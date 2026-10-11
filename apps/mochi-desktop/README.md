@@ -28,7 +28,7 @@ Linux needs webkit2gtk 4.1 and its companions (Ubuntu 22.04 or later):
 sudo apt-get install libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
 ```
 
-Windows needs only the WebView2 runtime, which Windows 10 22H2 and 11 ship.
+Windows needs only the WebView2 runtime, which Windows 10 22H2 and 11 ship. Release builds link the Visual C++ runtime statically, so users need no VC++ redistributable; debug and test builds link it dynamically, because Tauri's static mode puts a stub `msvcrt.lib` on the search path that a workspace-wide `cargo test` hands to every other crate's doctests (`build.rs` explains).
 
 ```bash
 # Development: the Vite dev server, then the app, which loads it (devUrl).
