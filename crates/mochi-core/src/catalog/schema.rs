@@ -11,12 +11,13 @@
 //!   `content_hash`), never in a shared column, because the file-content hash
 //!   is unseparated (plan O20).
 //!
-//! Tables from §10.1 **not** defined yet, because their columns depend on
-//! decisions owned by later phases: `dictionaries` (O21, C8/C9),
-//! `key_envelopes` (C11, R5), `parity_groups` (C12, R6), `retained_roots`
-//! (C9), `search_documents` (C13). Preserved attributes on file versions wait
-//! for decision D6 (plan O6). `commits` carries only ordering here; the commit
-//! ID and record fields arrive with the commit record in C5.
+//! Five §10.1 tables are not catalog tables in 1.0; their information lives
+//! elsewhere (`docs/ratification/R4-catalog-ddl-draft.md` §4): key envelopes
+//! are their own frames, listed by every commit; retention operations and
+//! state, key operations and state, and preserved attributes (D6) are in the
+//! recovery manifests; no dictionaries, parity, or search extraction exist
+//! yet. `commits` carries only ordering; commit IDs and record fields are in
+//! the commit records.
 
 /// SQLite `application_id` for MOCHI catalogs: ASCII `MOCH`. Draft (R4).
 pub const APPLICATION_ID: i32 = 0x4D4F_4348;
