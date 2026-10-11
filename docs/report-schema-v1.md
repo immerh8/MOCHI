@@ -9,6 +9,7 @@ Spec §20.5 lists what a machine-readable report must contain; this file is the 
 - `started_at` / `completed_at` are filled, in the D15 form `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`.
 - New error codes `REFERENCE_INVALID` and `FRESHNESS_FAILED` (both exit 1). `PROFILE_VIOLATION` (exit 1) is added by the TAR-compatibility profile (Annex B.2.9 D19).
 - The Encrypted profile (Annex B.2.10 D20) adds `KEY_UNAVAILABLE` (an operational error, exit 3, never a finding) and `KDF_COST_BELOW_DEFAULT`, which only ever appears as a finding with severity `info`: a key envelope in the file (any commit's, removed ones included, since they still yield the data key) declares an Argon2id cost below the writer default (m < 65,536 KiB or t < 3); the message says when the head no longer lists it. `expected` and `observed` give the two costs; it changes no dimension and no exit code (D20 item 14).
+- `LIMIT_NOT_DEFAULT` (R7 decision of 2026-10-11, spec §20.5 "configuration"): one finding with severity `info` per reader limit that differs from its default (`--limit`); `expected` is the default, `observed` the value in force, and the message names the limit. It changes no dimension and no exit code.
 
 ## Fields
 
@@ -54,10 +55,11 @@ The policy requires integrity and recoverability, plus freshness under D15's con
 
 `mochi health` emits this same schema from `mochi_core::health`, with these conventions (plan K5): `level` is `structural` (its only look at the archive is locating the head) and `scope` says that no check was run; `checked_commit` is the current head; the dimensions come from locally recorded evidence (rules in `docs/c14-cli.md`, rule 13); reasons a dimension is `UNKNOWN` or `OVERDUE` are `skipped` items named after the dimension, plus one named `unreadable_evidence` when evidence log lines could not be read; a recorded failure appears as a finding with the stable codes of the run that found it; `coverage.evidence_age_seconds` is the age of the oldest evidence behind integrity or recoverability. Durability and key availability are `UNKNOWN`, searchability and retention compliance `UNSUPPORTED`, so the overall status is never `PASS` in 1.0.
 
-## Open for R7
+## Decided for R7 (2026-10-11, delegated)
 
-- Final field names and the JSON Schema document itself.
-- Whether control objects get their own coverage counts.
-- Whether `UNCOMMITTED_TAIL` (an interrupted write) should lower durability rather than stay a warning.
-- Whether health reports need their own marker (today only `level` and `scope` distinguish them).
-- A dedicated not-found code for a path absent from a snapshot (today `INVALID_ARGUMENT`, plan C6).
+The items this section listed as open are decided in
+`docs/ratification/R7-reports-and-error-codes-draft.md` §8: the JSON Schema document is
+written at the R7 freeze; control objects get no coverage counts (findings cover them);
+`UNCOMMITTED_TAIL` stays a warning and does not lower durability; `health` reports need
+no marker (`level` and `scope` distinguish them); a path absent from a snapshot stays
+`INVALID_ARGUMENT`. The schema version stays 1.

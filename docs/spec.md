@@ -339,14 +339,14 @@ The following values are proposed for v2.0. They are not a declaration that the 
 | `0x184D2A56` | Commit footer |
 | `0x184D2A57` | Archive descriptor |
 | `0x184D2A58` | Recovery manifest |
-| `0x184D2A59` | Encrypted object envelope |
+| `0x184D2A59` | Encrypted object envelope (the *sealed object* of Annex B.2.10, D20) |
 | `0x184D2A5A`–`0x184D2A5B` | Reserved |
 | `0x184D2A5C` | Key envelope |
 | `0x184D2A5D` | Compression dictionary |
 | `0x184D2A5E` | Optional footer-history accelerator |
 | `0x184D2A5F` | Parity object |
 
-Frame IDs alone do not establish that an arbitrary Zstandard stream is a MOCHI archive. Readers MUST validate the MOCHI descriptor and versioned record envelopes.
+Frame IDs alone do not establish that an arbitrary Zstandard stream is a MOCHI archive. Readers MUST validate the MOCHI descriptor and versioned record envelopes before interpreting any record. **[Amendment, ratification R1 decision of 2026-10-11 (delegated)]** "Before interpreting" is the scope of this rule: head discovery, footer and commit validation, the structural walk, and stored-integrity checks remain permitted with a missing or damaged descriptor, as Annex B.2 D12 says. A frame that no verified record references is walked and never interpreted; 1.0 readers do not report unreferenced frames of kinds 1.0 does not write (they are outside every committed hash, so a report about them would be a claim about bytes no commit vouches for).
 
 **[1.0 integration]** *Relationship to earlier drafts.* This registry replaces the placeholder allocations in the unified-draft Appendix B. Notable changes: `0x184D2A56` is now the commit footer (v1.2 had no framed footer); `0x184D2A57`/`58`/`59` are new (descriptor, recovery manifest, encrypted object envelope); `0x184D2A53` (previously proposed for range-reservation records) is reserved with no Core interpretation, because shared-file range reservation is no longer part of Core (Section 12.5); `0x184D2A5E` is now an optional *accelerator* rather than a recovery authority (Section 22). The registry is still proposed until the ratification package publishes it (Section 28).
 
@@ -401,7 +401,9 @@ This is a proposed incompatible footer layout. Existing archives MUST NOT be sil
 
 **[1.0 integration]** *Why the footer moved into a skippable frame.* The v1.2 layout ended the file with 64 bare trailer bytes, and after each append the previous trailer remained mid-file. Neither is a valid Zstandard frame, so `zstd -dc` would stop with a header error at the first trailer — the v1.2 zero-tool fallback could not have worked as written. Framing every footer fixes this. The footer digest is also now computed over *stored* commit-frame bytes, so it can be checked without decryption keys, unlike v1.2's hash over decrypted metadata.
 
-**[1.0 integration]** *Open decision:* whether any v1.2-layout archives exist that must be recognized as legacy (Section 26). If none were ever produced outside development, the `MOCHI2` magic could be reconsidered; see Annex B, D1. Until decided, implementations use `MOCHI2` as specified above.
+**[1.0 integration]** *Decided (Annex B.1 D1):* the magic stays `MOCHI2` and the wire generation stays 2, independent of the product version.
+
+**[Amendment, plan O17, recorded in the spec by the R1 decision of 2026-10-11]** A footer MUST follow the commit frame it names: the commit frame's last byte precedes the footer's first byte. A footer whose commit-frame range reaches the footer or beyond is invalid. The format is append-only, so no writer needs a footer before its commit, and tail validation relies on this order.
 
 ### 8.5 Parsing requirements
 
@@ -517,6 +519,8 @@ MOCHI separates immutable content records from ordered namespace operations.
 
 Exact DDL is a release-gated companion artifact.
 
+**[Amendment, ratification R4 decision of 2026-10-11 (delegated)]** The table above lists *logical* records. A record MAY live outside the SQLite catalog when another structure is its authority. In 1.0, `dictionaries`, `parity_groups`, and `search_documents` do not exist yet; key envelopes are their own frames listed by every commit, with key operations and state in the recovery manifests (B.2.10); retention operations and state are in the recovery manifests (D18); and the preserved attributes of `file_versions` (Section 10.4.1, D6) are in the recovery manifests only, so restoring attributes needs the segment's manifests, not only the head's image. The exact catalog DDL, and where each logical record lives, are in ratification artifact R4.
+
 ### 10.2 Namespace operations
 
 The Core profile defines:
@@ -579,6 +583,8 @@ Verification MUST include:
 - SQLite structural integrity checks.
 - Foreign-key or equivalent relationship validation.
 - MOCHI-specific dependency and snapshot checks.
+
+**[Amendment, ratification R4 decision of 2026-10-11 (delegated)]** No canonical page layout or row order is defined, so two writers MAY produce different images of the same catalog. Images are compared by content (for example the snapshot-manifest equivalence check, Annex B.2 D10 item 7), never by bytes, and an independent reader MUST NOT assume byte-identical images.
 
 ### 10.6 Replay and checkpoints
 
@@ -1035,7 +1041,7 @@ A successful stored-byte scrub MAY coexist with unknown decryptability or overdu
 Machine-readable reports MUST include:
 - Report schema version.
 - Archive and checked commit identities.
-- Expected preserved head.
+- Expected head (the freshness anchor, Annex B.1 D8).
 - Tool and configuration versions.
 - Check start and completion times.
 - Scope and verification level.
@@ -1715,6 +1721,8 @@ Archives from before this batch have no descriptor and are rejected as legacy dr
 | 56 | 8 | Commit sequence | |
 | 64 | 16 | Transaction ID | |
 | 80 | 8·n | Required features | u64 values, strictly increasing |
+
+**[Amendment, ratification R2 decision of 2026-10-11 (delegated)]** n ≤ 64 is a wire rule of envelope version 0, not a reader limit: raising a reader's required-feature limit does not admit a longer v0 header, and a record that needs more than 64 features needs envelope version 1.
 
 This envelope replaces the 68-byte draft in `mochi-format/src/envelope.rs`. That draft's 16-byte archive identity does not match the 32-byte archive ID used everywhere else.
 

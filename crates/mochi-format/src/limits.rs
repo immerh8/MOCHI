@@ -129,6 +129,40 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// Every limit with its stable name, the one `mochi --limit NAME=VALUE`
+    /// takes and reports print. The destructuring is exhaustive, so a new
+    /// field cannot be left out.
+    pub const fn named(&self) -> [(&'static str, u64); 11] {
+        let Limits {
+            max_skippable_payload,
+            max_frame_len,
+            max_blocks_per_frame,
+            max_window_size,
+            max_commit_frame_len,
+            max_decoded_object_len,
+            max_required_features,
+            max_kdf_memory_kib,
+            max_kdf_iterations,
+            max_kdf_lanes,
+            max_key_envelopes,
+        } = *self;
+        [
+            ("max-skippable-payload", max_skippable_payload),
+            ("max-frame-len", max_frame_len),
+            ("max-blocks-per-frame", max_blocks_per_frame),
+            ("max-window-size", max_window_size),
+            ("max-commit-frame-len", max_commit_frame_len),
+            ("max-decoded-object-len", max_decoded_object_len),
+            ("max-required-features", max_required_features),
+            ("max-kdf-memory-kib", max_kdf_memory_kib),
+            ("max-kdf-iterations", max_kdf_iterations),
+            ("max-kdf-lanes", max_kdf_lanes),
+            ("max-key-envelopes", max_key_envelopes),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

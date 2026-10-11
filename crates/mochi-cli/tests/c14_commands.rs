@@ -551,6 +551,60 @@ fn c14_refused_and_limited_options() {
     assert_ne!(v["dimensions"]["integrity"], "PASS");
 }
 
+/// **A non-default reader limit is named in the report** (spec §20.5,
+/// "configuration"; R7 decision of 2026-10-11): one `LIMIT_NOT_DEFAULT`
+/// finding per changed limit, severity `info`, with the default as
+/// `expected` and the value as `observed`. It changes no dimension and no
+/// exit code. Every name `Limits::named` reports is one `--limit` accepts.
+#[test]
+fn c14_a_non_default_limit_is_recorded_not_judged() {
+    let a = Area::new();
+    let archive = a.create();
+    let (code, v) = a.json(&["verify", &archive, "--no-local-history"]);
+    assert_eq!(code, exit::OK, "{v}");
+    let codes = |v: &Value| -> Vec<String> {
+        v["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert!(!codes(&v).contains(&"LIMIT_NOT_DEFAULT".to_owned()), "{v}");
+    let dims = v["dimensions"].clone();
+
+    let default = mochi_format::Limits::default();
+    let raised = default.max_frame_len + 1;
+    let (code, v) = a.json(&[
+        "verify",
+        &archive,
+        "--no-local-history",
+        "--limit",
+        &format!("max-frame-len={raised}"),
+    ]);
+    assert_eq!(code, exit::OK, "{v}");
+    assert_eq!(v["dimensions"], dims, "a raised limit changes no dimension");
+    let notes: Vec<&Value> = v["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["code"] == "LIMIT_NOT_DEFAULT")
+        .collect();
+    assert_eq!(notes.len(), 1, "{v}");
+    assert_eq!(notes[0]["severity"], "info");
+    assert_eq!(notes[0]["expected"], default.max_frame_len.to_string());
+    assert_eq!(notes[0]["observed"], raised.to_string());
+    assert!(notes[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("max-frame-len"));
+
+    for (name, value) in default.named() {
+        let (code, v) = a.json(&["list", &archive, "--limit", &format!("{name}={value}")]);
+        assert_eq!(code, exit::OK, "--limit {name}: {v}");
+    }
+}
+
 /// **`--tar-compatible` end to end (D19).** The profile is chosen at
 /// creation and kept by `append`; `verify` parses the streams and passes;
 /// `gc plan` reports the framing apart from what it could collect; a file

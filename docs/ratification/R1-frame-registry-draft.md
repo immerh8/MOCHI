@@ -129,33 +129,28 @@ Required-feature identifiers registered: **1** = the Encrypted profile, suite 1 
 R5 frozen). No other identifier is assigned; any other listed feature is refused
 (`UNSUPPORTED_FEATURE`, exit 4).
 
-## 6. Open items (spec and code disagree, or the spec is silent)
+## 6. Decisions on the open items (delegated, 2026-10-11)
 
-Recorded, not resolved. Each needs a spec edit, an Annex B entry, or an owner call
-before R1 freezes.
+The owner delegated these calls ("decide on best practice and the goal"). Each is
+recorded where it now lives; nothing in this section changes a byte on the wire.
 
-1. **§8.2 and §8.4 still say "proposed".** The code uses these values as the wire
-   format, and the golden vectors depend on them. Freezing R1 is what removes the
-   word; until then the spec text and this draft agree that nothing is ratified.
-2. **§8.4's closing "Open decision" on `MOCHI2` is stale.** Annex B.1 D1 decided it
-   ("Keep `MOCHI2`"). The §8.4 paragraph should point to D1 as decided.
-3. **§8.2 names `0x184D2A59` "Encrypted object envelope"**; D20 and the code call
-   the frame a *sealed object*. Same frame, two names. Proposal: keep the §8.2 name
-   in the registry table and say "sealed object (D20)" in the use column, as here.
-4. **Footer before commit (plan O17).** The code requires the commit frame to lie
-   entirely before the footer that names it. The spec says physical order may vary
-   but does not say a footer may not precede its commit. Proposal: state the rule
-   in §8.4.
-5. **Unreferenced frames of kinds not written in 1.0.** A 1.0 reader walks them and
-   ignores them unless a record references them. The spec does not say whether
-   `verify` should report an unreferenced `0x184D2A52`, `…54`, `…55`, `…5D`,
-   `…5E`, or `…5F` frame in the committed prefix (today it does not). Options: (a)
-   silent, as now; (b) an `info` finding; (c) `UNSUPPORTED` for the dimension that
-   kind would serve. Recommendation: (b), since (c) would make every archive written
-   by a later build look unsupported to a 1.0 reader even when nothing references
-   the frame.
-6. **§8.2's closing sentence** says readers MUST validate the descriptor and record
-   envelopes; D12 permits head discovery, footer and commit validation, the walk,
-   and stored-integrity checks with a missing or damaged descriptor. The two are
-   consistent only if "validate" is read as "before interpretation". Proposal:
-   say so in §8.2.
+1. **"Proposed" in §8.2 and §8.4.** Stays until R1 freezes at Beta; the freeze removes
+   it. Until then the spec and this draft agree that nothing is ratified.
+2. **§8.4's stale "open decision" on `MOCHI2`.** Replaced in the spec by a pointer to
+   Annex B.1 D1 (decided: keep `MOCHI2`).
+3. **Two names for `0x184D2A59`.** The §8.2 name stays; the spec's registry row now
+   adds "the *sealed object* of Annex B.2.10, D20", as this draft's table does.
+4. **Footer after commit (plan O17).** Already decided in the plan; now stated in
+   §8.4: the commit frame's last byte precedes the footer's first byte, otherwise the
+   footer is invalid. The code already enforces it.
+5. **Unreferenced frames of kinds 1.0 never writes: (a) silent.** This draft
+   recommended an `info` finding, but `verify` has no forward walk of the whole file:
+   it reaches frames only through references. Adding one costs a full extra pass on
+   every run, at every level, to report bytes that no committed hash covers (so a
+   report about them would claim nothing a commit vouches for). Anything a later
+   build writes that matters is reached through a reference, and an unknown
+   reference is already refused (`UNSUPPORTED_FEATURE`). The spec now says so (§8.2
+   amendment). Adding such a finding later is a new code, which is not a breaking
+   change.
+6. **§8.2 "Readers MUST validate the descriptor".** Amended to "before interpreting
+   any record", with the D12 exceptions named, so the two texts agree.

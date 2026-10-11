@@ -272,7 +272,9 @@ pub fn classify(code: ErrorCode) -> ErrorClass {
         | ErrorCode::KeyUnavailable
         // Only ever an informational finding (D20 item 14), never raised as
         // an error; if one were, it would conclude nothing about the archive.
-        | ErrorCode::KdfCostBelowDefault => ErrorClass::Operational,
+        | ErrorCode::KdfCostBelowDefault
+        // Only ever an informational finding (R7, §20.5 configuration).
+        | ErrorCode::LimitNotDefault => ErrorClass::Operational,
     }
 }
 
@@ -375,6 +377,25 @@ pub fn verify(src: &dyn ReadStorage, opts: &VerifyOptions, ctx: &JobContext<'_>)
         tar_streams: false,
         keyless: false,
     };
+    // §20.5 asks for the configuration in force: a reader limit that differs
+    // from the default changes what this run could check, so each one is
+    // recorded (R7 decision of 2026-10-11). Informational: it changes no
+    // dimension and no exit code.
+    let defaults = mochi_format::Limits::default().named();
+    for ((name, value), (_, default)) in opts.read.limits.named().into_iter().zip(defaults) {
+        if value != default {
+            run.report.findings.push(Finding {
+                code: ErrorCode::LimitNotDefault,
+                severity: Severity::Info,
+                message: Some(format!(
+                    "reader limit {name} is {value}, not the default {default}"
+                )),
+                expected: Some(default.to_string()),
+                observed: Some(value.to_string()),
+                affected: None,
+            });
+        }
+    }
     let mut head = None;
     let mut damage = None;
     let mut freshness = Status::Unknown;

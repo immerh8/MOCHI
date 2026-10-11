@@ -124,22 +124,20 @@ is wrong.
   after opening. The seal's associated data binds the archive ID and the object or
   commit identity, so a sealed frame opens only in its own place.
 
-## 5. Open items
+## 5. Decisions on the open items (delegated, 2026-10-11)
 
-1. **Feature-count rule versus reader limits.** v0 caps n at 64 on the wire, and the
-   reader's `max_required_features` defaults to the same 64. Raising the reader limit
-   with `--limit` does not admit a longer v0 header. The spec does not say whether a
-   later envelope version may raise the wire cap or whether 64 is permanent. Proposal:
-   record 64 as permanent for v0 and say a larger list needs envelope version 1.
-2. **§8.3 says larger logical records "MUST be split using a specified representation
-   or rejected."** 1.0 takes the rejected branch for manifests and catalog images
-   (D10 item 11): a writer refuses (`CAPACITY_EXCEEDED`) and no head is published.
-   R2 freezes that branch; a split representation would be a new envelope version.
-3. **Dictionaries and parity** will carry the binary envelope (D11 names them) but no
-   payload encoding is registered for either. C12/R6 must register one before writing
-   any.
-4. **Spec §8.3's amendment header still reads "implementation and evidence pending
-   (B.2.6)".** The implementation and its golden vectors exist (`fixtures/golden/b2`).
-   Whether the B.2.6 evidence item ("valid and reject vectors for every CDDL rule and
-   every D11 obligation, in both encodings") is complete has not been audited for
-   this draft; that audit belongs to R8.
+1. **The feature-count cap is permanent for envelope version 0.** n ≤ 64 is a wire
+   rule of v0, independent of reader limits; a record needing more features needs
+   envelope version 1. Stated in spec B.2.2 under the binary envelope table.
+2. **Oversized records are rejected, not split, in 1.0.** That is D10 item 11's branch
+   of §8.3, and R2 freezes it: a writer refuses (`CAPACITY_EXCEEDED`) and publishes no
+   head. A split representation would be a new envelope version with its own Annex B
+   entry.
+3. **Dictionaries and parity register a payload encoding before writing.** C12 (R6)
+   and any dictionary work must add their payload encoding to B.2.2's registry, with
+   signature and vectors, before a writer emits one. Recorded as a precondition in
+   plan W9 (`docs/next-work-plan.md`).
+4. **The B.2.6 evidence audit belongs to R8.** "Valid and reject vectors for every
+   CDDL rule and every D11 obligation, in both encodings" is checked when the golden
+   set R8 is assembled, not in this draft. §8.3's "evidence pending" marker stays until
+   that audit passes.
