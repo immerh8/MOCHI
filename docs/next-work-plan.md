@@ -319,7 +319,7 @@ Each draft cites its source file and commit, lists any place the spec and code d
 
 ### W9 — Later (after the above)
 
-- **C12 Redundancy + R6:** a Reed–Solomon suite (candidate: Cauchy RS over GF(2^8); pick a maintained MIT/Apache crate, or implement against published vectors), parity objects `0x184D2A5F` with a `parity_groups` cross-check (§15). Needs its own Annex B entry (D21) like D19/D20. Then C8 steps 5–6 and the DoD row "damage beyond parity capacity".
+- **C12 Redundancy + R6** (precondition, R2 decision 2026-10-11: register the parity payload encoding in B.2.2's binary-envelope registry, with signature and vectors, before any writer emits one; the same applies to dictionaries): a Reed–Solomon suite (candidate: Cauchy RS over GF(2^8); pick a maintained MIT/Apache crate, or implement against published vectors), parity objects `0x184D2A5F` with a `parity_groups` cross-check (§15). Needs its own Annex B entry (D21) like D19/D20. Then C8 steps 5–6 and the DoD row "damage beyond parity capacity".
 - **C8 step 7 (bounded salvage scan):** needs rules for labelling uncertain finds and a decision on writing a descriptor "labelled as reconstructed" (D12). Write those as an Annex B proposal for the owner before code.
 - **R8 golden set** (valid, corrupt, interrupted archives for every profile), then **R9**: per O7, a read-only verifier in Python written by a **fresh session given only `docs/spec.md` and the ratification artifacts**, never the Rust code. That is a good fit for a separate model session started cold.
 - **Desktop D1–D8** after D0, in plan order.

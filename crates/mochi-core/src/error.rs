@@ -168,6 +168,13 @@ pub enum ErrorCode {
     /// never an error and changes no dimension's status or the exit code
     /// (Annex B.2.10 D20 item 14, decided at the R5 freeze). Added after C11.
     KdfCostBelowDefault,
+    /// Verification, informational only: a reader limit in force differs
+    /// from its default (raised or lowered with `--limit`), which changes
+    /// what the run could check. Spec §20.5 asks reports to name the
+    /// configuration; `expected` and `observed` give the default and the
+    /// value. Never an error; changes no dimension's status or the exit
+    /// code. Added at the R7 draft decisions (2026-10-11).
+    LimitNotDefault,
 }
 
 impl ErrorCode {
@@ -215,6 +222,7 @@ impl ErrorCode {
         ErrorCode::ProfileViolation,
         ErrorCode::KeyUnavailable,
         ErrorCode::KdfCostBelowDefault,
+        ErrorCode::LimitNotDefault,
     ];
 
     /// The stable string form. Independent of serde so it cannot drift silently;
@@ -263,6 +271,7 @@ impl ErrorCode {
             ErrorCode::ProfileViolation => "PROFILE_VIOLATION",
             ErrorCode::KeyUnavailable => "KEY_UNAVAILABLE",
             ErrorCode::KdfCostBelowDefault => "KDF_COST_BELOW_DEFAULT",
+            ErrorCode::LimitNotDefault => "LIMIT_NOT_DEFAULT",
         }
     }
 }
@@ -398,6 +407,8 @@ mod tests {
         "KEY_UNAVAILABLE",
         // Appended at the R5 freeze (D20 item 14).
         "KDF_COST_BELOW_DEFAULT",
+        // Appended at the R7 draft decisions (§20.5 configuration).
+        "LIMIT_NOT_DEFAULT",
     ];
 
     #[test]

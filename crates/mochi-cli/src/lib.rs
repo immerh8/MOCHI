@@ -35,17 +35,23 @@ fn long_version() -> String {
 
 /// Map an error to its exit code (spec §23.2; Annex B.2.2 for the B.2 codes).
 ///
-/// * **1**: evidence that the archive is wrong. Integrity failures, whatever
-///   command found them, so `get` refusing a corrupt object exits like
-///   `verify` finding it (plan O22); a missing, damaged, or mismatched
-///   descriptor (D12); GC unable to rebuild retention state (D10 item 10).
+/// * **1**: evidence that the archive is wrong, whatever command found it:
+///   every code [`mochi_core::verify::classify`] calls a violation, so `get`
+///   or `ls` failing on a damaged archive exits like `verify` finding the
+///   damage (plan O22, extended to every violation by the R7 decision of
+///   2026-10-11). Input a user typed is parsed into `INVALID_ARGUMENT`
+///   before core sees it (`render::archive_path_arg`, `append --delete`), so
+///   these codes reach this mapping only from archive bytes.
 /// * **4**: the build or the format cannot do what was asked: an unsupported
 ///   feature, or an in-place profile change (D12).
-/// * **3**: everything else is operational, including `CHECKPOINT_MISMATCH`
-///   raised by a *writer*. When `verify` finds a checkpoint mismatch it reports
-///   a `FAIL` dimension, which exits 1 through the report (D15), not here.
+/// * **3**: everything else is operational. The one violation that stays
+///   here is `CHECKPOINT_MISMATCH`: as an *error* it only ever comes from a
+///   writer whose own output disagrees with its source (B.2.2: "3
+///   (writer)"). When `verify` finds one it reports a `FAIL` dimension, which
+///   exits 1 through the report (D15).
 ///
 /// The match is exhaustive on purpose: a new code must be placed explicitly.
+/// The test `exit_code_for_agrees_with_classify` pins the two placements.
 pub fn exit_code_for(code: ErrorCode) -> u8 {
     match code {
         ErrorCode::StoredIntegrityFailed
@@ -54,16 +60,7 @@ pub fn exit_code_for(code: ErrorCode) -> u8 {
         | ErrorCode::RetentionUnresolved
         | ErrorCode::ReferenceInvalid
         | ErrorCode::FreshnessFailed
-        | ErrorCode::ProfileViolation => exit::FAILED,
-        ErrorCode::UnsupportedFeature | ErrorCode::ProfileChangeUnsupported => exit::UNSUPPORTED,
-        ErrorCode::IoError
-        | ErrorCode::OutOfBounds
-        | ErrorCode::LimitExceeded
-        | ErrorCode::LockConflict
-        | ErrorCode::InvalidArgument
-        | ErrorCode::Cancelled
-        | ErrorCode::NotImplemented
-        | ErrorCode::ReportInconsistent
+        | ErrorCode::ProfileViolation
         | ErrorCode::MalformedFrame
         | ErrorCode::Truncated
         | ErrorCode::FooterInvalid
@@ -75,8 +72,17 @@ pub fn exit_code_for(code: ErrorCode) -> u8 {
         | ErrorCode::IdentityConflict
         | ErrorCode::RecordInvalid
         | ErrorCode::NoValidHead
+        | ErrorCode::TailUnresolved => exit::FAILED,
+        ErrorCode::UnsupportedFeature | ErrorCode::ProfileChangeUnsupported => exit::UNSUPPORTED,
+        ErrorCode::IoError
+        | ErrorCode::OutOfBounds
+        | ErrorCode::LimitExceeded
+        | ErrorCode::LockConflict
+        | ErrorCode::InvalidArgument
+        | ErrorCode::Cancelled
+        | ErrorCode::NotImplemented
+        | ErrorCode::ReportInconsistent
         | ErrorCode::UncommittedTail
-        | ErrorCode::TailUnresolved
         | ErrorCode::CommitUnconfirmed
         | ErrorCode::WriterPoisoned
         | ErrorCode::DestinationExists
@@ -88,7 +94,8 @@ pub fn exit_code_for(code: ErrorCode) -> u8 {
         | ErrorCode::NameUnsupported
         | ErrorCode::AttributeNotRestored
         | ErrorCode::KeyUnavailable
-        | ErrorCode::KdfCostBelowDefault => exit::ERROR,
+        | ErrorCode::KdfCostBelowDefault
+        | ErrorCode::LimitNotDefault => exit::ERROR,
     }
 }
 

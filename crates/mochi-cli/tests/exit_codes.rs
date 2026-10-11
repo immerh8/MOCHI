@@ -127,28 +127,46 @@ fn every_1_0_command_from_spec_23_2_is_present() {
     assert_eq!(code, exit::ERROR, "{err}");
 }
 
+/// R7 decision (2026-10-11): an error exits 1 exactly when verification would
+/// count the same code as a violation, so automation reading only the exit
+/// code learns "the archive is wrong" from `ls` or `get` as from `verify`.
+/// `CHECKPOINT_MISMATCH` is the one exception: as an error it only comes from
+/// a writer (B.2.2: "3 (writer)"); `verify` reports it through a `FAIL`
+/// dimension instead.
 #[test]
-fn integrity_failures_exit_1_everything_else_is_classified() {
+fn exit_code_for_agrees_with_classify() {
     use mochi_cli::exit_code_for;
+    use mochi_core::verify::{classify, ErrorClass};
     use mochi_core::ErrorCode;
     for code in ErrorCode::ALL {
-        let want = match code {
-            ErrorCode::StoredIntegrityFailed | ErrorCode::ContentIntegrityFailed => exit::FAILED,
-            ErrorCode::UnsupportedFeature => exit::UNSUPPORTED,
-            // Spec Annex B.2.2 "New error codes" table.
-            ErrorCode::DescriptorInvalid | ErrorCode::RetentionUnresolved => exit::FAILED,
-            ErrorCode::ProfileChangeUnsupported => exit::UNSUPPORTED,
-            // C7: verification evidence that the archive is wrong.
-            ErrorCode::ReferenceInvalid | ErrorCode::FreshnessFailed => exit::FAILED,
-            // C10 (D19 rule 8): a TAR stream that differs from its commit's puts.
-            ErrorCode::ProfileViolation => exit::FAILED,
-            // CHECKPOINT_MISMATCH: 3 from a writer; a verify finding exits 1
-            // through the report's FAIL dimension, not through this mapping.
-            _ => exit::ERROR,
+        let want = match (code, classify(*code)) {
+            (ErrorCode::CheckpointMismatch, _) => exit::ERROR,
+            (_, ErrorClass::Violation) => exit::FAILED,
+            (_, ErrorClass::Unsupported) => exit::UNSUPPORTED,
+            (_, ErrorClass::Operational) => exit::ERROR,
         };
         assert_eq!(exit_code_for(*code), want, "{code}");
         // No error code may ever map to success.
         assert_ne!(exit_code_for(*code), exit::OK, "{code}");
+    }
+    // The cases the rule is about, spelled out.
+    for code in [
+        ErrorCode::MalformedFrame,
+        ErrorCode::CatalogInvalid,
+        ErrorCode::RecordInvalid,
+        ErrorCode::NoValidHead,
+        ErrorCode::TailUnresolved,
+        ErrorCode::StoredIntegrityFailed,
+    ] {
+        assert_eq!(exit_code_for(code), exit::FAILED, "{code}");
+    }
+    for code in [
+        ErrorCode::KeyUnavailable,
+        ErrorCode::UncommittedTail,
+        ErrorCode::InvalidArgument,
+        ErrorCode::LimitExceeded,
+    ] {
+        assert_eq!(exit_code_for(code), exit::ERROR, "{code}");
     }
 }
 
@@ -203,4 +221,76 @@ fn exceed_default_limits_is_refused_by_name() {
     // Only `create` takes it; elsewhere it is no more meaningful than before.
     let (_, _, err) = go(&["append", "a.mochi", "--exceed-default-limits"]);
     assert!(!err.contains("1.x feature"), "{err}");
+}
+
+/// R7 decision (2026-10-11): `NOT_IMPLEMENTED` stays registered (retiring a
+/// code is a breaking change), but a 1.0 build returns it from no command.
+/// Every command spec §23.2 puts in the 1.0 scope is read from the spec and
+/// run with minimal arguments against a missing archive, so that it gets past
+/// argument parsing (its `--json` error is proof) to the scope check: it must
+/// fail on the missing file, never as not implemented.
+#[test]
+fn no_one_dot_zero_command_is_not_implemented() {
+    let spec = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec.md"),
+    )
+    .unwrap();
+    let line = spec
+        .lines()
+        .find(|l| l.contains("*1.0 command scope.* In 1.0:"))
+        .expect("spec §23.2 lists the 1.0 commands");
+    let list = line
+        .split("In 1.0:")
+        .nth(1)
+        .unwrap()
+        .split(". Post-1.0")
+        .next()
+        .unwrap();
+    let commands: Vec<String> = list
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(commands.len(), 18, "{commands:?}");
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.mochi").display().to_string();
+    let out_dir = dir.path().join("out").display().to_string();
+    let plan = dir.path().join("plan.json").display().to_string();
+    let m = missing.as_str();
+    for cmd in &commands {
+        let args: Vec<&str> = match cmd.as_str() {
+            "create" => vec!["create", m, m],
+            "append" => vec!["append", m, "--delete", "x"],
+            "get" => vec!["get", m, "-C", &out_dir],
+            "list" => vec!["list", m],
+            "snapshot" => vec!["snapshot", "list", m],
+            "search" => vec!["search", m, "--path", "x"],
+            "verify" => vec!["verify", m],
+            "fsck" => vec!["fsck", m],
+            "health" => vec!["health", m],
+            "restore-test" => vec!["restore-test", m, "-C", &out_dir],
+            "repair plan" => vec!["repair", "plan", m],
+            "repair apply" => vec!["repair", "apply", m, "--plan", &plan, "--output", &out_dir],
+            "checkpoint" => vec!["checkpoint", m],
+            "compact" => vec!["compact", m, "--output", &out_dir],
+            "gc plan" => vec!["gc", "plan", m],
+            "gc apply" => vec!["gc", "apply", m, "--plan", &plan, "--output", &out_dir],
+            "rekey" => vec!["rekey", m, "--list"],
+            "dump-index" => vec!["dump-index", m],
+            other => panic!("spec §23.2 lists {other:?}; add its minimal arguments here"),
+        };
+        let mut argv = args.clone();
+        argv.extend(["--json", "--no-local-history"]);
+        let (code, out, err) = go(&argv);
+        let v: serde_json::Value = serde_json::from_str(out.trim())
+            .unwrap_or_else(|e| panic!("{cmd}: arguments not accepted ({e}): {out} {err}"));
+        let error = v["error"]["code"].as_str().unwrap_or_default();
+        assert_ne!(error, "NOT_IMPLEMENTED", "{cmd}: {v}");
+        assert_ne!(
+            code,
+            exit::OK,
+            "{cmd}: a missing archive cannot succeed: {v}"
+        );
+    }
 }

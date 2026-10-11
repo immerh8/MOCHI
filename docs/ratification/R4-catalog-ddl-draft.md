@@ -184,24 +184,19 @@ Preserved attributes (§10.4.1, D6) are likewise **not** catalog columns: the
 manifests carry them (manifest file-version key 5), and restore rebuilds them from
 the segment's snapshot manifest and deltas (`publish::promised_attributes`).
 
-## 5. Open items
+## 5. Decisions on the open items (delegated, 2026-10-11)
 
-1. **§10.1 says the catalog holds the five tables of §4.** The code keeps that
-   information in frames and manifests instead. Either §10.1 is amended to call
-   these *logical* records that may live outside SQLite, or R4 adds tables. The
-   working design (D10, D18, D20) depends on the manifests being the authority, so
-   the proposal is the amendment.
-2. **Attributes outside the catalog.** A reader that opens only the head's image
-   cannot restore attributes; it needs the segment's manifests. That is consistent
-   with D10's "the manifest is the delta", but the spec does not say it. Proposal:
-   state in §10.1 that `file_versions`' attributes are manifest-only in 1.0.
-3. **`user_version` 0 is a draft value.** Ratified schemas start at 1. Freezing R4
-   means bumping it to 1, which changes every image byte and therefore every stored
-   hash in the golden set (R8 must be regenerated after, never before).
-4. **`schema.rs`'s module comment is stale**: it still says `key_envelopes`,
-   `retained_roots`, and `search_documents` wait for C11, C9, and C13, which have
-   shipped with the placements in §4. Fixed in the same change as this draft.
-5. **Row order.** Nothing in the spec requires a canonical row order or page layout,
-   so two writers can produce different images of the same catalog. Images are
-   compared by content (the snapshot-manifest equivalence check, D10 item 7), never
-   by bytes; R9's independent reader must not assume byte-identical images.
+1. **§10.1 lists logical records.** The spec is amended (§10.1): a logical record may
+   live outside the SQLite catalog when another structure is its authority, and the
+   1.0 placements of §4 are named. No tables are added. The manifests are the
+   authority by design (D10, D18, D20), and a second copy in the catalog would be a
+   second truth to keep consistent.
+2. **Attributes are manifest-only in 1.0.** Stated in the same §10.1 amendment:
+   restoring attributes needs the segment's manifests, not only the head's image.
+3. **`user_version` becomes 1 at the R4 freeze**, in the same change that freezes the
+   DDL, and before the R8 golden set is regenerated (never after, or every stored
+   hash in R8 changes twice).
+4. **`schema.rs`'s stale comment**: fixed with the draft.
+5. **Images are compared by content, never by bytes.** Stated in §10.5 (amendment):
+   no canonical page layout or row order is defined, and an independent reader (R9)
+   must not assume byte-identical images.
