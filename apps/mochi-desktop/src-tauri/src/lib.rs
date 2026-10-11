@@ -6,6 +6,7 @@
 //! generated into `ui/src/ipc/generated/` by `ts-rs` when the tests run;
 //! CI fails if the checked-in copies are stale.
 
+mod automation;
 pub mod commands;
 pub mod ipc;
 pub mod jobs;
@@ -21,5 +22,20 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::start_job,
             commands::cancel_job
         ])
+        .setup(|app| {
+            main_window(app)?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
+}
+
+/// The one window, labelled `main` (the label `capabilities/main.json`
+/// grants). Built here rather than in `tauri.conf.json` so that test
+/// builds can configure WebView2 for WebDriver (`automation`).
+fn main_window(app: &mut tauri::App) -> tauri::Result<()> {
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+        .title("MOCHI")
+        .inner_size(900.0, 640.0);
+    automation::configure(builder).build()?;
+    Ok(())
 }

@@ -20,6 +20,11 @@ path = "src/main.rs"
 # Without it the app loads `devUrl` (the Vite dev server): `cargo build` and
 # `cargo test` then need no built frontend. The E2E job enables it.
 custom-protocol = ["tauri/custom-protocol"]
+# Test builds only (the E2E job): on Windows, pass msedgedriver's
+# WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS and WEBVIEW2_USER_DATA_FOLDER through
+# to WebView2 so that the driver can attach (src/automation.rs). Never
+# enabled in a shipped build.
+e2e = []
 
 [dependencies]
 mochi-core.workspace = true

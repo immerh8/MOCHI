@@ -44,7 +44,7 @@ cargo test -p mochi-desktop        # writes ui/src/ipc/generated/*.ts; commit th
 
 # End to end (what the `desktop e2e` CI job runs)
 pnpm --dir apps/mochi-desktop/ui build
-cargo build -p mochi-desktop --features custom-protocol   # embeds ui/dist
+cargo build -p mochi-desktop --features custom-protocol,e2e   # embeds ui/dist; e2e: see below
 cargo install tauri-driver --locked
 cd apps/mochi-desktop/e2e && pnpm install --frozen-lockfile
 xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnpm test,
@@ -73,6 +73,15 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   `ws://localhost:5173` (Vite's hot reload) and inline styles (Vite injects CSS as
   style elements in development). No remote content, no eval; `freezePrototype` is on.
   `ci/check-invariants.sh` rule 10 refuses eval and any other http(s) origin.
+- **WebDriver hook only in test builds.** On Windows, msedgedriver attaches by setting
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (remote debugging) and
+  `WEBVIEW2_USER_DATA_FOLDER`, but Tauri always passes its own WebView2 arguments and data
+  directory, which win, so the driver never finds `DevToolsActivePort`. The `e2e` Cargo
+  feature (`src/automation.rs`) passes both variables through to the main window. Only
+  the E2E job enables it; a shipped build never does, so no environment variable can open
+  a debugging port in it. The main window is built in code (`lib.rs`), not in
+  `tauri.conf.json`, for this reason; its label stays `main`, the label the capability
+  grants.
 - **Text only.** Lint errors for `dangerouslySetInnerHTML`, `innerHTML`/`outerHTML`
   assignment, `insertAdjacentHTML`, `javascript:` URLs, and eval
   (`@eslint-react/dom-no-dangerously-set-innerhtml` and friends, plus a core

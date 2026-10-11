@@ -4,7 +4,7 @@
 //
 // Build first, with the UI embedded:
 //   pnpm --dir ../ui build
-//   cargo build -p mochi-desktop --features custom-protocol
+//   cargo build -p mochi-desktop --features custom-protocol,e2e
 // Linux needs a display: run under `xvfb-run`.
 import { spawn } from "node:child_process";
 import path from "node:path";

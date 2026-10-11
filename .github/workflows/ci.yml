@@ -129,7 +129,8 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - name: Build the app with the UI embedded
-        run: cargo build --locked -p mochi-desktop --features custom-protocol
+        # `e2e`: test builds only; lets msedgedriver configure WebView2 (src/automation.rs).
+        run: cargo build --locked -p mochi-desktop --features custom-protocol,e2e
       - name: Install the E2E runner
         working-directory: apps/mochi-desktop/e2e
         run: pnpm install --frozen-lockfile
@@ -137,25 +138,31 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/mochi-desktop/e2e
         run: xvfb-run -a pnpm test
-      # Diagnostic (first Windows run failed with "DevToolsActivePort file
-      # doesn't exist"): does the app start, stay up, and expose WebView2's
-      # DevTools endpoint when asked the way msedgedriver asks?
-      - name: Check the app launches with WebView2 remote debugging (Windows)
+      # Pre-flight: start the app the way msedgedriver does (remote debugging
+      # on, its own user data folder) and check that WebView2 writes
+      # DevToolsActivePort there and answers on the port. Without the `e2e`
+      # feature it does not (Tauri's own WebView2 options win), which is the
+      # "DevToolsActivePort file doesn't exist" a WebDriver session reports.
+      - name: Check WebView2 accepts WebDriver's settings (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $udf = Join-Path $env:RUNNER_TEMP "wv2-preflight"
+          New-Item -ItemType Directory -Force $udf | Out-Null
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+          $env:WEBVIEW2_USER_DATA_FOLDER = $udf
           $p = Start-Process -FilePath target\debug\mochi-desktop.exe -PassThru `
             -RedirectStandardOutput "$env:RUNNER_TEMP\app-out.txt" -RedirectStandardError "$env:RUNNER_TEMP\app-err.txt"
           Start-Sleep -Seconds 15
           $alive = -not $p.HasExited
           "app alive after 15 s: $alive"
-          if (-not $alive) { "exit code: $($p.ExitCode)" }
-          try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9222/json/version -TimeoutSec 5).Content } catch { "no DevTools endpoint on 9222: $($_.Exception.Message)" }
+          $port = Get-ChildItem -Path $udf -Recurse -Filter DevToolsActivePort -ErrorAction SilentlyContinue
+          "DevToolsActivePort found: $([bool]$port)"
+          $ok = $false
+          try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9222/json/version -TimeoutSec 5).Content; $ok = $true } catch { "no DevTools endpoint on 9222: $($_.Exception.Message)" }
           if ($alive) { Stop-Process -Id $p.Id -Force }
-          "--- app stdout"; Get-Content "$env:RUNNER_TEMP\app-out.txt" -ErrorAction SilentlyContinue
           "--- app stderr"; Get-Content "$env:RUNNER_TEMP\app-err.txt" -ErrorAction SilentlyContinue
-          if (-not $alive) { exit 1 }
+          if (-not ($alive -and $ok)) { exit 1 }
       - name: Run the E2E tests (Windows)
         if: runner.os == 'Windows'
         working-directory: apps/mochi-desktop/e2e
