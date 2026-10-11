@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window. Least privilege (AGENTS.md): the two job commands and nothing else. No fs, shell, http, or dialog permission; core:default is not granted. The file dialog arrives with D1, which is the first phase that picks paths.",
+  "windows": ["main"],
+  "permissions": ["allow-start-job", "allow-cancel-job"]
+}

@@ -54,8 +54,9 @@ hits=$(grep -nE '^\s*unrar(_sys|-sys)?\s*=' $(find crates apps -name Cargo.toml 
 
 # 7. Archive-supplied strings render as text only (spec §23.3 #9). React's
 #    escape hatch is banned outright in the UI source.
-if [ -d apps/mochi-desktop/ui ]; then
-  hits=$(grep -rnE 'dangerouslySetInnerHTML|\.innerHTML\s*=' apps/mochi-desktop/ui \
+#    The UI source only: the lint config names the banned API on purpose.
+if [ -d apps/mochi-desktop/ui/src ]; then
+  hits=$(grep -rnE 'dangerouslySetInnerHTML|\.innerHTML\s*=' apps/mochi-desktop/ui/src \
           --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
           --exclude-dir=node_modules --exclude-dir=dist 2>/dev/null || true)
   [ -n "$hits" ] && report "HTML injection API in the UI (AGENTS.md: Tauri v2 rules)" "$hits"
@@ -78,10 +79,30 @@ hits=$(grep -rnE --include='*.rs' 'Connection::open\(|open_with_flags|ATTACH[[:s
 hits=$(grep -rnE 'test-controls' --include=Cargo.toml crates apps fuzz 2>/dev/null \
         | grep -vE '^crates/mochi-(core|testkit)/Cargo.toml:' || true)
 [ -n "$hits" ] && report "test-controls enabled outside mochi-testkit (review decision 14)" "$hits"
-for f in crates/mochi-cli/Cargo.toml crates/mochi-core/Cargo.toml crates/mochi-format/Cargo.toml; do
+for f in crates/mochi-cli/Cargo.toml crates/mochi-core/Cargo.toml crates/mochi-format/Cargo.toml apps/mochi-desktop/src-tauri/Cargo.toml; do
   deps=$(awk '/^\[/{sec=$0} sec=="[dependencies]" && /mochi-testkit/' "$f")
   [ -n "$deps" ] && report "shipped crate depends on mochi-testkit (review decision 14)" "$f: $deps"
 done
+
+# 10. Least privilege for the webview (AGENTS.md "Tauri v2 rules"): no
+#     filesystem, shell, process, or HTTP permission in any capability, and a
+#     CSP with no eval and no remote origin (only the app and its IPC).
+caps=apps/mochi-desktop/src-tauri/capabilities
+if [ -d "$caps" ]; then
+  hits=$(grep -rnE '"(fs|shell|http|process|opener|updater):' "$caps" 2>/dev/null || true)
+  [ -n "$hits" ] && report "broad webview permission in a capability (AGENTS.md: least privilege)" "$hits"
+fi
+conf=apps/mochi-desktop/src-tauri/tauri.conf.json
+if [ -f "$conf" ]; then
+  csp=$(grep -nE '"(csp|devCsp)"' "$conf" || true)
+  hits=$(printf '%s\n' "$csp" | grep -E "unsafe-eval|wasm-unsafe-eval" || true)
+  [ -n "$hits" ] && report "CSP allows eval (AGENTS.md: strict CSP)" "$hits"
+  # The only http(s) origin allowed is Tauri's IPC endpoint on Windows; the
+  # Vite dev server appears only as ws://localhost in devCsp.
+  hits=$(printf '%s\n' "$csp" | grep -oE 'https?://[^ ;"]+' | grep -vxE 'http://ipc\.localhost' || true)
+  [ -n "$hits" ] && report "CSP allows a remote origin (AGENTS.md: strict CSP)" "$hits"
+  grep -qE '"csp"[[:space:]]*:[[:space:]]*"' "$conf" || report "no CSP in tauri.conf.json (AGENTS.md: strict CSP)" "$conf"
+fi
 
 if [ "$fail" -eq 0 ]; then echo "invariants: ok"; fi
 exit "$fail"
