@@ -3,10 +3,12 @@
 //! * Built: `create`, `append`, `list`, `get`, `snapshot list`, `snapshot
 //!   retain`/`expire`/`release`, `search`, `verify`, `fsck`, `restore-test`,
 //!   `checkpoint`, `compact`, `gc plan`, `gc apply`, `repair plan`,
-//!   `repair apply`, `rekey`.
+//!   `repair apply`, `rekey`, `dump-index`, `health`.
 //! * In 1.0 scope but not built yet: exit 3 with `NOT_IMPLEMENTED` (a
 //!   development-build condition, never a success). Their arguments are
-//!   accepted and ignored, so the refusal names the command.
+//!   accepted and ignored, so the refusal names the command. No command is in
+//!   this state today (`Scope::InScope` is kept for the next one); `dump-index`
+//!   and `health` are built too.
 //! * Post-1.0 (`inventory`, `split`, `join`, `mount`): exit **4** with
 //!   `UNSUPPORTED_FEATURE`, not 3 (spec §23.2), whatever their arguments.
 

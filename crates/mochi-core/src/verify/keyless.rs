@@ -351,6 +351,7 @@ mod tests {
             recovery_failed: false,
             tar_streams: false,
             keyless: false,
+            undecodable: Default::default(),
         }
     }
 

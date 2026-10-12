@@ -54,6 +54,9 @@
 //!   no parity to rebuild one). `FAIL` too when `deep` finds a commit that
 //!   baseline recovery cannot rebuild. `UNKNOWN` if data objects were not read or the
 //!   history could not be assessed.
+//!   Content this build cannot decode (a dictionary dependency; 1.0 writes
+//!   none) is `UNSUPPORTED`, not damage: each file version that reads it is
+//!   named with its paths and snapshots (plan K17; [`report_dependents`]).
 //! * **freshness:** from the anchor (D8): none → `UNKNOWN`; otherwise `PASS`
 //!   if the verified history contains the anchor commit (for a local-history
 //!   anchor, at its recorded sequence), else `FAIL` (`FRESHNESS_FAILED`).
@@ -75,7 +78,7 @@
 //! limits, cancellation) marks the run as an operational error (exit 3) and
 //! lists what was skipped.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod keyless;
 mod tar_stream;
@@ -311,6 +314,10 @@ struct Run {
     /// The archive is Encrypted and no passphrase was supplied: only stored
     /// integrity was checked (Annex B.2.10 D20 item 12).
     keyless: bool,
+    /// Data objects this build cannot decode (`UNSUPPORTED_FEATURE`, such as
+    /// a dictionary dependency, plan K17). Their dependents are listed by
+    /// [`report_dependents`].
+    undecodable: BTreeSet<crate::object::ObjectId>,
 }
 
 impl Run {
@@ -497,6 +504,7 @@ fn verify_with(
         recovery_failed: false,
         tar_streams: false,
         keyless: false,
+        undecodable: BTreeSet::new(),
     };
     // §20.5 asks for the configuration in force: a reader limit that differs
     // from the default changes what this run could check, so each one is
@@ -1260,6 +1268,9 @@ fn data_objects(
                     checked_bytes = checked_bytes.saturating_add(record.stored_len);
                 }
                 Err(e) => {
+                    if e.code == ErrorCode::UnsupportedFeature {
+                        run.undecodable.insert(*id);
+                    }
                     run.data_failed |= run
                         .error(&format!("object {} at offset {at}", id.to_hex()), &e)
                         == ErrorClass::Violation;
@@ -1269,7 +1280,83 @@ fn data_objects(
         ctx.report(phase::OBJECTS, i as u64 + 1, Some(total));
     }
     record_coverage(run, total, expected_bytes, checked_objects, checked_bytes);
+    if let Err(e) = report_dependents(cat, run) {
+        run.error(
+            "listing the file versions that need undecodable objects",
+            &e,
+        );
+    }
     true
+}
+
+/// Plan K17 (spec §24.2 amendment): intact content this build cannot decode
+/// is `UNSUPPORTED`, and "identify all affected files" means every file
+/// version that reads an undecodable object is named, with its paths and the
+/// snapshots that hold it. One `UNSUPPORTED_FEATURE` finding per version.
+fn report_dependents(cat: &Catalog, run: &mut Run) -> Result<(), MochiError> {
+    use crate::catalog::extent::ExtentSource;
+    use crate::catalog::namespace::FileVersionId;
+
+    if run.undecodable.is_empty() {
+        return Ok(());
+    }
+    let mut affected: BTreeMap<FileVersionId, (BTreeSet<Vec<u8>>, BTreeSet<u64>)> = BTreeMap::new();
+    for id in cat.file_version_ids()? {
+        if let Some((_, extents)) = cat.file_version(&id)? {
+            let hit = extents.iter().any(|x| {
+                matches!(x.source, ExtentSource::Chunk { chunk, .. } if run.undecodable.contains(&chunk))
+            });
+            if hit {
+                affected.insert(id, Default::default());
+            }
+        }
+    }
+    cat.replay_each(|seq, snapshot| {
+        for (path, entry) in snapshot.iter() {
+            if let Some((paths, seqs)) = affected.get_mut(&entry.version) {
+                paths.insert(path.as_stored().to_vec());
+                seqs.insert(seq);
+            }
+        }
+        Ok(())
+    })?;
+    for (id, (paths, seqs)) in &affected {
+        let hex: String = id.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let held = match (paths.is_empty(), seqs.first(), seqs.last()) {
+            (false, Some(&first), Some(&last)) => {
+                let names: Vec<String> = paths
+                    .iter()
+                    .map(|p| format!("{:?}", String::from_utf8_lossy(p)))
+                    .collect();
+                let snaps: Vec<String> = seqs.iter().map(u64::to_string).collect();
+                Some((
+                    format!(
+                        "path {} in snapshot{} {}",
+                        names.join(", "),
+                        if seqs.len() == 1 { "" } else { "s" },
+                        snaps.join(", ")
+                    ),
+                    first,
+                    last,
+                ))
+            }
+            _ => None,
+        };
+        run.report.findings.push(Finding {
+            code: ErrorCode::UnsupportedFeature,
+            severity: Severity::Warning,
+            message: Some(format!(
+                "file version {hex} reads content this build cannot decode (a dependency such \
+                 as a shared dictionary; MOCHI 1.0 writes none, plan O21): {}",
+                held.as_ref()
+                    .map_or("held by no retained snapshot", |h| h.0.as_str())
+            )),
+            expected: None,
+            observed: None,
+            affected: held.map(|(_, first, last)| crate::report::SeqRange { first, last }),
+        });
+    }
+    Ok(())
 }
 
 fn record_coverage(run: &mut Run, total: u64, expected: u64, objects: u64, bytes: u64) {
@@ -1436,6 +1523,7 @@ pub fn check_catalog_contents(
         recovery_failed: false,
         tar_streams: false,
         keyless: false,
+        undecodable: BTreeSet::new(),
     };
     let d = depth(level).unwrap_or(0);
     let mut finished = true;

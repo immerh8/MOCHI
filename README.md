@@ -19,7 +19,7 @@ end-user application.
 |---|---|---|
 | `crates/mochi-format` | Framing, record envelopes, digests. Pure, no I/O. | C1: frame walker, skippable writer, framed footer, draft envelope. C2: representation types, per-scope typed digests, unencrypted object codec |
 | `crates/mochi-core` | Archive operations, jobs, reports, `Storage` trait | C0 harness; C2: object records, integrity checks; C3: catalog (paths, extents, namespace replay, published images); C4: recovery manifests; C5: commit records, §12.2 publication, head location, tail handling; Annex B.2 batch: archive descriptor, commit v1, delta manifests with checkpoints, D13 creation, D14 tail quarantine, D15 report results and timestamps |
-| `crates/mochi-cli` | The `mochi` binary | C0: full command surface, every command reports honestly that it is not built |
+| `crates/mochi-cli` | The `mochi` binary | Every spec §23.2 1.0 command is built (`docs/c14-cli.md`); post-1.0 commands exit 4 |
 | `crates/mochi-testkit` | Fault-injecting storage, fixtures | C0: `SimStorage`; C1/C2: golden vectors, fuzz exercisers, C2 property tests |
 | `apps/mochi-desktop` | Tauri v2 app: React + TypeScript + Vite (O1); reads `.mochi` plus ZIP, 7z, RAR, `.tar.gz` (D8, read-only) | **Not started; unblocked** (D0 next on the desktop track). Windows 10 22H2+/11 and Ubuntu 22.04/24.04 (O11) |
 | `fuzz/` | cargo-fuzz targets | `frame_walker`, `footer`, `envelope` (C1), `object_decode` (C2), `catalog_image` (C3), `cbor_decode`, `manifest_decode` (C4), `commit_decode`, `archive_open` (C5); see `fuzz/README.md` |
@@ -168,9 +168,10 @@ a new archive, leave out and list anything that cannot be recovered, verify
 the result before publishing it, and never write to the damaged source. A
 partial repair is labelled partial and exits `2`.
 
-Commands not built yet (`rekey`) exit `3` with
-`NOT_IMPLEMENTED`, and post-1.0 commands (`inventory`, `split`, `join`,
-`mount`) exit `4` with `UNSUPPORTED_FEATURE`, as spec §23.2 requires. See
+Every 1.0 command in spec §23.2 is built. A command a future build adds to
+the 1.0 scope before implementing it would exit `3` with `NOT_IMPLEMENTED`,
+and post-1.0 commands (`inventory`, `split`, `join`, `mount`) exit `4` with
+`UNSUPPORTED_FEATURE`, as spec §23.2 requires. See
 `docs/implementation-plan.md` for the status of every phase.
 
 ## License
