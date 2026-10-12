@@ -10,7 +10,7 @@ the output is byte-for-byte reproducible. The Rust test
 implementation against every value; CI regenerates the file and fails if
 it differs.
 
-Run:  pip install blake3==1.0.11
+Run:  pip install blake3==1.0.8
       python3 gen_vectors.py > vectors.json
 """
 import json

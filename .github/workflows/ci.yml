@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/r6"
-          "$RUNNER_TEMP/r6/bin/pip" install --quiet blake3==1.0.11
+          "$RUNNER_TEMP/r6/bin/pip" install --quiet blake3==1.0.8
           "$RUNNER_TEMP/r6/bin/python" docs/ratification/R6-vectors/gen_vectors.py \
             | diff - docs/ratification/R6-vectors/vectors.json
 

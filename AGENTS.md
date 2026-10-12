@@ -55,7 +55,7 @@ cd fuzz && cargo +nightly fuzz run frame_walker corpus/frame_walker ../fixtures/
 cargo run -p mochi-cli -- verify fixtures/golden/c5/<file>.mochi --json --no-local-history
 ```
 
-R6 vectors come from an independent Python implementation; CI regenerates them (needs `pip install blake3==1.0.11`):
+R6 vectors come from an independent Python implementation; CI regenerates them (needs `pip install blake3==1.0.8`):
 
 ```bash
 python3 docs/ratification/R6-vectors/gen_vectors.py | diff - docs/ratification/R6-vectors/vectors.json
