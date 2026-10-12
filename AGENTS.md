@@ -27,7 +27,7 @@ If the spec does not answer a question, **do not invent an answer.** Stop, state
 
 ## Commands
 
-Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 draft), C13 discovery, C8 through §22 steps 1–4 and 6, and C14 implemented, `docs/c14-cli.md`):
+Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–4 and 6, and C14 implemented, `docs/c14-cli.md`):
 
 ```bash
 cargo fmt --all --check
@@ -37,6 +37,7 @@ ci/check-invariants.sh                       # mechanical checks for rules clipp
 ci/tar-interop.sh "$PWD/target/debug/mochi" zstd tar bsdtar   # C10: real zstd, GNU tar, bsdtar over a TAR-compatible archive
 cargo run -p mochi-cli -- --help
 cargo run --release -p mochi-testkit --example c5_append_bench   # §27 append benchmark (C5)
+cargo run --release -p mochi-testkit --example c12_parity_bench   # §27 recovery-record benchmark (C12, R6); --quick skips 512 MiB
 ```
 
 Pinned `compile_fail` error codes are only checked on nightly (CI job `doc-nightly`):
