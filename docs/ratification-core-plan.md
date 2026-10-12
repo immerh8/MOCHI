@@ -35,7 +35,7 @@ and get CI green on Windows and Ubuntu.
 | R1, R2, R4 | Frame registry, envelopes, DDL | Drafts; all open items decided 2026-10-11 | **W15** (format freeze) |
 | R3 | Canonical serialization and separators | No artifact. The encoding, schemas, and separators exist as drafts in code and CDDL | **W13**, frozen in **W15** |
 | R5 | Crypto | **Frozen** 2026-10-11 | — |
-| R6 | Erasure coding | Draft with independent vectors; 5 open items; G11 not met | **W14** |
+| R6 | Erasure coding | **Frozen** 2026-10-12 (W14, G11 met; the row below was the state when this plan was written: draft with independent vectors, 5 open items, G11 not met) | — |
 | R7 | Reports and error codes | Draft; decided items; freezes at Beta | **W19** |
 | R8 | Golden valid, corrupt, and interrupted archives | Per-phase sets `c1`–`c12`, `b2`; no whole-set R8 | **W16** |
 | R9 | Independent reader results | Not started; author not chosen | **W17**, **W18** (call K22) |
@@ -457,6 +457,8 @@ edit one separator, one schema rule, and one CDDL key, and see each fail.
      §6.
 3. If the review finds a byte to change, **stop and do not freeze**. A layout change is
    an Annex B entry and new vectors, and it needs the review to restart.
+
+**Status (2026-10-12): done.** The benchmark is `docs/benchmarks/c12-parity.md`; the review is R6 §10. It found no byte to change (documentation fixes only), the calls on K15 items 1 to 5 were confirmed, and R6, spec B.2.11, G11, the README, and the plan were updated.
 
 **PR:** "R6: parity benchmark and freeze review (G11)".
 
