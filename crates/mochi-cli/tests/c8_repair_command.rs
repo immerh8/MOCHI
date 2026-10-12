@@ -394,3 +394,196 @@ fn c8_repair_copy_takes_a_verified_frame_from_a_byte_copy() {
         .contains("plan again"));
     assert!(!a.p("v1.mochi").exists());
 }
+
+fn footer_offsets(archive: &str) -> Vec<u64> {
+    let s = OsReadStorage::open(std::path::Path::new(archive)).unwrap();
+    commit_history(&s, &ReadOptions::default())
+        .unwrap()
+        .iter()
+        .map(|e| e.footer_offset)
+        .collect()
+}
+
+/// **The bounded salvage scan (§22 step 7, Annex B.2.13 D23).** With every
+/// footer damaged there is no head: without `--salvage` nothing is
+/// recoverable (exit 1) and the ladder says the scan may recover more; with
+/// it the commits the scan can confirm are recovered, the unconfirmed head is
+/// listed and left out, the plan is partial (exit 2) in text and JSON, a
+/// plan made with it is bound to it, retention needs its waiver, and the new
+/// archive verifies. `--archive-id` needs `--salvage` and valid hex.
+#[test]
+fn c8_repair_salvage_recovers_confirmed_commits_and_is_always_partial() {
+    let a = Area::new();
+    let archive = a.history();
+    let source_before = blake3_of(&archive);
+    for f in footer_offsets(&archive) {
+        flip(&archive, f + 30);
+    }
+    let damaged_hash = blake3_of(&archive);
+    assert_ne!(source_before, damaged_hash);
+
+    // Without --salvage: nothing, and the detail points at the flag.
+    let (code, out, err) = a.go(&["repair", "plan", &archive]);
+    assert_eq!(code, exit::FAILED, "{out}{err}");
+    assert!(
+        out.contains("step 7 bounded salvage scan: NOT ATTEMPTED"),
+        "{out}"
+    );
+    assert!(out.contains("--salvage"), "{out}");
+
+    // Text with --salvage.
+    let (code, out, err) = a.go(&["repair", "plan", &archive, "--salvage"]);
+    assert_eq!(code, exit::DEGRADED, "{out}{err}");
+    assert!(out.contains("step 7 bounded salvage scan: used"), "{out}");
+    assert!(out.contains("salvage scan: "), "{out}");
+    assert!(out.contains("NOT recovered: commit 2"), "{out}");
+    assert!(
+        out.contains("no footer or later commit confirms publication"),
+        "{out}"
+    );
+    assert!(out.contains("snapshots found by the salvage scan"), "{out}");
+    assert!(out.contains("outcome: PARTIAL"), "{out}");
+
+    let plan = a.s("plan.json");
+    let (code, v) = a.json(&["repair", "plan", &archive, "--salvage", "-o", &plan]);
+    assert_eq!(code, exit::DEGRADED, "{v}");
+    assert_eq!(v["outcome"], "partial");
+    assert_eq!(v["plan"]["ladder"][6]["status"], "used");
+    assert_eq!(v["plan"]["snapshots"].as_array().unwrap().len(), 2);
+    assert_eq!(v["plan"]["snapshots"][0]["trust"], "salvage");
+    assert_eq!(v["plan"]["salvage"]["unconfirmed"][0]["seq"], 2);
+    assert_eq!(v["plan"]["salvage"]["confirmed"][0]["by"], "link");
+    assert_eq!(v["plan"]["salvage"]["limit_reached"], false);
+    assert_eq!(blake3_of(&archive), damaged_hash, "plan only reads");
+
+    // Applying needs the same options and the retention waiver.
+    let new = a.s("new.mochi");
+    let (code, v) = a.json(&["repair", "apply", &archive, "--plan", &plan, "-o", &new]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    let (code, v) = a.json(&[
+        "repair",
+        "apply",
+        &archive,
+        "--plan",
+        &plan,
+        "--salvage",
+        "-o",
+        &new,
+    ]);
+    assert_eq!(code, exit::FAILED, "{v}");
+    assert_eq!(v["error"]["code"], "RETENTION_UNRESOLVED");
+    assert!(!a.p("new.mochi").exists());
+    let (code, out, err) = a.go(&[
+        "repair",
+        "apply",
+        &archive,
+        "--plan",
+        &plan,
+        "--salvage",
+        "--accept-retention-loss",
+        "-o",
+        &new,
+    ]);
+    assert_eq!(code, exit::DEGRADED, "{out}{err}");
+    assert!(out.contains("PARTIAL repair (salvage)"), "{out}");
+    assert!(out.contains("NOT recovered: commit 2"), "{out}");
+    assert_eq!(blake3_of(&archive), damaged_hash, "apply only reads");
+    let (code, v) = a.json(&["verify", &new]);
+    assert_eq!(code, exit::OK, "{v}");
+    let (_, l) = a.json(&["list", &new]);
+    assert_eq!(paths(&l), ["a", "b"]);
+
+    // The candidate limit: incomplete, never a pass, still partial.
+    let (code, out, err) = a.go(&[
+        "--limit",
+        "max-salvage-candidates=3",
+        "repair",
+        "plan",
+        &archive,
+        "--salvage",
+    ]);
+    assert_eq!(code, exit::DEGRADED, "{out}{err}");
+    assert!(out.contains("recoverable snapshots (1): 0"), "{out}");
+    assert!(
+        out.contains("step 7 bounded salvage scan: INCOMPLETE"),
+        "{out}"
+    );
+    assert!(out.contains("REACHED"), "{out}");
+
+    // Arguments.
+    let (code, out, err) = a.go(&["repair", "plan", &archive, "--archive-id", &"ab".repeat(32)]);
+    assert_ne!(code, exit::OK, "{out}");
+    assert!(err.contains("--salvage"), "{err}");
+    let (code, v) = a.json(&[
+        "repair",
+        "plan",
+        &archive,
+        "--salvage",
+        "--archive-id",
+        "xyz",
+    ]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    // A readable descriptor that names another archive.
+    let (code, v) = a.json(&[
+        "repair",
+        "plan",
+        &archive,
+        "--salvage",
+        "--archive-id",
+        &"ab".repeat(32),
+    ]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+}
+
+/// Two archives in one file and a destroyed descriptor: `ARCHIVE_ID_AMBIGUOUS`
+/// (exit 3) names both, and `--archive-id` picks one.
+#[test]
+fn c8_repair_salvage_two_archives_need_an_archive_id() {
+    let a = Area::new();
+    let first = a.history();
+    let second = a.s("second.mochi");
+    let (code, v) = a.json(&["create", &second, &a.file("z", b"zulu")]);
+    assert_eq!(code, CREATED, "{v}");
+    let s = OsReadStorage::open(std::path::Path::new(&first)).unwrap();
+    let h = commit_history(&s, &ReadOptions::default()).unwrap();
+    let id_first = h[0].commit.archive_id.to_hex();
+    let desc_len = h[0].commit.descriptor.stored_len as usize;
+    let s2 = OsReadStorage::open(std::path::Path::new(&second)).unwrap();
+    let id_second = commit_history(&s2, &ReadOptions::default()).unwrap()[0]
+        .commit
+        .archive_id
+        .to_hex();
+    drop((s, s2));
+    let both = a.s("both.mochi");
+    let mut bytes = fs::read(&first).unwrap();
+    bytes.extend_from_slice(&fs::read(&second).unwrap());
+    bytes[..desc_len].fill(0);
+    fs::write(&both, bytes).unwrap();
+
+    let (code, v) = a.json(&["repair", "plan", &both, "--salvage"]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "ARCHIVE_ID_AMBIGUOUS");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains(&id_first) && msg.contains(&id_second), "{msg}");
+
+    let (code, v) = a.json(&[
+        "repair",
+        "plan",
+        &both,
+        "--salvage",
+        "--archive-id",
+        &id_first,
+    ]);
+    assert_eq!(code, exit::DEGRADED, "{v}");
+    // Without -o, --json prints the plan itself.
+    assert_eq!(v["snapshots"].as_array().unwrap().len(), 3);
+    assert_eq!(v["salvage"]["archive_id_source"], "option");
+    assert_eq!(v["salvage"]["foreign_commits"], 1);
+    assert_eq!(
+        v["salvage"]["profile_inference"]["descriptor_reconstructed"],
+        true
+    );
+}

@@ -68,6 +68,10 @@ pub const DEFAULT_KDF_ITERATIONS: u64 = 16;
 pub const DEFAULT_KDF_LANES: u64 = 16;
 pub const DEFAULT_KEY_ENVELOPES: u64 = 16;
 
+/// Default cap on the candidates one salvage scan examines (spec Annex B.2.13
+/// D23 item 2): 2^20. At the cap the scan stops and says so.
+pub const DEFAULT_SALVAGE_CANDIDATES: u64 = 1 << 20;
+
 // The figures B.2.3 states, pinned at compile time.
 const _: () = assert!(DEFAULT_SEALED_IMAGE_PAYLOAD == 268_434_800);
 const _: () = assert!(DEFAULT_FRAME_LEN == 269_484_032);
@@ -103,6 +107,11 @@ pub struct Limits {
     pub max_kdf_lanes: u64,
     /// Most key envelopes one commit may list.
     pub max_key_envelopes: u64,
+    /// Most candidates a salvage scan examines (ladder step 7, B.2.13 item
+    /// 2): every offset where a resynchronization tests a magic number, and
+    /// every commit record or footer it evaluates. At the limit the scan
+    /// stops and the step is reported incomplete, never a pass.
+    pub max_salvage_candidates: u64,
 }
 
 impl Limits {
@@ -120,6 +129,7 @@ impl Limits {
         max_kdf_iterations: DEFAULT_KDF_ITERATIONS,
         max_kdf_lanes: DEFAULT_KDF_LANES,
         max_key_envelopes: DEFAULT_KEY_ENVELOPES,
+        max_salvage_candidates: DEFAULT_SALVAGE_CANDIDATES,
     };
 }
 
@@ -133,7 +143,7 @@ impl Limits {
     /// Every limit with its stable name, the one `mochi --limit NAME=VALUE`
     /// takes and reports print. The destructuring is exhaustive, so a new
     /// field cannot be left out.
-    pub const fn named(&self) -> [(&'static str, u64); 11] {
+    pub const fn named(&self) -> [(&'static str, u64); 12] {
         let Limits {
             max_skippable_payload,
             max_frame_len,
@@ -146,6 +156,7 @@ impl Limits {
             max_kdf_iterations,
             max_kdf_lanes,
             max_key_envelopes,
+            max_salvage_candidates,
         } = *self;
         [
             ("max-skippable-payload", max_skippable_payload),
@@ -159,6 +170,7 @@ impl Limits {
             ("max-kdf-iterations", max_kdf_iterations),
             ("max-kdf-lanes", max_kdf_lanes),
             ("max-key-envelopes", max_key_envelopes),
+            ("max-salvage-candidates", max_salvage_candidates),
         ]
     }
 }
@@ -179,6 +191,7 @@ mod tests {
         assert_eq!(l.max_kdf_iterations, 16);
         assert_eq!(l.max_kdf_lanes, 16);
         assert_eq!(l.max_key_envelopes, 16);
+        assert_eq!(l.max_salvage_candidates, 1_048_576);
         assert_eq!(DEFAULT_SEALED_IMAGE_PAYLOAD, 268_434_800);
         assert_eq!(DEFAULT_IMAGE_PAYLOAD, 268_434_864);
     }

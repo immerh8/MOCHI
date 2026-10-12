@@ -165,6 +165,7 @@ fn exit_code_for_agrees_with_classify() {
         ErrorCode::UncommittedTail,
         ErrorCode::InvalidArgument,
         ErrorCode::LimitExceeded,
+        ErrorCode::ArchiveIdAmbiguous,
     ] {
         assert_eq!(exit_code_for(code), exit::ERROR, "{code}");
     }

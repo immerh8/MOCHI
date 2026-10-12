@@ -97,6 +97,7 @@ pub fn exit_code_for(code: ErrorCode) -> u8 {
         | ErrorCode::AttributeNotRestored
         | ErrorCode::KeyUnavailable
         | ErrorCode::KdfCostBelowDefault
+        | ErrorCode::ArchiveIdAmbiguous
         | ErrorCode::LimitNotDefault => exit::ERROR,
     }
 }

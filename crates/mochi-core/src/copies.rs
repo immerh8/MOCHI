@@ -154,6 +154,12 @@ pub enum Trust {
     /// The commit's existence rests on a copy: the source cannot show it
     /// (D22 item 3 (ii)).
     CopyConfirmed,
+    /// Recovered only with the help of the bounded salvage scan (ladder step
+    /// 7, Annex B.2.13 D23): the scan established the commit's publication
+    /// (its own footer, or a later commit's parent link), regenerated a
+    /// footer on its chain, or re-encoded the descriptor that opens it. A
+    /// snapshot the trusted chain recovers alone is never labelled so.
+    Salvage,
 }
 
 /// What the copy pass did.

@@ -187,6 +187,12 @@ pub enum ErrorCode {
     /// out what the damage touches. Never a reconstruction of wrong bytes.
     /// Exit 1. Added in C12.
     ParityCapacityExceeded,
+    /// Repair, ladder step 7 (Annex B.2.13 D23 item 4): the salvage scan
+    /// found commits of more than one archive and neither the source's
+    /// descriptor nor `--archive-id` says which to recover. Operational
+    /// (exit 3): the run could not decide, which is not evidence about the
+    /// archive. Added with W12.
+    ArchiveIdAmbiguous,
 }
 
 impl ErrorCode {
@@ -237,6 +243,7 @@ impl ErrorCode {
         ErrorCode::LimitNotDefault,
         ErrorCode::ParityDamaged,
         ErrorCode::ParityCapacityExceeded,
+        ErrorCode::ArchiveIdAmbiguous,
     ];
 
     /// The stable string form. Independent of serde so it cannot drift silently;
@@ -288,6 +295,7 @@ impl ErrorCode {
             ErrorCode::LimitNotDefault => "LIMIT_NOT_DEFAULT",
             ErrorCode::ParityDamaged => "PARITY_DAMAGED",
             ErrorCode::ParityCapacityExceeded => "PARITY_CAPACITY_EXCEEDED",
+            ErrorCode::ArchiveIdAmbiguous => "ARCHIVE_ID_AMBIGUOUS",
         }
     }
 }
@@ -428,6 +436,8 @@ mod tests {
         // Appended in C12 (D21).
         "PARITY_DAMAGED",
         "PARITY_CAPACITY_EXCEEDED",
+        // Appended with W12 (D23).
+        "ARCHIVE_ID_AMBIGUOUS",
     ];
 
     #[test]

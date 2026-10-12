@@ -466,6 +466,19 @@ pub struct RepairPlanArgs {
     /// commit chain. `apply` must be given the same copies in the same order.
     #[arg(long, value_name = "PATH")]
     pub copy: Vec<PathBuf>,
+    /// Also scan for commits whose footers are damaged (§22 step 7; Annex
+    /// B.2.13), when steps 1–6 leave something unrecovered. A commit the scan
+    /// finds is used only if its publication is confirmed (its own footer, or
+    /// a later commit's parent link); an unconfirmed commit is listed and
+    /// never recovered. Any repair that uses the scan, or that stops at
+    /// `--limit max-salvage-candidates`, is partial (exit 2).
+    #[arg(long)]
+    pub salvage: bool,
+    /// With `--salvage`: the archive to recover (64 hex digits) when the
+    /// source's descriptor cannot say and its commits belong to several
+    /// (`ARCHIVE_ID_AMBIGUOUS`).
+    #[arg(long, value_name = "HEX", requires = "salvage")]
+    pub archive_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -486,6 +499,12 @@ pub struct RepairApplyArgs {
     /// The copies the plan was made with, in the same order.
     #[arg(long, value_name = "PATH")]
     pub copy: Vec<PathBuf>,
+    /// The plan was made with `--salvage`: give it again.
+    #[arg(long)]
+    pub salvage: bool,
+    /// The plan was made with `--archive-id`: give it again.
+    #[arg(long, value_name = "HEX", requires = "salvage")]
+    pub archive_id: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]

@@ -29,8 +29,9 @@
 //!    and metadata chains (catalog images), recovery manifests (a damaged
 //!    image's snapshot manifest), and parity (C12, Annex B.2.11 D21).
 //!    Independent copies (step 5, Annex B.2.12 D22) are taken when the caller
-//!    names them; the bounded salvage scan (step 7) is a later slice. Each is
-//!    reported as such in [`RepairPlan::ladder`], never as passed.
+//!    names them; the bounded salvage scan (step 7, Annex B.2.13 D23) only
+//!    when the caller asks for it. Each is reported as such in
+//!    [`RepairPlan::ladder`], never as passed.
 //!
 //! **Parity runs first** although it is step 6: a Redundancy-profile
 //! archive's damaged shards are rebuilt into an overlay
@@ -46,6 +47,18 @@
 //! [`RepairPlan::donations`], and a snapshot whose commit only a copy can
 //! show is labelled [`Trust::CopyConfirmed`]. A repair made complete by
 //! copies is complete: its result is fully verified (D22 item 7).
+//!
+//! **Salvage comes last** ([`crate::salvage`], only with `--salvage`, and only
+//! if the survey above left something unrecovered): the scan finds commits by
+//! frame, decides which were published (their own footer, or a kept commit's
+//! parent link), regenerates their footers (and, when it hashes to what the
+//! commits record, the descriptor) in the in-memory view, and the survey runs
+//! again over the trusted head's chain and the top of each salvaged segment,
+//! in that order, so the trusted chain's snapshots are never replaced. A
+//! snapshot that needed the scan is labelled [`Trust::Salvage`], an
+//! unconfirmed commit is listed and never recovered, and any plan that used
+//! the scan or stopped at its limit is **partial**, whatever it recovered
+//! (D23 item 9).
 //!
 //! A group whose damage exceeds its parity is listed in
 //! [`RepairPlan::parity`] (`PARITY_CAPACITY_EXCEEDED`), and what the damage
@@ -121,6 +134,7 @@ use crate::publish::{
 };
 use crate::read::read_version;
 use crate::retention::{RetentionOp, RetentionState};
+use crate::salvage::{self, SalvageOptions, SalvageReport};
 use crate::status::Status;
 use crate::storage::{ReadStorage, Storage, StorageDir};
 use crate::verify::{classify, verify, ErrorClass, VerifyOptions};
@@ -130,6 +144,7 @@ use crate::verify::{classify, verify, ErrorClass, VerifyOptions};
 pub mod phase {
     pub const SURVEY: &str = "repair-survey";
     pub const CHECK: &str = "repair-check";
+    pub const SALVAGE: &str = "repair-salvage";
     pub const COPY: &str = "repair-copy";
     pub const VERIFY: &str = "repair-verify";
 }
@@ -140,7 +155,7 @@ pub mod phase {
 /// snapshot's `trust`. A v1 plan is refused by [`apply`]: plan again.
 pub const PLAN_FORMAT: &str = "mochi-repair-plan-v2";
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -180,8 +195,11 @@ pub enum StepStatus {
     NotNeeded,
     /// The step ran and found nothing usable.
     NotAvailable,
-    /// This build does not take this step (yet); not a pass.
+    /// The step was not asked for (step 7 needs `--salvage`); not a pass.
     NotAttempted,
+    /// The step ran and stopped at a limit before it finished (the salvage
+    /// scan at `max-salvage-candidates`); never a pass.
+    Incomplete,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,6 +396,10 @@ pub struct RepairPlan {
     /// reconstructed object (§22.2).
     #[serde(default)]
     pub donations: Vec<Donation>,
+    /// What the bounded salvage scan (step 7, Annex B.2.13 D23) found, when
+    /// it ran.
+    #[serde(default)]
+    pub salvage: Option<SalvageReport>,
     /// Recorded by a catalog image and carried over; `None`: no image could
     /// be read, and the new archive records this build's defaults.
     pub writer_parameters: Option<WriterParameters>,
@@ -500,7 +522,7 @@ fn later_steps() -> [LadderStep; 3] {
             7,
             "bounded salvage scan",
             StepStatus::NotAttempted,
-            "not built yet (plan C8, later slice)",
+            "not requested (--salvage asks for the bounded scan, Annex B.2.13)",
         ),
     ]
 }
@@ -525,6 +547,7 @@ fn nothing(source_len: u64, ladder: Vec<LadderStep>, head: Option<SourceHead>) -
             parity: None,
             copies: Vec::new(),
             donations: Vec::new(),
+            salvage: None,
             writer_parameters: None,
             damage_found: true,
             outcome,
@@ -707,14 +730,79 @@ fn survey(
         }),
         None => None,
     };
-    let by_seq: BTreeMap<u64, &HistoryEntry> = chain.iter().map(|e| (e.commit.seq, e)).collect();
+    let front = Front {
+        source_len,
+        archive_id: Some(archive_id),
+        head: Some(head),
+        tail: Some(tail),
+        chain_break,
+        step1,
+        step2,
+        top_seq: head_seq,
+        primary_seq: Some(head_seq),
+        damaged: loc.source != HeadSource::Eof,
+    };
+    survey_chains(src, front, vec![chain], confirmed, None, opts, ctx)
+}
 
-    // Step 3 and 4: open the trusted commits from the head down; each
-    // catalog supplies every snapshot it holds that no later one did.
+/// What the front of a survey decided: where the source's head and tail are,
+/// and the first two rungs of the ladder.
+struct Front {
+    source_len: u64,
+    archive_id: Option<String>,
+    head: Option<SourceHead>,
+    tail: Option<Tail>,
+    chain_break: Option<ChainBreak>,
+    step1: LadderStep,
+    step2: LadderStep,
+    /// The highest sequence a snapshot can have here: sequences up to it
+    /// that no catalog holds are lost.
+    top_seq: u64,
+    /// The trusted head's sequence: its retention state is the one carried.
+    /// `None`: there is no trusted head, and retention is unresolved.
+    primary_seq: Option<u64>,
+    /// Damage was found before any catalog was opened.
+    damaged: bool,
+}
+
+/// Steps 3 and 4 onward, over `chains` of validated commits (each ascending;
+/// the first is the trusted head's chain, the rest come from the salvage
+/// scan, Annex B.2.13 D23 item 6). Catalogs are opened chain by chain from
+/// the top down, so a sequence the first chain supplies is never replaced by
+/// a later one. With `trusted` (the sequences the trusted chain recovered
+/// without salvage), any other recovered snapshot is labelled
+/// [`Trust::Salvage`].
+fn survey_chains(
+    src: &dyn ReadStorage,
+    front: Front,
+    chains: Vec<Vec<HistoryEntry>>,
+    confirmed: &BTreeSet<u64>,
+    trusted: Option<&BTreeSet<u64>>,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<Survey> {
+    let source_len = front.source_len;
+    let mut order: Vec<&HistoryEntry> = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    for chain in &chains {
+        for e in chain.iter().rev() {
+            if seen_ids.insert(*e.commit_id.as_bytes()) {
+                order.push(e);
+            }
+        }
+    }
+    let mut by_seq: BTreeMap<u64, &HistoryEntry> = BTreeMap::new();
+    for e in &order {
+        by_seq.entry(e.commit.seq).or_insert(e);
+    }
+    let top_seq = front.top_seq;
+
+    // Step 3 and 4: open the commits from the top down; each catalog
+    // supplies every snapshot it holds that no earlier one did.
     let mut opened: Vec<OpenedHead> = Vec::new();
     let mut assigned: BTreeMap<u64, usize> = BTreeMap::new();
     let mut open_errors: BTreeMap<u64, Problem> = BTreeMap::new();
-    for e in chain.iter().rev() {
+    for e in order.iter().copied() {
         let seq = e.commit.seq;
         if assigned.contains_key(&seq) {
             continue;
@@ -740,15 +828,15 @@ fn survey(
             assigned.entry(s).or_insert(idx);
         }
         opened.push(o);
-        ctx.report(phase::SURVEY, assigned.len() as u64, Some(head_seq + 1));
+        ctx.report(phase::SURVEY, assigned.len() as u64, Some(top_seq + 1));
     }
     let mut lost_snapshots = Vec::new();
-    for seq in 0..=head_seq {
+    for seq in 0..=top_seq {
         if assigned.contains_key(&seq) {
             continue;
         }
         let commit_id = by_seq.get(&seq).map(|e| hex(e.commit_id.as_bytes()));
-        let reason = match (open_errors.get(&seq), &chain_break) {
+        let reason = match (open_errors.get(&seq), &front.chain_break) {
             (Some(p), _) => p.clone(),
             (None, Some(b)) if seq < b.first_trusted_seq => Problem {
                 code: b.reason.code,
@@ -777,7 +865,7 @@ fn survey(
         conflicts: BTreeSet::new(),
     };
     let mut manifest_failures = Vec::new();
-    for e in &chain {
+    for e in order.iter().copied() {
         ctx.check_cancelled()?;
         let mut refs = vec![(ManifestKind::Delta, Ok(e.commit.delta_manifest))];
         if e.commit.metadata.is_checkpoint() {
@@ -877,7 +965,9 @@ fn survey(
                 },
                 entries: kept.len() as u64,
                 omitted: left.len() as u64,
-                trust: if confirmed.contains(&seq) {
+                trust: if trusted.is_some_and(|t| !t.contains(&seq)) {
+                    Trust::Salvage
+                } else if confirmed.contains(&seq) {
                     Trust::CopyConfirmed
                 } else {
                     Trust::Chain
@@ -910,20 +1000,28 @@ fn survey(
         .collect();
 
     // Retention: the head's, rebuilt from its segment (D10.10).
-    let head_open = opened.first().filter(|o| o.seq() == head_seq);
-    let retention_source = match head_open {
-        Some(o) => match resolve_retention(src, o, opts) {
+    let head_open = front
+        .primary_seq
+        .and_then(|ps| opened.first().filter(|o| o.seq() == ps));
+    let retention_source = match (head_open, front.primary_seq) {
+        (Some(o), _) => match resolve_retention(src, o, opts) {
             Ok(state) => Ok(state),
             Err(e) => Err(evidence(e)?),
         },
-        None => Err(Problem {
+        (None, None) => Err(Problem {
+            code: ErrorCode::RetentionUnresolved,
+            message: "there is no trusted head, so the source's retention state cannot be \
+                      rebuilt"
+                .into(),
+        }),
+        (None, Some(ps)) => Err(Problem {
             code: open_errors
-                .get(&head_seq)
+                .get(&ps)
                 .map_or(ErrorCode::RetentionUnresolved, |p| p.code),
             message: format!(
                 "the head commit cannot be opened, so its retention state cannot be rebuilt{}",
                 open_errors
-                    .get(&head_seq)
+                    .get(&ps)
                     .map(|p| format!(": {}", p.message))
                     .unwrap_or_default()
             ),
@@ -1005,7 +1103,7 @@ fn survey(
     } else {
         step(4, "recovery manifests", StepStatus::NotNeeded, "")
     };
-    let mut ladder = vec![step1, step2, step3, step4];
+    let mut ladder = vec![front.step1.clone(), front.step2.clone(), step3, step4];
     ladder.extend(later_steps());
 
     let outcome = if snapshots.is_empty() {
@@ -1014,15 +1112,15 @@ fn survey(
         && omitted.is_empty()
         && matches!(&retention, RetentionPlan::Carried { holds, .. }
             if holds.iter().all(|h| h.new_seq.is_some()))
-        && tail.state == "clean"
+        && front.tail.as_ref().is_some_and(|t| t.state == "clean")
     {
         Outcome::Complete
     } else {
         Outcome::Partial
     };
-    let damage_found = loc.source != HeadSource::Eof
-        || tail.state != "clean"
-        || chain_break.is_some()
+    let damage_found = front.damaged
+        || front.tail.as_ref().is_none_or(|t| t.state != "clean")
+        || front.chain_break.is_some()
         || !lost_snapshots.is_empty()
         || !omitted.is_empty()
         || !manifest_failures.is_empty()
@@ -1042,11 +1140,11 @@ fn survey(
     Ok(Survey {
         plan: RepairPlan {
             format: PLAN_FORMAT.to_owned(),
-            archive_id: Some(archive_id),
+            archive_id: front.archive_id,
             source_len,
-            head: Some(head),
-            tail: Some(tail),
-            chain_break,
+            head: front.head,
+            tail: front.tail,
+            chain_break: front.chain_break,
             ladder,
             snapshots,
             lost_snapshots,
@@ -1056,6 +1154,7 @@ fn survey(
             parity: None,
             copies: Vec::new(),
             donations: Vec::new(),
+            salvage: None,
             writer_parameters,
             damage_found,
             outcome,
@@ -1090,7 +1189,255 @@ pub fn plan_with_copies(
     opts: &ReadOptions,
     ctx: &JobContext<'_>,
 ) -> Result<RepairPlan> {
-    Ok(survey_healed(src, copies, opts, ctx)?.0.plan)
+    plan_with_salvage(src, copies, None, opts, ctx)
+}
+
+/// [`plan_with_copies`] with, when `salvage` is given, the bounded salvage
+/// scan (step 7, Annex B.2.13 D23) after steps 6, 5, and 1–4. The scan runs
+/// only if they left something unrecovered; any plan that uses it, or whose
+/// scan stopped at its limit, is partial.
+///
+/// Errors, besides the run itself failing: `ARCHIVE_ID_AMBIGUOUS` when the
+/// scan finds commits of several archives and nothing picks one;
+/// `INVALID_ARGUMENT` when `--archive-id` disagrees with the source
+/// descriptor; `RECORD_INVALID` when the confirmed commits disagree about the
+/// Encrypted profile.
+pub fn plan_with_salvage(
+    src: &dyn ReadStorage,
+    copies: &[CopySource<'_>],
+    salvage: Option<&SalvageOptions>,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<RepairPlan> {
+    Ok(survey_healed(src, copies, salvage, opts, ctx)?.0.plan)
+}
+
+fn set_step7(plan: &mut RepairPlan, status: StepStatus, detail: impl Into<String>) {
+    if let Some(slot) = plan.ladder.iter_mut().find(|l| l.step == 7) {
+        *slot = step(7, "bounded salvage scan", status, detail);
+    }
+}
+
+/// The footer-bearing chain of validated commits whose head footer lies at
+/// `footer_offset` in `src`, or `None` if no valid footer names a readable
+/// commit there.
+fn chain_at(
+    src: &dyn ReadStorage,
+    footer_offset: u64,
+    opts: &ReadOptions,
+) -> Result<Option<Vec<HistoryEntry>>> {
+    let r = crate::storage::StorageReader::new(src)?;
+    let footer = match mochi_format::footer::validate_footer(&r, footer_offset, &opts.limits) {
+        Ok(f) if f.commit_kind == mochi_format::registry::FrameKind::CommitRecord => f,
+        Err(mochi_format::FormatError::Source(m)) => {
+            return Err(MochiError::new(ErrorCode::IoError, m))
+        }
+        _ => return Ok(None),
+    };
+    let (commit, commit_id) = match read_commit(src, &footer, opts) {
+        Ok(x) => x,
+        Err(e) => {
+            evidence(e)?;
+            return Ok(None);
+        }
+    };
+    let entry = HistoryEntry {
+        footer_offset,
+        commit_offset: footer.fields.commit_offset,
+        commit,
+        commit_id,
+    };
+    Ok(Some(walk_back_tolerant(src, entry, opts)?.0))
+}
+
+/// Ladder step 7 (Annex B.2.13 D23): runs after the survey `a` over steps
+/// 6, 5, and 1–4 has left something unrecovered.
+///
+/// [`salvage::prepare`] scans the view, decides which commits were published,
+/// and lays regenerated footers (and, when its hash matches, the descriptor)
+/// over it. The survey then runs again over the trusted head's chain and the
+/// top of each salvaged segment, in that order, so a sequence the trusted
+/// chain recovered is never replaced and every other recovered snapshot is
+/// labelled [`Trust::Salvage`].
+fn salvage_pass(
+    view: &mut HealedSource<'_>,
+    a: Survey,
+    sv: &SalvageOptions,
+    confirmed: &BTreeSet<u64>,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<Survey> {
+    let needed = a.plan.head.is_none()
+        || !a.plan.lost_snapshots.is_empty()
+        || a.plan.chain_break.is_some()
+        || a.plan.tail.as_ref().is_some_and(|t| t.state != "clean");
+    if !needed {
+        let mut a = a;
+        set_step7(
+            &mut a.plan,
+            StepStatus::NotNeeded,
+            "earlier steps left nothing unrecovered",
+        );
+        return Ok(a);
+    }
+    ctx.report(phase::SALVAGE, 0, None);
+    let prep = salvage::prepare(view, sv, opts, ctx)?;
+    let head_footer = a.plan.head.as_ref().map(|h| h.footer_offset);
+    let mut roots: Vec<u64> = head_footer.into_iter().collect();
+    let new_roots = prep.roots.iter().any(|r| Some(*r) != head_footer);
+    for r in &prep.roots {
+        if !roots.contains(r) {
+            roots.push(*r);
+        }
+    }
+    let mut chains = Vec::new();
+    if new_roots || prep.footers_regenerated > 0 || prep.descriptor_restored {
+        for r in &roots {
+            if let Some(c) = chain_at(&*view, *r, opts)? {
+                chains.push(c);
+            }
+        }
+    }
+    let trusted: BTreeSet<u64> = a.plan.snapshots.iter().map(|s| s.seq).collect();
+    let mut report = prep.report;
+    let mut s = if chains.is_empty() {
+        a
+    } else {
+        let find = |n: u8| {
+            a.plan
+                .ladder
+                .iter()
+                .find(|l| l.step == n)
+                .cloned()
+                .unwrap_or_else(|| step(n, "", StepStatus::NotAvailable, ""))
+        };
+        let top_seq = chains
+            .iter()
+            .filter_map(|c| c.last().map(|e| e.commit.seq))
+            .max()
+            .unwrap_or(0)
+            .max(a.plan.head.as_ref().map_or(0, |h| h.seq));
+        let front = Front {
+            source_len: a.plan.source_len,
+            archive_id: a
+                .plan
+                .archive_id
+                .clone()
+                .or_else(|| report.archive_id.clone()),
+            head: a.plan.head.clone(),
+            tail: a.plan.tail.clone(),
+            chain_break: a.plan.chain_break.clone(),
+            step1: find(1),
+            step2: find(2),
+            top_seq,
+            primary_seq: a.plan.head.as_ref().map(|h| h.seq),
+            damaged: true,
+        };
+        survey_chains(&*view, front, chains, confirmed, Some(&trusted), opts, ctx)?
+    };
+
+    // Orphans: data objects no catalog that opened references (D23 item 7).
+    let mut referenced = BTreeSet::new();
+    for o in &s.opened {
+        for id in o.catalog.object_ids()? {
+            if let Some(at) = o.catalog.object_location(&id)? {
+                referenced.insert(at);
+            }
+        }
+    }
+    (report.orphan_data_objects, report.orphan_bytes) =
+        salvage::orphans(&prep.data_frames, &referenced);
+    if let Some(inf) = report.profile_inference.as_mut() {
+        inf.writer_parameters = match s.plan.writer_parameters {
+            Some(p) => format!(
+                "recorded in a catalog image (chunk size {}, zstd level {})",
+                p.chunk_size, p.zstd_level
+            ),
+            None => format!(
+                "no catalog image could be read: this build's defaults (chunk size {}, zstd \
+                 level {})",
+                crate::publish::DEFAULT_CHUNK_SIZE,
+                mochi_format::codec::EncodeParams::default().level
+            ),
+        };
+    }
+
+    let salvaged: Vec<u64> = s
+        .plan
+        .snapshots
+        .iter()
+        .filter(|x| x.trust == Trust::Salvage)
+        .map(|x| x.seq)
+        .collect();
+    let (status, detail) = if report.limit_reached {
+        (
+            StepStatus::Incomplete,
+            format!(
+                "stopped at the candidate limit max-salvage-candidates={} after {} \
+                 candidates; what lies beyond was not examined{}",
+                report.candidate_limit,
+                report.candidates,
+                if salvaged.is_empty() {
+                    String::new()
+                } else {
+                    format!("; snapshots recovered so far: {salvaged:?}")
+                }
+            ),
+        )
+    } else if !salvaged.is_empty() {
+        (
+            StepStatus::Used,
+            format!(
+                "{} snapshot{} recovered from commits the scan confirmed ({salvaged:?}); {} \
+                 footer{} regenerated{}; {} commit{} unconfirmed and left out (§5.1). \
+                 Without a trusted head completeness cannot be shown, so the repair is partial",
+                salvaged.len(),
+                if salvaged.len() == 1 { "" } else { "s" },
+                report.footers_regenerated.len(),
+                if report.footers_regenerated.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                if prep.descriptor_restored {
+                    "; the descriptor was re-encoded (profile inferred)"
+                } else {
+                    ""
+                },
+                report.unconfirmed_count,
+                if report.unconfirmed_count == 1 {
+                    " is"
+                } else {
+                    "s are"
+                },
+            ),
+        )
+    } else {
+        (
+            StepStatus::NotAvailable,
+            format!(
+                "the scan ({} candidates) confirmed no commit that adds to what steps 1–6 \
+                 recovered; {} unconfirmed commit{} listed",
+                report.candidates,
+                report.unconfirmed_count,
+                if report.unconfirmed_count == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+            ),
+        )
+    };
+    s.plan.salvage = Some(report);
+    set_step7(&mut s.plan, status, detail);
+    if matches!(status, StepStatus::Used | StepStatus::Incomplete) {
+        s.plan.damage_found = true;
+        if s.plan.outcome == Outcome::Complete {
+            s.plan.outcome = Outcome::Partial;
+            s.plan.exit_code = s.plan.outcome.exit_code();
+        }
+    }
+    Ok(s)
 }
 
 /// The ladder's step 5 from what the copies did.
@@ -1146,6 +1493,7 @@ fn copies_step(copies: &[CopyReport], donations: &[Donation], damage_found: bool
 fn survey_healed<'a>(
     src: &'a dyn ReadStorage,
     copies: &[CopySource<'_>],
+    salvage: Option<&SalvageOptions>,
     opts: &ReadOptions,
     ctx: &JobContext<'_>,
 ) -> Result<(Survey, HealedSource<'a>)> {
@@ -1163,6 +1511,25 @@ fn survey_healed<'a>(
     };
     let donated = copies::donate(&mut view, copies, opts, ctx)?;
     let mut s = survey(&view, &donated.confirmed, opts, ctx)?;
+    match salvage {
+        Some(sv) => s = salvage_pass(&mut view, s, sv, &donated.confirmed, opts, ctx)?,
+        None => {
+            let unrecovered = s.plan.head.is_none()
+                || !s.plan.lost_snapshots.is_empty()
+                || s.plan.chain_break.is_some()
+                || s.plan.tail.as_ref().is_some_and(|t| t.state != "clean");
+            set_step7(
+                &mut s.plan,
+                StepStatus::NotAttempted,
+                if unrecovered {
+                    "not requested; `--salvage` may recover more (a bounded scan whose result is \
+                     always partial, Annex B.2.13)"
+                } else {
+                    "not requested"
+                },
+            );
+        }
+    }
     let step6 = match &scan {
         None => step(
             6,
@@ -1278,6 +1645,10 @@ pub struct RepairReport {
     /// The copies consulted and every frame they supplied (step 5).
     pub copies: Vec<CopyReport>,
     pub donations: Vec<Donation>,
+    /// What the salvage scan found (step 7), when it ran.
+    pub salvage: Option<SalvageReport>,
+    /// Constraints the repaired archive does not carry (D23 item 8).
+    pub profile_constraints_lost: Vec<String>,
     pub retention: Option<RetentionPlan>,
     /// The caller accepted that retention could not be carried.
     pub retention_loss_accepted: bool,
@@ -1335,6 +1706,33 @@ where
     D: StorageDir,
     D::File: Storage,
 {
+    apply_with_salvage(
+        src, copies, None, approved, dir, name, ids, read, options, ctx,
+    )
+}
+
+/// [`apply_with_copies`] with the salvage options the plan was made with
+/// (step 7, Annex B.2.13 D23): the re-survey refuses any difference, as it
+/// does for the source and the copies. The repaired archive is a new archive
+/// with its own ordinary descriptor; when the source descriptor was
+/// re-encoded, TAR compatibility is not carried over (D12 as amended).
+#[allow(clippy::too_many_arguments)]
+pub fn apply_with_salvage<D>(
+    src: &dyn ReadStorage,
+    copies: &[CopySource<'_>],
+    salvage: Option<&SalvageOptions>,
+    approved: &RepairPlan,
+    dir: &mut D,
+    name: &str,
+    ids: Box<dyn IdSource>,
+    read: &ReadOptions,
+    options: &RepairOptions,
+    ctx: &JobContext<'_>,
+) -> Result<RepairReport>
+where
+    D: StorageDir,
+    D::File: Storage,
+{
     if approved.format != PLAN_FORMAT {
         return Err(MochiError::new(
             ErrorCode::InvalidArgument,
@@ -1344,7 +1742,7 @@ where
             ),
         ));
     }
-    let (s, view) = survey_healed(src, copies, read, ctx)?;
+    let (s, view) = survey_healed(src, copies, salvage, read, ctx)?;
     // Everything below reads the healed bytes (step 6).
     let src: &dyn ReadStorage = &view;
     if s.plan != *approved {
@@ -1362,8 +1760,8 @@ where
             } else {
                 ErrorCode::RecordInvalid
             },
-            "nothing is recoverable through §22 steps 1–6 (the salvage scan is not built); \
-             nothing was written",
+            "nothing is recoverable through §22 steps 1–6, or through step 7 if it was asked \
+             for (--salvage); nothing was written",
         ));
     }
     if let Some(RetentionPlan::Unresolved { reason }) = &plan.retention {
@@ -1380,6 +1778,11 @@ where
         }
     }
 
+    let reconstructed = plan
+        .salvage
+        .as_ref()
+        .and_then(|v| v.profile_inference.as_ref())
+        .is_some_and(|i| i.descriptor_reconstructed);
     let wopts = WriterOptions {
         chunk_size: plan.writer_parameters.map(|p| p.chunk_size),
         zstd_level: plan.writer_parameters.map(|p| p.zstd_level),
@@ -1387,7 +1790,15 @@ where
         dedup: Dedup::Off,
         // A rewrite keeps the source's profile (Annex B.2.9 D19 rule 9); the
         // newest opened head's descriptor is the one that was verified.
-        profile: s.opened.first().map(|o| o.descriptor.profile()),
+        profile: s.opened.first().map(|o| {
+            let mut p = o.descriptor.profile();
+            // D23 item 8: a descriptor that salvage re-encoded does not carry
+            // TAR compatibility into the new archive; it is listed as lost.
+            if reconstructed {
+                p.tar_compatible = false;
+            }
+            p
+        }),
         // Encrypted: the passphrases given open the new archive, which has its
         // own data key (D20 item 10).
         read: read.clone(),
@@ -1406,11 +1817,28 @@ where
         if let Some(p) = options.checkpoint_policy {
             w.set_checkpoint_policy(p)?;
         }
-        // Catalogs were opened from the head down, so their snapshots are
-        // in ascending order when taken in reverse.
-        for (idx, o) in s.opened.iter().enumerate().rev() {
+        // Ascending by source sequence, whichever catalog supplies each
+        // snapshot (with salvage, segments interleave, D23 item 6): runs of
+        // consecutive snapshots from one catalog are written in one pass.
+        let mut runs: Vec<(usize, BTreeSet<u64>)> = Vec::new();
+        for r in &plan.snapshots {
+            let idx = *s.assigned.get(&r.seq).ok_or_else(|| {
+                MochiError::new(
+                    ErrorCode::InvalidArgument,
+                    "internal: a planned snapshot has no catalog",
+                )
+            })?;
+            match runs.last_mut() {
+                Some((i, set)) if *i == idx => {
+                    set.insert(r.seq);
+                }
+                _ => runs.push((idx, BTreeSet::from([r.seq]))),
+            }
+        }
+        for (idx, wanted) in &runs {
+            let o = &s.opened[*idx];
             o.catalog.replay_each(|seq, snapshot| {
-                if s.assigned.get(&seq) != Some(&idx) {
+                if !wanted.contains(&seq) {
                     return Ok(());
                 }
                 ctx.check_cancelled()?;
@@ -1554,6 +1982,13 @@ where
         omitted: plan.omitted.clone(),
         copies: plan.copies.clone(),
         donations: plan.donations.clone(),
+        profile_constraints_lost: plan
+            .salvage
+            .as_ref()
+            .and_then(|v| v.profile_inference.as_ref())
+            .map(|i| i.profile_constraints_lost.clone())
+            .unwrap_or_default(),
+        salvage: plan.salvage.clone(),
         retention_loss_accepted: matches!(plan.retention, Some(RetentionPlan::Unresolved { .. })),
         retention: plan.retention,
         chunks_copied: copier.chunks_copied,

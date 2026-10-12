@@ -357,6 +357,7 @@ pub fn exercise_archive_open(data: &[u8]) -> ArchiveOpenOutcome {
     damage_assessment_is_sound(&storage, &opts);
     repair_plan_is_sound(&storage, &opts);
     repair_with_copy_is_sound(&storage, data, &opts);
+    salvage_scan_is_sound(&storage, &opts);
     deep_verify_is_sound(&storage, &opts);
     parity_scan_is_sound(&storage, data, &opts);
     let Ok(head) = mochi_core::publish::open_head(&storage, &opts) else {
@@ -930,6 +931,112 @@ pub fn exercise_all(data: &[u8]) {
     exercise_key_envelope(data);
     exercise_sealed_object(data);
     exercise_parity_frame(data);
+    exercise_salvage_scan(data);
+}
+
+/// The bounded salvage scan (ladder step 7, spec Annex B.2.13 D23) over
+/// arbitrary bytes, at the fuzz limits and again at a candidate limit so low
+/// that most inputs stop at it. See [`salvage_scan_is_sound`].
+pub fn exercise_salvage_scan(data: &[u8]) {
+    let storage = crate::SimStorage::from_bytes(data.to_vec());
+    let opts = mochi_core::publish::ReadOptions {
+        limits: fuzz_limits(),
+        ..Default::default()
+    };
+    salvage_scan_is_sound(&storage, &opts);
+}
+
+/// `repair plan --salvage` on anything: it terminates within its limits,
+/// fails only operationally (an ambiguous archive ID is one), never records
+/// evidence as an error, and every plan keeps the step-7 invariants:
+///
+/// * recovered sequences are strictly increasing and never also lost;
+/// * a snapshot labelled `salvage` whose commit record is known comes from a
+///   commit the scan confirmed and did not find contradictory (§5.1, §22.1);
+/// * a plan that used the scan, or whose scan hit its limit, is never
+///   `complete` (D23 item 9), and the exit code follows the outcome;
+/// * the scan examined no more candidates than its limit, and says so when
+///   it stopped at it;
+/// * the lists it carries are bounded.
+fn salvage_scan_is_sound(storage: &crate::SimStorage, opts: &mochi_core::publish::ReadOptions) {
+    use mochi_core::copies::Trust;
+    use mochi_core::job::{CancellationToken, JobContext, NullProgress};
+    use mochi_core::repair::{plan_with_salvage, Outcome, StepStatus};
+    use mochi_core::salvage::{SalvageOptions, MAX_LISTED};
+    use mochi_core::verify::{classify, ErrorClass};
+    let cancel = CancellationToken::new();
+    let ctx = JobContext {
+        progress: &NullProgress,
+        cancel: &cancel,
+    };
+    for limit in [opts.limits.max_salvage_candidates, 6] {
+        let mut o = opts.clone();
+        o.limits.max_salvage_candidates = limit;
+        let p = match plan_with_salvage(storage, &[], Some(&SalvageOptions::default()), &o, &ctx) {
+            Ok(p) => p,
+            Err(e) => {
+                assert_eq!(
+                    classify(e.code),
+                    ErrorClass::Operational,
+                    "salvage planning failed on evidence instead of recording it: {e}"
+                );
+                continue;
+            }
+        };
+        assert_eq!(p.exit_code, p.outcome.exit_code());
+        let recovered: Vec<u64> = p.snapshots.iter().map(|s| s.seq).collect();
+        assert!(
+            recovered.windows(2).all(|w| w[0] < w[1]),
+            "ascending, unique"
+        );
+        assert!(p
+            .lost_snapshots
+            .iter()
+            .all(|l| recovered.binary_search(&l.seq).is_err()));
+        let step7 = p
+            .ladder
+            .iter()
+            .find(|l| l.step == 7)
+            .expect("the ladder has step 7");
+        if matches!(step7.status, StepStatus::Used | StepStatus::Incomplete) {
+            assert_ne!(p.outcome, Outcome::Complete, "salvage is always partial");
+        }
+        if let Some(sv) = &p.salvage {
+            assert!(sv.candidates <= sv.candidate_limit && sv.candidate_limit == limit);
+            assert_eq!(sv.limit_reached, step7.status == StepStatus::Incomplete);
+            for list in [&sv.confirmed, &sv.unconfirmed, &sv.rejected] {
+                assert!(list.len() <= MAX_LISTED);
+            }
+            assert!(sv.contradictory.len() <= MAX_LISTED);
+            for s in p.snapshots.iter().filter(|s| s.trust == Trust::Salvage) {
+                // Its commit record is known only when a chain reached it.
+                // That commit is one the scan confirmed (or contradicted:
+                // the trusted chain keeps the commit it reached, D23 item
+                // 4), or the trusted head itself, which needed the scan's
+                // regenerated descriptor to open. Never one it left
+                // unconfirmed or rejected. (Skipped when the scan stopped
+                // at its limit or the lists were cut short.)
+                let Some(id) = s.commit_id.as_deref() else {
+                    continue;
+                };
+                if sv.limit_reached || sv.lists_truncated {
+                    continue;
+                }
+                let is_head = p.head.as_ref().is_some_and(|h| h.commit_id == id);
+                let contradicted = sv
+                    .contradictory
+                    .iter()
+                    .any(|c| c.commits.iter().any(|x| x.commit_id == id));
+                assert!(
+                    sv.confirmed.iter().any(|c| c.commit_id == id) || is_head || contradicted,
+                    "snapshot {} came from a commit the scan did not confirm",
+                    s.seq
+                );
+            }
+        } else {
+            assert!(!p.snapshots.iter().any(|s| s.trust == Trust::Salvage));
+        }
+    }
 }
 
 /// Parity frames and reconstruction (C12, spec Annex B.2.11 D21; R6). A

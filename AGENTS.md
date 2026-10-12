@@ -27,7 +27,7 @@ If the spec does not answer a question, **do not invent an answer.** Stop, state
 
 ## Commands
 
-Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–6, and C14 implemented, `docs/c14-cli.md`):
+Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–7, and C14 implemented, `docs/c14-cli.md`):
 
 ```bash
 cargo fmt --all --check
@@ -47,7 +47,7 @@ Pinned `compile_fail` error codes are only checked on nightly (CI job `doc-night
 cargo +nightly test --doc -p mochi-format
 ```
 
-Fuzzing (nightly plus `cargo install cargo-fuzz`; targets `frame_walker`, `footer`, `envelope`, `object_decode`, `catalog_image`, `cbor_decode`, `manifest_decode`, `commit_decode`, `archive_open`, `descriptor_decode`, `tar_stream`, `key_envelope`, `sealed_object`, `parity_frame`):
+Fuzzing (nightly plus `cargo install cargo-fuzz`; targets `frame_walker`, `footer`, `envelope`, `object_decode`, `catalog_image`, `cbor_decode`, `manifest_decode`, `commit_decode`, `archive_open`, `descriptor_decode`, `tar_stream`, `key_envelope`, `sealed_object`, `parity_frame`, `salvage_scan`):
 
 ```bash
 cd fuzz && cargo +nightly fuzz run frame_walker corpus/frame_walker ../fixtures/golden/c1 ../fixtures/golden/c2 -- -max_total_time=60

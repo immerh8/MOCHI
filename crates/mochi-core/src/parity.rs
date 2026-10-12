@@ -69,6 +69,12 @@ pub struct HealedSource<'a> {
     /// Offset → bytes of a whole frame a copy supplied. Frames never overlap
     /// each other; they read over `patches`.
     donated: BTreeMap<u64, Vec<u8>>,
+    /// Offset → bytes the salvage scan re-derived (ladder step 7, Annex B.2.13
+    /// D23): footers regenerated for commits whose publication a later
+    /// commit's parent link confirms, and the descriptor re-encoded when its
+    /// hash matches the one every confirmed commit records. Read over
+    /// everything else; never trusted without the checks that follow.
+    restored: BTreeMap<u64, Vec<u8>>,
 }
 
 impl<'a> HealedSource<'a> {
@@ -78,12 +84,18 @@ impl<'a> HealedSource<'a> {
             inner,
             patches: BTreeMap::new(),
             donated: BTreeMap::new(),
+            restored: BTreeMap::new(),
         }
     }
 
     /// Whether any byte differs from the archive.
     pub fn is_patched(&self) -> bool {
-        !self.patches.is_empty() || !self.donated.is_empty()
+        !self.patches.is_empty() || !self.donated.is_empty() || !self.restored.is_empty()
+    }
+
+    /// Lay bytes the salvage scan re-derived over the view (D23).
+    pub(crate) fn restore(&mut self, offset: u64, bytes: Vec<u8>) {
+        self.restored.insert(offset, bytes);
     }
 
     /// Bytes replaced by parity.
@@ -132,6 +144,7 @@ impl ReadStorage for HealedSource<'_> {
         let n = self.inner.read_at(offset, buf)?;
         overlay(&self.patches, offset, buf, n);
         overlay(&self.donated, offset, buf, n);
+        overlay(&self.restored, offset, buf, n);
         Ok(n)
     }
 }
