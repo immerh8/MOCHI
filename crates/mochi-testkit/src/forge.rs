@@ -180,3 +180,101 @@ pub fn field(v: &mut Value, key: u64) -> &mut Value {
     };
     &mut entries.iter_mut().find(|(k, _)| *k == key).unwrap().1
 }
+
+/// What [`put_with_dependency`] makes the forged chunk depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictionaryDependency {
+    /// No dependency: an ordinary chunk (the control).
+    None,
+    /// A dictionary that is an intact object of the same commit. Nothing in
+    /// 1.0 can use it as one, so the chunk is undecodable (plan K17).
+    Present,
+    /// A dictionary ID the catalog does not hold: a dangling reference
+    /// (§5.2).
+    Missing,
+}
+
+/// Forge one delta commit after the head of `bytes` that puts `name` with
+/// one intact chunk depending on `dep`. Returns the archive bytes and the
+/// forged file version.
+pub fn put_with_dependency(
+    bytes: Vec<u8>,
+    name: &str,
+    dep: DictionaryDependency,
+) -> (Vec<u8>, mochi_core::catalog::namespace::FileVersionId) {
+    use mochi_core::catalog::extent::{Extent, ExtentSource};
+    use mochi_core::catalog::namespace::{EntryKind, FileVersionId, NamespaceOp};
+    use mochi_core::catalog::FileVersion;
+    use mochi_core::manifest::{ChunkEntry, FileVersionEntry};
+    use mochi_core::object::{build_object, Dependency, ObjectId};
+    use mochi_format::codec::{EncodeParams, Protection};
+    use mochi_format::digest::file_content_hash;
+    use mochi_format::repr::{DecodedBytes, DecodedSlice};
+    use mochi_format::Limits;
+
+    let object = |seed: u64, ids: u64| {
+        build_object(
+            &DecodedBytes::new(crate::deterministic_bytes(seed, 150)),
+            &EncodeParams::default(),
+            Protection::None,
+            &mut crate::SeqIds::new(ids),
+            &Limits::default(),
+        )
+        .unwrap()
+    };
+    let content = crate::deterministic_bytes(77, 150);
+    let mut f = Forge::new(bytes);
+    let head = f.history().pop().unwrap();
+    let mut obj = object(77, 0x5000);
+    let dictionary = object(78, 0x6000);
+    let mut m = empty_delta(&head, txid(0x31));
+    match dep {
+        DictionaryDependency::None => {}
+        DictionaryDependency::Present => {
+            obj.record
+                .dependencies
+                .push(Dependency::Dictionary(dictionary.record.id));
+            let at = f.append_object(&dictionary.stored).offset;
+            m.chunks.push(ChunkEntry {
+                record: dictionary.record.clone(),
+                location: Some(at),
+            });
+        }
+        DictionaryDependency::Missing => obj
+            .record
+            .dependencies
+            .push(Dependency::Dictionary(ObjectId::from_bytes([9; 32]))),
+    }
+    let at = f.append_object(&obj.stored).offset;
+    let id = FileVersionId::from_bytes([0xD7; 32]);
+    m.chunks.push(ChunkEntry {
+        record: obj.record.clone(),
+        location: Some(at),
+    });
+    m.file_versions.push(FileVersionEntry {
+        version: FileVersion {
+            id,
+            kind: EntryKind::File,
+            logical_len: content.len() as u64,
+            content_hash: Some(file_content_hash(DecodedSlice::from_logical(&content))),
+        },
+        extents: vec![Extent {
+            ordinal: 0,
+            logical_offset: 0,
+            length: content.len() as u64,
+            source: ExtentSource::Chunk {
+                chunk: obj.record.id,
+                chunk_offset: 0,
+            },
+        }],
+        attributes: crate::replay::attrs(0o644, 8),
+    });
+    m.ops.push(NamespaceOp::Put {
+        path: crate::archive::path(name),
+        version: id,
+    });
+    m.canonicalize();
+    let r = f.append_manifest(&m);
+    f.append_delta(&head, rule_base(&head), r, txid(0x31));
+    (f.bytes, id)
+}

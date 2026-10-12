@@ -663,102 +663,17 @@ fn c7_footer_history_frames_are_skipped_never_interpreted() {
     }
 }
 
-/// `archive()` plus a forged commit 3 that puts `/dep` with one chunk. With
-/// `needs_dictionary` the chunk's record declares a dictionary dependency
-/// this build cannot satisfy (the same forgery as
-/// `c8_undecodable_content_refuses_the_plan`); the bytes are intact either
-/// way. Returns the storage and the forged file version.
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// `archive()` plus a forged commit 3 that puts `dep` with one intact chunk
+/// depending on `dep` (`mochi_testkit::forge::put_with_dependency`).
 fn with_dependency(
-    needs_dictionary: bool,
-    dictionary_present: bool,
+    dep: mochi_testkit::forge::DictionaryDependency,
 ) -> (SimStorage, mochi_core::catalog::namespace::FileVersionId) {
-    use mochi_core::catalog::extent::{Extent, ExtentSource};
-    use mochi_core::catalog::namespace::{EntryKind, FileVersionId, NamespaceOp};
-    use mochi_core::catalog::FileVersion;
-    use mochi_core::manifest::{ChunkEntry, FileVersionEntry};
-    use mochi_core::object::{build_object, Dependency, ObjectId};
-    use mochi_format::codec::{EncodeParams, Protection};
-    use mochi_format::digest::file_content_hash;
-    use mochi_format::repr::{DecodedBytes, DecodedSlice};
-    use mochi_format::Limits;
-    use mochi_testkit::archive::path;
-    use mochi_testkit::forge::{empty_delta, rule_base, txid, Forge};
-    use mochi_testkit::replay::attrs;
-
-    let content = mochi_testkit::deterministic_bytes(77, 150);
-    let mut f = Forge::new(archive().contents());
-    let head = f.history()[2].clone();
-    let mut obj = build_object(
-        &DecodedBytes::new(content.clone()),
-        &EncodeParams::default(),
-        Protection::None,
-        &mut SeqIds::new(0x5000),
-        &Limits::default(),
-    )
-    .unwrap();
-    // The "dictionary": an intact catalog object. Nothing in 1.0 can use it
-    // as one, which is what makes the dependent chunk undecodable.
-    let dictionary = build_object(
-        &DecodedBytes::new(mochi_testkit::deterministic_bytes(78, 150)),
-        &EncodeParams::default(),
-        Protection::None,
-        &mut SeqIds::new(0x6000),
-        &Limits::default(),
-    )
-    .unwrap();
-    if needs_dictionary {
-        let dep = if dictionary_present {
-            dictionary.record.id
-        } else {
-            ObjectId::from_bytes([9; 32])
-        };
-        obj.record.dependencies.push(Dependency::Dictionary(dep));
-    }
-    let dictionary_at = (needs_dictionary && dictionary_present)
-        .then(|| f.append_object(&dictionary.stored).offset);
-    let at = f.append_object(&obj.stored).offset;
-    let id = FileVersionId::from_bytes([0xD7; 32]);
-    let mut m = empty_delta(&head, txid(0x31));
-    if let Some(dictionary_at) = dictionary_at {
-        m.chunks.push(ChunkEntry {
-            record: dictionary.record.clone(),
-            location: Some(dictionary_at),
-        });
-    }
-    m.chunks.push(ChunkEntry {
-        record: obj.record.clone(),
-        location: Some(at),
-    });
-    m.file_versions.push(FileVersionEntry {
-        version: FileVersion {
-            id,
-            kind: EntryKind::File,
-            logical_len: content.len() as u64,
-            content_hash: Some(file_content_hash(DecodedSlice::from_logical(&content))),
-        },
-        extents: vec![Extent {
-            ordinal: 0,
-            logical_offset: 0,
-            length: content.len() as u64,
-            source: ExtentSource::Chunk {
-                chunk: obj.record.id,
-                chunk_offset: 0,
-            },
-        }],
-        attributes: attrs(0o644, 8),
-    });
-    m.ops.push(NamespaceOp::Put {
-        path: path("dep"),
-        version: id,
-    });
-    m.canonicalize();
-    let r = f.append_manifest(&m);
-    f.append_delta(&head, rule_base(&head), r, txid(0x31));
-    (f.storage(), id)
+    let (bytes, id) = mochi_testkit::forge::put_with_dependency(archive().contents(), "dep", dep);
+    (SimStorage::from_bytes(bytes), id)
 }
 
 /// **A dictionary dependency is reported, never skipped (plan K17; spec
@@ -771,7 +686,9 @@ fn with_dependency(
 /// dependency verifies `PASS` at every level.
 #[test]
 fn c7_a_dictionary_dependency_is_unsupported_with_the_affected_versions() {
-    let (control, _) = with_dependency(false, true);
+    use mochi_testkit::forge::DictionaryDependency;
+
+    let (control, _) = with_dependency(DictionaryDependency::None);
     for level in LEVELS {
         let r = run(&control, at(level)).report;
         assert!(!has(&r, ErrorCode::UnsupportedFeature), "{level:?}");
@@ -783,7 +700,7 @@ fn c7_a_dictionary_dependency_is_unsupported_with_the_affected_versions() {
         exit::OK
     );
 
-    let (s, id) = with_dependency(true, true);
+    let (s, id) = with_dependency(DictionaryDependency::Present);
     for level in [
         VerificationLevel::ContentIntegrity,
         VerificationLevel::Restoration,
@@ -830,7 +747,7 @@ fn c7_a_dictionary_dependency_is_unsupported_with_the_affected_versions() {
 
     // A dependency on an object the catalog does not hold is a dangling
     // reference (§5.2): a violation, FAIL, exit 1, not a missing feature.
-    let (dangling, _) = with_dependency(true, false);
+    let (dangling, _) = with_dependency(DictionaryDependency::Missing);
     let r = run(&dangling, at(VerificationLevel::ContentIntegrity)).report;
     assert!(has(&r, ErrorCode::ReferenceInvalid), "{:?}", r.findings);
     assert_eq!(r.exit_code, exit::FAILED);
