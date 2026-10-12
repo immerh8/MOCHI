@@ -1271,7 +1271,7 @@ Implementations MUST maintain:
 | False magic inside payload | No false object or commit acceptance |
 | Oversized or malicious frame metadata | Bounded resource use and explicit rejection |
 | Destroyed SQLite catalogs | Recover the promised scope through manifests |
-| Missing shared dictionary | Identify all affected files and exercise recovery. **[Amendment, delegated 2026-10-12, plan K17]** 1.0 writes no dictionaries (plan O21). A dictionary-dependent chunk is reported as `UNSUPPORTED` (`UNSUPPORTED_FEATURE`, exit 4) with every affected file version listed, never as partial content, and repair refuses rather than omits it (plan K4) |
+| Missing shared dictionary | Identify all affected files and exercise recovery. **[Amendment, delegated 2026-10-12, plan K17]** 1.0 writes no dictionaries (plan O21). A dictionary-dependent chunk is reported as `UNSUPPORTED` (`UNSUPPORTED_FEATURE`, exit 4) with every affected file version listed, never as partial content, and repair refuses rather than omits it (plan K4). **[Clarified, delegated 2026-10-12, W10]** This applies to a dependency that resolves to an intact catalog object; a dependency naming an object the catalog does not hold is a dangling reference (§5.2), reported `REFERENCE_INVALID` (`FAIL`) |
 | Corrupted content object | Detect and recover where policy permits |
 | Damage beyond parity capacity | Explicit unrecoverable result |
 | Deleted primary archive | Inventory detects absence; independent restore succeeds |
