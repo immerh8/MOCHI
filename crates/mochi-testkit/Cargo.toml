@@ -17,3 +17,7 @@ proptest.workspace = true
 serde_json.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
+# R3 (docs/ratification/R3-canonical-serialization-draft.md): validates the golden
+# CBOR records against docs/schemas/*.cddl. MIT; test-only, never a dependency
+# of a shipped crate. Only the CBOR validator is enabled.
+cddl = { version = "0.10.7", default-features = false, features = ["std", "cbor", "json", "additional-controls", "ast-span", "ast-comments", "ast-parent"] }

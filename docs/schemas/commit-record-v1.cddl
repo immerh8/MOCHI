@@ -1,6 +1,7 @@
 ; MOCHI commit record, schema version 1 (DRAFT; ratification item R3).
 ; Decisions: spec Annex B.2 D10, D11, D12. Supersedes commit-record-v0.cddl
 ; for new archives; a v0 commit is a pre-batch draft and is rejected (§26).
+; This file is complete and standalone: every rule it uses is defined here.
 ;
 ; Encoding: the deterministic-CBOR subset of Annex B.1 D2. A reader MUST
 ; reject input that does not re-encode to identical bytes, and MUST reject
@@ -18,6 +19,19 @@
 ; those objects contains this commit's ID. They carry only the archive ID,
 ; sequence, and transaction ID, all of which are known before they are
 ; written. The footer (§8.4) covers this frame's stored bytes.
+;
+; Schema 1 is written exactly when the commit lists no required feature. A
+; commit that lists the Encrypted feature (1) is schema 2
+; (commit-record-v2.cddl); a schema-1 commit that lists it is RECORD_INVALID.
+;
+; Rules CDDL cannot state, checked by the code (R3 section 7 lists them):
+;   * features are strictly increasing (ENVELOPE_INVALID) and every entry is
+;     known (UNSUPPORTED_FEATURE);
+;   * a parent's sequence equals this sequence - 1; a base's sequence is
+;     below this sequence; a parent's footer offset resolves to a valid
+;     footer of that commit (an offset is a traversal offset, D10.6);
+;   * every object-ref ends at or before this commit frame's offset;
+;   * key 9 equals the commit ID recomputed from the rest of the map.
 ;
 ; CDDL note: type choices used as array elements are written as named rules.
 ; This is equivalent under RFC 8610, and works around a validator defect
@@ -85,7 +99,7 @@ base-ref = {
 ; this commit frame's offset (§5.1).
 object-ref = {
   0: uint,                    ; offset of the frame's first byte
-  1: uint,                    ; stored length including the frame header (>= 8)
+  1: uint .ge 8,              ; stored length including the frame header (>= 8)
   2: hash32,                  ; stored-object hash; verified BEFORE parsing
 }
 
@@ -94,5 +108,6 @@ txid = bstr .size 16
 hash32 = bstr .size 32
 seq = uint
 features = [* uint]           ; strictly increasing (no duplicates)
-info-time = [int, nanos]
+info-time = [secs, nanos]     ; seconds since the Unix epoch, nanoseconds
+secs = int                    ; must fit a signed 64-bit integer (checked by the code)
 nanos = uint .lt 1000000000

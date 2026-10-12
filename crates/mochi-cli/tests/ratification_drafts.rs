@@ -868,3 +868,821 @@ fn r6_byte_strings_match_the_code() {
         assert_eq!(hex(&r[1]), code[r[0].as_str()], "{}", r[0]);
     }
 }
+
+// ---- R3: canonical serialization and domain separators ---------------------------------
+
+const R3: &str = "docs/ratification/R3-canonical-serialization-draft.md";
+
+/// Hex bytes as R3 writes them: space-separated, `XX×N` repeating a byte.
+fn hex_rep(cell: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for tok in cell.split_whitespace() {
+        match tok.split_once('×') {
+            Some((b, n)) => {
+                let byte = hex(b);
+                assert_eq!(byte.len(), 1, "{tok:?}");
+                out.extend(std::iter::repeat_n(byte[0], n.parse::<usize>().unwrap()));
+            }
+            None => out.extend(hex(tok)),
+        }
+    }
+    out
+}
+
+/// Every `CborFault`. The match makes a new fault a compile error here.
+fn all_cbor_faults() -> Vec<mochi_format::cbor::CborFault> {
+    use mochi_format::cbor::CborFault::*;
+    let all = [
+        Truncated,
+        NotShortest,
+        ReservedAdditionalInfo,
+        Indefinite,
+        Tag,
+        Float,
+        SimpleValue,
+        NonIntegerKey,
+        KeyOrder,
+        InvalidUtf8,
+        LengthExceedsInput,
+        TooDeep,
+        TooManyItems,
+        TrailingBytes,
+        NotCanonical,
+    ];
+    for f in all {
+        match f {
+            Truncated
+            | NotShortest
+            | ReservedAdditionalInfo
+            | Indefinite
+            | Tag
+            | Float
+            | SimpleValue
+            | NonIntegerKey
+            | KeyOrder
+            | InvalidUtf8
+            | LengthExceedsInput
+            | TooDeep
+            | TooManyItems
+            | TrailingBytes
+            | NotCanonical => {}
+        }
+    }
+    all.to_vec()
+}
+
+#[test]
+fn r3_cbor_subset_table_matches_the_codec() {
+    use mochi_format::cbor::{self, CborLimits};
+    use mochi_format::FormatError;
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "1.1 Constructs"), 0);
+    let mut faults = BTreeSet::new();
+    for r in &rows {
+        let input = hex_rep(&r[1]);
+        let mut limits = CborLimits::default();
+        if let Some(n) = r[2].strip_prefix("items=") {
+            limits.max_items = n.parse().unwrap();
+        } else {
+            assert_eq!(r[2], "default", "{}", r[0]);
+        }
+        let got = cbor::decode(&input, &limits);
+        match r[3].as_str() {
+            "accepted" => {
+                assert!(got.is_ok(), "{}: {got:?}", r[0]);
+                assert_eq!(r[4], "—", "{}", r[0]);
+                // Accepted input is canonical: it re-encodes to itself.
+                assert_eq!(cbor::encode(&got.unwrap()).unwrap(), input, "{}", r[0]);
+            }
+            "refused" => {
+                let Err(FormatError::Cbor(f)) = got else {
+                    panic!("{}: {got:?}", r[0])
+                };
+                assert_eq!(format!("{f:?}"), r[4], "{}", r[0]);
+                faults.insert(r[4].clone());
+            }
+            other => panic!("{}: verdict {other:?}", r[0]),
+        }
+    }
+    // Every fault but the last-resort guard has an example.
+    let expected: BTreeSet<String> = all_cbor_faults()
+        .iter()
+        .map(|f| format!("{f:?}"))
+        .filter(|f| f != "NotCanonical")
+        .collect();
+    assert_eq!(faults, expected);
+}
+
+#[test]
+fn r3_codec_fault_codes_match_the_code() {
+    use mochi_format::FormatError;
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "1.2 Codec faults"), 0);
+    let faults = all_cbor_faults();
+    assert_eq!(rows.len(), faults.len());
+    for (r, f) in rows.iter().zip(&faults) {
+        assert_eq!(r[0], format!("{f:?}"), "R3 lists the faults in code order");
+        let code = mochi_core::MochiError::from(FormatError::Cbor(*f)).code;
+        assert_eq!(r[1], code.as_str(), "{f:?}");
+        assert!(!r[2].is_empty());
+    }
+}
+
+#[test]
+fn r3_writer_refusals_match_the_encoder() {
+    use mochi_format::cbor::{self, CborLimits, Value};
+    let nested = |depth: usize| {
+        let mut v = Value::Uint(0);
+        for _ in 0..depth {
+            v = Value::Array(vec![v]);
+        }
+        v
+    };
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "1.3 Writer refusals"), 0);
+    assert_eq!(rows.len(), 5);
+    let two = CborLimits {
+        max_items: 2,
+        ..CborLimits::default()
+    };
+    for r in &rows {
+        let (name, result): (&str, Result<Vec<u8>, mochi_format::FormatError>) = match r[0].as_str()
+        {
+            "a map with keys 1 then 0" => (
+                "encode",
+                cbor::encode(&Value::Map(vec![(1, Value::Null), (0, Value::Null)])),
+            ),
+            "65 nested arrays around the integer 0" => (
+                "encode_within",
+                cbor::encode_within(&nested(65), &CborLimits::default()),
+            ),
+            "64 nested arrays around the integer 0" => (
+                "encode_within",
+                cbor::encode_within(&nested(64), &CborLimits::default()),
+            ),
+            "an array of 2 under items=2" => (
+                "encode_within",
+                cbor::encode_within(&Value::Array(vec![Value::Null, Value::Null]), &two),
+            ),
+            "an array of 1 under items=2" => (
+                "encode_within",
+                cbor::encode_within(&Value::Array(vec![Value::Null]), &two),
+            ),
+            other => panic!("unknown writer case {other:?}"),
+        };
+        match result {
+            Ok(_) => assert!(r[1].starts_with(&format!("{name} succeeds")), "{}", r[0]),
+            Err(e) => {
+                let code = mochi_core::MochiError::from(e).code;
+                assert!(
+                    r[1].starts_with(&format!("{name} fails with {code}")),
+                    "{}: {}",
+                    r[0],
+                    r[1]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn r3_cbor_limits_match_the_code() {
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "1.4 Limits"), 0);
+    let l = mochi_format::cbor::CborLimits::default();
+    let first_number = |cell: &str| -> usize {
+        cell.split_whitespace()
+            .next()
+            .unwrap()
+            .replace(',', "")
+            .parse()
+            .unwrap()
+    };
+    let by: BTreeMap<&str, usize> = rows
+        .iter()
+        .map(|r| (r[0].as_str(), first_number(&r[1])))
+        .collect();
+    assert_eq!(by["Depth"], l.max_depth);
+    assert_eq!(by["Items"], l.max_items);
+    assert_eq!(by.len(), 2);
+}
+
+/// `name` → `CODE` for every `rejects` line of the vector lists in `dir`.
+fn vector_codes(dir: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for file in ["vectors.txt", "descriptor-vectors.txt"] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/golden")
+            .join(dir)
+            .join(file);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() >= 3 && f[1] == "rejects" {
+                out.insert(f[0].to_owned(), f[2].to_owned());
+            }
+        }
+    }
+    out
+}
+
+fn golden_exists(rel: &str) -> bool {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/golden")
+        .join(rel)
+        .is_file()
+}
+
+#[test]
+fn r3_record_level_causes_match_the_vector_lists() {
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "2.2 Record-level causes"), 0);
+    assert!(rows.len() >= 25);
+    for r in &rows {
+        let v = r[2].as_str();
+        let (dir, file) = v.split_once('/').unwrap();
+        let name = file.strip_suffix(".bin").unwrap();
+        assert!(golden_exists(v), "{v} does not exist");
+        let codes = vector_codes(dir);
+        assert_eq!(
+            codes.get(name).map(String::as_str),
+            Some(r[1].as_str()),
+            "{}: {v}",
+            r[0]
+        );
+    }
+}
+
+#[test]
+fn r3_schema_registry_matches_the_code() {
+    use mochi_core::{commit, descriptor, keys, manifest, quarantine};
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "3. Schema registry"), 0);
+    assert_eq!(rows.len(), 10);
+
+    // Versions read per record, from the code.
+    let current: BTreeMap<&str, Vec<u64>> = BTreeMap::from([
+        ("Archive descriptor", vec![descriptor::SCHEMA_VERSION]),
+        (
+            "Commit record",
+            vec![commit::SCHEMA_VERSION, commit::ENCRYPTED_SCHEMA_VERSION],
+        ),
+        (
+            "Recovery manifest",
+            vec![
+                manifest::SCHEMA_VERSION,
+                manifest::RETENTION_SCHEMA_VERSION,
+                manifest::ENCRYPTED_SCHEMA_VERSION,
+            ],
+        ),
+        ("Key envelope", vec![keys::ENVELOPE_SCHEMA_VERSION]),
+        (
+            "Tail-quarantine sidecar metadata",
+            vec![quarantine::SIDECAR_SCHEMA_VERSION],
+        ),
+    ]);
+    let legacy: BTreeMap<&str, u64> = BTreeMap::from([
+        ("Commit record", commit::LEGACY_SCHEMA_VERSION),
+        ("Recovery manifest", manifest::LEGACY_SCHEMA_VERSION),
+    ]);
+
+    let mut seen_current: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    let mut files = BTreeSet::new();
+    for r in &rows {
+        let (record, version) = (r[0].as_str(), r[1].parse::<u64>().unwrap());
+        let file = r[3].as_str();
+        assert!(files.insert(file.to_owned()), "{file} listed twice");
+        let schema = repo_file(&format!("docs/schemas/{file}"));
+        assert!(
+            schema
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("0: {version},"))),
+            "{file} never draws `0: {version}`"
+        );
+        assert!(
+            file.ends_with(&format!("-v{version}.cddl")),
+            "{file} is not version {version}"
+        );
+        if r[2] != "none (a tool file)" {
+            let kind = kind_of(&r[2]);
+            let expected = match record {
+                "Archive descriptor" => FrameKind::ArchiveDescriptor,
+                "Commit record" => FrameKind::CommitRecord,
+                "Recovery manifest" => FrameKind::RecoveryManifest,
+                "Key envelope" => FrameKind::KeyEnvelope,
+                other => panic!("{other}"),
+            };
+            assert_eq!(kind, expected, "{record}");
+        }
+        if r[5] == "legacy" {
+            assert_eq!(legacy[record], version, "{record}: legacy version");
+            assert!(
+                r[4].starts_with("never"),
+                "{record}: a legacy schema is never written"
+            );
+            assert!(schema.contains("LEGACY (refused)"), "{file}");
+        } else {
+            assert!(
+                r[5].starts_with("draft") || r[5].starts_with("frozen"),
+                "{record}: status {:?}",
+                r[5]
+            );
+            seen_current
+                .entry(record.to_owned())
+                .or_default()
+                .push(version);
+            assert!(!schema.contains("LEGACY (refused)"), "{file}");
+        }
+    }
+    for (record, versions) in &current {
+        assert_eq!(&seen_current[*record], versions, "{record}: versions read");
+    }
+    assert_eq!(seen_current.len(), current.len());
+
+    // The table lists every schema file, and nothing else.
+    let on_disk: BTreeSet<String> =
+        std::fs::read_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schemas"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+    assert_eq!(files, on_disk);
+}
+
+/// The first valid payload of a golden `.bin` vector (one skippable frame).
+fn golden_payload(rel: &str) -> Vec<u8> {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/golden")
+            .join(rel),
+    )
+    .unwrap();
+    let len = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    bytes[8..8 + len].to_vec()
+}
+
+/// The domain separator R3 §5 gives for a constant name.
+fn r3_domain(constant: &str) -> Vec<u8> {
+    let doc = repo_file(R3);
+    let lines = section(&doc, "5. Domain separators");
+    for n in 0..3 {
+        for r in table(&lines, n) {
+            if r[0] == constant {
+                return bytes_expr(&r[1]);
+            }
+        }
+    }
+    panic!("R3 §5 lacks {constant}");
+}
+
+#[test]
+fn r3_commit_id_construction_reproduces_the_vectors() {
+    use mochi_format::cbor::{self, CborLimits, Value};
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "4. Commit ID"), 0);
+    assert_eq!(rows.len(), 3);
+    let domain = r3_domain("COMMIT_ID_DOMAIN");
+
+    // The construction, as the document states it, over a commit payload.
+    let recompute = |payload: &[u8]| -> (Vec<u8>, Vec<u8>) {
+        let Value::Map(entries) = cbor::decode(payload, &CborLimits::default()).unwrap() else {
+            panic!("a commit is a map")
+        };
+        let stored = match entries.iter().find(|(k, _)| *k == 9) {
+            Some((_, Value::Bytes(b))) => b.clone(),
+            other => panic!("key 9: {other:?}"),
+        };
+        let body: Vec<(u64, Value)> = entries.into_iter().filter(|(k, _)| *k != 9).collect();
+        let body = cbor::encode(&Value::Map(body)).unwrap();
+        let mut h = blake3::Hasher::new();
+        h.update(&domain);
+        h.update(&body);
+        (h.finalize().as_bytes().to_vec(), stored)
+    };
+
+    let listed = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/golden/c5/vectors.txt"),
+    )
+    .unwrap();
+    for r in &rows {
+        let rel = r[0].as_str();
+        let (id, stored) = recompute(&golden_payload(rel));
+        assert_eq!(hex_string(&id), r[1], "{rel}: recomputed");
+        assert_eq!(id, stored, "{rel}: key 9");
+        let name = rel
+            .strip_prefix("c5/")
+            .unwrap()
+            .strip_suffix(".bin")
+            .unwrap();
+        assert!(
+            listed
+                .lines()
+                .any(|l| l == format!("{name} valid {}", r[1])),
+            "{name}: c5/vectors.txt disagrees"
+        );
+    }
+
+    // Every commit in the golden archives, schema 1 and schema 2 alike.
+    let mut checked = 0;
+    for (dir, file) in [
+        ("c5", "valid-archive-3-commits.mochi"),
+        ("c11", "valid-archive-encrypted.mochi"),
+        ("c12", "valid-archive-recovery-record.mochi"),
+    ] {
+        let bytes = std::fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/golden")
+                .join(dir)
+                .join(file),
+        )
+        .unwrap();
+        let mut off = 0u64;
+        while off < bytes.len() as u64 {
+            let span = mochi_format::frame::walk_frame(
+                bytes.as_slice(),
+                off,
+                &mochi_format::Limits::default(),
+            )
+            .unwrap();
+            if span.magic == registry::COMMIT_RECORD {
+                let at = off as usize + registry::SKIPPABLE_HEADER_LEN;
+                let (id, stored) = recompute(&bytes[at..off as usize + span.len as usize]);
+                assert_eq!(id, stored, "{dir}/{file} at {off}");
+                checked += 1;
+            }
+            off = span.end();
+        }
+    }
+    assert!(checked >= 9, "{checked} commits");
+}
+
+fn hex_string(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+#[test]
+fn r3_domain_separators_match_the_code() {
+    use mochi_format::digest::{self, Digest};
+    let doc = repo_file(R3);
+    let lines = section(&doc, "5. Domain separators");
+
+    // BLAKE3 scopes.
+    let code: BTreeMap<&str, (&[u8], &str)> = BTreeMap::from([
+        (
+            "FOOTER_DOMAIN",
+            (
+                digest::FOOTER_DOMAIN,
+                Digest::<digest::Footer>::scope_name(),
+            ),
+        ),
+        (
+            "CHUNK_CONTENT_DOMAIN",
+            (
+                digest::CHUNK_CONTENT_DOMAIN,
+                Digest::<digest::ChunkContent>::scope_name(),
+            ),
+        ),
+        (
+            "STORED_OBJECT_DOMAIN",
+            (
+                digest::STORED_OBJECT_DOMAIN,
+                Digest::<digest::StoredObjectScope>::scope_name(),
+            ),
+        ),
+        (
+            "DICTIONARY_DOMAIN",
+            (
+                digest::DICTIONARY_DOMAIN,
+                Digest::<digest::Dictionary>::scope_name(),
+            ),
+        ),
+        (
+            "COMMIT_ID_DOMAIN",
+            (
+                digest::COMMIT_ID_DOMAIN,
+                Digest::<digest::CommitIdScope>::scope_name(),
+            ),
+        ),
+        (
+            "PARITY_SHARD_DOMAIN",
+            (
+                digest::PARITY_SHARD_DOMAIN,
+                Digest::<digest::ParityShard>::scope_name(),
+            ),
+        ),
+        (
+            "PARITY_FRAME_DOMAIN",
+            (
+                digest::PARITY_FRAME_DOMAIN,
+                Digest::<digest::ParityFrame>::scope_name(),
+            ),
+        ),
+    ]);
+    let rows = table(&lines, 0);
+    assert_eq!(rows.len(), code.len());
+    let mut listed: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for r in &rows {
+        let (bytes, scope) = code[r[0].as_str()];
+        assert_eq!(bytes_expr(&r[1]), bytes, "{}", r[0]);
+        assert_eq!(
+            r[2].parse::<usize>().unwrap(),
+            bytes.len(),
+            "{}: length",
+            r[0]
+        );
+        assert_eq!(r[3], scope, "{}: scope name", r[0]);
+        listed.insert(bytes.to_vec());
+    }
+    let all: BTreeSet<Vec<u8>> = digest::ALL_DOMAINS.iter().map(|d| d.to_vec()).collect();
+    assert_eq!(listed, all, "R3 lists exactly ALL_DOMAINS");
+
+    // AEAD prefixes.
+    let aead: BTreeMap<&str, &[u8]> = BTreeMap::from([
+        ("KEY_WRAP_DOMAIN", digest::KEY_WRAP_DOMAIN),
+        ("OBJECT_SEAL_DOMAIN", digest::OBJECT_SEAL_DOMAIN),
+    ]);
+    let rows = table(&lines, 1);
+    assert_eq!(rows.len(), aead.len());
+    for r in &rows {
+        let bytes = aead[r[0].as_str()];
+        assert_eq!(bytes_expr(&r[1]), bytes, "{}", r[0]);
+        assert_eq!(
+            r[2].parse::<usize>().unwrap(),
+            bytes.len(),
+            "{}: length",
+            r[0]
+        );
+    }
+    assert_eq!(digest::AEAD_DOMAINS.len(), aead.len());
+
+    // The two unseparated scopes.
+    let rows = table(&lines, 2);
+    assert_eq!(rows.len(), 2);
+    for r in &rows {
+        let (bytes, scope) = match r[0].as_str() {
+            "FILE_CONTENT_DOMAIN" => (
+                digest::FILE_CONTENT_DOMAIN,
+                Digest::<digest::FileContent>::scope_name(),
+            ),
+            "TAIL_QUARANTINE_DOMAIN" => (
+                digest::TAIL_QUARANTINE_DOMAIN,
+                Digest::<digest::TailQuarantine>::scope_name(),
+            ),
+            other => panic!("{other}"),
+        };
+        assert!(bytes.is_empty(), "{}: unseparated", r[0]);
+        assert!(bytes_expr(&r[1]).is_empty(), "{}", r[0]);
+        assert_eq!(r[2], scope);
+    }
+
+    // Prefix-freeness: one zero byte, and it is the last.
+    let every: Vec<&[u8]> = digest::ALL_DOMAINS
+        .iter()
+        .chain(digest::AEAD_DOMAINS)
+        .copied()
+        .collect();
+    for d in &every {
+        assert_eq!(d.iter().filter(|b| **b == 0).count(), 1, "{d:?}");
+        assert_eq!(d.last(), Some(&0), "{d:?}");
+    }
+    for a in &every {
+        for b in &every {
+            assert!(a == b || !b.starts_with(a), "{a:?} is a prefix of {b:?}");
+        }
+    }
+}
+
+#[test]
+fn r3_separators_reproduce_the_c2_digest_vectors() {
+    let doc = repo_file(R3);
+    let lines = section(&doc, "5. Domain separators");
+    // scope name → separator, from the document alone.
+    let mut by_scope: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for n in [0, 2] {
+        for r in table(&lines, n) {
+            by_scope.insert(r[3 - usize::from(n == 2)].clone(), bytes_expr(&r[1]));
+        }
+    }
+    assert!(by_scope["file-content"].is_empty());
+    let text = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/golden/c2/vectors.txt"),
+    )
+    .unwrap();
+    let mut checked = BTreeSet::new();
+    for line in text.lines().filter(|l| l.starts_with("digest ")) {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let input = if f[2] == "-" { Vec::new() } else { hex(f[2]) };
+        let mut h = blake3::Hasher::new();
+        h.update(&by_scope[f[1]]);
+        h.update(&input);
+        assert_eq!(hex_string(h.finalize().as_bytes()), f[3], "{line}");
+        checked.insert(f[1].to_owned());
+    }
+    let expected: BTreeSet<String> = [
+        "file-content",
+        "chunk-content",
+        "stored-object",
+        "dictionary",
+        "commit-id",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    assert_eq!(checked, expected);
+}
+
+#[test]
+fn r3_schema_selection_matches_the_code() {
+    use mochi_core::commit::CommitRecord;
+    use mochi_core::manifest::{Manifest, Provenance, RewriteReason};
+    use mochi_core::object::ArchiveId;
+    use mochi_core::retention::RetentionOp;
+    use mochi_format::cbor::CborLimits;
+    use mochi_format::Limits;
+
+    let (l, c) = (Limits::default(), CborLimits::default());
+    let commit = || {
+        CommitRecord::decode(&golden_payload("c5/valid-commit-root.bin"), &l, &c)
+            .unwrap()
+            .0
+    };
+    let delta =
+        || Manifest::decode(&golden_payload("c4/valid-manifest-root-delta.bin"), &l, &c).unwrap();
+    let snapshot =
+        || Manifest::decode(&golden_payload("c4/valid-manifest-snapshot.bin"), &l, &c).unwrap();
+    let provenance = || {
+        Some(Provenance {
+            source_archive_id: ArchiveId::from_bytes([1; 32]),
+            commits: vec![(0, mochi_format::digest::CommitId::from_bytes([2; 32]))],
+            collected: vec![],
+            reason: RewriteReason::Collection,
+        })
+    };
+
+    let doc = repo_file(R3);
+    let rows = table(&section(&doc, "6. One logical structure"), 0);
+    assert_eq!(rows.len(), 9);
+    for r in &rows {
+        let want: u64 = r[2].parse().unwrap();
+        let got = match (r[0].as_str(), r[1].as_str()) {
+            ("Commit record", "the commit lists no required feature") => commit().schema_version(),
+            ("Commit record", "the commit lists required feature 1 (Encrypted)") => {
+                let mut x = commit();
+                x.required_features = vec![1];
+                x.schema_version()
+            }
+            (
+                "Recovery manifest",
+                "no retention operation, an empty retention state, no provenance, not Encrypted",
+            ) => {
+                assert_eq!(snapshot().schema_version(), delta().schema_version());
+                delta().schema_version()
+            }
+            ("Recovery manifest", "a delta with at least one retention operation") => {
+                let mut x = delta();
+                x.retention_ops.push(RetentionOp::Expire { seq: 0 });
+                x.schema_version()
+            }
+            ("Recovery manifest", "a snapshot with a non-empty retention state") => {
+                let mut x = snapshot();
+                x.retention.expired.insert(0);
+                x.schema_version()
+            }
+            ("Recovery manifest", "provenance, whether or not retention data") => {
+                let mut x = delta();
+                x.provenance = provenance();
+                let mut y = x.clone();
+                y.retention_ops.push(RetentionOp::Expire { seq: 0 });
+                assert_eq!(x.schema_version(), y.schema_version());
+                x.schema_version()
+            }
+            (
+                "Recovery manifest",
+                "lists required feature 1 (Encrypted), whatever else it holds",
+            ) => {
+                let mut x = delta();
+                x.required_features = vec![1];
+                let mut y = x.clone();
+                y.retention_ops.push(RetentionOp::Expire { seq: 0 });
+                y.provenance = provenance();
+                assert_eq!(x.schema_version(), y.schema_version());
+                x.schema_version()
+            }
+            ("Archive descriptor", "always") => mochi_core::descriptor::SCHEMA_VERSION,
+            ("Key envelope", "always") => mochi_core::keys::ENVELOPE_SCHEMA_VERSION,
+            other => panic!("unknown condition {other:?}"),
+        };
+        assert_eq!(got, want, "{} / {}", r[0], r[1]);
+        if r[3] != "—" {
+            assert!(r[3].contains("/reject-"), "{}", r[3]);
+            assert!(golden_exists(&r[3]), "{} does not exist", r[3]);
+        }
+    }
+}
+
+#[test]
+fn r3_vector_index_names_only_files_that_exist() {
+    let doc = repo_file(R3);
+    let mut named = BTreeSet::new();
+    for needle in ["7.1 Rules the code checks", "7.2 Vector index"] {
+        for line in section(&doc, needle) {
+            for token in backticked(&[line]) {
+                if token.contains('/') && (token.ends_with(".bin") || token.ends_with(".mochi")) {
+                    named.insert(token);
+                }
+            }
+        }
+    }
+    assert!(named.len() >= 80, "{} files named", named.len());
+    for rel in &named {
+        assert!(golden_exists(rel), "R3 names {rel}, which does not exist");
+    }
+    // The schemas the index covers are the schema files.
+    let rows = table(&section(&doc, "7.2 Vector index"), 0);
+    let mut schemas = BTreeSet::new();
+    for r in &rows {
+        schemas.insert(r[0].clone());
+        let rejects_are_rejects = backticked(&[r[3].as_str()])
+            .into_iter()
+            .filter(|t| t.contains('/'))
+            .all(|t| t.contains("/reject-"));
+        assert!(
+            rejects_are_rejects,
+            "{}: a Reject cell names a valid file",
+            r[1]
+        );
+        let valids_are_valid = backticked(&[r[2].as_str()])
+            .into_iter()
+            .all(|t| t.contains("/valid-"));
+        assert!(
+            valids_are_valid,
+            "{}: a Valid cell names a reject file",
+            r[1]
+        );
+    }
+    for s in &schemas {
+        assert!(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../../docs/schemas/{s}.cddl"))
+                .is_file(),
+            "{s}"
+        );
+    }
+    assert_eq!(schemas.len(), 8, "{schemas:?}");
+}
+
+#[test]
+fn r3_sidecar_layout_and_keys_match_the_code() {
+    use mochi_core::quarantine::{sidecar_name, SidecarMetadata, MAX_METADATA_LEN};
+    use mochi_format::cbor::{self, CborLimits, Value};
+    let doc = repo_file(R3);
+    let lines = section(&doc, "Appendix A");
+
+    let hash = mochi_format::digest::Digest::from_bytes([0x7A; 32]);
+    let meta = SidecarMetadata {
+        archive_id: mochi_core::object::ArchiveId::from_bytes([0xA1; 32]),
+        head_commit_id: mochi_format::digest::CommitId::from_bytes([0xC2; 32]),
+        head_seq: 7,
+        tail_offset: 4096,
+        tail_len: 100,
+        tail_hash: hash,
+        frame_magics: vec![registry::COMMIT_RECORD],
+        incomplete_final_frame: false,
+        tool: "mochi 0.1.0".into(),
+        time: "2026-10-12T01:02:03.123456789Z".into(),
+    };
+    let header = meta.header().unwrap();
+    let rows = table(&lines, 0);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0][0], "0");
+    assert_eq!(
+        bytes_expr(&rows[0][3].replace("(R1 §4)", "")),
+        registry::TAIL_QUARANTINE_MAGIC
+    );
+    assert_eq!(&header[..8], &registry::TAIL_QUARANTINE_MAGIC);
+    assert_eq!((rows[1][0].as_str(), rows[1][1].as_str()), ("8", "4"));
+    let l = u32::from_le_bytes(header[8..12].try_into().unwrap());
+    assert_eq!(header.len(), 12 + l as usize, "metadata follows the length");
+    assert_eq!(rows[2][0], "12");
+    assert!(rows[1][3].contains(&format!("{MAX_METADATA_LEN}")));
+    assert!((1..=MAX_METADATA_LEN).contains(&l));
+
+    // The name.
+    let example = "a.mochi.tail-4096-7a7a7a7a7a7a7a7a.mochiq";
+    assert!(doc.contains(&format!("`{example}`")));
+    assert_eq!(sidecar_name("a.mochi", 4096, &hash), example);
+
+    // The key set.
+    let keys: BTreeSet<u64> = table(&lines, 1)
+        .iter()
+        .map(|r| r[0].parse().unwrap())
+        .collect();
+    let Value::Map(entries) = cbor::decode(&header[12..], &CborLimits::default()).unwrap() else {
+        panic!("a map")
+    };
+    assert_eq!(
+        keys,
+        entries.iter().map(|(k, _)| *k).collect::<BTreeSet<_>>()
+    );
+}

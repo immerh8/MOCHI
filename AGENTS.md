@@ -35,6 +35,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ci/check-invariants.sh                       # mechanical checks for rules clippy can't express
 ci/tar-interop.sh "$PWD/target/debug/mochi" zstd tar bsdtar   # C10: real zstd, GNU tar, bsdtar over a TAR-compatible archive
+cargo test -p mochi-testkit --test r3_cddl      # R3: docs/schemas/*.cddl against the golden bytes (cddl crate, dev-dependency of mochi-testkit only)
 cargo run -p mochi-cli -- --help
 cargo run --release -p mochi-testkit --example c5_append_bench   # §27 append benchmark (C5)
 cargo run --release -p mochi-testkit --example c12_parity_bench   # §27 recovery-record benchmark (C12, R6); --quick skips 512 MiB

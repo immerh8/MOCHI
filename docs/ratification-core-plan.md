@@ -435,6 +435,17 @@ edit one separator, one schema rule, and one CDDL key, and see each fail.
 
 **PR:** "R3: canonical serialization draft, complete CDDL, mechanical CDDL check".
 
+**Status (2026-10-12).** Done as specified: R3 draft, every `docs/schemas/*.cddl` complete
+and standalone, `r3_cddl.rs`, and the drift tests; the results and the 9 open items are
+in the plan §6 status bullet and in R3 §9 and §10. Two things differ from the text
+above. (1) Codec rejections are not all `RECORD_INVALID`: truncation is `TRUNCATED` and a
+limit overrun is `LIMIT_EXCEEDED` (R3 §1.2, open item 1). (2) The `cddl` crate needs
+`ast-span`, `ast-comments`, `ast-parent`, `json`, and `additional-controls` enabled to
+compile its CBOR validator, and `[profile.dev.package.cddl] opt-level = 3` to run in
+seconds; both are in the workspace manifests and explained in R3 §8. The crate matches a
+bare range over a byte string by its length and `.regexp` as a search, so the schemas
+use `uint .le N` and list the timestamp pattern as a hand check (R3 §7.1).
+
 ### W14 — R6 benchmark and freeze review (S–M) ∥
 
 1. **Benchmark** `crates/mochi-testkit/examples/c12_parity_bench.rs`, written up in

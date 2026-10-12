@@ -8,6 +8,17 @@
 ; B.1 D2. The CBOR-native envelope (D11) is keys 0, 1, and 4, plus the frame
 ; kind and frame length. Identity is the archive ID.
 ;
+; This file is complete and standalone: every rule it uses is defined here.
+;
+; Rules CDDL cannot state, checked by the code (R3 section 7 lists them):
+;   * features are strictly increasing (ENVELOPE_INVALID) and every entry is
+;     known (UNSUPPORTED_FEATURE); the Encrypted feature (1) cannot be
+;     combined with the TAR-compatible constraint (DESCRIPTOR_INVALID);
+;   * the draft identifier is the one this build reads (a different number,
+;     or null, is refused as a draft from another batch or a ratified
+;     archive), and the wire generation is 2;
+;   * the redundancy suite is known (UNSUPPORTED_FEATURE).
+;
 ; The descriptor holds only creation-time facts. It never locates key
 ; envelopes (§14.3: commits do), and it never changes. Changing a
 ; creation-time constraint, including adopting the Encrypted profile, means
