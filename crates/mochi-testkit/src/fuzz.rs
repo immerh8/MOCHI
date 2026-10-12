@@ -357,6 +357,7 @@ pub fn exercise_archive_open(data: &[u8]) -> ArchiveOpenOutcome {
     damage_assessment_is_sound(&storage, &opts);
     repair_plan_is_sound(&storage, &opts);
     deep_verify_is_sound(&storage, &opts);
+    parity_scan_is_sound(&storage, data, &opts);
     let Ok(head) = mochi_core::publish::open_head(&storage, &opts) else {
         return ArchiveOpenOutcome::Refused;
     };
@@ -766,6 +767,30 @@ pub fn exercise_sealed_object(data: &[u8]) {
     }
 }
 
+/// The parity scan (D21) on anything: never a panic or an `Err` other than
+/// I/O; the healed view has the file's size; with nothing rebuilt it reads
+/// the file exactly, and what was rebuilt is at most the shards it counts.
+fn parity_scan_is_sound(
+    storage: &crate::SimStorage,
+    data: &[u8],
+    opts: &mochi_core::publish::ReadOptions,
+) {
+    use mochi_core::storage::ReadStorage;
+    let job = crate::archive::Job::new();
+    let (scan, view) = mochi_core::parity::scan(storage, opts, &job.ctx())
+        .expect("a parity scan of in-memory bytes does not fail");
+    assert_eq!(view.size().unwrap(), data.len() as u64);
+    if scan.shards_rebuilt() == 0 {
+        assert!(!view.is_patched());
+    }
+    assert!(
+        view.patched_bytes()
+            <= scan
+                .shards_rebuilt()
+                .saturating_mul(mochi_format::parity::MAX_SHARD)
+    );
+}
+
 pub fn exercise_all(data: &[u8]) {
     exercise_walker(data);
     exercise_footer(data);
@@ -779,4 +804,74 @@ pub fn exercise_all(data: &[u8]) {
     exercise_tar_stream(data);
     exercise_key_envelope(data);
     exercise_sealed_object(data);
+    exercise_parity_frame(data);
+}
+
+/// Parity frames and reconstruction (C12, spec Annex B.2.11 D21; R6). A
+/// frame that decodes re-encodes to the same bytes (one encoding per frame);
+/// anything else is refused, never a panic. Then input-derived group shapes
+/// and erasure patterns: up to m lost shards always rebuild exactly, and more
+/// is `BeyondCapacity` whenever a data shard is among them.
+pub fn exercise_parity_frame(data: &[u8]) {
+    use mochi_format::error::{FormatError, ParityFault};
+    use mochi_format::parity::{
+        accumulate, decode_frame, encode_frame, reconstruct, ParityFrameInfo,
+    };
+    let limits = fuzz_limits();
+    if let Ok(f) = decode_frame(data, &[1], &limits) {
+        let info = ParityFrameInfo::of(&f);
+        let hashes: Vec<[u8; 32]> = (0..f.layout.data_shards)
+            .map(|j| f.shard_hash(j).expect("the table holds k hashes"))
+            .collect();
+        let again = encode_frame(
+            &info,
+            &[1],
+            f.group,
+            f.parity_index,
+            &hashes,
+            f.shard,
+            &Limits::WRITER_DEFAULT,
+        )
+        .expect("a decoded frame re-encodes");
+        assert_eq!(again, data, "one encoding per parity frame");
+    }
+
+    let [a, b, c, d, body @ ..] = data else {
+        return;
+    };
+    let k = usize::from(*a % 8) + 1;
+    let m = usize::from(*b) % k + 1;
+    let erased = u32::from(u16::from_le_bytes([*c, *d])) & ((1u32 << (k + m)) - 1);
+    let len = (body.len() / k).clamp(1, 64);
+    let shards: Vec<Vec<u8>> = (0..k)
+        .map(|j| {
+            (0..len)
+                .map(|i| body.get(j * len + i).copied().unwrap_or(0))
+                .collect()
+        })
+        .collect();
+    let mut parity = vec![vec![0u8; len]; m];
+    for (j, s) in shards.iter().enumerate() {
+        accumulate(&mut parity, j as u64, s).expect("j < k ≤ 128");
+    }
+    let mut all: Vec<Option<Vec<u8>>> = shards
+        .iter()
+        .chain(&parity)
+        .enumerate()
+        .map(|(i, s)| (erased & (1 << i) == 0).then(|| s.clone()))
+        .collect();
+    let lost = erased.count_ones() as usize;
+    let data_lost = (0..k).any(|i| erased & (1 << i) != 0);
+    match reconstruct(k, m, &mut all, len) {
+        Ok(()) => {
+            assert!(lost <= m || !data_lost, "rebuilt beyond capacity");
+            for (i, s) in shards.iter().enumerate() {
+                assert_eq!(all[i].as_ref(), Some(s), "rebuilt shard {i} differs");
+            }
+        }
+        Err(e) => {
+            assert_eq!(e, FormatError::Parity(ParityFault::BeyondCapacity));
+            assert!(lost > m && data_lost, "refused within capacity");
+        }
+    }
 }

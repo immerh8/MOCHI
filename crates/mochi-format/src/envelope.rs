@@ -7,9 +7,9 @@
 //!   `mochi-core`; they call the shared obligation checks in this module
 //!   ([`check_required_features`], [`RecordIdentity::check`]) so the two
 //!   encodings cannot drift apart.
-//! * **Opaque payloads** (catalog images now; dictionaries and parity later)
-//!   carry the **binary envelope v0** below at the start of the skippable
-//!   payload.
+//! * **Opaque payloads** (catalog images and parity frames; dictionaries
+//!   later) carry the **binary envelope v0** below at the start of the
+//!   skippable payload.
 //!
 //! # Binary envelope v0 (Annex B.2.2)
 //!
@@ -20,7 +20,7 @@
 //! | 0 | 4 | Header length | = 80 + 8·n |
 //! | 4 | 2 | Envelope version | = 0 |
 //! | 6 | 2 | Record schema version | catalog image: = SQLite `user_version` |
-//! | 8 | 4 | Payload encoding | 0 = SQLite 3 image; others unregistered |
+//! | 8 | 4 | Payload encoding | 0 = SQLite 3 image; 1 = parity shard (D21); others unregistered |
 //! | 12 | 4 | n = required-feature count | ≤ 64 |
 //! | 16 | 8 | Payload length | = frame payload − header length |
 //! | 24 | 32 | Archive ID | |
@@ -68,18 +68,23 @@ const SQLITE_USER_VERSION_AT: usize = 60;
 pub enum PayloadEncoding {
     /// 0: a SQLite 3 database image; payload starts `SQLite format 3\0`.
     SqliteImage,
+    /// 1: a parity shard of the Redundancy profile (spec Annex B.2.11 D21;
+    /// layout in [`crate::parity`]); payload starts `MOCHI2-PARITY\0\0\0`.
+    ParityShard,
 }
 
 impl PayloadEncoding {
     pub const fn code(self) -> u32 {
         match self {
             PayloadEncoding::SqliteImage => 0,
+            PayloadEncoding::ParityShard => 1,
         }
     }
 
     pub const fn from_code(code: u32) -> Option<Self> {
         match code {
             0 => Some(PayloadEncoding::SqliteImage),
+            1 => Some(PayloadEncoding::ParityShard),
             _ => None,
         }
     }
@@ -88,15 +93,26 @@ impl PayloadEncoding {
     pub const fn signature(self) -> &'static [u8] {
         match self {
             PayloadEncoding::SqliteImage => &registry::SQLITE_IMAGE_SIGNATURE,
+            PayloadEncoding::ParityShard => &registry::PARITY_SIGNATURE,
         }
     }
 }
 
-/// Frame kinds that carry a binary envelope. Only catalog images exist in
-/// this build; dictionaries (C8) and parity (C12) join when their payload
-/// encodings are registered.
+/// Frame kinds that carry a binary envelope: catalog images and parity
+/// frames (D21). Dictionaries join when their payload encoding is
+/// registered.
 pub const fn carries_binary_envelope(kind: FrameKind) -> bool {
-    matches!(kind, FrameKind::MetadataDelta)
+    payload_encoding_for(kind).is_some()
+}
+
+/// The one payload encoding each enveloped kind carries: a catalog image
+/// is never a parity shard, and the reverse.
+pub const fn payload_encoding_for(kind: FrameKind) -> Option<PayloadEncoding> {
+    match kind {
+        FrameKind::MetadataDelta => Some(PayloadEncoding::SqliteImage),
+        FrameKind::ParityObject => Some(PayloadEncoding::ParityShard),
+        _ => None,
+    }
 }
 
 /// The identity a record must share with the commit that references it
@@ -223,8 +239,12 @@ pub fn encode_binary_record(
     known_features: &[u64],
     writer_limits: &Limits,
 ) -> Result<Vec<u8>> {
-    if !carries_binary_envelope(kind) {
-        return Err(FormatError::Envelope(EnvelopeFault::KindHasNoEnvelope));
+    match payload_encoding_for(kind) {
+        None => return Err(FormatError::Envelope(EnvelopeFault::KindHasNoEnvelope)),
+        Some(e) if e != envelope.encoding => {
+            return Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch))
+        }
+        Some(_) => {}
     }
     let n = envelope.required_features.len() as u64;
     if n > BINARY_ENVELOPE_MAX_FEATURES {
@@ -282,6 +302,8 @@ fn check_payload_encoding(envelope: &BinaryEnvelope, payload: &[u8]) -> Result<(
                 return Err(FormatError::Envelope(EnvelopeFault::SchemaVersionMismatch));
             }
         }
+        // The parity layout is checked by `crate::parity`, which owns it.
+        PayloadEncoding::ParityShard => {}
     }
     Ok(())
 }
@@ -351,6 +373,9 @@ pub fn decode_binary_record<'a>(
     }
     let encoding = PayloadEncoding::from_code(u32_at(8))
         .ok_or(FormatError::Envelope(EnvelopeFault::UnknownPayloadEncoding))?;
+    if payload_encoding_for(kind) != Some(encoding) {
+        return Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch));
+    }
 
     let required_features: Vec<u64> = head[BINARY_ENVELOPE_FIXED_LEN..]
         .chunks_exact(8)

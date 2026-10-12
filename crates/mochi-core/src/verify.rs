@@ -245,7 +245,9 @@ pub fn classify(code: ErrorCode) -> ErrorClass {
         | ErrorCode::RetentionUnresolved
         | ErrorCode::ReferenceInvalid
         | ErrorCode::FreshnessFailed
-        | ErrorCode::ProfileViolation => ErrorClass::Violation,
+        | ErrorCode::ProfileViolation
+        | ErrorCode::ParityDamaged
+        | ErrorCode::ParityCapacityExceeded => ErrorClass::Violation,
         ErrorCode::UnsupportedFeature | ErrorCode::ProfileChangeUnsupported => {
             ErrorClass::Unsupported
         }
@@ -354,6 +356,125 @@ fn now() -> Option<String> {
 /// Verify the archive in `src` (see the module documentation). Read-only;
 /// a job; never `Err`: every outcome is in the report.
 pub fn verify(src: &dyn ReadStorage, opts: &VerifyOptions, ctx: &JobContext<'_>) -> Verification {
+    verify_with(src, opts, ctx, true)
+}
+
+/// What the Redundancy profile's check found (Annex B.2.11 D21).
+struct ParityOutcome {
+    /// Protection is reduced: parity frames damaged, shards unchecked, or
+    /// commits whose parity could not be reached.
+    reduced: bool,
+    /// A group's damage exceeds its parity.
+    beyond_capacity: bool,
+    /// Shards were rebuilt; `Some(true)` when the rebuilt view verifies.
+    healed_verifies: Option<bool>,
+    rebuilt: u64,
+}
+
+/// The Redundancy profile's check (D21), at `stored_integrity` and deeper:
+/// every commit's parity frames, and every data shard of its protected range
+/// against their hash tables. Damage within capacity is rebuilt in an
+/// overlay, and the overlay is verified again (without parity) to decide
+/// whether the archive is recoverable. `None`: the archive promises no
+/// parity.
+fn check_parity(
+    src: &dyn ReadStorage,
+    opts: &VerifyOptions,
+    ctx: &JobContext<'_>,
+    run: &mut Run,
+) -> Option<ParityOutcome> {
+    // A readable descriptor without the constraint: nothing to check. An
+    // unreadable one may itself be what parity repairs.
+    if let Some(d) = crate::parity::read_descriptor_raw(src, &opts.read) {
+        d.redundancy?;
+    }
+    let (scan, view) = match crate::parity::scan(src, &opts.read, ctx) {
+        Ok(v) => v,
+        Err(e) => {
+            run.error("parity", &e);
+            return None;
+        }
+    };
+    scan.declared_percent?;
+    for (seq, why) in scan.violations() {
+        run.violation = true;
+        run.finding(
+            ErrorCode::ProfileViolation,
+            Severity::Error,
+            format!("commit {seq}: {why} (Annex B.2.11 D21)"),
+        );
+    }
+    for c in &scan.commits {
+        if c.frames_damaged > 0 || c.shards_unchecked > 0 {
+            let what = if c.frames == 0 {
+                "no parity frame is intact".to_owned()
+            } else {
+                format!(
+                    "{} of {} parity frames are damaged",
+                    c.frames_damaged, c.frames
+                )
+            };
+            let unchecked = if c.shards_unchecked > 0 {
+                format!(
+                    "; {} data shards have no intact frame to check them against",
+                    c.shards_unchecked
+                )
+            } else {
+                String::new()
+            };
+            run.finding(
+                ErrorCode::ParityDamaged,
+                Severity::Warning,
+                format!(
+                    "commit {}: {what}{unchecked}. The committed bytes are not affected; \
+                     the protection they had is reduced",
+                    c.seq
+                ),
+            );
+        }
+    }
+    for (seq, g) in scan.beyond_capacity() {
+        run.finding(
+            ErrorCode::ParityCapacityExceeded,
+            Severity::Error,
+            format!(
+                "commit {seq}, parity group {}: {} damaged shards, {} intact parity shards; \
+                 the damage in {} cannot be rebuilt from parity",
+                g.group,
+                g.damaged_shards,
+                g.intact_parity,
+                g.ranges
+                    .iter()
+                    .map(|(o, n)| format!("[{o}, {})", o + n))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    if let Some(why) = &scan.stopped {
+        run.skip("parity of earlier commits", why.clone());
+    }
+    let beyond_capacity = scan.beyond_capacity().next().is_some();
+    let healed_verifies = (view.is_patched() && !beyond_capacity).then(|| {
+        let again = verify_with(&view, opts, ctx, false);
+        let d = &again.report.dimensions;
+        d.get(&Dimension::Integrity) == Some(&Status::Pass)
+            && d.get(&Dimension::Recoverability) != Some(&Status::Fail)
+    });
+    Some(ParityOutcome {
+        reduced: scan.frames_damaged() > 0 || scan.shards_unchecked() > 0 || scan.stopped.is_some(),
+        beyond_capacity,
+        healed_verifies,
+        rebuilt: scan.shards_rebuilt(),
+    })
+}
+
+fn verify_with(
+    src: &dyn ReadStorage,
+    opts: &VerifyOptions,
+    ctx: &JobContext<'_>,
+    parity: bool,
+) -> Verification {
     let mut report = Report::new(opts.level);
     report.started_at = now();
     report.freshness_anchor = opts.anchor.kind();
@@ -400,6 +521,7 @@ pub fn verify(src: &dyn ReadStorage, opts: &VerifyOptions, ctx: &JobContext<'_>)
     let mut damage = None;
     let mut freshness = Status::Unknown;
     let mut key_availability = Status::Unknown;
+    let mut parity_outcome = None;
 
     match depth(opts.level) {
         None => {
@@ -423,7 +545,24 @@ pub fn verify(src: &dyn ReadStorage, opts: &VerifyOptions, ctx: &JobContext<'_>)
                 head = c.head;
                 damage = c.damage;
             }
-            run.report.scope = Some(scope_text(opts, d, run.tar_streams, run.keyless));
+            if parity && d >= 3 {
+                parity_outcome = check_parity(src, opts, ctx, &mut run);
+            }
+            let mut scope = scope_text(opts, d, run.tar_streams, run.keyless);
+            if let Some(p) = &parity_outcome {
+                scope.push_str(&format!(
+                    " Redundancy profile (D21): every reachable commit's parity frames checked \
+                     and its protected range hashed shard by shard; {} damaged shards rebuilt in \
+                     memory{}.",
+                    p.rebuilt,
+                    match p.healed_verifies {
+                        Some(true) => ", and the rebuilt archive verifies: run `mochi repair`",
+                        Some(false) => ", but the rebuilt archive still does not verify",
+                        None => "",
+                    }
+                ));
+            }
+            run.report.scope = Some(scope);
         }
     }
 
@@ -454,6 +593,24 @@ pub fn verify(src: &dyn ReadStorage, opts: &VerifyOptions, ctx: &JobContext<'_>)
                 } else if !run.data_complete || run.operational {
                     s = Status::rollup([s, Status::Unknown]);
                 }
+                s
+            }
+        }
+    };
+    // D21: what parity can and cannot rebuild decides recoverability over
+    // the damage found above; damaged parity reduces protection.
+    let recoverability = match &parity_outcome {
+        None => recoverability,
+        Some(p) if p.beyond_capacity => Status::Fail,
+        Some(p) => {
+            let s = if p.healed_verifies == Some(true) {
+                Status::Degraded
+            } else {
+                recoverability
+            };
+            if p.reduced {
+                Status::rollup([s, Status::Degraded])
+            } else {
                 s
             }
         }

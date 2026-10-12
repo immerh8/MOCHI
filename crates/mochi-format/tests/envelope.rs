@@ -272,10 +272,16 @@ fn obligation_header_length() {
 fn obligation_payload_encoding() {
     let frame = valid(vec![]);
     let mut p = frame[8..].to_vec();
-    set_u32(&mut p, 8, 1);
+    set_u32(&mut p, 8, 2);
     assert_eq!(
         decode(&p).unwrap_err(),
         fault(EnvelopeFault::UnknownPayloadEncoding)
+    );
+    // 1 is registered (a parity shard, D21), but not for a catalog image.
+    set_u32(&mut p, 8, 1);
+    assert_eq!(
+        decode(&p).unwrap_err(),
+        fault(EnvelopeFault::EncodingKindMismatch)
     );
 
     let mut p = frame[8..].to_vec();

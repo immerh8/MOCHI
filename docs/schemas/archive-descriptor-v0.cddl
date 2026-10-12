@@ -30,6 +30,15 @@ draft = uint / null
 
 constraints = {
   0: bool,                    ; TAR-compatible profile (Annex B.1 D4), fixed at creation
+  ? 1: redundancy,            ; Redundancy profile (Annex B.2.11 D21), fixed at creation; absent = none
+}
+
+; The recovery record: every commit writes parity frames laid out from
+; these (D21; ratification artifact R6). An unknown suite => refuse
+; (UNSUPPORTED_FEATURE); a percentage outside 1..100 => DESCRIPTOR_INVALID.
+redundancy = {
+  0: uint,                    ; suite: 1 = Cauchy Reed-Solomon over GF(2^8), layout rule v0
+  1: 1..100,                  ; parity percentage r
 }
 
 ; Advisory only. Readers MUST NOT raise their own limits from these values.

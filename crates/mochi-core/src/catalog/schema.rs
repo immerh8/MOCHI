@@ -15,9 +15,10 @@
 //! elsewhere (`docs/ratification/R4-catalog-ddl-draft.md` §4): key envelopes
 //! are their own frames, listed by every commit; retention operations and
 //! state, key operations and state, and preserved attributes (D6) are in the
-//! recovery manifests; no dictionaries, parity, or search extraction exist
-//! yet. `commits` carries only ordering; commit IDs and record fields are in
-//! the commit records.
+//! recovery manifests; parity groups are described by the parity frames
+//! themselves (D21); no dictionaries or search extraction exist yet.
+//! `commits` carries only ordering; commit IDs and record fields are in the
+//! commit records.
 
 /// SQLite `application_id` for MOCHI catalogs: ASCII `MOCH`. Draft (R4).
 pub const APPLICATION_ID: i32 = 0x4D4F_4348;

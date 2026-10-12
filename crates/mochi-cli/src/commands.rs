@@ -440,10 +440,13 @@ pub fn create(env: &mut Env<'_>, a: &CreateArgs) -> Result<u8> {
         chunk_size: a.chunk_size,
         zstd_level: a.compression_level,
         record_time: true,
-        profile: (a.tar_compatible || a.encrypted).then_some(Profile {
-            tar_compatible: a.tar_compatible,
-            encrypted: a.encrypted,
-        }),
+        profile: (a.tar_compatible || a.encrypted || a.recovery_record.is_some()).then_some(
+            Profile {
+                tar_compatible: a.tar_compatible,
+                encrypted: a.encrypted,
+                redundancy: a.recovery_record,
+            },
+        ),
         kdf: None,
         ..WriterOptions::default()
     };

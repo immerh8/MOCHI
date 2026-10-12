@@ -1,4 +1,4 @@
-//! Drift test for the draft ratification artifacts R1, R2, R4, and R7
+//! Drift test for the draft ratification artifacts R1, R2, R4, R6, and R7
 //! (`docs/ratification/`, plan §6, next-work-plan W8).
 //!
 //! The drafts are written from the code. Every table they mark *(checked)* is
@@ -264,6 +264,7 @@ fn r1_registered_byte_strings_match_the_code() {
             "SQLITE_IMAGE_SIGNATURE",
             &registry::SQLITE_IMAGE_SIGNATURE[..],
         ),
+        ("PARITY_SIGNATURE", &registry::PARITY_SIGNATURE[..]),
     ]
     .into_iter()
     .collect();
@@ -298,12 +299,15 @@ fn r1_record_schema_versions_match_the_code() {
                 .map(|v| u64::from(*v))
                 .collect(),
             FrameKind::EncryptedObject => vec![u64::from(mochi_format::seal::SEAL_VERSION)],
+            FrameKind::ParityObject => {
+                vec![u64::from(mochi_format::parity::RECORD_SCHEMA_VERSION)]
+            }
             other => panic!("R1 §5 lists {other:?}, which has no record schema"),
         };
         assert_eq!(listed, code, "{kind:?}");
         assert!(kinds.insert(format!("{kind:?}")), "{kind:?} listed twice");
     }
-    assert_eq!(kinds.len(), 6);
+    assert_eq!(kinds.len(), 7);
     // "Required-feature identifiers registered: **1**".
     assert_eq!(mochi_format::seal::FEATURE_ENCRYPTED, 1);
     for known in [
@@ -713,4 +717,154 @@ fn r7_report_fields_match_the_serialized_report() {
         .flat_map(|r| r[0].split(", ").map(str::to_owned).collect::<Vec<_>>())
         .collect();
     assert_eq!(listed, keys(&value), "docs/report-schema-v1.md");
+}
+
+// ---- R6: erasure coding -------------------------------------------------------------
+
+const R6: &str = "docs/ratification/R6-erasure-coding-draft.md";
+
+#[test]
+fn r6_suite_and_layout_constants_match_the_code() {
+    use mochi_format::parity;
+    let doc = repo_file(R6);
+    let suite = table(&section(&doc, "1. Suite 1"), 0);
+    let value = |name: &str| -> String {
+        suite
+            .iter()
+            .find(|r| r[0] == name)
+            .unwrap_or_else(|| panic!("R6 §1 lacks {name}"))[1]
+            .clone()
+    };
+    assert_eq!(
+        value("Suite identifier"),
+        parity::SUITE_CAUCHY_GF256.to_string()
+    );
+    assert!(
+        value("Field").contains(&format!("{:#X}", parity::FIELD_POLYNOMIAL).replace("0X", "0x"))
+    );
+    assert_eq!(
+        value("Data shards per group, k"),
+        format!("1 to {}", parity::MAX_DATA_SHARDS)
+    );
+    // The coefficient formula, at its corners.
+    assert!(value("Coefficient").contains("1 / (p ⊕ (128 + j))"));
+    for (p, j) in [(0u64, 0u64), (127, 127), (5, 77)] {
+        let x = (p as u8) ^ ((128 + j) as u8);
+        assert_eq!(
+            parity::gf_mul(parity::coefficient(p, j).unwrap(), x),
+            1,
+            "C[{p}][{j}] is the inverse of p ⊕ (128 + j)"
+        );
+    }
+
+    let rows = table(&section(&doc, "2. Layout rule"), 0);
+    let code: BTreeMap<&str, u64> = [
+        ("TARGET_SHARDS", parity::TARGET_SHARDS),
+        ("SHARD_ALIGN", parity::SHARD_ALIGN),
+        ("MIN_SHARD", parity::MIN_SHARD),
+        ("MAX_SHARD", parity::MAX_SHARD),
+        ("MAX_DATA_SHARDS", parity::MAX_DATA_SHARDS),
+        ("MIN_PERCENT", u64::from(parity::MIN_PERCENT)),
+        ("MAX_PERCENT", u64::from(parity::MAX_PERCENT)),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(rows.len(), code.len());
+    for r in &rows {
+        assert_eq!(r[1], code[r[0].as_str()].to_string(), "{}", r[0]);
+    }
+}
+
+#[test]
+fn r6_frame_layout_matches_an_encoded_frame() {
+    use mochi_format::parity::{self, Layout, ParityFrameInfo};
+    let doc = repo_file(R6);
+    let rows = table(&section(&doc, "4. Parity frame"), 0);
+    let layout = Layout::compute(0x0102, 1000, 50).unwrap();
+    let info = ParityFrameInfo {
+        layout,
+        archive_id: [0xA1; 32],
+        seq: 3,
+        transaction_id: [0xB2; 16],
+        required_features: Vec::new(),
+    };
+    let k = layout.data_shards as usize;
+    let s = layout.shard_size as usize;
+    let hashes = vec![[0xC3; 32]; k];
+    let shard = vec![0xD4; s];
+    let frame = parity::encode_frame(
+        &info,
+        &[],
+        0,
+        0,
+        &hashes,
+        &shard,
+        &mochi_format::Limits::default(),
+    )
+    .unwrap();
+    let body = &frame[registry::SKIPPABLE_HEADER_LEN + envelope::BINARY_ENVELOPE_FIXED_LEN..];
+    let mut at = 0;
+    for r in &rows {
+        let size = match r[1].as_str() {
+            "32·k" => 32 * k,
+            "s" => s,
+            n => n.parse().unwrap(),
+        };
+        let offset = match r[0].as_str() {
+            "56 + 32·k" => 56 + 32 * k,
+            "56 + 32·k + s" => 56 + 32 * k + s,
+            n => n.parse().unwrap(),
+        };
+        assert_eq!(offset, at, "{}: fields are contiguous", r[2]);
+        let expected: Vec<u8> = match r[2].as_str() {
+            "Signature" => registry::PARITY_SIGNATURE.to_vec(),
+            "Suite" => parity::SUITE_CAUCHY_GF256.to_le_bytes().to_vec(),
+            "Parity percentage" => 50u16.to_le_bytes().to_vec(),
+            "Shard size" => (s as u32).to_le_bytes().to_vec(),
+            "Range offset" => 0x0102u64.to_le_bytes().to_vec(),
+            "Range length" => 1000u64.to_le_bytes().to_vec(),
+            "Group count" => (layout.groups as u32).to_le_bytes().to_vec(),
+            "Data shards per group" => (k as u16).to_le_bytes().to_vec(),
+            "Parity shards per group" => (layout.parity_shards as u16).to_le_bytes().to_vec(),
+            "Group index" | "Parity index" => 0u32.to_le_bytes().to_vec(),
+            "Data-shard hashes" => hashes.concat(),
+            "Parity shard" => shard.clone(),
+            "Frame digest" => {
+                let end = frame.len() - 32;
+                mochi_format::digest::parity_frame_digest(
+                    mochi_format::digest::StoredObjectBytes::new(&frame[..end]),
+                )
+                .as_bytes()
+                .to_vec()
+            }
+            other => panic!("unknown field {other}"),
+        };
+        assert_eq!(body[at..at + size], expected[..], "{}", r[2]);
+        at += size;
+    }
+    assert_eq!(at, body.len(), "the table covers the whole payload");
+    assert_eq!(frame.len() as u64, layout.frame_len(0));
+}
+
+#[test]
+fn r6_byte_strings_match_the_code() {
+    let doc = repo_file(R6);
+    let rows = table(&section(&doc, "4. Parity frame"), 1);
+    let code: BTreeMap<&str, &[u8]> = [
+        ("PARITY_SIGNATURE", &registry::PARITY_SIGNATURE[..]),
+        (
+            "PARITY_SHARD_DOMAIN",
+            mochi_format::digest::PARITY_SHARD_DOMAIN,
+        ),
+        (
+            "PARITY_FRAME_DOMAIN",
+            mochi_format::digest::PARITY_FRAME_DOMAIN,
+        ),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(rows.len(), code.len());
+    for r in &rows {
+        assert_eq!(hex(&r[1]), code[r[0].as_str()], "{}", r[0]);
+    }
 }

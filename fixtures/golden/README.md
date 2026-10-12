@@ -18,8 +18,13 @@ Rules (AGENTS.md):
 
 `b2/`: the Annex B.2 wire batch (drafts, R1/R2).
 
-* 15 binary envelope v0 frames (`*-envelope-*`): one valid catalog-image
+* 16 binary envelope v0 frames (`*-envelope-*`): one valid catalog-image
   envelope and one reject per D11 obligation, each with its own fault.
+  Changed deliberately in C12 (2026-10-12): payload encoding 1 became the
+  parity shard (D21), so `reject-envelope-payload-encoding` now uses the
+  unregistered value 2 (one byte differs), and
+  `reject-envelope-payload-encoding-kind` (encoding 1 in a catalog-image
+  frame, `EncodingKindMismatch`) is new.
   Reader expectations are in `vectors.txt`. Payloads are minimal SQLite
   headers (signature and `user_version` only).
 * 19 archive descriptor v0 frames (`*-descriptor-*`): two valid (minimal; with
@@ -215,3 +220,24 @@ too short.
 passphrases) that must keep verifying at every level with either passphrase, and keylessly at
 `stored_integrity`. Not compared with a fresh build (zstd, SQLite, random nonces). Frozen when
 first written; `write_c11_golden_files` refuses to overwrite a differing file.
+
+## C12 vectors
+
+Redundancy profile (spec Annex B.2.11 D21; ratification artifact R6; plan C12).
+Written by `c12_golden.rs`.
+
+`c12/valid-parity-frame.bin` and `c12/reject-parity-*.bin` (7): the frames of
+`docs/ratification/R6-vectors/vectors.json` (an independent implementation's
+output) as files, compared byte for byte with the JSON; each reject is refused
+for its stated reason (digest, unknown suite, layout fields, signature, the
+wrong payload encoding). They seed the `parity_frame` fuzz target.
+
+`c12/valid-archive-recovery-record.mochi`: the scripted three-commit history
+with a 50 % recovery record. It must keep verifying clean, and its parity must
+keep decoding. `c12/damaged-within-capacity.mochi`: two data shards of commit 0
+(one holds the descriptor) and two of the head damaged; the parity scan must
+rebuild it to the valid archive **byte for byte**. `c12/damaged-beyond-capacity.mochi`:
+three data shards of the head's group damaged, one more than its parity; it must
+be reported (`PARITY_CAPACITY_EXCEEDED`) and left exactly as it is. Not compared
+with a fresh build (zstd and SQLite output). Frozen when first written;
+`write_c12_golden_files` refuses to overwrite a differing file.

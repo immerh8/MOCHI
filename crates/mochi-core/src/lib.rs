@@ -38,6 +38,7 @@ pub mod job;
 pub mod keys;
 pub mod manifest;
 pub mod object;
+pub mod parity;
 pub mod publish;
 pub mod quarantine;
 pub mod read;

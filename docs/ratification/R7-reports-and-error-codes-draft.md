@@ -134,10 +134,12 @@ order codes were added.
 | `ATTRIBUTE_NOT_RESTORED` | 3 | operational | C6 | Restore: a promised attribute could not be applied; content restored |
 | `REFERENCE_INVALID` | 1 | violation | C7 | An object reference does not resolve, or a delta references outside the baseline view (Q64) |
 | `FRESHNESS_FAILED` | 1 | violation | C7 | The verified history does not contain the freshness anchor (D8) |
-| `PROFILE_VIOLATION` | 1 | violation | C10 | A TAR-compatible archive's stream does not match its commits (D19) |
+| `PROFILE_VIOLATION` | 1 | violation | C10 | A TAR-compatible archive's stream does not match its commits (D19); or a Redundancy-profile commit's parity frames verify but disagree with it, or it has none (D21) |
 | `KEY_UNAVAILABLE` | 3 | operational | C11 | No passphrase given, or none opens a key envelope (D20 item 9); never a finding |
 | `KDF_COST_BELOW_DEFAULT` | 3 | operational | R5 | Informational finding only: a key envelope's Argon2id cost is below the writer default (D20 item 14); never raised as an error |
 | `LIMIT_NOT_DEFAULT` | 3 | operational | R7 | Informational finding only: a reader limit in force differs from its default (`--limit`); `expected` is the default, `observed` the value (§20.5 "configuration"); never raised as an error |
+| `PARITY_DAMAGED` | 1 | violation | C12 | A parity frame is damaged or missing, or a group has no intact frame (D21). Reported as a warning finding: integrity unaffected, recoverability `DEGRADED` |
+| `PARITY_CAPACITY_EXCEEDED` | 1 | violation | C12 | A parity group has more damaged shards than intact parity shards (D21): recoverability `FAIL`; repair leaves out what the damage touches, never rebuilding wrong bytes |
 
 Codes reported only as findings carry their meaning through the report (`findings[]`
 and the dimension they set); their "exit as error" column applies only if a command

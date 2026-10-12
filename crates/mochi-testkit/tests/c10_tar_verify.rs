@@ -30,6 +30,7 @@ const LEVELS: [VerificationLevel; 5] = [
 const TAR: Profile = Profile {
     tar_compatible: true,
     encrypted: false,
+    redundancy: None,
 };
 
 fn tar_options() -> WriterOptions {

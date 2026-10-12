@@ -231,6 +231,7 @@ fn the_unencrypted_descriptor_cannot_be_combined_with_encryption_flags() {
     opts.profile = Some(mochi_core::descriptor::Profile {
         tar_compatible: true,
         encrypted: true,
+        redundancy: None,
     });
     let e = ArchiveWriter::create(SimStorage::new(), Box::new(SeqIds::new(1)), opts).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidArgument);

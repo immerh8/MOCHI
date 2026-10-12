@@ -61,6 +61,8 @@ pub fn exit_code_for(code: ErrorCode) -> u8 {
         | ErrorCode::ReferenceInvalid
         | ErrorCode::FreshnessFailed
         | ErrorCode::ProfileViolation
+        | ErrorCode::ParityDamaged
+        | ErrorCode::ParityCapacityExceeded
         | ErrorCode::MalformedFrame
         | ErrorCode::Truncated
         | ErrorCode::FooterInvalid

@@ -57,7 +57,7 @@ this table is not a frame (`MALFORMED_FRAME`). *(checked)*
 | `0x184D2A5C` | `KeyEnvelope` | yes | — | Key envelope, deterministic CBOR, Encrypted profile only (R5 §3) |
 | `0x184D2A5D` | `CompressionDictionary` | yes | — | Not written. No dictionaries in 1.0 builds yet |
 | `0x184D2A5E` | `FooterHistory` | yes | — | Not written. Optional accelerator, never a recovery authority (§22) |
-| `0x184D2A5F` | `ParityObject` | yes | — | Not written until the Redundancy profile (C12, R6) |
+| `0x184D2A5F` | `ParityObject` | yes | — | Parity frame, Redundancy profile only (D21, R6): binary envelope v0 with payload encoding 1, written between a commit frame and its footer |
 
 Rules the code enforces for every kind:
 
@@ -76,6 +76,10 @@ Rules the code enforces for every kind:
   (`FrameKind::magic` is `None` for `Reserved`).
 - **No bare bytes between frames.** A file is the descriptor frame followed by
   frames only; footers are frames too (§8.4).
+- **Between a commit frame and its footer** a writer puts nothing, or, in the
+  Redundancy profile, exactly that commit's parity frames (D21; §8.4's amendment
+  allows it: the commit frame precedes its footer). Readers that do not check parity
+  walk over them like any unreferenced frame.
 
 ## 3. Commit footer
 
@@ -108,6 +112,7 @@ them. *(checked)*
 | `FOOTER_MAGIC` | `4d4f43484932 0000` | Footer payload bytes 0–7 |
 | `TAIL_QUARANTINE_MAGIC` | `4d4f434849 5451 00` | Offset 0 of a `.mochiq` tail-quarantine sidecar (D14, B.2.2). Never inside an archive; its first four bytes are not a frame magic |
 | `SQLITE_IMAGE_SIGNATURE` | `53514c69746520666f726d6174203300` | Binary-envelope payload encoding 0 must start with these 16 bytes (R2) |
+| `PARITY_SIGNATURE` | `4d4f434849322d504152495459000000` | Binary-envelope payload encoding 1, a parity shard (D21, R6), must start with these 16 bytes |
 
 ## 5. Record schema versions this build reads
 
@@ -124,6 +129,7 @@ draft and is refused and named legacy (§26). *(checked)*
 | `0x184D2A5C` | Key envelope | 0 | Always 0 |
 | `0x184D2A50` | Catalog image (binary envelope v0) | 0 | Record schema = the image's SQLite `user_version`, 0 (R4) |
 | `0x184D2A59` | Sealed object | 0 | Always 0 (R5, frozen) |
+| `0x184D2A5F` | Parity frame (binary envelope v0) | 0 | Always 0 (R6) |
 
 Required-feature identifiers registered: **1** = the Encrypted profile, suite 1 (D20,
 R5 frozen). No other identifier is assigned; any other listed feature is refused

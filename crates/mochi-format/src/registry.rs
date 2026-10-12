@@ -52,6 +52,11 @@ pub const TAIL_QUARANTINE_MAGIC: [u8; 8] = *b"MOCHITQ\0";
 /// image (spec Annex B.2.2): the 16-byte SQLite header string.
 pub const SQLITE_IMAGE_SIGNATURE: [u8; 16] = *b"SQLite format 3\0";
 
+/// Signature of binary-envelope payload encoding 1, a parity shard of the
+/// Redundancy profile (spec Annex B.2.11 D21; R6): ASCII `MOCHI2-PARITY` and
+/// three zero bytes.
+pub const PARITY_SIGNATURE: [u8; 16] = *b"MOCHI2-PARITY\0\0\0";
+
 /// What a registered magic number denotes. A magic match is only ever a
 /// *candidate* (spec §8.5); this classifies candidates, it does not validate them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

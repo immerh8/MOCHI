@@ -201,6 +201,7 @@ fn archive() -> SimStorage {
             profile: Some(mochi_core::descriptor::Profile {
                 tar_compatible: true,
                 encrypted: false,
+                redundancy: None,
             }),
             ..test_options()
         },

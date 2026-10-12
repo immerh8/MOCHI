@@ -277,6 +277,8 @@ Generic Zstandard decoding does not constitute decryption or meaningful file ext
 
 Adds erasure coding with a fully specified coding suite and shard-placement policy.
 
+**[Amendment, Annex B.2.11 D21: decided; implemented (plan C12); R6 drafted, not frozen]** The profile is a per-archive *recovery record*: each commit writes Cauchy Reed–Solomon parity (GF(2^8)) over the stored bytes it adds, between its commit frame and its footer, at a percentage chosen at creation (descriptor constraint 1). It is not a required feature: readers that do not check parity read the archive unchanged.
+
 ### 7.5 Segmented profile
 
 Stores immutable segments independently while preserving stable object identities and verified location mappings.
@@ -292,7 +294,7 @@ Adds independent inventory, recovery copies, retention enforcement, scheduled ve
 | Core (7.1) | **Required** | Everything else depends on it |
 | TAR-stream compatibility (7.2) | **Target**, writer-selectable | Preserves v1.2's zero-tool extraction goal, now as a restricted, tested profile. Default on/off is Annex B, D4 |
 | Encrypted (7.3) | **Target** | Password-protected archives are a baseline expectation for a WinRAR-class product. Blocked on the cryptographic ratification item (Section 28) |
-| Redundancy (7.4) | **Target** | Equivalent of WinRAR's "recovery record." Blocked on the erasure-coding ratification item |
+| Redundancy (7.4) | **Target** | Equivalent of WinRAR's "recovery record." Designed and implemented (Annex B.2.11 D21, plan C12); the erasure-coding ratification item R6 is drafted with independent vectors and freezes after review |
 | Segmented (7.5) | **Post-1.0 (1.x)** | Includes split volumes. WinRAR users commonly expect multi-volume archives; see Annex B, D5 |
 | Preservation (7.6) | **Not in 1.0** | Requires an independently protected inventory and recovery copies, which a desktop archiver does not provide |
 | Concurrent preparation (12.5) | **Post-1.0** | Core serializes publication; the 1.0 writer is single-writer |
@@ -519,7 +521,7 @@ MOCHI separates immutable content records from ordered namespace operations.
 
 Exact DDL is a release-gated companion artifact.
 
-**[Amendment, ratification R4 decision of 2026-10-11 (delegated)]** The table above lists *logical* records. A record MAY live outside the SQLite catalog when another structure is its authority. In 1.0, `dictionaries`, `parity_groups`, and `search_documents` do not exist yet; key envelopes are their own frames listed by every commit, with key operations and state in the recovery manifests (B.2.10); retention operations and state are in the recovery manifests (D18); and the preserved attributes of `file_versions` (Section 10.4.1, D6) are in the recovery manifests only, so restoring attributes needs the segment's manifests, not only the head's image. The exact catalog DDL, and where each logical record lives, are in ratification artifact R4.
+**[Amendment, ratification R4 decision of 2026-10-11 (delegated)]** The table above lists *logical* records. A record MAY live outside the SQLite catalog when another structure is its authority. In 1.0, `dictionaries` and `search_documents` do not exist yet; `parity_groups` is not a record at all, because group membership follows from the commit chain and the descriptor (B.2.11, D21 item 7); key envelopes are their own frames listed by every commit, with key operations and state in the recovery manifests (B.2.10); retention operations and state are in the recovery manifests (D18); and the preserved attributes of `file_versions` (Section 10.4.1, D6) are in the recovery manifests only, so restoring attributes needs the segment's manifests, not only the head's image. The exact catalog DDL, and where each logical record lives, are in ratification artifact R4.
 
 ### 10.2 Namespace operations
 
@@ -801,6 +803,8 @@ For a conventional `(k + m, k)` erasure-coded group, recovery requires at least 
 
 The design MUST NOT promise repair beyond the suite's tested capacity.
 
+**[Amendment, Annex B.2.11 D21]** Suite 1, the layout rule, the frame layout, shard integrity, and the reconstruction procedure are defined there and in R6. The cross-check below against a catalog `parity_groups` record is **replaced**: every parity frame self-describes its suite, `k`, `m`, and range, every frame of a commit must agree with the others and with the commit chain and descriptor, and no catalog record exists (D21 item 7), so parity survives the loss of every catalog.
+
 **[1.0 integration]** *Carried from v1.2 (Proposed).* A parity object SHOULD self-describe its coding suite, `k`, `m`, and the object range it protects, and readers MUST cross-check that description against the catalog's `parity_groups` record — so either can rebuild the other if one is lost. v1.2's rule that parity must not span a compaction boundary becomes simpler here: compaction always writes a new representation (Section 18.2), so parity for it is regenerated against the new layout, and the old representation's parity stays valid for the old representation during its safety period. Cauchy Reed–Solomon remains the candidate suite; v1.2's `m/k` guidance of about 10–20% is an operational suggestion, not a format guarantee.
 
 ### 15.2 Protection coverage
@@ -814,6 +818,8 @@ Parity policy MUST explicitly state coverage for:
 - Key envelopes.
 
 Parity MUST NOT be the sole protection for its own only surviving configuration metadata.
+
+**[Amendment, Annex B.2.11 D21]** The 1.0 coverage policy is the table in D21 item 3: content objects, metadata, recovery manifests, commit records, key envelopes, and the descriptor are covered by the parity of the commit that wrote them; each footer by the next commit's; the head's footer and parity frames themselves by none; no dictionaries are written. The configuration is in the descriptor and in every parity frame, outside every protected range.
 
 ### 15.3 Suggested preservation policy
 
@@ -1129,7 +1135,7 @@ Recovery proceeds from least invasive to most invasive sources:
 3. Use verified checkpoints and metadata chains.
 4. Use recovery manifests.
 5. Retrieve verified alternate objects from independent copies.
-6. Reconstruct missing objects using available parity.
+6. Reconstruct missing objects using available parity. **[Amendment, Annex B.2.11 D21]** In this build repair takes this step first, rebuilding into an in-memory overlay that steps 1–4 then read; damage beyond a group's parity is reported (`PARITY_CAPACITY_EXCEEDED`) and never rebuilt.
 7. Perform bounded frame scanning and salvage if structured recovery is insufficient.
 
 Footer history is an accelerator, not a sole source of truth.
@@ -1490,6 +1496,7 @@ Each decision blocks the listed work until recorded in this annex. D1–D9 are r
 | D18 | **Decided by the owner on 2026-10-07 (plan C9); wire format: recovery-manifest schema 2.** Retention is expiry plus legal holds; collection and compaction write a new archive with a new archive ID and provenance; the source is never removed automatically. See B.2.8 | — | C9; D4 (desktop retention UI); C14 `snapshot`, `gc`, `compact` |
 
 | D19 | **Decided [delegated 2026-10-08]; no wire change.** The TAR-stream compatibility profile (spec 7.2) is written by emitting, per commit with at least one put, one complete POSIX pax TAR stream whose non-content bytes live in ordinary data chunks that no extent references (*stream-only chunks*). See B.2.9 | — | C10; C9 (GC accounting, rewrites keep the profile); C7 (`PROFILE_VIOLATION`); desktop "create" dialog (D4) |
+| D21 | **Decided [delegated 2026-10-12]; wire format: parity frame v0 (binary-envelope payload encoding 1), descriptor constraint 1; no required feature.** The Redundancy profile (spec 7.4, 15) writes, per commit, Cauchy Reed–Solomon parity over GF(2^8) of the stored bytes from the parent's footer to the end of the commit frame, between the commit frame and its footer, at a percentage fixed at creation. See B.2.11 | — | C12; R6; C8 step 6; desktop "create" dialog (D5) |
 | D20 | **Decided [delegated 2026-10-09]; wire format: key envelope v0, sealed object v0, commit record schema 2, recovery-manifest schema 3, required feature 1.** The Encrypted profile (spec 7.3, 14) seals data chunks, catalog images, and manifests with XChaCha20-Poly1305 under one random data key per archive, wrapped per passphrase (Argon2id) in key envelopes that every commit record lists. See B.2.10 | — | C11 and `rekey`; R5; desktop passphrase flows |
 
 Status of the open questions from the original v1.2 review: chunk-hash ordering — resolved (9.2); concurrent writers — resolved for Core (12.5); `content_index` schema — superseded, DDL is a ratification artifact (10.1); version-byte mapping — reframed by Section 26 and D1; Windows attribute defaults — D6.
@@ -1529,7 +1536,7 @@ An entry moves to B.1 only when its implementation tasks are complete and its ga
    - a complete snapshot manifest (kind 1).
 
    Commit 0 is always a checkpoint.
-3. **Authoritative state.** Every mutation of state that a reader, verifier, or GC relies on is a manifest operation, and a snapshot manifest covers all of that state. Derived, rebuildable state (search documents, §19.4) is excluded. Roots, holds, retention changes, dictionaries, key-envelope references, and parity membership join both manifest kinds in the phases that introduce them, each as a new manifest schema version.
+3. **Authoritative state.** Every mutation of state that a reader, verifier, or GC relies on is a manifest operation, and a snapshot manifest covers all of that state. Derived, rebuildable state (search documents, §19.4) is excluded. Roots, holds, retention changes, dictionaries, key-envelope references, and parity membership join both manifest kinds in the phases that introduce them, each as a new manifest schema version. **[Amendment, D21]** Parity membership turned out not to be state: it is a function of the commit chain and the descriptor (B.2.11 item 7), so no manifest carries it.
 4. **Replay.** Snapshot *c* is built by applying the delta manifests after base *b*, in sequence order, to *b*'s checkpoint.
    - Each manifest applies atomically: on any failure the catalog is unchanged and replay stops.
    - Operations apply in array order, with validity checked against the commit's completed state.
@@ -1574,7 +1581,7 @@ An entry moves to B.1 only when its implementation tasks are complete and its ga
 
 **D11 — Record envelopes (plan O16).** The §8.3 envelope has two encodings, by amendment of §8.3:
 - **Deterministic-CBOR records** (commit, manifest, descriptor): required keys inside the record body.
-- **Opaque payloads** (catalog images now; dictionaries and parity later): the binary envelope header defined in B.2.2.
+- **Opaque payloads** (catalog images and parity frames; dictionaries later): the binary envelope header defined in B.2.2. A parity frame is referenced by no record, so its integrity scope is its own digest (B.2.11 item 6).
 
 Each §8.3 field has one validation obligation, enforced identically for both encodings:
 
@@ -1658,6 +1665,7 @@ No object contains the ID of the commit that references it. The commit ID covers
 | Archive descriptor v0 | `0x184D2A57`, offset 0 | `docs/schemas/archive-descriptor-v0.cddl` |
 | Commit record v2, manifest v3, key envelope v0 (Encrypted profile only; D20) | `0x184D2A51`, `0x184D2A58`, `0x184D2A5C` | `commit-record-v2.cddl`, `recovery-manifest-v3.cddl`, `key-envelope-v0.cddl` |
 | Sealed object v0 (Encrypted profile only; D20) | `0x184D2A59` | Binary layout in B.2.10 item 5 |
+| Parity frame v0 (Redundancy profile only; D21) | `0x184D2A5F` | Binary envelope v0, payload encoding 1, + layout in B.2.11 item 5 (R6) |
 | Catalog image | `0x184D2A50` | Binary envelope v0 (below) + SQLite image |
 | Tail-quarantine sidecar v0 | Not in the archive | `docs/schemas/tail-quarantine-v0.cddl` |
 
@@ -1714,7 +1722,7 @@ Archives from before this batch have no descriptor and are rejected as legacy dr
 | 0 | 4 | Header length | = 80 + 8·n |
 | 4 | 2 | Envelope version | = 0 |
 | 6 | 2 | Record schema version | For a catalog image: equals the image's SQLite `user_version` |
-| 8 | 4 | Payload encoding | 0 = SQLite 3 database image (payload starts `SQLite format 3\0`); other values unregistered |
+| 8 | 4 | Payload encoding | 0 = SQLite 3 database image (payload starts `SQLite format 3\0`); 1 = parity shard (payload starts `MOCHI2-PARITY\0\0\0`; D21); other values unregistered. Each enveloped kind carries exactly one: 0 in `0x184D2A50`, 1 in `0x184D2A5F` |
 | 12 | 4 | n = required-feature count | ≤ 64 |
 | 16 | 8 | Payload length | = frame payload length − header length |
 | 24 | 32 | Archive ID | |
@@ -1804,6 +1812,7 @@ Every mandatory checkpoint must fit within all of the limits above, so archive s
 - **D10.6** (2026-10-03 and 2026-10-04). Parent traversal offset versus base footer hint (Q17, Q23); one descriptor per segment (Q16).
 - **D12** (2026-10-04). Placement note tying the single descriptor to D10.6.
 - **§7.3, §14.1** (2026-10-09). Pointers to D20 (B.2.10), the cryptographic profile this section required. B.2.2's wire-layout table lists the Encrypted-profile structures.
+- **§7.4, §10.1, §15.1, §15.2, §22 step 6, D10 item 3, D11** (2026-10-12). Pointers to D21 (B.2.11); §15.1's catalog `parity_groups` cross-check is replaced by the frames' self-description checked against the commit chain and descriptor. B.2.2 registers payload encoding 1 and lists the parity frame.
 - **B.2.3, B.2.4** (2026-10-05, from the T32 measurements). Storage-bound terms defined (ΣΔ, *B*₀, *B*_forced); α and *F* defaults confirmed; measured catalog and decoded-CBOR memory; B.2.4's estimates replaced by measurements.
 
 #### B.2.6 Evidence and release gates
@@ -1851,6 +1860,11 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - Without a key, stored-integrity verification passes while content levels, Recoverability, and Key availability are `UNKNOWN`; with the key, everything passes.
   - The dedup-equality leak exists and is asserted. Secrets never appear in `Debug` output or errors.
   - Hostile KDF parameters are refused before any allocation. Fuzz targets cover the key-envelope and sealed-object decoders.
+- **G11 Redundancy profile (D21, B.2.11 item 15).** Evidence in CI since 2026-10-12 (tests listed in B.2.11 item 15 and R6 §8); **not met** until the R6 review runs and freezes R6.
+  - The R6 vectors, from an independent implementation, reproduce in CI and match the implementation byte for byte.
+  - ≤ *m* damaged shards per group rebuild bit-identically, in every commit at once; *m* + 1 is `PARITY_CAPACITY_EXCEEDED` and nothing is rewritten.
+  - Parity survives the loss of the whole catalog image; the descriptor and earlier footers are rebuilt; a contiguous burst spreads across groups.
+  - Damaged parity is `PARITY_DAMAGED` with integrity unaffected; forged frames are `PROFILE_VIOLATION`. A fuzz target covers the frame decoder and reconstruction.
 
 #### B.2.7 Writer lock (D17; decided by the owner 2026-10-06, plan Q54)
 
@@ -1975,6 +1989,40 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 (h) Converting an archive to or from the Encrypted profile by rewrite is not offered (D12).
 
 **Implementation notes (C11, 2026-10-09; accepted at the R5 freeze).** The implementation follows items 1 to 15. Where the text left a choice, the code chose as listed in `docs/c11-encrypted.md` ("Decisions made in the implementation"): low-level reads unlock from the commit's own envelopes while the head is opened strictly (item 10); "checked wherever manifests are replayed with a key" (item 10) is met for every commit by `verify` and `fsck`, and for the opened commit by appends, baseline recovery, and `segment_state`, but not by a plain read open, which never reads S(*b*) (D10.9); a keyless run's Integrity is `UNKNOWN` above `stored_integrity` (item 12); and the shipped CLI has no KDF-cost option (item 1: writers expose no other parameters). The commit schema's data region has a minimum length of 73 bytes (`8 + 48 + 1 + 16`: skippable header, sealed header, one ciphertext byte, tag), not 72 as the CDDL first said.
+
+#### B.2.11 Redundancy profile (D21; decided by delegation 2026-10-12, plan C12)
+
+**Status: implemented (plan C12); ratification artifact R6 is a draft with independent vectors, not frozen.** `docs/ratification/R6-erasure-coding-draft.md` states the suite and layouts below as checked tables, and `R6-vectors/` holds vectors from an independent implementation that CI regenerates. R6 freezes after a review, as R5 did; until then the layouts may change, and archives with a recovery record are draft-compatible only (§28). This entry fills the gaps §15.1 lists (field and matrix, `k`, `m`, ordering, sizes and padding, shard integrity, protected representation, reconstruction and validation) and states the §15.2 coverage.
+
+1. **What it is.** A *recovery record*, in WinRAR's terms: each commit writes Reed–Solomon parity over the stored bytes it adds, in the same file, so that damage to those bytes can be rebuilt up to a stated capacity. It is chosen at creation as a **parity percentage** *r*, 1 to 100, recorded as descriptor constraint 1, `{0: suite, 1: r}` (`archive-descriptor-v0.cddl`; absent = no recovery record), and fixed for the archive's life (D12). It is **not a required feature**: no record references a parity frame, so a reader that does not check parity reads the archive exactly as before. A reader that does not know the suite named in the descriptor refuses the descriptor (`UNSUPPORTED_FEATURE`); a percentage outside 1–100 is `DESCRIPTOR_INVALID`.
+2. **Suite 1: Cauchy Reed–Solomon over GF(2^8).** The field is GF(2^8) with the polynomial x^8 + x^4 + x^3 + x^2 + 1 (`0x11D`); addition is XOR. A group has *k* data shards and *m* parity shards, 1 ≤ m ≤ k ≤ 128. Parity shard *p* is Σⱼ C[p][j] · Dⱼ, byte by byte, with C[p][j] = 1 / (p ⊕ (128 + j)). Every square submatrix of a Cauchy matrix is invertible, so the code is MDS: **any k of a group's k + m shards rebuild it**. Because p < 128 ≤ 128 + j, no coefficient is 0 or 1, so no parity shard is a byte copy of a data shard (a copied footer could otherwise make an interrupted tail look like a damaged commit, D14 (b)).
+3. **Protected range and coverage (§15.2).** Commit *n* protects the stored bytes [*a*, *b*): *a* is its parent's footer offset (0 for commit 0), *b* the end of its commit frame. The representation protected is **stored bytes** (§15.1), so parity works without keys.
+
+   | Structure | Covered by |
+   |---|---|
+   | Content objects (data chunks, stream-only chunks, sealed chunks) | The parity of the commit that wrote them |
+   | Metadata (catalog images), recovery manifests, key envelopes | The parity of the commit that wrote them |
+   | Commit records | Their own commit's parity |
+   | The archive descriptor | Commit 0's parity (it is at offset 0) |
+   | Commit footers | The **next** commit's parity. The head's footer is covered by none (item 8) |
+   | Dictionaries | None are written in 1.0; one written in a commit's range would be covered like any object |
+   | Parity frames | None: each carries its own digest (item 6), and a damaged frame only reduces capacity |
+
+   §15.2's rule that parity must not be the sole protection of its own configuration holds: the configuration is in the descriptor and repeated in **every** parity frame, and no parity frame is inside any protected range.
+4. **Layout rule** (normative; R6 has vectors). With *L* = *b* − *a*: shard size *s* = min(1 MiB, max(⌈*L* / 1024⌉↑64, min(16 KiB, *L*↑64))), where *x*↑64 rounds up to a multiple of 64; real data shards *N* = ⌈*L* / *s*⌉, shard *i* covering [*a* + *i*·*s*, …) zero-padded to *s* (padding is hashed, never stored); groups *G* = ⌈*N* / 128⌉; **shard *i* belongs to group *i* mod *G*** at index *i* div *G*, so a contiguous burst spreads across groups; *k* = ⌈*N* / *G*⌉, and an index past *N* is a virtual all-zero shard; *m* = ⌈*k* · *r* / 100⌉. *G* must fit 32 bits.
+5. **Placement and frame layout.** Parity frames are skippable frames of kind `0x184D2A5F`, written **between the commit frame and its footer** (§8.4's amendment requires only that the commit frame precede its footer), *G*·*m* of them, all of one length, group by group (frame *j* is parity shard *j* mod *m* of group *j* div *m*). A frame's payload is a binary envelope v0 (B.2.2) with **payload encoding 1** and record schema version 0, carrying the identity (archive ID, sequence, transaction ID) and the required features of the commit whose footer follows, then (integers little-endian): signature `MOCHI2-PARITY` and three zero bytes (16); suite (u16); *r* (u16); *s* (u32); *a* (u64); *L* (u64); *G* (u32); *k* (u16); *m* (u16); group index (u32); parity index (u32); the group's *k* data-shard hashes (32 bytes each, index order); the parity shard (*s* bytes); the frame digest (32). Each frame repeats its group's hash table, so any one intact frame locates damage in the group.
+6. **Integrity.** A data-shard hash is BLAKE3 over `MOCHI2-PARITY-SHARD` 0x00 and the padded shard; the frame digest is BLAKE3 over `MOCHI2-PARITY-FRAME` 0x00 and every frame byte before it, skippable header included (both separators are defined once, in `digest.rs`). The digest is checked before any field is read. **Parity is a repair aid, never an integrity anchor**: no hash of the commit chain covers it, a rebuilt byte is used only if it hashes to the table, and everything that reads rebuilt bytes still checks the chain's own hashes (§9.2), which no parity frame can satisfy for bytes the writer did not write.
+7. **Cross-checks (replaces §15.1's `parity_groups` cross-check).** Every frame of a commit must agree with every other (layout, identity, features, the group's hash table) and with the commit: its identity and required features, *a* = the parent's footer offset (0 at commit 0), *a* + *L* = the end of the commit frame, the layout = item 4's rule for the descriptor's *r*, the frames filling exactly [end of commit frame, footer), and each frame in its slot. A frame that verifies but disagrees is **`PROFILE_VIOLATION`** (integrity `FAIL`), and nothing from that commit's frames is used. A commit of a Redundancy-profile archive with no parity frames is the same violation. There is **no `parity_groups` catalog record and no manifest state**: which shards a group holds is a function of the commit chain and the descriptor, so it is neither mutable state (D10 item 3) nor a §10.1 catalog table in 1.0, and parity survives the loss of every catalog.
+8. **Reconstruction.** From the head back to commit 0: parse (not validate) the footer, because its digest covers a commit frame that may itself need rebuilding; find a frame of the commit that decodes; check every real data shard against the table; for each group with damaged shards and at least *k* intact shards in all, solve for the damaged data shards and keep each only if it hashes to its table entry; lay the rebuilt shards over the file in memory; then validate the footer and read the commit record through the rebuilt bytes, apply item 7, and continue at the parent's footer, which this commit's range covered. **The head's footer is in no range**: when it is damaged, the head is found by the forward footer scan as without parity, and the head commit is never republished (D14: a missing footer looks exactly like an interrupted write).
+9. **Capacity, and nothing beyond it** (§15.1). Per group: any *m* damaged shards, data or parity. A contiguous burst over up to about *m* · *G* shards (≈ *r* % of the range) lands at most *m* shards in each group. A group with more damaged data shards than intact parity shards is **`PARITY_CAPACITY_EXCEEDED`**: recoverability `FAIL`, nothing in the group is rewritten, and repair leaves out what the damage touches (C8 rule 2). Never wrong bytes.
+10. **Writer.** After appending the commit frame, the writer reads the range back one group at a time (memory (*m* + 1)·*s*, at most 129 MiB at 100 %), writes the frames, and only then syncs and writes the footer (§12.2 steps 6–8 unchanged). A crash before the footer leaves complete frames and no footer: an eligible tail (D14). Cost: about *r* % of each commit's stored bytes in parity shards plus 176 + 8·*n* + 32·*k* bytes per frame (*n* required features). No speed is claimed (§27).
+11. **Profiles together.** Encrypted (D20): parity is plaintext over sealed stored bytes, a linear function of ciphertext that reveals nothing the ciphertext does not, and keyless `verify` checks it. TAR-compatible (D19): parity frames are skippable, so the commits' streams are unchanged. Both combinations are allowed. **Fixed at creation**: asking an append for another percentage, or to add or drop the record, is `PROFILE_CHANGE_UNSUPPORTED` (exit 4); rewrites (`compact`, `gc apply`, `repair apply`, `rekey --reencrypt`) keep the source's profile, percentage included, and write fresh parity for the new archive.
+12. **Verification and repair.** `verify` checks parity at `stored_integrity` and deeper (it reads every byte) and stays read-only: rebuilding happens in memory. A damaged or missing frame, or a group with no intact frame, is **`PARITY_DAMAGED`** (warning; integrity unaffected; recoverability at most `DEGRADED`). When damage was found and parity rebuilt all of it, the rebuilt view is verified again without parity; if it verifies, recoverability is `DEGRADED` ("run `mochi repair`"), not `FAIL`. Repair takes ladder step 6 **first**: it rebuilds what it can into the overlay, runs steps 1–4 over the rebuilt bytes, records the scan in the plan (`parity`), and writes a new archive (C8 rule 1) with fresh parity.
+13. **CLI.** `mochi create --recovery-record PERCENT`. The desktop option is plan D5.
+14. **What it does not claim.** It is not a copy or a backup (§15.3): a lost, overwritten, or deleted file loses its recovery record with it. A file cut short loses its newest parity first, and the head's footer is unprotected (item 8). It is not authentication: whoever can rewrite the file can rewrite its parity. No wording calls an archive "safe" or "backed up" because it has a recovery record (§23.3).
+15. **Evidence (gate G11).** The R6 vectors, from an independent implementation (bit-by-bit field arithmetic), reproduce in CI and match the Rust code byte for byte; every erasure pattern of up to *m* rebuilds for all *k* ≤ 6; ≤ *m* damaged shards per group rebuild bit-identically in every commit at once, including the descriptor, a commit record, a catalog image, and an earlier footer; *m* + 1 is reported and left unchanged; the whole catalog image destroyed is rebuilt; a contiguous burst spreads across groups; damaged and forged frames are reported as above; Encrypted and TAR-compatible archives carry parity; a fuzz target covers the frame decoder and reconstruction; golden fixtures `c12/` must keep verifying and healing.
+
+**Open items recorded here.** (a) The head commit's footer is unprotected (item 8); writing a second copy of the footer, or the §22 footer-history accelerator, would cover it at the cost of a wire change. (b) Damage at the end of the file reaches the newest parity first; a trailer copy or sidecar is a possible 1.x addition. (c) Each frame repeats its group's 32-byte shard hashes (32·*k* bytes), which dominates the overhead of small commits (a 100 KB commit at 10 % carries one 16 KiB shard plus 400 bytes of table); a separate index frame would shrink it at the cost of a single point of failure. (d) GF(2^8) bounds a group at 128 + 128 shards; larger commits use more groups rather than a larger field. (e) No throughput benchmark accompanies this slice, and none is claimed.
 
 ## Annex C. Document Lineage **[1.0 integration]**
 

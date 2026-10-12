@@ -168,7 +168,7 @@ for writing (`open_image_writable`); the image bytes are never modified.
 |---|---|
 | `dictionaries` | None: no dictionaries are written. `chunk_dependencies` reserves the `dictionary` kind |
 | `key_envelopes` | Key envelopes are their own frames (R5 §3), listed by every commit (commit key 11); key operations and state are in the manifests (manifest key 13). Nothing in the catalog |
-| `parity_groups` | None until C12 (R6) |
+| `parity_groups` | Not a record: each parity frame self-describes its group, checked against the commit chain and the descriptor (D21 item 7, R6 §5) |
 | `retained_roots` | Retention operations and state are in the recovery manifests (manifest key 11, D18), rebuilt by replay |
 | `search_documents` | None: 1.0 search reads the namespace and file versions directly (C13); no extraction index |
 

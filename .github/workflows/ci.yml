@@ -54,6 +54,17 @@ jobs:
       - name: AGENTS.md invariants
         shell: bash
         run: bash ci/check-invariants.sh
+      # R6: the vectors come from an independent Python implementation of
+      # the parity suite; regenerating them must reproduce the checked-in
+      # file, which the Rust tests read (tests/r6_vectors.rs).
+      - name: R6 vectors reproduce (independent implementation)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r6"
+          "$RUNNER_TEMP/r6/bin/pip" install --quiet blake3==1.0.11
+          "$RUNNER_TEMP/r6/bin/python" docs/ratification/R6-vectors/gen_vectors.py \
+            | diff - docs/ratification/R6-vectors/vectors.json
 
   ui:
     # Desktop frontend (plan D0, O1, K9): Node 24 LTS, pnpm from
@@ -188,7 +199,7 @@ jobs:
           # delta-segment vectors whose heads exercise the segment
           # assertions. Archives reach ~150 KB, above libFuzzer's default
           # max_len.
-          - { target: archive_open,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11", args: "-max_len=400000" }
+          - { target: archive_open,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11 ../fixtures/golden/c12", args: "-max_len=400000" }
           # Their own vectors: commit records (c5/*.bin), descriptors (b2).
           - { target: commit_decode,     seeds: "../fixtures/golden/c5", args: "" }
           - { target: descriptor_decode, seeds: "../fixtures/golden/b2", args: "" }
@@ -197,6 +208,8 @@ jobs:
           # C11 (D20): key envelopes and sealed objects.
           - { target: key_envelope,      seeds: "../fixtures/golden/c11", args: "" }
           - { target: sealed_object,     seeds: "../fixtures/golden/c11", args: "" }
+          # C12 (D21): parity frames and reconstruction.
+          - { target: parity_frame,      seeds: "../fixtures/golden/c12", args: "-max_len=4096" }
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly toolchain
