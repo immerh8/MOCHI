@@ -9,8 +9,8 @@
 #![allow(clippy::needless_range_loop)]
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
+use mochi_core::commit::Metadata;
 use mochi_core::damage::{assess_damage, Effect, Readability};
 use mochi_core::publish::{
     commit_history, open_at_footer, open_head, ArchiveWriter, CatalogSource, CheckpointPolicy,
@@ -21,6 +21,8 @@ use mochi_core::status::{Dimension, Status, VerificationLevel};
 use mochi_core::ErrorCode;
 use mochi_format::cbor::Value;
 use mochi_format::footer::FOOTER_FRAME_LEN;
+use mochi_format::registry;
+use mochi_format::repr::StoredObject;
 use mochi_testkit::archive::{read_state, test_options, Job};
 use mochi_testkit::forge::{self, Forge};
 use mochi_testkit::replay::{
@@ -468,14 +470,36 @@ fn t17_invalid_record_is_not_treated_as_damage() {
     );
 }
 
-/// The frozen bare-image archive's images are refused at the envelope as
-/// `UNSUPPORTED_FEATURE` (checklist Q12). That is not stored damage, so the
-/// intact snapshot manifest must not stand in for it.
+/// An image that is not in a binary envelope (the pre-T10 form) is refused at
+/// the envelope as `UNSUPPORTED_FEATURE` (checklist Q12). That is not stored
+/// damage, so the intact snapshot manifest must not stand in for it. The
+/// frozen bare-image archive is a draft-1 archive and is now refused at its
+/// descriptor (K13), so the case is forged on a draft-2 archive.
 #[test]
 fn t17_unsupported_image_does_not_fall_back() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/golden/c5/reject-archive-bare-image.mochi");
-    let s = SimStorage::from_bytes(std::fs::read(path).unwrap());
+    let steps = history_long();
+    let s = write(CheckpointPolicy::EveryCommit, &steps[..2]);
+    let h = commit_history(&s, &opts()).unwrap();
+    let mut rec = h[1].commit.clone();
+    let Metadata::Checkpoint { image, snapshot } = rec.metadata else {
+        panic!("checkpoint policy EveryCommit");
+    };
+    let mut f = Forge::new(s.contents());
+    // The real image's SQLite bytes (envelope header 80 bytes, no features)
+    // behind a bare skippable header: what a pre-envelope writer stored.
+    let at = image.offset as usize;
+    let sqlite = f.bytes[at + 8 + 80..at + image.stored_len as usize].to_vec();
+    f.bytes.truncate(h[1].commit_offset as usize);
+    let mut frame = registry::METADATA_DELTA.to_le_bytes().to_vec();
+    frame.extend_from_slice(&(sqlite.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&sqlite);
+    let bare = f.append_object(&StoredObject::from_loaded(frame));
+    rec.metadata = Metadata::Checkpoint {
+        image: bare,
+        snapshot,
+    };
+    let _forged = f.append_commit(&rec);
+    let s = f.storage();
     assert_eq!(
         open_head(&s, &opts()).unwrap_err().code,
         ErrorCode::UnsupportedFeature
@@ -483,6 +507,7 @@ fn t17_unsupported_image_does_not_fall_back() {
     let job = Job::new();
     let r = assess_damage(&s, &opts(), &job.ctx()).unwrap();
     let head = r.commits.last().unwrap();
+    assert_eq!(head.seq, 1);
     assert_eq!(
         head.readable,
         Readability::Unreadable {

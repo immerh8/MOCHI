@@ -52,9 +52,11 @@ use crate::object::ArchiveId;
 /// Descriptor schema version (key 0).
 pub const SCHEMA_VERSION: u64 = 0;
 
-/// Draft identifier this build writes and reads (key 3): 1 = the Annex B.2
-/// wire batch. A ratified archive carries null.
-pub const DRAFT_ID: u64 = 1;
+/// Draft identifier this build writes and reads (key 3): 2 = the layout
+/// frozen at the format freeze (gate G12; R1 to R4; plan K13). Draft 1 was the
+/// Annex B.2 wire batch before the freeze (R4 `user_version` 0) and is refused.
+/// A ratified archive carries null.
+pub const DRAFT_ID: u64 = 2;
 
 /// Required features this build understands: the Encrypted profile's
 /// identifier (Annex B.2.10 D20 item 4, suite 1). Anything else fails closed.
@@ -435,7 +437,7 @@ mod tests {
         want.extend([7u8; 32]);
         want.extend([
             0x02, 0x02, // 2: 2
-            0x03, 0x01, // 3: 1
+            0x03, 0x02, // 3: 2 (draft 2, the frozen layout)
             0x04, 0x80, // 4: []
             0x05, 0xA1, 0x00, 0xF4, // 5: {0: false}
         ]);

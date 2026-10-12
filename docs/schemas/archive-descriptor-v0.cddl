@@ -1,4 +1,4 @@
-; MOCHI archive descriptor, schema version 0 (DRAFT; ratification items R1, R2).
+; MOCHI archive descriptor, schema version 0 (FROZEN with draft 2; ratification items R1, R2).
 ; Decision: spec Annex B.2 D12.
 ;
 ; Stored as the payload of one skippable frame of kind ARCHIVE_DESCRIPTOR
@@ -34,7 +34,7 @@ descriptor = {
   ? 6: declared-limits,       ; present ONLY when the writer opted into limits above reader defaults (D10.8)
 }
 
-; Pre-1.0 draft identifier. 1 = the Annex B.2 wire batch. Null only in a
+; Pre-1.0 draft identifier. 2 = the layout frozen at G12 (1 was the pre-freeze batch and is refused). Null only in a
 ; ratified 1.0 archive. Archives from before this batch carry no
 ; descriptor and are rejected as legacy drafts (§26).
 draft = uint / null

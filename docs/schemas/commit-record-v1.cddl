@@ -1,4 +1,4 @@
-; MOCHI commit record, schema version 1 (DRAFT; ratification item R3).
+; MOCHI commit record, schema version 1 (FROZEN with draft 2; ratification item R3).
 ; Decisions: spec Annex B.2 D10, D11, D12. Supersedes commit-record-v0.cddl
 ; for new archives; a v0 commit is a pre-batch draft and is rejected (§26).
 ; This file is complete and standalone: every rule it uses is defined here.
@@ -9,7 +9,7 @@
 ; COMMIT_RECORD (0x184D2A51). The CBOR-native envelope (D11) is keys 0, 1,
 ; 3, and 7, plus the frame kind and frame length.
 ;
-; Commit ID (§9.2): BLAKE3-256 over the draft domain separator
+; Commit ID (§9.2): BLAKE3-256 over the domain separator
 ; "MOCHI2-COMMIT-ID" || 0x00 (mochi-format digest.rs), followed by the
 ; canonical encoding of this map with key 9 removed. Key 9 MUST equal the
 ; recomputed value.

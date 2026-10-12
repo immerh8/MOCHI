@@ -576,7 +576,10 @@ fn c7_golden_archives_verify_as_labelled() {
             assert_eq!(r.exit_code, exit::OK, "{name}: {:?}", r.findings);
         } else if name.starts_with("reject-archive-") {
             seen.1 += 1;
-            let want = if name == "reject-archive-legacy-v0.mochi" {
+            // The two frozen archives older than draft 2 are refused, not damaged.
+            let want = if name == "reject-archive-legacy-v0.mochi"
+                || name == "reject-archive-bare-image.mochi"
+            {
                 exit::UNSUPPORTED
             } else {
                 exit::FAILED

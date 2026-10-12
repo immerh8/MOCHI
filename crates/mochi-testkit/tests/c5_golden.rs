@@ -142,26 +142,19 @@ fn the_legacy_v0_archive_is_refused_as_legacy() {
 }
 
 /// T10: an image that is not in a binary envelope is never handed to
-/// SQLite. Read as an envelope, a bare image's bytes 4..6 ("te") give
-/// version 0x6574: unknown envelope version, refused as unsupported (D11
-/// "Schema version: unknown version: refuse"). Commit records are unaffected.
+/// SQLite. The frozen bare-image archive is a **draft-1** archive, so since
+/// the format freeze (draft 2, K13) it is refused at its descriptor, before
+/// any image is read: `UNSUPPORTED_FEATURE`, naming draft 1. The envelope
+/// rule itself is held by `t17_unsupported_image_does_not_fall_back` (a
+/// bare image forged into a draft-2 archive), `mochi-core`'s
+/// `image::tests`, and the b2 envelope vectors.
 #[test]
-fn the_pre_envelope_archive_is_refused_at_the_image() {
+fn the_pre_envelope_archive_is_refused_as_draft_1() {
     let s = SimStorage::from_bytes(std::fs::read(dir().join(BARE_IMAGE_ARCHIVE)).unwrap());
     let opts = ReadOptions::default();
-    let loc = mochi_core::publish::locate_head(&s, &opts.limits).unwrap();
-    assert!(loc.tail.is_clean());
-    let history = commit_history(&s, &opts).unwrap();
-    assert_eq!(history.len(), 3);
-    for h in &history {
-        let e = open_at_footer(&s, h.footer_offset, &opts).unwrap_err();
-        assert_eq!(e.code, mochi_core::ErrorCode::UnsupportedFeature, "{e}");
-        assert!(
-            e.message.contains("envelope version 25972"),
-            "{}",
-            e.message
-        );
-    }
+    let e = mochi_core::publish::open_head(&s, &opts).unwrap_err();
+    assert_eq!(e.code, mochi_core::ErrorCode::UnsupportedFeature, "{e}");
+    assert!(e.message.contains("draft 1"), "{}", e.message);
 }
 
 fn check_archive(name: &str, bytes: Vec<u8>, expect: &ArchiveExpect) {

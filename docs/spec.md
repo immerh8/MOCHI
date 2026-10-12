@@ -1,6 +1,6 @@
 # MOCHI 1.0 Specification
 
-**Status:** Proposed design specification; not yet a ratified interoperable wire format. Until the gates in Section 28 pass, implementations MUST describe support as experimental or draft-compatible.
+**Status:** Design specification. The wire layouts R1–R4 and the suites R5 and R6 are **frozen as draft 2** (format freeze, gate G12, 2026-10-12; Annex B.2.6, B.2.14); the format is not yet declared interoperable. Until the gates in Section 28 pass, implementations MUST describe support as experimental or draft-compatible.
 **Specification revision:** 2.0 (the "MOCHI Design Document v2.0" refinement, integrated for the MOCHI 1.0 product release)
 **Supersedes:** MOCHI design documentation v1.2, and the unified "v1.2 + extended capabilities" draft built on it.
 **Product release targeted:** MOCHI 1.0 — `mochi-core` library, `mochi` CLI, and the MOCHI desktop application (Tauri v2).
@@ -48,9 +48,9 @@ Section 26 requires these versions to be distinct. For MOCHI 1.0 they are:
 |---|---|---|
 | Product release | 1.0 | Semantic version of `mochi-core`, `mochi` CLI, and the desktop application |
 | Specification revision | 2.0 | This document |
-| Container wire generation | 2 (proposed) | Byte layout; footer magic `MOCHI2\0\0` (Section 8.4) |
-| Metadata schema version | Assigned by the ratification package | SQLite DDL (Section 10) |
-| Recovery-manifest encoding version | Assigned by the ratification package | Section 11 |
+| Container wire generation | 2 | Byte layout; footer magic `MOCHI2\0\0` (Section 8.4) |
+| Metadata schema version | 1 (SQLite `user_version`; R4, frozen with draft 2) | SQLite DDL (Section 10) |
+| Recovery-manifest encoding version | Schemas 1, 2, 3, selected by the record's content (R3 §6, frozen with draft 2) | Section 11 |
 | Extension versions | Per extension | Annex A items, once ratified |
 
 A product labelled "1.0" writing wire generation "2" is intentional under this scheme but is a user-facing naming risk. See Annex B, decision D1.
@@ -325,11 +325,11 @@ A conceptual session is:
 
 Physical ordering MAY vary where bootstrap dependencies and the backend publication protocol permit it.
 
-### 8.2 Proposed frame registry
+### 8.2 Frame registry
 
-The following values are proposed for v2.0. They are not a declaration that the v1.2 draft values were already standardized.
+The following values are the frozen registry of draft 2 (ratification artifact R1, which is more precise than this table and wins for its topic). They are not a declaration that the v1.2 draft values were already standardized.
 
-| Frame magic | Proposed use |
+| Frame magic | Use |
 |---|---|
 | `0xFD2FB528` | Standard Zstandard data frame |
 | `0x184D2A50` | Metadata delta or checkpoint |
@@ -350,7 +350,7 @@ The following values are proposed for v2.0. They are not a declaration that the 
 
 Frame IDs alone do not establish that an arbitrary Zstandard stream is a MOCHI archive. Readers MUST validate the MOCHI descriptor and versioned record envelopes before interpreting any record. **[Amendment, ratification R1 decision of 2026-10-11 (delegated)]** "Before interpreting" is the scope of this rule: head discovery, footer and commit validation, the structural walk, and stored-integrity checks remain permitted with a missing or damaged descriptor, as Annex B.2 D12 says. A frame that no verified record references is walked and never interpreted; 1.0 readers do not report unreferenced frames of kinds 1.0 does not write (they are outside every committed hash, so a report about them would be a claim about bytes no commit vouches for).
 
-**[1.0 integration]** *Relationship to earlier drafts.* This registry replaces the placeholder allocations in the unified-draft Appendix B. Notable changes: `0x184D2A56` is now the commit footer (v1.2 had no framed footer); `0x184D2A57`/`58`/`59` are new (descriptor, recovery manifest, encrypted object envelope); `0x184D2A53` (previously proposed for range-reservation records) is reserved with no Core interpretation, because shared-file range reservation is no longer part of Core (Section 12.5); `0x184D2A5E` is now an optional *accelerator* rather than a recovery authority (Section 22). The registry is still proposed until the ratification package publishes it (Section 28).
+**[1.0 integration]** *Relationship to earlier drafts.* This registry replaces the placeholder allocations in the unified-draft Appendix B. Notable changes: `0x184D2A56` is now the commit footer (v1.2 had no framed footer); `0x184D2A57`/`58`/`59` are new (descriptor, recovery manifest, encrypted object envelope); `0x184D2A53` (previously proposed for range-reservation records) is reserved with no Core interpretation, because shared-file range reservation is no longer part of Core (Section 12.5); `0x184D2A5E` is now an optional *accelerator* rather than a recovery authority (Section 22). The registry was frozen with R1 at the format freeze (draft 2, gate G12); the format as a whole is not yet declared interoperable (Section 28).
 
 ### 8.3 Record envelopes
 
@@ -371,11 +371,11 @@ Skippable-frame payloads are limited by their 32-bit length field. Larger logica
 
 Both encodings MUST carry every field listed above, and MUST impose identical validation obligations (Annex B.2 D11). Neither encoding may omit or weaken an obligation. The binary layout is given in Annex B.2.2. For recovery manifests, including snapshot manifests, and for catalog images, 1.0 takes the "rejected" branch of the preceding paragraph (Annex B.2 D10, item 11).
 
-### 8.4 Proposed footer
+### 8.4 Commit footer
 
 The footer is a skippable frame with an 8-byte Zstandard skippable header and a 64-byte MOCHI payload.
 
-The proposed payload is:
+The payload is:
 
 | Payload offset | Size | Field |
 |---|---|---|
@@ -399,7 +399,7 @@ The footer digest is BLAKE3-256 over the concatenation of:
 
 A clean committed EOF permits reading the final 64-byte payload, but readers MUST also validate its preceding skippable header.
 
-This is a proposed incompatible footer layout. Existing archives MUST NOT be silently relabeled.
+This footer layout is incompatible with v1.2's. Existing archives MUST NOT be silently relabeled.
 
 **[1.0 integration]** *Why the footer moved into a skippable frame.* The v1.2 layout ended the file with 64 bare trailer bytes, and after each append the previous trailer remained mid-file. Neither is a valid Zstandard frame, so `zstd -dc` would stop with a header error at the first trailer — the v1.2 zero-tool fallback could not have worked as written. Framing every footer fixes this. The footer digest is also now computed over *stored* commit-frame bytes, so it can be checked without decryption keys, unlike v1.2's hash over decrypted metadata.
 
@@ -573,7 +573,7 @@ Extended attributes, ACLs, alternate data streams, and ownership by name are **n
 
 ### 10.5 SQLite usage
 
-Metadata catalogs use SQLite 3 with a proposed page size of 4096 bytes.
+Metadata catalogs use SQLite 3 with a page size of 4096 bytes (R4).
 
 Published database images MUST be self-contained and MUST NOT depend on external WAL or journal files.
 
@@ -1395,6 +1395,8 @@ Before claiming preservation readiness, demonstrate:
 
 Until these gates pass, implementations MUST describe support as experimental or draft-compatible.
 
+**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). R7 (G15), the golden set R8 (G13), and the independent results R9 (G14) are pending, so the description above still applies.
+
 ## 29. Summary of Changes from v1.2
 
 | Area | v2.0 refinement |
@@ -1474,7 +1476,7 @@ The unified v1.2 draft contained detailed extension sections (its §11–§20). 
 
 ## Annex B. Open Decisions for MOCHI 1.0 **[1.0 integration]**
 
-Each decision blocks the listed work until recorded in this annex. D1–D9 are recorded in B.1. D10–D15 are decided in B.2. Their implementation and evidence are pending (B.2.6), and they are not yet recorded in B.1.
+Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10–D16 and D24 stay in B.2: D10, D11, D12, D14, and D15 await the G1 audit (R8), D13 awaits G6, D16 is out of 1.0, and D24 is half implemented (B.2.14).
 
 | ID | Decision | Options | Blocks |
 |---|---|---|---|
@@ -1521,15 +1523,22 @@ Each entry below closes the decision above with the same ID. Rationale and conse
 | D7 | **A read-only verifier in Python, written from this specification alone**, sharing no code with the reference implementation. Section 28's interoperability claim for 1.0 is scoped to the profiles 1.0 ships (Core, TAR-compatibility, Encrypted, Redundancy). **[Amendment, delegated 2026-10-12, plan K22, K23]** It is written by a session started cold on a checkout that does not contain the Rust code (`docs/`, `fixtures/golden/`, `interop/` only), reading only this specification, the ratification artifacts, the schemas, and vectors and fixtures as data. It lives in `interop/pyverify/`. Agreement with the reference implementation is exact equality of an interop summary over the R8 golden set (gate G14). |
 | D8 | **Layered, and the source is always reported.** With no anchor, freshness is `UNKNOWN`. A user-supplied expected head gives `PASS`/`FAIL`. Otherwise a client MAY keep the last-seen head per archive ID as a local anchor, giving `FAIL` on rollback or substitution. First sight is `UNKNOWN`, never `PASS`. The report names the anchor used. |
 | D9 | **The desktop application reads ZIP, 7z, RAR, and `.tar.gz`/`.tar` (browse, extract, test) and never writes them.** Outside this specification; see the plan, phase D8. |
+| D17 | **Writer lock** (not wire format): an OS lock on a separate lock file; details in B.2.7. Moved here at the format freeze. |
+| D18 | **Retention, collection, and compaction** (recovery-manifest schema 2): details in B.2.8. Moved here at the format freeze. |
+| D19 | **TAR-stream compatibility profile** (no wire change): stream-only chunks; details in B.2.9. Moved here at the format freeze. |
+| D20 | **Encrypted profile** (key envelope v0, sealed object v0, commit schema 2, manifest schema 3, feature 1): details in B.2.10; gate G10 met 2026-10-11, R5 frozen. Moved here at the format freeze. |
+| D21 | **Redundancy profile** (parity frame v0, descriptor constraint 1): details in B.2.11; gate G11 met 2026-10-12, R6 frozen. Moved here at the format freeze. |
+| D22 | **Independent copies, ladder step 5** (no wire change): details in B.2.12. Moved here at the format freeze. |
+| D23 | **Bounded salvage, ladder step 7** (no wire change): details in B.2.13. Moved here at the format freeze. |
 
 ### B.2 Wire batch (decided 2026-10-01)
 
 **Status.** This annex separates three things, and the text below never treats one as another:
-- **Semantic decisions** (B.2.1) and **wire layouts** (B.2.2) are *decided*. Their schemas are drafts under R3.
-- **Implementation** is tracked task by task in `docs/b2-implementation-checklist.md`. None of it is done.
-- **Evidence and release gates** (B.2.6) are *pending*.
+- **Semantic decisions** (B.2.1) and **wire layouts** (B.2.2) are *decided*. Their schemas are frozen with R3 as part of draft 2 (G12, 2026-10-12).
+- **Implementation** is tracked task by task in `docs/b2-implementation-checklist.md`. The wire batch (D10 to D15) is implemented; D13 awaits G6, and D16's opt-in path is out of 1.0.
+- **Evidence and release gates** (B.2.6): G10, G11, and G12 are met; the others are pending.
 
-An entry moves to B.1 only when its implementation tasks are complete and its gates pass. Nothing in this annex is implemented, tested in the reference implementation, or evidenced by being written here.
+An entry moves to B.1 only when its implementation tasks are complete and its gates pass. Writing a decision here is not evidence that it is implemented or tested.
 
 #### B.2.1 Semantic decisions
 
@@ -1713,9 +1722,9 @@ No object contains the ID of the commit that references it. The commit ID covers
 | 0 | Schema version = 0 |
 | 1 | Archive ID |
 | 2 | Wire generation = 2 (`MOCHI2`) |
-| 3 | Draft identifier: 1 for this batch; null only in a ratified archive |
+| 3 | Draft identifier: 2 (the layout frozen at G12, D24); null only in a ratified archive. Draft 1, the pre-freeze batch, is refused (`UNSUPPORTED_FEATURE`, exit 4) |
 | 4 | Required features |
-| 5 | Constraints `{0: TAR-compatible}` |
+| 5 | Constraints `{0: TAR-compatible, ? 1: {suite, percentage}}`; key 1 is the Redundancy profile (D21, B.2.11) and is absent otherwise |
 | 6 (optional) | Declared limits; present only on opt-in (B.2.3) |
 
 Archives from before this batch have no descriptor and are rejected as legacy drafts (§26).
@@ -1871,7 +1880,7 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - ≤ *m* damaged shards per group rebuild bit-identically, in every commit at once; *m* + 1 is `PARITY_CAPACITY_EXCEEDED` and nothing is rewritten.
   - Parity survives the loss of the whole catalog image; the descriptor and earlier footers are rebuilt; a contiguous burst spreads across groups.
   - Damaged parity is `PARITY_DAMAGED` with integrity unaffected; forged frames are `PROFILE_VIOLATION`. A fuzz target covers the frame decoder and reconstruction.
-- **G12 Format freeze (decided 2026-10-12, plan K12, K26).** Pending.
+- **G12 Format freeze (decided 2026-10-12, plan K12, K26).** **Met 2026-10-12** [delegated; owner review pending at the desktop checkpoint, plan K11]: each of R1 to R4 ends with its freeze review, the drift test and `r3_cddl.rs` pass, `user_version` is 1, the draft identifier is 2, and `b2/reject-archive-draft-1.mochi` is the draft-1 reject fixture.
   - R1, R2, R3, and R4 are frozen in one review, recorded in each artifact. R6 is frozen first (G11).
   - The drift test and R3's mechanical CDDL check pass.
   - R4 `user_version` is 1, and the draft identifier is 2 (D24). Whole-archive fixtures are regenerated deliberately, with the diff explained, and one draft-1 archive is kept as a reject fixture.
@@ -1952,7 +1961,7 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 4. **Discovery and the required feature (§14.3, D12).**
    - **Commit record schema 2** (`commit-record-v2.cddl`) adds key 11, the **complete** list of the key envelopes valid at that commit (references with stored-object hashes, listed in increasing envelope-ID order), so a reader finds them from the footer-verified head **without decrypting anything**. The descriptor never locates envelopes (D12). A commit's envelope set is bound by the commit ID and the footer chain like any other reference.
    - **The Encrypted profile's required-feature identifier is 1** (the first unassigned value; suite 1, XChaCha20-Poly1305 with Argon2id). Descriptor key 4 lists it, as do every commit record's key 7, every manifest's key 9, and every catalog image's envelope; `KNOWN_REQUIRED_FEATURES` of this version of the format is `[1]` in all four. A reader that does not know it refuses the archive: `UNSUPPORTED_FEATURE`, exit 4. **The descriptor schema does not change**, and a feature identifier of 1 that earlier test code used as an "unknown feature" must be replaced by an unassigned value (for example 2).
-   - **One profile per archive, agreed by every record.** Schema 2 commits and schema 3 manifests occur exactly in archives whose descriptor lists feature 1; any disagreement is `RECORD_INVALID`. An Encrypted archive cannot be TAR-compatible (descriptor constraint 0 must be false: `DESCRIPTOR_INVALID`; `create` refuses the combination with `INVALID_ARGUMENT`).
+   - **One profile per archive, agreed by every record.** Schema 2 commits and schema 3 manifests occur exactly in archives whose descriptor lists feature 1; a disagreement between a commit and a manifest is `RECORD_INVALID`, and between a commit and the descriptor `DESCRIPTOR_INVALID` (D12: a mismatched descriptor; R3 §10 item 9). An Encrypted archive cannot be TAR-compatible (descriptor constraint 0 must be false: `DESCRIPTOR_INVALID`; `create` refuses the combination with `INVALID_ARGUMENT`).
 5. **Sealed objects.** Data chunks, catalog images, and recovery manifests (delta and snapshot) are **compress-then-encrypt**: the plaintext is exactly the skippable payload (images, manifests) or the whole Zstandard frame (chunks) that the same object has in a Core archive, sealed and stored in one `0x184D2A59` frame. The frame replaces `0x184D2A50` (image), `0x184D2A58` (manifest), and the bare data frame; D11's rule that the frame kind match the referencing field is read accordingly (commit keys 5.1, 5.2, and 6 reference `0x184D2A59`; key 10 stays `0x184D2A57`). Layout (integers little-endian; every byte defined):
 
    | Offset | Size | Field | Rule |
@@ -1987,7 +1996,7 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
     - **Rewrites re-seal.** The associated data binds the archive ID, and a rewrite creates a new archive ID, so every sealed object is opened and sealed again. Each rewrite of an Encrypted archive therefore **needs a passphrase**, creates a **new DEK and key ID**, and writes new envelopes for the passphrases given (a passphrase not given again does not carry over). Without a passphrase, `compact`, `gc plan`, `gc apply`, `repair plan`, and `repair apply` fail with `KEY_UNAVAILABLE`: retention state and chunk references are sealed, so even a plan needs the key. What `verify` finds without a key is the keyless view (item 12). The new archive's delta(0) carries provenance (manifest key 12).
     - **`rekey --add-passphrase` and `--remove-passphrase ENVELOPE_ID` are rewraps.** A rewrap writes one ordinary commit: no namespace operations, a new envelope frame for an addition, the new complete envelope set in commit key 11, and the **key operations** (manifest key 13: `[0, envelope ID]` add, `[1, envelope ID]` remove) as the rewrap's **audit record**. The DEK and key ID do not change and no data is rewritten. The set must never become empty; a commit's key 11 must equal the key state replayed from the manifests (checked wherever manifests are replayed with a key). Authentication: any passphrase of the head's set.
     - **Removal is not revocation.** The removed envelope's frame stays in the file's history, and a rewrap keeps the DEK, so the removed passphrase still yields the DEK from this very file (and from any copy), and the DEK opens content appended **after** the removal too. A reader may refuse a removed passphrase at the head, as `mochi` does, but that is policy, not a cryptographic barrier. Only a rewrite (`--reencrypt`, `compact`, `gc apply`, `repair apply`) puts content under a DEK that a passphrase not given again cannot reach. Output and documentation say so, and never say "revoked" or "secure".
-    - **`rekey --reencrypt` writes a new archive** through the rewrite path (never in place): new archive ID, new DEK, new key ID, one envelope per new passphrase, every snapshot kept. Its audit record is the provenance key 12 with `reason` 1 (manifest schema 3, key 3 of the provenance map); a collection or compaction carries reason 0. **Rewrap and re-encryption have separate audit records** (§14.4). Re-encryption does not recall copies already made.
+    - **`rekey --reencrypt` writes a new archive** through the rewrite path (never in place): new archive ID, new DEK, new key ID, one envelope per new passphrase, every snapshot kept. Its audit record is the provenance key 12 with `reason` 1 (manifest schema 3, key 3 of the provenance map); a collection or compaction has reason 0, written by the **absence** of key 3 (an explicit 0 is refused, R3 §6 and §10 item 2). **Rewrap and re-encryption have separate audit records** (§14.4). Re-encryption does not recall copies already made.
     - **`rekey --list`** shows the head's envelope IDs, creation sequence, and KDF parameters. It needs no key.
 11. **Passphrase entry (CLI).** An interactive prompt without echo (the `rpassword` crate), asked twice when a passphrase is created, or `--passphrase-file PATH` (the first line, line ending removed; read once; a warning if it is readable by others on Unix). **Never as an argument value.** The environment variable `MOCHI_PASSPHRASE` is read only behind `--passphrase-env-for-automation`, whose name and help say so. The desktop app follows AGENTS.md (a passphrase crosses IPC once and is not persisted unless the user opts into the OS credential store).
 12. **Reports and verification (§20).**
@@ -2100,7 +2109,7 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 
 #### B.2.14 Draft-to-1.0 boundary (D24; decided by delegation 2026-10-12, plan K13, K25)
 
-**Status: decided, not implemented** (plan workstreams W15 and W20).
+**Status: item 1 implemented at the format freeze (W15, 2026-10-12); items 2 to 4 decided, not implemented** (plan W20).
 
 1. **Draft identifier.** Descriptor key 3 becomes **2** in the change that freezes R1–R4 (gate G12), together with R4 `user_version` 1. Draft 2 names the frozen layout. Any later wire change before 1.0 increments it again, with an Annex B entry. A build refuses every draft other than its own (`UNSUPPORTED_FEATURE`, exit 4), naming the draft.
 2. **1.0.** A 1.0 writer writes `null` (a ratified archive). Every 1.0 command except `migrate` refuses a draft archive with exit 4, naming the draft.

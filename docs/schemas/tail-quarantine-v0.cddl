@@ -1,4 +1,4 @@
-; MOCHI tail-quarantine sidecar metadata, schema version 0 (DRAFT).
+; MOCHI tail-quarantine sidecar metadata, schema version 0 (FROZEN with draft 2; a tool file, not archive format).
 ; Decision: spec Annex B.2 D14. This is NOT part of the .mochi wire format.
 ; The sidecar is a separate file written beside the archive before an
 ; explicit tail truncation.

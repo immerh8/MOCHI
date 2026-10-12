@@ -295,3 +295,25 @@ fn no_one_dot_zero_command_is_not_implemented() {
         );
     }
 }
+
+/// K13: a draft-1 archive (written before the format freeze) is a refusal,
+/// not damage: `UNSUPPORTED_FEATURE`, exit 4, and the message names draft 1.
+/// The fixture is the pre-freeze `c5/valid-archive-3-commits.mochi` kept
+/// byte for byte.
+#[test]
+fn a_draft_1_archive_is_refused_exit_4_naming_the_draft() {
+    let path = format!(
+        "{}/../../fixtures/golden/b2/reject-archive-draft-1.mochi",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    for cmd in [
+        &["verify", path.as_str(), "--no-local-history"][..],
+        &["list", path.as_str()],
+    ] {
+        let (code, out, err) = go(cmd);
+        assert_eq!(code, exit::UNSUPPORTED, "{cmd:?}: {out} {err}");
+        let all = format!("{out}{err}");
+        assert!(all.contains("draft 1"), "{cmd:?}: {all}");
+        assert!(all.contains("UNSUPPORTED_FEATURE"), "{cmd:?}: {all}");
+    }
+}

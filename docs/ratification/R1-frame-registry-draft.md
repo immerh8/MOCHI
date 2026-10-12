@@ -1,19 +1,22 @@
-# R1 — Frame registry and version mapping (DRAFT, not frozen)
+# R1 — Frame registry and version mapping (FROZEN, draft 2)
 
-> **Status 2026-10-11: draft.** Written from the working code at `main` commit
-> `57e3a69` and the golden vectors in `fixtures/golden/`, as plan §6 requires. It is
-> **not frozen**: it freezes at Beta, with R2 and R3. Until then a change to the code
-> or the spec may change this file, but only together with the code: the test
-> `crates/mochi-cli/tests/ratification_drafts.rs` parses the tables marked
-> *(checked)* below and fails if they differ from the code.
+> **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
+> owner review pending at the desktop checkpoint, plan K11). It was written 2026-10-11
+> from the working code at `main` commit `57e3a69` and the golden vectors in
+> `fixtures/golden/`, and frozen with R2, R3, and R4 by the review in §7. The file name
+> keeps "draft" for links (as R5 and R6 did). A change to any byte or rule below is a
+> new draft identifier (`descriptor::DRAFT_ID`, spec Annex B.2.14) with an Annex B
+> entry, never an edit. Tables marked *(checked)* are compared with the code by
+> `crates/mochi-cli/tests/ratification_drafts.rs`.
 
 Sources: spec §1.2, §8.1, §8.2, §8.4, §8.6, Annex B.1 D1, Annex B.2 D11, D12, D14,
 B.2.2, B.2.10. Code: `crates/mochi-format/src/registry.rs` (the only module allowed
 to spell a frame magic, `ci/check-invariants.sh`), `version.rs`, `footer.rs`,
 `frame.rs`; record schema versions in `crates/mochi-core/src/{descriptor,commit,manifest,keys,image}.rs`.
 
-Where this file and the spec disagree, that is listed in §6 as an open item. This
-file does not pick a side.
+Where this file and the spec disagreed, §6 records the call, and the spec was
+corrected at the freeze (§7). Where they still differ, this file wins for its topic
+(AGENTS.md, "Sources of truth").
 
 ## 1. Version identifiers
 
@@ -24,10 +27,15 @@ Spec §1.2 and §26 keep these distinct. *(checked)*
 | Specification revision | `2.0` | `version::SPEC_REVISION` |
 | Wire generation | `2` | `version::WIRE_GENERATION`; descriptor key 2 |
 | Footer magic | `MOCHI2` ‖ `00 00` | `registry::FOOTER_MAGIC` |
-| Draft identifier | `1` | `descriptor::DRAFT_ID`; descriptor key 3 (null only in a ratified archive) |
+| Draft identifier | `2` | `descriptor::DRAFT_ID`; descriptor key 3 (null only in a ratified archive) |
 | Format status | `experimental / draft-compatible` | `version::FORMAT_STATUS`; every report's `tool.format_status` |
 
 **D1 (decided):** the wire generation stays 2, independent of the product version.
+**D24 (decided, implemented at the freeze):** the draft identifier is 2 and names the
+layout frozen here and in R2 to R4. Draft 1, the pre-freeze batch (R4 `user_version`
+0), is refused as `UNSUPPORTED_FEATURE` (exit 4) with a message naming draft 1, as is
+any other value but 2 and `null` (a ratified archive, which a draft build also
+refuses). `fixtures/golden/b2/reject-archive-draft-1.mochi` is such an archive.
 The product version (`mochi --version`, `tool.version` in reports) is unrelated to
 any of the values above.
 
@@ -72,6 +80,18 @@ Rules the code enforces for every kind:
 - **The descriptor is valid only at offset 0** (D12). The walker refuses a
   `0x184D2A57` frame anywhere else on the magic alone (`MisplacedFrame`,
   `MALFORMED_FRAME`).
+- **What the walk refuses in a Zstandard data frame** (`frame::walk_frame`): bit 3 of
+  the `Frame_Header_Descriptor` (reserved), block type 3, and a `Block_Size` above the
+  frame's block maximum. These are `MALFORMED_FRAME`. Missing `Frame_Content_Size` or
+  checksum (O21) is not a walk error: it is refused when a chunk is decoded
+  (`codec`, `MALFORMED_FRAME`). A nonzero `Dictionary_ID` is read; no 1.0 writer emits
+  one, and a chunk that needs a dictionary is `UNSUPPORTED_FEATURE` (R4 §2,
+  `chunk_dependencies`).
+- **A skippable frame of kind `0x184D2A56` whose `Frame_Size` is not 64** is walked like
+  any other frame and is not a footer: footer parsing (§3) requires exactly 64.
+- **In the Encrypted profile** data chunks are stored in `0x184D2A59` sealed frames of
+  kind 0 (R5 §4, §5), not as bare `0xFD2FB528` frames; the `ZstdData` row describes the
+  plaintext a sealed frame holds.
 - **Reserved kinds** have three magics and no writer may emit any of them
   (`FrameKind::magic` is `None` for `Reserved`).
 - **No bare bytes between frames.** A file is the descriptor frame followed by
@@ -102,6 +122,16 @@ bytes at end of file also validates the preceding 8-byte skippable header.
 
 The footer never carries a record envelope (D11); its fixed layout is its schema.
 
+**Validation order** (`footer::validate_footer`): the preceding 8-byte skippable header
+(`FOOTER_INVALID`); the payload magic; the named range is at least 8 bytes, does not
+overflow, and ends at or before the footer's own offset (`FOOTER_INVALID`); the range is
+within the commit-frame length limit (`LIMIT_EXCEEDED`); a skippable frame of exactly
+that stored length starts at the offset (`FOOTER_INVALID`); the digest
+(`FOOTER_INVALID`). The caller then requires that frame's kind to be `0x184D2A51` and
+the footer's sequence to equal the commit's own key 2 (`publish.rs`). Bytes between the
+commit frame and the footer are not examined by the digest; in the Redundancy profile
+they are the commit's parity frames (§2, R6), checked by R6's rules.
+
 ## 4. Other registered byte strings
 
 Not frame magics, but registered in `registry.rs` so that no other module spells
@@ -118,8 +148,8 @@ them. *(checked)*
 
 Per kind, the schema version carried by the record (CBOR key 0, or the binary
 envelope's record-schema field). An unknown version is refused as
-`UNSUPPORTED_FEATURE` (D11); version 0 of commits and manifests is the pre-batch
-draft and is refused and named legacy (§26). *(checked)*
+`UNSUPPORTED_FEATURE` (D11, exit 4); version 0 of commits and manifests is the pre-batch
+draft and is refused with the same code and a message that says *legacy* (§26). *(checked)*
 
 | Kind | Record | Versions read | Written when |
 |---|---|---|---|
@@ -127,7 +157,7 @@ draft and is refused and named legacy (§26). *(checked)*
 | `0x184D2A51` | Commit record | 1, 2 | 2 exactly in the Encrypted profile (required feature 1), else 1 |
 | `0x184D2A58` | Recovery manifest | 1, 2, 3 | 3 in the Encrypted profile; 2 when retention data is present; else 1 |
 | `0x184D2A5C` | Key envelope | 0 | Always 0 |
-| `0x184D2A50` | Catalog image (binary envelope v0) | 0 | Record schema = the image's SQLite `user_version`, 0 (R4) |
+| `0x184D2A50` | Catalog image (binary envelope v0) | 1 | Record schema = the image's SQLite `user_version`, 1 (R4); 0 was the pre-freeze draft and is refused |
 | `0x184D2A59` | Sealed object | 0 | Always 0 (R5, frozen) |
 | `0x184D2A5F` | Parity frame (binary envelope v0) | 0 | Always 0 (R6) |
 
@@ -140,8 +170,8 @@ R5 frozen). No other identifier is assigned; any other listed feature is refused
 The owner delegated these calls ("decide on best practice and the goal"). Each is
 recorded where it now lives; nothing in this section changes a byte on the wire.
 
-1. **"Proposed" in §8.2 and §8.4.** Stays until R1 freezes at Beta; the freeze removes
-   it. Until then the spec and this draft agree that nothing is ratified.
+1. **"Proposed" in §8.2 and §8.4.** Removed from the spec at the freeze (§7, found and
+   fixed 2).
 2. **§8.4's stale "open decision" on `MOCHI2`.** Replaced in the spec by a pointer to
    Annex B.1 D1 (decided: keep `MOCHI2`).
 3. **Two names for `0x184D2A59`.** The §8.2 name stays; the spec's registry row now
@@ -160,3 +190,71 @@ recorded where it now lives; nothing in this section changes a byte on the wire.
    change.
 6. **§8.2 "Readers MUST validate the descriptor".** Amended to "before interpreting
    any record", with the D12 exceptions named, so the two texts agree.
+
+## 7. Freeze review (2026-10-12)
+
+The review gate G12 asks for, in the form of R5 §12, run once for R1 to R4 (the other
+three artifacts carry the same section for their own findings). Plan authority: K11
+(a self-review recorded here, marked [delegated 2026-10-12]; the owner reviews it at
+the next desktop-phase checkpoint), K12, K13, and W15. The rule it ran under: **if any
+byte other than R4 `user_version` and the draft identifier should change, stop and do
+not freeze.** None did.
+
+**Checked.**
+
+* **The drift test passes** (`ratification_drafts.rs`, 30 tests) with the tables in
+  this file; the identifiers table now says draft 2 and the record-schema table says
+  catalog image 1. R3's mechanical check (`r3_cddl.rs`, 7 tests) also passes.
+* **The code is the registry.** The 17 magics, the 64-byte footer layout and digest
+  input, and the four registered byte strings are compared by the drift test; the walk
+  rules of §2 and the footer validation order of §3 were read against `frame.rs` and
+  `footer.rs`.
+* **Draft 2 is written and draft 1 is refused.** `DRAFT_ID` is 2; the descriptor vectors
+  were regenerated (every `b2` descriptor file differs from its old self in exactly one
+  byte, key 3's value); a draft-1 archive is refused with exit 4 naming draft 1
+  (`exit_codes.rs`).
+
+**Found and fixed at the freeze** (no byte other than the two planned ones changed).
+
+1. **The spec said draft identifier 1** (B.2.2 descriptor table) while R1 §1 said 2.
+   B.2.2 now says 2, names draft 1 as refused, and draws constraint key 5.1.
+2. **"Proposed" in spec §8.2 and §8.4**, the status line, §1.2's two "assigned by the
+   ratification package" rows, and "(proposed)" on the wire generation: removed or
+   replaced by the values (checklist item 2).
+3. **Three behaviours the code had and the text did not say** (cold read, findings 4 to
+   8 below): the footer validation order, what the walk refuses in a data frame, and
+   that a 56-size footer-kind frame is simply walked.
+4. **Stale text**: "Where this file and the spec disagree … does not pick a side", the
+   catalog image's schema version in §5, and the status of §6 item 1.
+
+**Cold read.** A fresh subagent was given only `docs/spec.md` and this file (no code)
+and asked where it would have to guess to write a reader. Its findings, and the call on
+each:
+
+| # | Finding | Call |
+|---|---|---|
+| 1 | Draft identifier: spec said 1, R1 says 2 | **Fixed in the spec** (found 1). |
+| 2 | Image schema: 0 or 1 | **Fixed**: only 1 is read (§5); 0 is refused. |
+| 3 | Code for a legacy version 0 | **Fixed in text** (§5): `UNSUPPORTED_FEATURE`, exit 4, message says *legacy*. |
+| 4 | Code for a misplaced descriptor, and for another kind at offset 0 | **Decided, as the code does.** A `0x184D2A57` frame away from offset 0 is `MALFORMED_FRAME` (§2). Whatever sits at offset 0 and is not a decodable descriptor is `DESCRIPTOR_INVALID` (D12; the vector `reject-descriptor-wrong-frame-kind` pins it). |
+| 5 | What the footer's pointer must satisfy | **Fixed in text** (§3, validation order). |
+| 6 | Bytes between the commit frame and its footer | **Fixed in text** (§3): not examined by the footer digest; Redundancy frames are R6's. |
+| 7 | A 0x184D2A56 frame whose size is not 64 | **Fixed in text** (§2). |
+| 8 | What "reserved header bits are refused" means, block limits, `Dictionary_ID`, O21 | **Fixed in text** (§2). |
+| 9 | Code for a record that names a reserved, unwritten, or wrong-kind frame | **Open item, call:** the reference returns `ENVELOPE_INVALID` for a binary-envelope kind mismatch (R2 §2.1) and `RECORD_INVALID`/`UNSUPPORTED_FEATURE` for the CBOR layer's references (R3 §2.2). W16 records the code each golden case returns, and R9 compares verdicts through R8's `expect`. |
+| 10 | Code for a wrong wire generation or footer magic | **Decided, as the code does:** generation ≠ 2 is `UNSUPPORTED_FEATURE`; a payload whose magic is not `MOCHI2 00 00` is not a footer (`FOOTER_INVALID`). |
+| 11 | Data frames in the Encrypted profile | **Fixed in text** (§2); the sealed layout is R5's. |
+
+Text-only items fixed: the "Specification revision" and "Product release" rows are
+identifiers, not wire values (§1 already says the product version is unrelated); the
+required-feature rule (strictly increasing, at most 64 in a binary envelope) is R2 §2,
+which the R1 table points to; spec §1.2 now assigns the metadata and manifest versions.
+Dependencies the reader was not given (R2 to R6, R7's registry, plan O17 and O21) are
+cross-references, not guesses.
+
+**Calls on the open items.** §6's six calls stand and none changed a byte. Item 1 is
+done. Nothing else is outstanding for R1.
+
+**What the review did not do.** It did not repeat the cold read after the text fixes
+(the fixes are quotations of the code's behaviour; R9's independent reader is the
+second check); it did not run a fuzzing campaign (CI's `fuzz-smoke` replays the corpora).

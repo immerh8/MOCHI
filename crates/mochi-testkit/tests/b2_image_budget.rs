@@ -43,14 +43,15 @@ fn identity() -> RecordIdentity {
 }
 
 /// A zeroed payload of `len` bytes that passes the envelope's signature and
-/// `user_version` checks (user_version 0 = zero bytes at 60..64).
+/// `user_version` checks (user_version 1 = big-endian 1 at 60..64).
 fn sqlite_shaped(len: u64) -> Vec<u8> {
     assert_eq!(
-        IMAGE_RECORD_SCHEMA, 0,
-        "payload helper assumes user_version 0"
+        IMAGE_RECORD_SCHEMA, 1,
+        "payload helper assumes user_version 1"
     );
     let mut v = vec![0u8; len as usize];
     v[..16].copy_from_slice(b"SQLite format 3\0");
+    v[60..64].copy_from_slice(&1i32.to_be_bytes());
     v
 }
 
