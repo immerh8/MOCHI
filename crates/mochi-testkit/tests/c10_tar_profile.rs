@@ -20,6 +20,7 @@ use mochi_testkit::{deterministic_bytes, SeqIds, SimStorage};
 const TAR: Profile = Profile {
     tar_compatible: true,
     encrypted: false,
+    redundancy: None,
 };
 
 fn tar_options() -> WriterOptions {

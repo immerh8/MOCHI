@@ -25,6 +25,7 @@ const OUT: &str = "out.mochi";
 const TAR: Profile = Profile {
     tar_compatible: true,
     encrypted: false,
+    redundancy: None,
 };
 
 fn opts() -> ReadOptions {

@@ -113,6 +113,7 @@ use mochi_format::footer::{encode_footer_frame, validate_footer, validate_footer
 use mochi_format::footer::{ValidatedFooter, FOOTER_FRAME_LEN};
 use mochi_format::frame::{walk_frame, FrameDetail, Frames};
 use mochi_format::kdf::KdfParams;
+use mochi_format::parity;
 use mochi_format::registry::{self, FrameKind, SKIPPABLE_HEADER_LEN};
 use mochi_format::repr::{DecodedBytes, DecodedSlice, StoredObject};
 use mochi_format::seal::KeyId;
@@ -2513,6 +2514,8 @@ struct Prepared {
     delta_bytes: u64,
     base_bytes: u64,
     commit_offset: u64,
+    /// After the commit frame, and after its parity frames (D21).
+    footer_offset: u64,
     commit_frame: StoredObject,
     commit_id: CommitId,
     delta_manifest_hash: StoredObjectHash,
@@ -2637,6 +2640,9 @@ pub mod phase {
     /// Re-reading and checking both checkpoint representations (D10.7).
     pub const ADOPT: &str = "adopt";
     pub const COMMIT_RECORD: &str = "commit-record";
+    /// Redundancy profile only (D21): the commit's parity frames;
+    /// `completed` of `total` parity groups.
+    pub const PARITY: &str = "parity";
     pub const SYNC_CONTENT: &str = "sync-content";
     pub const FOOTER: &str = "footer";
     pub const SYNC_FOOTER: &str = "sync-footer";
@@ -2697,6 +2703,10 @@ pub struct ArchiveWriter<S: Storage> {
     /// The Encrypted profile's key state (Annex B.2.10 D20); `None` for every
     /// other profile.
     crypto: Option<WriterCrypto>,
+    /// The Redundancy profile's parity percentage (descriptor constraint 1,
+    /// Annex B.2.11 D21): every commit writes parity frames between its
+    /// commit frame and its footer.
+    redundancy: Option<u16>,
 }
 
 /// One key envelope valid at the head: its ID and where its frame is.
@@ -2745,6 +2755,18 @@ impl<S: Storage> std::fmt::Debug for ArchiveWriter<S> {
 /// the TAR-compatible profile (Annex B.2.9 D19), and the Encrypted profile
 /// (Annex B.2.10 D20); the last two exclude each other.
 fn check_create_profile(asked: Profile) -> Result<()> {
+    if let Some(p) = asked.redundancy {
+        if !(parity::MIN_PERCENT..=parity::MAX_PERCENT).contains(&p) {
+            return Err(MochiError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "a recovery record of {p}% is outside {}–{}% (Annex B.2.11 D21)",
+                    parity::MIN_PERCENT,
+                    parity::MAX_PERCENT
+                ),
+            ));
+        }
+    }
     if asked.encrypted && asked.tar_compatible {
         return Err(MochiError::new(
             ErrorCode::InvalidArgument,
@@ -2774,6 +2796,13 @@ fn check_append_profile(descriptor: &Descriptor, asked: Option<Profile>) -> Resu
                 "enabling the TAR-compatible profile"
             } else {
                 "removing the TAR-compatible profile"
+            });
+        }
+        if asked.redundancy != have.redundancy {
+            changes.push(match (asked.redundancy, have.redundancy) {
+                (Some(_), None) => "adding a recovery record",
+                (None, Some(_)) => "removing the recovery record",
+                _ => "changing the recovery record's size",
             });
         }
         if !changes.is_empty() {
@@ -2936,6 +2965,7 @@ impl<S: Storage> ArchiveWriter<S> {
         })();
         let policy = CheckpointPolicy::Trigger(opts.checkpoint_trigger.unwrap_or_default());
         let tar = opts.profile.is_some_and(|p| p.tar_compatible);
+        let redundancy = opts.profile.and_then(|p| p.redundancy);
         let (archive_id, params, catalog) = match result {
             Ok(v) => v,
             Err(e) => {
@@ -2958,11 +2988,14 @@ impl<S: Storage> ArchiveWriter<S> {
             // The default profile is not TAR-compatible (spec D4); choosing
             // it is explicit and fixed at creation (D12). The Encrypted
             // profile is the required feature of D20 item 4.
-            new_descriptor: Some(if crypto.is_some() {
-                Descriptor::new_encrypted(archive_id)
-            } else {
-                Descriptor::new(archive_id, tar)
-            }),
+            new_descriptor: Some(Descriptor::for_profile(
+                archive_id,
+                Profile {
+                    tar_compatible: tar,
+                    encrypted: crypto.is_some(),
+                    redundancy,
+                },
+            )),
             policy,
             checkpoint_requested: false,
             #[cfg(any(test, feature = "test-controls"))]
@@ -2976,6 +3009,7 @@ impl<S: Storage> ArchiveWriter<S> {
             poisoned: None,
             audit: Vec::new(),
             crypto,
+            redundancy,
         })
     }
 
@@ -3210,6 +3244,7 @@ impl<S: Storage> ArchiveWriter<S> {
                 // The profile is the archive's own (D12); an append that asks
                 // for another was refused in `open_locked`.
                 let tar = head.descriptor.tar_compatible;
+                let redundancy = head.descriptor.redundancy.map(|r| r.percent);
                 let dedup = match opts.dedup.resolve(tar) {
                     Ok(d) => d,
                     Err(e) => {
@@ -3298,6 +3333,7 @@ impl<S: Storage> ArchiveWriter<S> {
                         poisoned: None,
                         audit,
                         crypto,
+                        redundancy,
                     },
                     truncation,
                 ))
@@ -3608,7 +3644,7 @@ impl<S: Storage> ArchiveWriter<S> {
             prepared.seq,
             prepared.commit_frame.as_bytes(),
         );
-        let expected_footer_offset = prepared.commit_offset + prepared.commit_frame.len();
+        let expected_footer_offset = prepared.footer_offset;
         let unconfirmed = |what: String| MochiError::new(ErrorCode::CommitUnconfirmed, what);
         match self.storage.append(&footer) {
             Ok(at) if at == expected_footer_offset => {}
@@ -4293,10 +4329,24 @@ impl<S: Storage> ArchiveWriter<S> {
             ));
         }
         let commit_offset = self.storage.append(commit_frame.as_bytes())?;
-        // The footer lands directly after the commit frame (step 7 checks).
-        let footer_offset = commit_offset
+        let commit_end = commit_offset
             .checked_add(commit_frame.len())
             .ok_or_else(|| MochiError::new(ErrorCode::LimitExceeded, "offset overflow"))?;
+        // The footer lands directly after the commit frame, or after the
+        // commit's parity frames in the Redundancy profile (step 7 checks).
+        let footer_offset = match self.redundancy {
+            None => commit_end,
+            Some(percent) => self.append_parity(
+                percent,
+                commit_end,
+                RecordIdentity {
+                    archive_id: *self.archive_id.as_bytes(),
+                    commit_sequence: seq,
+                    transaction_id,
+                },
+                ctx,
+            )?,
+        };
         let next_base = match record.metadata {
             Metadata::Checkpoint { .. } => CommitLink {
                 commit_id,
@@ -4332,6 +4382,7 @@ impl<S: Storage> ArchiveWriter<S> {
             delta_bytes,
             base_bytes,
             commit_offset,
+            footer_offset,
             commit_frame,
             commit_id,
             delta_manifest_hash: delta_manifest.stored_hash,
@@ -4355,6 +4406,84 @@ impl<S: Storage> ArchiveWriter<S> {
         } else {
             Vec::new()
         }
+    }
+
+    /// Write the commit's parity frames (Annex B.2.11 D21) after its commit
+    /// frame, which ends at `commit_end`, and return where the footer goes.
+    ///
+    /// The protected range runs from the parent's footer (0 for commit 0, so
+    /// the descriptor is covered) to `commit_end`; it is read back from
+    /// storage, one group at a time, so memory holds one group's parity
+    /// (m + 1 shards, at most 129 MiB at 100 %).
+    fn append_parity(
+        &mut self,
+        percent: u16,
+        commit_end: u64,
+        identity: RecordIdentity,
+        ctx: &JobContext<'_>,
+    ) -> Result<u64> {
+        let start = self.head.map_or(0, |h| h.footer_offset);
+        let len = commit_end.checked_sub(start).ok_or_else(|| {
+            MochiError::new(
+                ErrorCode::InvalidArgument,
+                "internal: parity range is reversed",
+            )
+        })?;
+        let layout = parity::Layout::compute(start, len, percent).map_err(MochiError::from)?;
+        let features = self.profile_features();
+        let shard_len = usize::try_from(layout.shard_size)
+            .map_err(|_| MochiError::new(ErrorCode::LimitExceeded, "shard size"))?;
+        let mut at = commit_end;
+        let frame_len = layout.frame_len(features.len());
+        let info = parity::ParityFrameInfo {
+            layout,
+            archive_id: identity.archive_id,
+            seq: identity.commit_sequence,
+            transaction_id: identity.transaction_id,
+            required_features: features,
+        };
+        for g in 0..layout.groups {
+            ctx.check_cancelled()?;
+            ctx.report(phase::PARITY, g, Some(layout.groups));
+            let mut acc = vec![vec![0u8; shard_len]; layout.parity_shards as usize];
+            let mut hashes = Vec::with_capacity(layout.data_shards as usize);
+            let mut buf = vec![0u8; shard_len];
+            for j in 0..layout.data_shards {
+                let (offset, n) = layout.shard_extent(layout.shard_index(g, j));
+                let n = n as usize;
+                self.storage.read_exact_at(offset, &mut buf[..n])?;
+                hashes.push(parity::data_shard_hash(&buf[..n], &layout));
+                parity::accumulate(&mut acc, j, &buf[..n]).map_err(MochiError::from)?;
+            }
+            for (p, shard) in acc.iter().enumerate() {
+                let frame = parity::encode_frame(
+                    &info,
+                    crate::descriptor::KNOWN_REQUIRED_FEATURES,
+                    g,
+                    p as u64,
+                    &hashes,
+                    shard,
+                    &Limits::WRITER_DEFAULT,
+                )
+                .map_err(MochiError::from)?;
+                if frame.len() as u64 != frame_len {
+                    return Err(MochiError::new(
+                        ErrorCode::InvalidArgument,
+                        "internal: parity frames of one commit differ in length",
+                    ));
+                }
+                let landed = self.storage.append(&frame)?;
+                if landed != at {
+                    return Err(MochiError::new(
+                        ErrorCode::LockConflict,
+                        format!("parity frame landed at {landed}, not {at}"),
+                    ));
+                }
+                at += frame_len;
+            }
+        }
+        ctx.report(phase::PARITY, layout.groups, Some(layout.groups));
+        Ok(at)
     }
 
     /// A fresh transaction ID (RFC 9562 version 4) from the ID source.

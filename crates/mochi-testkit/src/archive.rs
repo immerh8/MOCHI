@@ -101,6 +101,7 @@ pub fn encrypted_options(passphrases: &[&str]) -> WriterOptions {
         profile: Some(mochi_core::descriptor::Profile {
             tar_compatible: false,
             encrypted: true,
+            redundancy: None,
         }),
         kdf: Some(TEST_KDF),
         ..test_options()

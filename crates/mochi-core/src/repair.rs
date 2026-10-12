@@ -23,14 +23,23 @@
 //!    the new archive records the repair (no wire-format change): the plan
 //!    and report are the record (§22.2 "record unrecoverable files and
 //!    affected snapshots explicitly").
-//! 3. **Ladder steps 1–4 only** in this slice: the expected head and its
+//! 3. **Ladder steps 1–4 and 6** in this build: the expected head and its
 //!    footer, earlier footers (the forward scan of [`locate_head`]; the
 //!    footer-history accelerator is not written by this build), checkpoints
-//!    and metadata chains (catalog images), and recovery manifests (a
-//!    damaged image's snapshot manifest). Independent copies (step 5) are
-//!    not taken, parity (step 6) waits for the Redundancy profile (C12), and
-//!    the bounded salvage scan (step 7) is a later slice. Each is reported
-//!    as such in [`RepairPlan::ladder`], never as passed.
+//!    and metadata chains (catalog images), recovery manifests (a damaged
+//!    image's snapshot manifest), and parity (C12, Annex B.2.11 D21).
+//!    Independent copies (step 5) are not taken, and the bounded salvage
+//!    scan (step 7) is a later slice. Each is reported as such in
+//!    [`RepairPlan::ladder`], never as passed.
+//!
+//! **Parity runs first** although it is step 6: a Redundancy-profile
+//! archive's damaged shards are rebuilt into an overlay
+//! ([`crate::parity::HealedSource`]) and steps 1–4 then run over the healed
+//! bytes, so a commit record, footer, catalog, or chunk that parity rebuilt
+//! is used as if it had never been damaged (every hash is still checked).
+//! A group whose damage exceeds its parity is listed in
+//! [`RepairPlan::parity`] (`PARITY_CAPACITY_EXCEEDED`), and what the damage
+//! touches is left out as before: never rebuilt wrong.
 //!
 //! # Rules [delegated] (recorded in the plan, C8 status)
 //!
@@ -90,6 +99,7 @@ use crate::gc::resolve_retention;
 use crate::job::JobContext;
 use crate::manifest::{Attributes, ManifestKind, Mtime};
 use crate::object::IdSource;
+use crate::parity::HealedSource;
 #[cfg(any(test, feature = "test-controls"))]
 use crate::publish::CheckpointPolicy;
 use crate::publish::{
@@ -339,6 +349,10 @@ pub struct RepairPlan {
     pub manifest_failures: Vec<ManifestFailure>,
     /// `None` when nothing is recoverable.
     pub retention: Option<RetentionPlan>,
+    /// The Redundancy profile's scan (step 6), when the archive has a
+    /// recovery record: what was rebuilt, what was beyond capacity.
+    #[serde(default)]
+    pub parity: Option<crate::parity::ParityScan>,
     /// Recorded by a catalog image and carried over; `None`: no image could
     /// be read, and the new archive records this build's defaults.
     pub writer_parameters: Option<WriterParameters>,
@@ -441,7 +455,8 @@ fn step(n: u8, name: &str, status: StepStatus, detail: impl Into<String>) -> Lad
     }
 }
 
-/// Steps 5–7: never taken by this build.
+/// Steps 5–7 before step 6 is known: 5 and 7 are never taken by this build;
+/// [`survey_healed`] replaces step 6.
 fn later_steps() -> [LadderStep; 3] {
     [
         step(
@@ -453,8 +468,8 @@ fn later_steps() -> [LadderStep; 3] {
         step(
             6,
             "parity",
-            StepStatus::NotAttempted,
-            "the Redundancy profile is not built (plan C12)",
+            StepStatus::NotAvailable,
+            "the archive has no recovery record (Redundancy profile, Annex B.2.11 D21)",
         ),
         step(
             7,
@@ -482,6 +497,7 @@ fn nothing(source_len: u64, ladder: Vec<LadderStep>, head: Option<SourceHead>) -
             omitted: Vec::new(),
             manifest_failures: Vec::new(),
             retention: None,
+            parity: None,
             writer_parameters: None,
             damage_found: true,
             outcome,
@@ -1000,6 +1016,7 @@ fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Re
             omitted,
             manifest_failures,
             retention: (outcome != Outcome::NothingRecoverable).then_some(retention),
+            parity: None,
             writer_parameters,
             damage_found,
             outcome,
@@ -1023,7 +1040,79 @@ fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Re
 /// Errors only for what compromises the run itself (I/O, limits,
 /// cancellation): damage is the plan's content.
 pub fn plan(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Result<RepairPlan> {
-    Ok(survey(src, opts, ctx)?.plan)
+    Ok(survey_healed(src, opts, ctx)?.0.plan)
+}
+
+/// Step 6 first (module docs): rebuild what parity can, then survey the
+/// healed bytes, and record step 6 in the ladder.
+fn survey_healed<'a>(
+    src: &'a dyn ReadStorage,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<(Survey, HealedSource<'a>)> {
+    let maybe =
+        crate::parity::read_descriptor_raw(src, opts).is_none_or(|d| d.redundancy.is_some());
+    let (scan, view) = if maybe {
+        let (scan, view) = crate::parity::scan(src, opts, ctx)?;
+        if scan.declared_percent.is_some() {
+            (Some(scan), view)
+        } else {
+            (None, HealedSource::new(src))
+        }
+    } else {
+        (None, HealedSource::new(src))
+    };
+    let mut s = survey(&view, opts, ctx)?;
+    let step6 = match &scan {
+        None => step(
+            6,
+            "parity",
+            StepStatus::NotAvailable,
+            "the archive has no recovery record (Redundancy profile, Annex B.2.11 D21)",
+        ),
+        Some(sc) => {
+            let beyond = sc.beyond_capacity().count();
+            let rebuilt = sc.shards_rebuilt();
+            let mut detail = format!(
+                "commits checked: {}; damaged shards: {}, rebuilt: {rebuilt}; damaged parity \
+                 frames: {}",
+                sc.commits.len(),
+                sc.shards_damaged(),
+                sc.frames_damaged()
+            );
+            if beyond > 0 {
+                detail.push_str(&format!(
+                    "; parity groups beyond capacity: {beyond} (PARITY_CAPACITY_EXCEEDED): what \
+                     their damage touches is left out"
+                ));
+            }
+            if let Some(why) = &sc.stopped {
+                detail.push_str(&format!("; {why}"));
+            }
+            let status = if rebuilt > 0 {
+                StepStatus::Used
+            } else if beyond > 0 || sc.violations().next().is_some() {
+                StepStatus::NotAvailable
+            } else {
+                StepStatus::NotNeeded
+            };
+            step(6, "parity", status, detail)
+        }
+    };
+    if let Some(slot) = s.plan.ladder.iter_mut().find(|l| l.step == 6) {
+        *slot = step6;
+    }
+    if let Some(sc) = &scan {
+        if sc.shards_damaged() > 0
+            || sc.frames_damaged() > 0
+            || sc.shards_unchecked() > 0
+            || sc.violations().next().is_some()
+        {
+            s.plan.damage_found = true;
+        }
+    }
+    s.plan.parity = scan;
+    Ok((s, view))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1111,7 +1200,9 @@ where
     D: StorageDir,
     D::File: Storage,
 {
-    let s = survey(src, read, ctx)?;
+    let (s, view) = survey_healed(src, read, ctx)?;
+    // Everything below reads the healed bytes (step 6).
+    let src: &dyn ReadStorage = &view;
     if s.plan != *approved {
         return Err(MochiError::new(
             ErrorCode::InvalidArgument,
@@ -1127,7 +1218,7 @@ where
             } else {
                 ErrorCode::RecordInvalid
             },
-            "nothing is recoverable through §22 steps 1–4 (the salvage scan is not built); \
+            "nothing is recoverable through §22 steps 1–4 and 6 (the salvage scan is not built); \
              nothing was written",
         ));
     }

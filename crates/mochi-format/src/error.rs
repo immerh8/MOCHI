@@ -123,6 +123,9 @@ pub enum EnvelopeFault {
     UnknownPayloadEncoding,
     /// Payload encoding: the payload lacks that encoding's signature.
     EncodingSignatureMismatch,
+    /// Payload encoding: registered, but not the one this frame kind
+    /// carries (a parity shard in a catalog-image frame, or the reverse).
+    EncodingKindMismatch,
     /// Schema version: for a catalog image, the header's record schema
     /// version differs from the image's SQLite `user_version`.
     SchemaVersionMismatch,
@@ -193,6 +196,25 @@ pub enum SealFault {
     RandomFailed,
     /// The AEAD or KDF primitive failed for a reason not archive-derived.
     PrimitiveFailed,
+}
+
+/// Why a parity frame or a reconstruction was refused (spec Annex B.2.11
+/// D21; [`crate::parity`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParityFault {
+    /// Not one skippable frame of the parity kind filling the bytes given.
+    NotAParityFrame,
+    /// Shorter than its fixed fields.
+    TooShort,
+    /// The frame digest does not match: the frame is damaged.
+    DigestMismatch,
+    /// Layout fields that the layout rule does not produce, an index out of
+    /// range, or a length that does not match them.
+    Layout,
+    /// A suite this build does not know.
+    UnknownSuite { suite: u16 },
+    /// Fewer intact shards than data shards: the group cannot be rebuilt.
+    BeyondCapacity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +300,8 @@ pub enum FormatError {
     InvalidArgument(&'static str),
     /// Sealing, opening, or key wrapping failed (D20).
     Seal(SealFault),
+    /// A parity frame or reconstruction was refused (D21).
+    Parity(ParityFault),
 }
 
 impl FormatError {
@@ -337,6 +361,13 @@ impl FormatError {
                 | SealFault::UnknownKdf => ErrorClass::Unsupported,
                 SealFault::RandomFailed => ErrorClass::Source,
                 SealFault::PrimitiveFailed => ErrorClass::InvalidArgument,
+            },
+            FormatError::Parity(fault) => match fault {
+                ParityFault::UnknownSuite { .. } => ErrorClass::Unsupported,
+                ParityFault::NotAParityFrame | ParityFault::TooShort => ErrorClass::Malformed,
+                ParityFault::DigestMismatch | ParityFault::Layout | ParityFault::BeyondCapacity => {
+                    ErrorClass::Record
+                }
             },
         }
     }
@@ -406,6 +437,7 @@ impl fmt::Display for FormatError {
             FormatError::Schema(msg) => write!(f, "schema violation: {msg}"),
             FormatError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
             FormatError::Seal(fault) => write!(f, "sealed object or key envelope: {fault:?}"),
+            FormatError::Parity(fault) => write!(f, "parity: {fault:?}"),
         }
     }
 }

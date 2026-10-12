@@ -68,20 +68,26 @@ limits that is 268,434,864 bytes, independent of how many features a record list
 | Code | Encoding | Signature |
 |---|---|---|
 | 0 | SQLite 3 database image | `SQLite format 3` ‖ `00` (16 bytes) |
+| 1 | Parity shard (Redundancy profile, D21; layout in R6) | `MOCHI2-PARITY` ‖ `00 00 00` (16 bytes) |
 
-Any other value is refused (`ENVELOPE_INVALID`).
+Any other value is refused (`ENVELOPE_INVALID`). Each enveloped kind carries exactly
+one encoding (below); a registered encoding in the other kind's frame is refused too
+(`EncodingKindMismatch`, added with encoding 1 on 2026-10-12).
 
 **Frame kinds that carry a binary envelope.** *(checked)*
 
 | Kind | Record |
 |---|---|
-| `0x184D2A50` | Catalog image |
+| `0x184D2A50` | Catalog image (encoding 0) |
+| `0x184D2A5F` | Parity frame (encoding 1; D21, R6) |
 
 **Decode order** (`decode_binary_record`; each failure has its own fault): kind; the
 80 fixed bytes present; envelope version; feature count ≤ 64 (before the header
 length is computed from it); header length; payload length; payload budget; payload
-encoding; required features; record schema version; payload signature (and, for
-SQLite, `user_version` = record schema version). The result is a *candidate*: nothing
+encoding, and that it is the kind's own; required features; record schema version;
+payload signature (and, for SQLite, `user_version` = record schema version).
+A parity frame's own digest is checked **before** this decoder runs, because no
+referencing record holds its hash (§4). The result is a *candidate*: nothing
 may interpret its payload until `Candidate::bind` has checked its identity against
 the referencing commit. Encoding refuses everything decoding refuses, plus anything
 over the writer's limits (`CAPACITY_EXCEEDED`).
@@ -111,7 +117,18 @@ is wrong.
 - Every CBOR record must re-encode to identical bytes under the one codec in
   `mochi-format::cbor` (D2); a record that does not is `RECORD_INVALID`.
 
-## 4. Records without an envelope
+## 4. Records without an envelope, and one without a referencing hash
+
+- **Parity frames** (`0x184D2A5F`, Redundancy profile, D21) carry a binary envelope
+  (encoding 1, record schema version 0, the identity and required features of the
+  commit whose footer follows them), but **no record references them**: the commit
+  record is written before them and the footer covers only the commit frame. Their
+  integrity scope is therefore their own frame digest (BLAKE3 over
+  `MOCHI2-PARITY-FRAME\0` and every frame byte before it), checked before the
+  envelope is decoded; their identity is bound to the commit whose footer follows
+  them, and a mismatch is a profile violation. They are a repair aid, never an
+  integrity anchor (R6 §5).
+
 
 - **Commit footer** (`0x184D2A56`): a fixed 64-byte payload (R1 §3). Its digest binds
   the commit frame; it never carries an envelope.
@@ -136,7 +153,9 @@ is wrong.
 3. **Dictionaries and parity register a payload encoding before writing.** C12 (R6)
    and any dictionary work must add their payload encoding to B.2.2's registry, with
    signature and vectors, before a writer emits one. Recorded as a precondition in
-   plan W9 (`docs/next-work-plan.md`).
+   plan W9 (`docs/next-work-plan.md`). **Done for parity (2026-10-12):** encoding 1,
+   signature `MOCHI2-PARITY\0\0\0`, registered in B.2.2 with D21; vectors in
+   `R6-vectors/` and the golden reject `b2/reject-envelope-payload-encoding-kind.bin`.
 4. **The B.2.6 evidence audit belongs to R8.** "Valid and reject vectors for every
    CDDL rule and every D11 obligation, in both encodings" is checked when the golden
    set R8 is assembled, not in this draft. §8.3's "evidence pending" marker stays until

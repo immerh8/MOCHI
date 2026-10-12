@@ -104,3 +104,10 @@ path = "fuzz_targets/sealed_object.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parity_frame"
+path = "fuzz_targets/parity_frame.rs"
+test = false
+doc = false
+bench = false

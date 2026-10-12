@@ -21,6 +21,7 @@ pub mod footer;
 pub mod frame;
 pub mod kdf;
 pub mod limits;
+pub mod parity;
 pub mod registry;
 pub mod repr;
 pub mod seal;

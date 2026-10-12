@@ -187,7 +187,8 @@ fn assert_repairs(
 }
 
 /// **Clean archive.** Every snapshot recovered from the head's image; the
-/// ladder stops at step 1 and names steps 5–7 as not attempted, never as
+/// ladder stops at step 1, names steps 5 and 7 as not attempted and step 6
+/// as not available (a Core archive has no recovery record), never as
 /// passed; apply reproduces every snapshot, carries retention, verifies the
 /// result, and leaves the source as it was. The plan survives JSON.
 #[test]
@@ -206,7 +207,7 @@ fn c8_clean_archive_plans_complete_and_reproduces_every_snapshot() {
             StepStatus::Used,
             StepStatus::NotNeeded,
             StepStatus::NotAttempted,
-            StepStatus::NotAttempted,
+            StepStatus::NotAvailable,
             StepStatus::NotAttempted,
         ]
     );

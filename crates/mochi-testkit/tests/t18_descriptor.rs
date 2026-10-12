@@ -59,10 +59,12 @@ fn add_uncommitted_tail(bytes: &mut Vec<u8>, head: &HistoryEntry) -> u64 {
 const ENCRYPT: Profile = Profile {
     tar_compatible: false,
     encrypted: true,
+    redundancy: None,
 };
 const TAR: Profile = Profile {
     tar_compatible: true,
     encrypted: false,
+    redundancy: None,
 };
 
 // ---- damaged and missing --------------------------------------------------------------
@@ -412,6 +414,7 @@ fn t18_enabling_encryption_in_place_is_refused() {
     let both = Profile {
         tar_compatible: true,
         encrypted: true,
+        redundancy: None,
     };
     let e = append_err(&s, with_profile(Some(both)), TailPolicy::Refuse);
     assert_eq!(e.code, ErrorCode::ProfileChangeUnsupported);
@@ -467,6 +470,7 @@ fn t18_create_with_an_unusable_profile_request_is_refused_and_leaves_nothing() {
     let both = Profile {
         tar_compatible: true,
         encrypted: true,
+        redundancy: None,
     };
     let e = ArchiveWriter::create(
         s.clone(),

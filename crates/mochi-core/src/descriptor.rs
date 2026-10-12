@@ -39,6 +39,7 @@
 use mochi_format::cbor::{self, CborLimits, Fields, Value};
 use mochi_format::envelope::{check_required_features, encode_cbor_record};
 use mochi_format::frame::{walk_frame, FrameDetail};
+use mochi_format::parity::{MAX_PERCENT, MIN_PERCENT, SUITE_CAUCHY_GF256};
 use mochi_format::registry::{FrameKind, DESCRIPTOR_OFFSET, SKIPPABLE_HEADER_LEN};
 use mochi_format::repr::StoredObject;
 use mochi_format::seal::FEATURE_ENCRYPTED;
@@ -69,13 +70,24 @@ pub struct DeclaredLimits {
 }
 
 /// The creation-time profile choices a writer can be asked for (spec §7,
-/// D4, D12). Both are fixed for the life of an archive.
+/// D4, D12). All are fixed for the life of an archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Profile {
     /// The TAR-compatible profile (descriptor constraint 0, D4).
     pub tar_compatible: bool,
     /// The Encrypted profile (§7.3, D3).
     pub encrypted: bool,
+    /// The Redundancy profile (§7.4, Annex B.2.11 D21): the parity
+    /// percentage, 1–100, of suite 1. Descriptor constraint 1.
+    pub redundancy: Option<u16>,
+}
+
+/// Descriptor constraint 1: the Redundancy profile's suite and parity
+/// percentage (D21). Every commit carries parity frames laid out from them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Redundancy {
+    pub suite: u16,
+    pub percent: u16,
 }
 
 /// A decoded descriptor. Generation and draft identifier are not fields:
@@ -86,6 +98,8 @@ pub struct Descriptor {
     pub required_features: Vec<u64>,
     /// Constraint 0: TAR-compatible profile, fixed at creation (D4).
     pub tar_compatible: bool,
+    /// Constraint 1: the Redundancy profile (D21), fixed at creation.
+    pub redundancy: Option<Redundancy>,
     /// Present only when the writer opted into larger limits (key 6).
     pub declared_limits: Option<DeclaredLimits>,
 }
@@ -114,6 +128,7 @@ impl Descriptor {
             archive_id,
             required_features: Vec::new(),
             tar_compatible,
+            redundancy: None,
             declared_limits: None,
         }
     }
@@ -126,8 +141,25 @@ impl Descriptor {
             archive_id,
             required_features: vec![FEATURE_ENCRYPTED],
             tar_compatible: false,
+            redundancy: None,
             declared_limits: None,
         }
+    }
+
+    /// A descriptor for `profile`: Encrypted or not, TAR-compatible or not,
+    /// and with or without parity (D21). The combinations the profiles
+    /// forbid are refused by the writer, not here.
+    pub fn for_profile(archive_id: ArchiveId, profile: Profile) -> Self {
+        let mut d = if profile.encrypted {
+            Descriptor::new_encrypted(archive_id)
+        } else {
+            Descriptor::new(archive_id, profile.tar_compatible)
+        };
+        d.redundancy = profile.redundancy.map(|percent| Redundancy {
+            suite: SUITE_CAUCHY_GF256,
+            percent,
+        });
+        d
     }
 
     /// Whether the archive was created in the Encrypted profile: the
@@ -141,6 +173,7 @@ impl Descriptor {
         Profile {
             tar_compatible: self.tar_compatible,
             encrypted: self.encrypted(),
+            redundancy: self.redundancy.map(|r| r.percent),
         }
     }
 
@@ -159,7 +192,19 @@ impl Descriptor {
                         .collect(),
                 ),
             ),
-            (5, Value::Map(vec![(0, Value::Bool(self.tar_compatible))])),
+            (5, {
+                let mut c = vec![(0, Value::Bool(self.tar_compatible))];
+                if let Some(r) = self.redundancy {
+                    c.push((
+                        1,
+                        Value::Map(vec![
+                            (0, Value::Uint(u64::from(r.suite))),
+                            (1, Value::Uint(u64::from(r.percent))),
+                        ]),
+                    ));
+                }
+                Value::Map(c)
+            }),
         ];
         if let Some(d) = self.declared_limits {
             m.push((
@@ -241,7 +286,7 @@ impl Descriptor {
             .collect::<std::result::Result<Vec<u64>, _>>()?;
         check_required_features(&required_features, KNOWN_REQUIRED_FEATURES, limits)?;
 
-        let tar_compatible = {
+        let (tar_compatible, redundancy) = {
             let c = f.req(5)?;
             let mut cf = Fields::of(c, "constraints")?;
             let tar = match cf.req(0)? {
@@ -252,8 +297,36 @@ impl Descriptor {
                     )))
                 }
             };
+            let redundancy = match cf.opt(1) {
+                None => None,
+                Some(r) => {
+                    let mut rf = Fields::of(r, "redundancy")?;
+                    let suite = rf.req(0)?.uint("parity suite")?;
+                    let percent = rf.req(1)?.uint("parity percentage")?;
+                    rf.finish()?;
+                    if suite != u64::from(SUITE_CAUCHY_GF256) {
+                        return Err(refuse(format!(
+                            "the archive's parity uses suite {suite}; this build knows only \
+                             suite {SUITE_CAUCHY_GF256}"
+                        )));
+                    }
+                    let percent = u16::try_from(percent)
+                        .ok()
+                        .filter(|p| (MIN_PERCENT..=MAX_PERCENT).contains(p))
+                        .ok_or_else(|| {
+                            invalid(format!(
+                                "parity percentage {percent} is outside \
+                                 {MIN_PERCENT}–{MAX_PERCENT}"
+                            ))
+                        })?;
+                    Some(Redundancy {
+                        suite: SUITE_CAUCHY_GF256,
+                        percent,
+                    })
+                }
+            };
             cf.finish()?;
-            tar
+            (tar, redundancy)
         };
         let declared_limits = match f.opt(6) {
             None => None,
@@ -280,6 +353,7 @@ impl Descriptor {
             archive_id,
             required_features,
             tar_compatible,
+            redundancy,
             declared_limits,
         })
     }
@@ -368,6 +442,30 @@ mod tests {
         assert_eq!(&s.as_bytes()[8..], &want[..]);
     }
 
+    /// D21: constraint 1 carries the suite and percentage; an unknown suite
+    /// is refused and a percentage outside 1–100 is damage.
+    #[test]
+    fn redundancy_constraint_round_trips_and_is_checked() {
+        let mut x = d();
+        x.redundancy = Some(Redundancy {
+            suite: 1,
+            percent: 10,
+        });
+        assert_eq!(rt(&x).unwrap(), x);
+        assert_eq!(x.profile().redundancy, Some(10));
+        let want = [0x05, 0xA2, 0x00, 0xF4, 0x01, 0xA2, 0x00, 0x01, 0x01, 0x0A];
+        let s = x.to_stored().unwrap();
+        assert!(s.as_bytes().windows(want.len()).any(|w| w == want));
+        for (suite, percent, code) in [
+            (2, 10, ErrorCode::UnsupportedFeature),
+            (1, 0, ErrorCode::DescriptorInvalid),
+            (1, 101, ErrorCode::DescriptorInvalid),
+        ] {
+            x.redundancy = Some(Redundancy { suite, percent });
+            assert_eq!(rt(&x).unwrap_err().code, code, "{suite} {percent}");
+        }
+    }
+
     #[test]
     fn only_offset_zero_is_accepted() {
         let s = d().to_stored().unwrap();
@@ -411,7 +509,8 @@ mod tests {
             e.profile(),
             Profile {
                 tar_compatible: false,
-                encrypted: true
+                encrypted: true,
+                redundancy: None,
             }
         );
         assert_eq!(rt(&e).unwrap(), e);

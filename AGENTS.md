@@ -27,7 +27,7 @@ If the spec does not answer a question, **do not invent an answer.** Stop, state
 
 ## Commands
 
-Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C13 discovery, C8 through §22 step 4, and C14 implemented, `docs/c14-cli.md`):
+Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 draft), C13 discovery, C8 through §22 steps 1–4 and 6, and C14 implemented, `docs/c14-cli.md`):
 
 ```bash
 cargo fmt --all --check
@@ -45,7 +45,7 @@ Pinned `compile_fail` error codes are only checked on nightly (CI job `doc-night
 cargo +nightly test --doc -p mochi-format
 ```
 
-Fuzzing (nightly plus `cargo install cargo-fuzz`; targets `frame_walker`, `footer`, `envelope`, `object_decode`, `catalog_image`, `cbor_decode`, `manifest_decode`, `commit_decode`, `archive_open`, `descriptor_decode`, `tar_stream`, `key_envelope`, `sealed_object`):
+Fuzzing (nightly plus `cargo install cargo-fuzz`; targets `frame_walker`, `footer`, `envelope`, `object_decode`, `catalog_image`, `cbor_decode`, `manifest_decode`, `commit_decode`, `archive_open`, `descriptor_decode`, `tar_stream`, `key_envelope`, `sealed_object`, `parity_frame`):
 
 ```bash
 cd fuzz && cargo +nightly fuzz run frame_walker corpus/frame_walker ../fixtures/golden/c1 ../fixtures/golden/c2 -- -max_total_time=60
@@ -53,6 +53,12 @@ cd fuzz && cargo +nightly fuzz run frame_walker corpus/frame_walker ../fixtures/
 
 ```bash
 cargo run -p mochi-cli -- verify fixtures/golden/c5/<file>.mochi --json --no-local-history
+```
+
+R6 vectors come from an independent Python implementation; CI regenerates them (needs `pip install blake3==1.0.8`):
+
+```bash
+python3 docs/ratification/R6-vectors/gen_vectors.py | diff - docs/ratification/R6-vectors/vectors.json
 ```
 
 Desktop (React + TypeScript + Vite, pnpm, Node 24 LTS — plan decision O1; D0 built, `apps/mochi-desktop/README.md`). On Linux the workspace build needs webkit2gtk 4.1 (`libwebkit2gtk-4.1-dev` and companions, listed in that README):
@@ -87,6 +93,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 - New dependencies must be MIT/Apache-2.0-compatible (the project is MIT OR Apache-2.0, plan O23). The one exception is UnRAR, confined to `mochi-foreign`, with its notice in `THIRD-PARTY-NOTICES.md`.
 - The catalog is in-memory SQLite; images move as bytes through `Storage` (O25). Never open SQLite on a file, `ATTACH`, or `VACUUM INTO` in `mochi-core` (`ci/check-invariants.sh` rule 8).
 - **Encrypted profile (D20, `docs/c11-encrypted.md`).** Every nonce is fresh from the OS CSPRNG: never a counter, never derived from content or position. A sealed object's associated data binds its archive ID, so a rewrite re-seals under a new data key and **needs the passphrase**; never copy a sealed frame between archives. Secrets (passphrases, the data key, the KEK) live in `zeroize` types, are never `Debug`-printed, logged, or put in an error message, and a passphrase is **never a command-line argument** (file, prompt, or the `--passphrase-env-for-automation` switch only). A command that needs the key opens it before it creates anything. A wrong passphrase is `KEY_UNAVAILABLE` (operational, exit 3), never a verification result; a tag failure on a hash-verified object is `CONTENT_INTEGRITY_FAILED`. Keyless `verify` reports `UNKNOWN` for everything it did not check and is never `PASS` overall. Removing a key envelope is **not revocation**: say so, and never write "revoked" or "secure". There is no KDF-cost knob in the shipped CLI.
+- **Redundancy profile (D21, `docs/ratification/R6-erasure-coding-draft.md`).** Parity is a **repair aid, never an integrity anchor**: a rebuilt shard is used only if it hashes to its table entry, and everything that reads rebuilt bytes still checks the commit chain's hashes. Never rebuild a group whose damage exceeds its intact parity (`PARITY_CAPACITY_EXCEEDED`), and never promise more than the suite's capacity. Parity frames go **between a commit frame and its footer**, before the step-6 sync; `verify` rebuilds only in memory (`parity::HealedSource`) and `repair` writes a new archive. Group membership is self-described and checked against the commit chain (no catalog table, no manifest state). The head's own footer is unprotected: never republish a head commit from parity. Never call an archive with a recovery record "safe" or "backed up".
 - **Hash-verify a catalog image before `Catalog::open_image`.** SQLite has no page checksums; a flipped bit in a stored value yields a different, fully valid catalog.
 - Paths are byte components joined by `/`; Windows names are WTF-8 (O24). Never normalize, case-fold, or lossily convert a name that is used as identity.
 

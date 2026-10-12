@@ -22,6 +22,7 @@ fn enabling_encryption_in_place_exits_4() {
         profile: Some(Profile {
             tar_compatible: false,
             encrypted: true,
+            redundancy: None,
         }),
         ..test_options()
     };
@@ -47,6 +48,7 @@ fn creating_an_encrypted_archive_without_a_passphrase_is_refused() {
         profile: Some(Profile {
             tar_compatible: false,
             encrypted: true,
+            redundancy: None,
         }),
         ..test_options()
     };

@@ -19,6 +19,7 @@ targets, via `exercise_all`) `c2_golden.rs::fuzz_smoke_over_mutated_objects`, an
 | `commit_decode` | C5 | commit records (spec §12.1, §9.2): closed schema, ID recomputation, fail-closed features, re-encode identity | written; seed with `../fixtures/golden/c5` |
 | `archive_open` | C5 | whole-archive open (spec §8.4, §12.2): head location, tail classification, footer → commit → manifest → checkpoint with hash-before-parse | written; seed with `../fixtures/golden/c5/valid-archive-3-commits.mochi` |
 | `descriptor_decode` | B.2 | archive descriptor v0 (spec Annex B.2 D12): closed schema, generation and draft refusals, offset-0 rule, re-encode identity | written; seed with `../fixtures/golden/b2` |
+| `parity_frame` | C12 | parity frames (spec Annex B.2.11 D21, R6): digest before fields, layout rule, re-encode identity; then input-derived group shapes and erasure patterns: ≤ m always rebuilds exactly, more is `BeyondCapacity` | written; seed with `../fixtures/golden/c12` |
 | checkpoint + delta replay | C6 | spec §10.6 (blocked on O26) | not yet |
 
 Run (needs nightly and `cargo install cargo-fuzz`). Put a scratch corpus directory

@@ -68,6 +68,11 @@ pub const STORED_OBJECT_DOMAIN: &[u8] = b"MOCHI2-STORED-OBJECT\0";
 pub const DICTIONARY_DOMAIN: &[u8] = b"MOCHI2-DICTIONARY\0";
 /// Draft (R3). §9.2 requires this one to be domain-separated.
 pub const COMMIT_ID_DOMAIN: &[u8] = b"MOCHI2-COMMIT-ID\0";
+/// One data shard of a parity group, padded to the shard size (spec Annex
+/// B.2.11 D21; R6).
+pub const PARITY_SHARD_DOMAIN: &[u8] = b"MOCHI2-PARITY-SHARD\0";
+/// One parity frame, every byte before its digest (D21; R6).
+pub const PARITY_FRAME_DOMAIN: &[u8] = b"MOCHI2-PARITY-FRAME\0";
 
 /// AEAD associated-data prefixes of the Encrypted profile (spec Annex B.2.10
 /// items 3 and 5). They are **not** BLAKE3 scopes: they prefix the associated
@@ -86,6 +91,8 @@ pub const ALL_DOMAINS: &[&[u8]] = &[
     STORED_OBJECT_DOMAIN,
     DICTIONARY_DOMAIN,
     COMMIT_ID_DOMAIN,
+    PARITY_SHARD_DOMAIN,
+    PARITY_FRAME_DOMAIN,
 ];
 
 mod sealed {
@@ -130,6 +137,11 @@ scopes! {
     /// Bytes removed by a tail truncation, as recorded in the quarantine
     /// sidecar (D14). Unseparated by the spec's definition.
     TailQuarantine => TAIL_QUARANTINE_DOMAIN, "tail-quarantine";
+    /// One data shard of a parity group: stored archive bytes, zero-padded
+    /// to the shard size (D21). Locates damage; never an integrity anchor.
+    ParityShard => PARITY_SHARD_DOMAIN, "parity-shard";
+    /// A parity frame's own digest (D21).
+    ParityFrame => PARITY_FRAME_DOMAIN, "parity-frame";
 }
 
 /// A BLAKE3-256 digest in scope `S`.
@@ -143,6 +155,8 @@ pub type ChunkContentHash = Digest<ChunkContent>;
 pub type StoredObjectHash = Digest<StoredObjectScope>;
 pub type DictionaryHash = Digest<Dictionary>;
 pub type CommitId = Digest<CommitIdScope>;
+pub type ParityShardHash = Digest<ParityShard>;
+pub type ParityFrameDigest = Digest<ParityFrame>;
 
 impl<S: DigestScope> Digest<S> {
     /// Rehydrate a digest read from a record. The caller asserts the scope;
@@ -290,6 +304,29 @@ impl StoredBytesHasher<StoredObjectScope> {
 pub fn stored_object_hash(stored: StoredObjectBytes<'_>) -> StoredObjectHash {
     let mut h = StoredBytesHasher::stored_object();
     h.update(stored);
+    h.finalize()
+}
+
+/// Hash of one parity-group data shard: the stored bytes of the protected
+/// range it covers followed by zero padding up to `shard_size` (D21). The
+/// padding is hashed, not stored.
+pub fn parity_shard_hash(stored: StoredObjectBytes<'_>, shard_size: u64) -> ParityShardHash {
+    let mut h = Scoped::<ParityShard>::new();
+    h.update(stored.bytes());
+    let mut pad = shard_size.saturating_sub(stored.len() as u64);
+    while pad > 0 {
+        let n = pad.min(ZEROS.len() as u64) as usize;
+        h.update(&ZEROS[..n]);
+        pad -= n as u64;
+    }
+    h.finalize()
+}
+
+/// A parity frame's digest: every byte of the frame before the digest
+/// field, skippable header included (D21).
+pub fn parity_frame_digest(frame_prefix: StoredObjectBytes<'_>) -> ParityFrameDigest {
+    let mut h = Scoped::<ParityFrame>::new();
+    h.update(frame_prefix.bytes());
     h.finalize()
 }
 

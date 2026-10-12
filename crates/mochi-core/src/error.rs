@@ -175,6 +175,18 @@ pub enum ErrorCode {
     /// value. Never an error; changes no dimension's status or the exit
     /// code. Added at the R7 draft decisions (2026-10-11).
     LimitNotDefault,
+    /// Verification: a parity frame of a Redundancy-profile archive is
+    /// damaged or missing, or no intact frame describes its group (Annex
+    /// B.2.11 D21). The committed bytes are not affected; the protection
+    /// they had is reduced, so recoverability is `DEGRADED`. Exit 1 if ever
+    /// raised as an error. Added in C12.
+    ParityDamaged,
+    /// Verification and repair: a parity group has more damaged shards than
+    /// its intact parity can rebuild (D21), so the damage in it is
+    /// unrecoverable from parity: recoverability `FAIL`, and repair leaves
+    /// out what the damage touches. Never a reconstruction of wrong bytes.
+    /// Exit 1. Added in C12.
+    ParityCapacityExceeded,
 }
 
 impl ErrorCode {
@@ -223,6 +235,8 @@ impl ErrorCode {
         ErrorCode::KeyUnavailable,
         ErrorCode::KdfCostBelowDefault,
         ErrorCode::LimitNotDefault,
+        ErrorCode::ParityDamaged,
+        ErrorCode::ParityCapacityExceeded,
     ];
 
     /// The stable string form. Independent of serde so it cannot drift silently;
@@ -272,6 +286,8 @@ impl ErrorCode {
             ErrorCode::KeyUnavailable => "KEY_UNAVAILABLE",
             ErrorCode::KdfCostBelowDefault => "KDF_COST_BELOW_DEFAULT",
             ErrorCode::LimitNotDefault => "LIMIT_NOT_DEFAULT",
+            ErrorCode::ParityDamaged => "PARITY_DAMAGED",
+            ErrorCode::ParityCapacityExceeded => "PARITY_CAPACITY_EXCEEDED",
         }
     }
 }
@@ -409,6 +425,9 @@ mod tests {
         "KDF_COST_BELOW_DEFAULT",
         // Appended at the R7 draft decisions (§20.5 configuration).
         "LIMIT_NOT_DEFAULT",
+        // Appended in C12 (D21).
+        "PARITY_DAMAGED",
+        "PARITY_CAPACITY_EXCEEDED",
     ];
 
     #[test]

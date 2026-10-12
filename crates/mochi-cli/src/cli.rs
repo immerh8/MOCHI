@@ -99,6 +99,16 @@ pub struct CreateArgs {
     /// archive: there is no recovery.
     #[arg(long)]
     pub encrypted: bool,
+    /// Add a recovery record (the Redundancy profile, spec Annex B.2.11
+    /// D21): Reed–Solomon parity of about PERCENT % of each commit's bytes,
+    /// written with the commit. `mochi verify` checks it and `mochi repair`
+    /// rebuilds damage up to its capacity: within each group of shards, as
+    /// many damaged shards as it has parity shards. Damage beyond that is
+    /// reported, never rebuilt wrong. The choice is fixed for the archive's
+    /// life. It is not a backup: a lost or overwritten file loses its
+    /// recovery record too.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u16).range(1..=100))]
+    pub recovery_record: Option<u16>,
     /// Most content bytes one commit may hold in memory.
     #[arg(long, value_name = "BYTES")]
     pub max_memory: Option<u64>,

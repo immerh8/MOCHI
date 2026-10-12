@@ -1956,9 +1956,15 @@ pub fn b2_envelope_vectors() -> Vec<EnvelopeVector> {
     );
     push(
         "reject-envelope-payload-encoding",
-        "payload encoding 1 (unregistered)",
-        RawEnvelope { encoding: 1, ..v() },
+        "payload encoding 2 (unregistered)",
+        RawEnvelope { encoding: 2, ..v() },
         f(EnvelopeFault::UnknownPayloadEncoding),
+    );
+    push(
+        "reject-envelope-payload-encoding-kind",
+        "payload encoding 1 (a parity shard, D21) in a catalog-image frame",
+        RawEnvelope { encoding: 1, ..v() },
+        f(EnvelopeFault::EncodingKindMismatch),
     );
     let mut bad_sig = b2_sqlite_header(0);
     bad_sig[0] = b's';
