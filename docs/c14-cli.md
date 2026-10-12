@@ -77,4 +77,4 @@ Errors in `--json` mode are one line on standard output: `{"error": {"code": "�
 
 ## What is not in this slice
 
-`rekey` (C11). `repair` takes §22 steps 1–4 and 6 (parity, C12): independent copies and the salvage scan are not taken. They keep exiting 3 `NOT_IMPLEMENTED`, never success. Full-text search (C13, optional) is refused with exit 4.
+`repair` takes §22 steps 1–4 and 6 (parity, C12): independent copies (step 5) and the salvage scan (step 7) are not taken yet (spec D22, D23; plan workstreams W11, W12); `repair` does not claim to have run them. No 1.0 command exits 3 `NOT_IMPLEMENTED` today. Full-text search (C13, optional) is refused with exit 4.
