@@ -28,15 +28,145 @@ jobs:
           # ubuntu-22.04 and ubuntu-24.04 share a job name and `runner.os`; without
           # this the 22.04 job restores 24.04's build scripts (glibc 2.39).
           key: ${{ matrix.os }}
+      - name: Desktop app build dependencies (Ubuntu; webkit2gtk 4.1, plan O11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
+      # ts-rs writes the IPC types while the tests run (plan O1); the
+      # checked-in copies must be exactly what the Rust types produce.
+      - name: Generated IPC types are fresh
+        shell: bash
+        run: |
+          git status --porcelain -- apps/mochi-desktop/ui/src/ipc/generated
+          test -z "$(git status --porcelain -- apps/mochi-desktop/ui/src/ipc/generated)" || {
+            echo "::error::apps/mochi-desktop/ui/src/ipc/generated is stale: run cargo test -p mochi-desktop and commit the result"
+            git diff -- apps/mochi-desktop/ui/src/ipc/generated
+            exit 1
+          }
       - name: AGENTS.md invariants
         shell: bash
         run: bash ci/check-invariants.sh
+
+  ui:
+    # Desktop frontend (plan D0, O1, K9): Node 24 LTS, pnpm from
+    # `packageManager`, frozen lockfile; lint (react text-only rules as
+    # errors), strict typecheck, unit tests, production build.
+    name: desktop ui
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: apps/mochi-desktop/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm (corepack, the version in package.json)
+        run: corepack enable
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+
+  e2e:
+    # Plan D0 exit: the built app streams a sample job's progress and cancels
+    # it cleanly, driven through tauri-driver on every supported platform
+    # (O11). GitHub's Windows runners are Windows Server; client-only
+    # behaviour goes on the release checklist.
+    name: desktop e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-${{ matrix.os }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm (corepack, the version in package.json)
+        run: corepack enable
+      - name: Desktop app and WebDriver dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev \
+            webkit2gtk-driver xvfb
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+      - name: Install msedgedriver matching the runner's WebView2 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --locked
+          mkdir -p "$RUNNER_TEMP/edgedriver"
+          cd "$RUNNER_TEMP/edgedriver" && msedgedriver-tool
+          ls -la "$RUNNER_TEMP/edgedriver"
+          echo "MOCHI_NATIVE_DRIVER=$RUNNER_TEMP/edgedriver/msedgedriver.exe" >> "$GITHUB_ENV"
+      - name: Build the UI
+        working-directory: apps/mochi-desktop/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build the app with the UI embedded
+        # `e2e`: test builds only; lets msedgedriver configure WebView2 (src/automation.rs).
+        run: cargo build --locked -p mochi-desktop --features custom-protocol,e2e
+      - name: Install the E2E runner
+        working-directory: apps/mochi-desktop/e2e
+        run: pnpm install --frozen-lockfile
+      - name: Run the E2E tests (Ubuntu, under Xvfb)
+        if: runner.os == 'Linux'
+        working-directory: apps/mochi-desktop/e2e
+        run: xvfb-run -a pnpm test
+      # Pre-flight: start the app the way msedgedriver does (remote debugging
+      # on, its own user data folder) and check that WebView2 writes
+      # DevToolsActivePort there and answers on the port. Without the `e2e`
+      # feature it does not (Tauri's own WebView2 options win), which is the
+      # "DevToolsActivePort file doesn't exist" a WebDriver session reports.
+      - name: Check WebView2 accepts WebDriver's settings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $udf = Join-Path $env:RUNNER_TEMP "wv2-preflight"
+          New-Item -ItemType Directory -Force $udf | Out-Null
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+          $env:WEBVIEW2_USER_DATA_FOLDER = $udf
+          $p = Start-Process -FilePath target\debug\mochi-desktop.exe -PassThru `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\app-out.txt" -RedirectStandardError "$env:RUNNER_TEMP\app-err.txt"
+          Start-Sleep -Seconds 15
+          $alive = -not $p.HasExited
+          "app alive after 15 s: $alive"
+          $port = Get-ChildItem -Path $udf -Recurse -Filter DevToolsActivePort -ErrorAction SilentlyContinue
+          "DevToolsActivePort found: $([bool]$port)"
+          $ok = $false
+          try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9222/json/version -TimeoutSec 5).Content; $ok = $true } catch { "no DevTools endpoint on 9222: $($_.Exception.Message)" }
+          if ($alive) { Stop-Process -Id $p.Id -Force }
+          "--- app stderr"; Get-Content "$env:RUNNER_TEMP\app-err.txt" -ErrorAction SilentlyContinue
+          if (-not ($alive -and $ok)) { exit 1 }
+      - name: Run the E2E tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: apps/mochi-desktop/e2e
+        run: pnpm test
 
   fuzz-smoke:
     name: fuzz smoke (${{ matrix.target }})
@@ -223,6 +353,3 @@ jobs:
       - name: Doctests with error codes checked
         run: cargo +nightly test --doc -p mochi-format
 
-  # Added as their phases land (plan §5, §8.1). Not present yet, on purpose:
-  #   e2e          - D0+: tauri-driver + WebdriverIO on Windows and Ubuntu (all supported platforms)
-  #   ui           - D0+: pnpm install --frozen-lockfile, eslint, tsc --noEmit, vitest, ts-rs types fresh

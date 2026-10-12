@@ -5,9 +5,10 @@ members = [
     "crates/mochi-core",
     "crates/mochi-cli",
     "crates/mochi-testkit",
+    # Phase D0 (plan §7, decision O1): the Tauri v2 desktop app. Building it
+    # on Linux needs webkit2gtk 4.1 (apps/mochi-desktop/README.md).
+    "apps/mochi-desktop/src-tauri",
 ]
-# apps/mochi-desktop/src-tauri joins the workspace when decision O1 is made
-# (plan §9) and phase D0 starts. See apps/mochi-desktop/README.md.
 
 [workspace.package]
 version = "0.1.0"

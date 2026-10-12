@@ -55,10 +55,12 @@ cd fuzz && cargo +nightly fuzz run frame_walker corpus/frame_walker ../fixtures/
 cargo run -p mochi-cli -- verify fixtures/golden/c5/<file>.mochi --json --no-local-history
 ```
 
-Desktop (React + TypeScript + Vite, pnpm, Node 24 LTS — plan decision O1; scaffold arrives with D0):
+Desktop (React + TypeScript + Vite, pnpm, Node 24 LTS — plan decision O1; D0 built, `apps/mochi-desktop/README.md`). On Linux the workspace build needs webkit2gtk 4.1 (`libwebkit2gtk-4.1-dev` and companions, listed in that README):
 
 ```bash
-# cd apps/mochi-desktop/ui && pnpm install --frozen-lockfile && pnpm tauri dev
+cd apps/mochi-desktop/ui && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test
+pnpm --dir apps/mochi-desktop/ui dev & cargo run -p mochi-desktop   # dev app on the Vite server
+cargo test -p mochi-desktop        # also regenerates ui/src/ipc/generated (commit it; CI checks)
 ```
 
 ## Invariants you must not break
@@ -123,7 +125,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 - **No format logic in the UI or in Tauri commands.** Commands are thin adapters: validate input, call `mochi-core`, return typed results.
 - **Least-privilege capabilities.** Do not grant the webview broad filesystem, shell, or HTTP permissions. The user picks paths via the dialog plugin; Rust performs the I/O. Every new permission needs a reason in the PR.
 - Keep the CSP strict. No remote content; no `eval`.
-- **Archive-supplied strings are untrusted.** Render file names, labels, and comments as text only. Never inject them as HTML. The fixture set includes hostile names; keep it passing. In React this means: never `dangerouslySetInnerHTML` (lint error `react/no-danger`, and `ci/check-invariants.sh` greps for it), never build HTML strings, never pass archive strings to `href`/`src` attributes.
+- **Archive-supplied strings are untrusted.** Render file names, labels, and comments as text only. Never inject them as HTML. The fixture set includes hostile names; keep it passing. In React this means: never `dangerouslySetInnerHTML` (lint error `@eslint-react/dom-no-dangerously-set-innerhtml` plus a `no-restricted-syntax` backstop, since `react/no-danger` stops at the unsupported ESLint 9; `ci/check-invariants.sh` greps `ui/src` for it), never build HTML strings, never pass archive strings to `href`/`src` attributes.
 - **IPC types are generated** from Rust with `ts-rs` (O1). Do not hand-edit generated files; CI fails if they are stale.
 - **Supported platforms are Windows 10 22H2+/11 and Ubuntu 22.04/24.04, x86-64 (O11).** macOS is not supported in 1.0; do not add macOS-specific code paths or claim macOS support in user-facing text.
 - Progress streams over a Tauri `Channel`; CPU-heavy work runs off the async runtime.

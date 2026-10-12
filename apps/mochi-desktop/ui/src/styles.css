@@ -1,0 +1,32 @@
+/* Neutral styling throughout: spec §23.3 allows success styling only for a
+   verification PASS, and nothing on this screen is a verification. */
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1f2328;
+  background: #f6f7f9;
+}
+main {
+  max-width: 44rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+}
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+progress {
+  width: 20rem;
+}
+[role="status"] {
+  min-height: 1.5em;
+}
