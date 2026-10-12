@@ -460,6 +460,12 @@ pub struct RepairPlanArgs {
     /// it, `--json` prints the plan and text mode summarizes it.
     #[arg(long, short = 'o', value_name = "PLAN_FILE")]
     pub output: Option<PathBuf>,
+    /// A byte copy of the same archive to take verified frames from (§22
+    /// step 5; Annex B.2.12). Repeatable; read only. A copy supplies bytes,
+    /// never trust: everything it donates is verified against the source's
+    /// commit chain. `apply` must be given the same copies in the same order.
+    #[arg(long, value_name = "PATH")]
+    pub copy: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -477,6 +483,9 @@ pub struct RepairApplyArgs {
     /// expired. Recorded in the output.
     #[arg(long)]
     pub accept_retention_loss: bool,
+    /// The copies the plan was made with, in the same order.
+    #[arg(long, value_name = "PATH")]
+    pub copy: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

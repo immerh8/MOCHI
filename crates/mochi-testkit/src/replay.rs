@@ -200,6 +200,62 @@ impl ReadStorage for Tracing<'_> {
     }
 }
 
+/// A read-only view whose reads fail with an I/O error once they touch
+/// `fail_from` or beyond (a copy on a failing disk, C8 step 5).
+pub struct FailingReads<'a> {
+    pub inner: &'a SimStorage,
+    pub fail_from: u64,
+}
+
+impl ReadStorage for FailingReads<'_> {
+    fn size(&self) -> Result<u64, StorageError> {
+        self.inner.size()
+    }
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, StorageError> {
+        if offset.saturating_add(buf.len() as u64) > self.fail_from {
+            return Err(StorageError::Io(std::io::Error::other(
+                "injected read failure",
+            )));
+        }
+        self.inner.read_at(offset, buf)
+    }
+}
+
+/// A read-only view that serves `reads` reads and then fails every one with
+/// an I/O error (a disk that dies part-way). `served` counts the reads that
+/// were attempted, so a first run with `usize::MAX` measures the sweep.
+pub struct FailAfter<'a> {
+    pub inner: &'a SimStorage,
+    pub reads: usize,
+    pub served: std::cell::Cell<usize>,
+}
+
+impl<'a> FailAfter<'a> {
+    pub fn new(inner: &'a SimStorage, reads: usize) -> Self {
+        FailAfter {
+            inner,
+            reads,
+            served: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl ReadStorage for FailAfter<'_> {
+    fn size(&self) -> Result<u64, StorageError> {
+        self.inner.size()
+    }
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, StorageError> {
+        let n = self.served.get();
+        self.served.set(n + 1);
+        if n >= self.reads {
+            return Err(StorageError::Io(std::io::Error::other(
+                "injected read failure",
+            )));
+        }
+        self.inner.read_at(offset, buf)
+    }
+}
+
 pub fn within(r: (u64, u64), allowed: &[(u64, u64)]) -> bool {
     allowed.iter().any(|&(lo, hi)| r.0 >= lo && r.0 + r.1 <= hi)
 }

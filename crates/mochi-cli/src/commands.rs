@@ -4,13 +4,14 @@
 //! `docs/c14-cli.md`.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use mochi_core::catalog::dump::DumpValue;
 use mochi_core::catalog::namespace::EntryKind;
 use mochi_core::catalog::namespace::FileVersionId;
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::compact::{self, CompactOptions, Keep};
+use mochi_core::copies::CopySource;
 use mochi_core::descriptor::Profile;
 use mochi_core::exit;
 use mochi_core::gc::{self, GcPlan, PlanHead};
@@ -2021,9 +2022,36 @@ fn outcome_line(o: Outcome) -> &'static str {
              recovered (listed above); a repair would be a partial salvage"
         }
         Outcome::NothingRecoverable => {
-            "nothing recoverable through §22 steps 1–4; the salvage scan (step 7) is not built"
+            "nothing recoverable through §22 steps 1–6; the salvage scan (step 7) is not built"
         }
     }
+}
+
+/// The copies named with `--copy`, opened read-only. A copy that is the
+/// archive itself is refused (D22 item 7).
+fn open_copies(archive: &Path, paths: &[PathBuf]) -> Result<Vec<(String, OsReadStorage)>> {
+    let own = std::fs::canonicalize(archive).ok();
+    let mut out = Vec::new();
+    for path in paths {
+        if own.is_some() && std::fs::canonicalize(path).ok() == own {
+            return Err(invalid(format!(
+                "--copy {} is the archive being repaired; a copy is a different file",
+                path.display()
+            )));
+        }
+        out.push((path.display().to_string(), open_archive(path)?));
+    }
+    Ok(out)
+}
+
+fn copy_sources(opened: &[(String, OsReadStorage)]) -> Vec<CopySource<'_>> {
+    opened
+        .iter()
+        .map(|(label, storage)| CopySource {
+            label: label.clone(),
+            storage,
+        })
+        .collect()
 }
 
 fn print_repair_plan(env: &mut Env<'_>, p: &RepairPlan) {
@@ -2075,12 +2103,57 @@ fn print_repair_plan(env: &mut Env<'_>, p: &RepairPlan) {
         };
         env.line(format!("step {} {}: {status}{detail}", s.step, s.name));
     }
+    for (i, c) in p.copies.iter().enumerate() {
+        let m = match c.matched {
+            Some(mochi_core::copies::CopyMatch::IdenticalDescriptor) => "identical descriptor",
+            Some(mochi_core::copies::CopyMatch::DescriptorHash) => "descriptor hash",
+            Some(mochi_core::copies::CopyMatch::NotACopy) => "NOT A COPY",
+            None => "undetermined",
+        };
+        let st = match c.status {
+            mochi_core::copies::CopyStatus::Used => "used",
+            mochi_core::copies::CopyStatus::NotNeeded => "not needed",
+            mochi_core::copies::CopyStatus::NotAvailable => "not available",
+            mochi_core::copies::CopyStatus::Unreadable => "UNREADABLE",
+        };
+        env.line(format!(
+            "copy {} {} ({} bytes, {m}): {st}; donated {} frame{} ({} bytes); {}",
+            i + 1,
+            text(c.path.as_bytes()),
+            c.len,
+            c.frames_donated,
+            if c.frames_donated == 1 { "" } else { "s" },
+            c.bytes_donated,
+            text(c.detail.as_bytes())
+        ));
+    }
+    for d in &p.donations {
+        env.line(format!(
+            "frame at offset {} ({} bytes, {:?}) comes from copy {}",
+            d.offset,
+            d.len,
+            d.kind,
+            d.copy + 1
+        ));
+    }
     let seqs: Vec<u64> = p.snapshots.iter().map(|s| s.seq).collect();
     env.line(format!(
         "recoverable snapshots ({}): {}",
         seqs.len(),
         seq_list(&seqs)
     ));
+    let by_copy: Vec<u64> = p
+        .snapshots
+        .iter()
+        .filter(|s| s.trust == mochi_core::copies::Trust::CopyConfirmed)
+        .map(|s| s.seq)
+        .collect();
+    if !by_copy.is_empty() {
+        env.line(format!(
+            "snapshots confirmed by a copy alone (the source cannot show the commit): {}",
+            seq_list(&by_copy)
+        ));
+    }
     for l in &p.lost_snapshots {
         env.line(format!(
             "lost snapshot {}: {}: {}",
@@ -2143,7 +2216,8 @@ pub fn repair_plan(env: &mut Env<'_>, a: &RepairPlanArgs) -> Result<u8> {
     };
     env.unlock(&a.archive, Need::Required)?;
     let src = open_archive(&a.archive)?;
-    let p = repair::plan(&src, &env.read, &ctx)?;
+    let opened = open_copies(&a.archive, &a.copy)?;
+    let p = repair::plan_with_copies(&src, &copy_sources(&opened), &env.read, &ctx)?;
     let value = serde_json::to_value(&p)
         .map_err(|e| MochiError::new(ErrorCode::IoError, format!("encoding the plan: {e}")))?;
     if let Some(out) = &a.output {
@@ -2207,13 +2281,15 @@ pub fn repair_apply(env: &mut Env<'_>, a: &RepairApplyArgs) -> Result<u8> {
     let (mut out_dir, out_name) = location(&a.output)?;
     // The source is only read: repair never writes to it (§22.2).
     let src = open_archive(&a.archive)?;
+    let opened = open_copies(&a.archive, &a.copy)?;
     let options = RepairOptions {
         accept_retention_loss: a.accept_retention_loss,
         kdf: None,
         ..RepairOptions::default()
     };
-    let report = repair::apply(
+    let report = repair::apply_with_copies(
         &src,
+        &copy_sources(&opened),
         &approved,
         &mut out_dir,
         &out_name,
