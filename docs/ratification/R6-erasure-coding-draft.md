@@ -199,3 +199,9 @@ Recorded in B.2.11 too; to be decided at the review that freezes R6.
    of a larger field (GF(2^16) would allow larger groups and stronger scattered-damage
    tolerance per group, at several times the coding cost).
 5. **No throughput benchmark.** None is claimed (§27); one belongs with the freeze.
+
+**Calls (2026-10-12, delegated; `docs/ratification-core-plan.md` K15; confirmed or
+revised at the freeze review, W14).** Items 1–4: **keep**, no wire change. Item 1's
+mitigation is copies (spec D22), not parity; a head commit is never republished from
+parity. Item 3 is quantified by the benchmark. Item 5: the benchmark
+(`docs/benchmarks/c12-parity.md`, §27 decomposition) is written **before** the freeze.

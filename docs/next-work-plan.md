@@ -322,8 +322,9 @@ Each draft cites its source file and commit, lists any place the spec and code d
 - **C12 Redundancy + R6** — **done as a draft 2026-10-12** (spec Annex B.2.11 D21; plan C12 status). The parity payload encoding is registered (encoding 1) with vectors from an independent implementation; the suite is implemented in `mochi-format` rather than taken from a crate, because the format must define the matrix exactly and the second implementation (R9) must reproduce it. `parity_groups` became self-description checked against the commit chain (D21 item 7). C8 step 6 and the DoD row "damage beyond parity capacity" are done; step 5 (independent copies) is still not attempted. **Left:** the R6 freeze review (gate G11), the desktop option (D5).
 - **C8 step 7 (bounded salvage scan):** needs rules for labelling uncertain finds and a decision on writing a descriptor "labelled as reconstructed" (D12). Write those as an Annex B proposal for the owner before code.
 - **R8 golden set** (valid, corrupt, interrupted archives for every profile), then **R9**: per O7, a read-only verifier in Python written by a **fresh session given only `docs/spec.md` and the ratification artifacts**, never the Rust code. That is a good fit for a separate model session started cold.
+- **Superseded for Core and ratification (2026-10-12):** C8 steps 5 and 7, R3, the R6 freeze, R1–R4 freeze, R7 freeze, R8, R9, and the 1.0 flip are planned in `docs/ratification-core-plan.md` (calls K10–K26, workstreams W10–W20). The items above stay as a record.
 - **Desktop D1–D8** after D0, in plan order.
-- **Owner-only:** G6 needs runs on physical Windows 10/11 hardware (T33).
+- **Owner-only:** G6 needs runs on physical Windows 10/11 hardware (T33). Who writes R9 is decided (K22: a cold session on a checkout without the Rust code).
 
 ---
 

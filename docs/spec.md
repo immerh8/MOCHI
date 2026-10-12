@@ -1134,13 +1134,15 @@ Recovery proceeds from least invasive to most invasive sources:
 2. Locate and validate previous committed footers if the tail is damaged.
 3. Use verified checkpoints and metadata chains.
 4. Use recovery manifests.
-5. Retrieve verified alternate objects from independent copies.
+5. Retrieve verified alternate objects from independent copies. **[Amendment, Annex B.2.12 D22]** In this build, copies are byte copies of the same archive given to repair explicitly. They are consulted after parity (step 6) and before steps 1–4 read the result. A copy supplies bytes only, and the source supplies the trust.
 6. Reconstruct missing objects using available parity. **[Amendment, Annex B.2.11 D21]** In this build repair takes this step first, rebuilding into an in-memory overlay that steps 1–4 then read; damage beyond a group's parity is reported (`PARITY_CAPACITY_EXCEEDED`) and never rebuilt.
-7. Perform bounded frame scanning and salvage if structured recovery is insufficient.
+7. Perform bounded frame scanning and salvage if structured recovery is insufficient. **[Amendment, Annex B.2.13 D23]** Only on explicit request. A commit found by scanning is used only if its publication is confirmed (its own footer, or a confirmed later commit's parent link). Any repair that uses this step is partial.
 
 Footer history is an accelerator, not a sole source of truth.
 
 **[1.0 integration]** *Proposed default (from v1.2).* When present, the `0x184D2A5E` accelerator holds the most recent N footers (proposed default N = 16) with their original offsets, so step 2 can usually avoid a backward scan. Each entry MUST still be validated against the commit frame it names. An optional `<archive>.mochi.trailer-backup` sidecar (atomic write-then-rename after each commit) remains permitted and is never authoritative over the archive itself.
+
+**[Amendment, decided by delegation 2026-10-12, plan K16]** MOCHI 1.0 writes neither the accelerator nor the sidecar. The `0x184D2A5E` magic stays registered (R1); a 1.0 reader walks such a frame and never interprets it. Step 2 is the forward and backward walk. Both mechanisms are 1.x options.
 
 ### 22.1 Scan safety
 
@@ -1269,7 +1271,7 @@ Implementations MUST maintain:
 | False magic inside payload | No false object or commit acceptance |
 | Oversized or malicious frame metadata | Bounded resource use and explicit rejection |
 | Destroyed SQLite catalogs | Recover the promised scope through manifests |
-| Missing shared dictionary | Identify all affected files and exercise recovery |
+| Missing shared dictionary | Identify all affected files and exercise recovery. **[Amendment, delegated 2026-10-12, plan K17]** 1.0 writes no dictionaries (plan O21). A dictionary-dependent chunk is reported as `UNSUPPORTED` (`UNSUPPORTED_FEATURE`, exit 4) with every affected file version listed, never as partial content, and repair refuses rather than omits it (plan K4) |
 | Corrupted content object | Detect and recover where policy permits |
 | Damage beyond parity capacity | Explicit unrecoverable result |
 | Deleted primary archive | Inventory detects absence; independent restore succeeds |
@@ -1498,6 +1500,9 @@ Each decision blocks the listed work until recorded in this annex. D1–D9 are r
 | D19 | **Decided [delegated 2026-10-08]; no wire change.** The TAR-stream compatibility profile (spec 7.2) is written by emitting, per commit with at least one put, one complete POSIX pax TAR stream whose non-content bytes live in ordinary data chunks that no extent references (*stream-only chunks*). See B.2.9 | — | C10; C9 (GC accounting, rewrites keep the profile); C7 (`PROFILE_VIOLATION`); desktop "create" dialog (D4) |
 | D21 | **Decided [delegated 2026-10-12]; wire format: parity frame v0 (binary-envelope payload encoding 1), descriptor constraint 1; no required feature.** The Redundancy profile (spec 7.4, 15) writes, per commit, Cauchy Reed–Solomon parity over GF(2^8) of the stored bytes from the parent's footer to the end of the commit frame, between the commit frame and its footer, at a percentage fixed at creation. See B.2.11 | — | C12; R6; C8 step 6; desktop "create" dialog (D5) |
 | D20 | **Decided [delegated 2026-10-09]; wire format: key envelope v0, sealed object v0, commit record schema 2, recovery-manifest schema 3, required feature 1.** The Encrypted profile (spec 7.3, 14) seals data chunks, catalog images, and manifests with XChaCha20-Poly1305 under one random data key per archive, wrapped per passphrase (Argon2id) in key envelopes that every commit record lists. See B.2.10 | — | C11 and `rekey`; R5; desktop passphrase flows |
+| D22 | **Decided [delegated 2026-10-12]; no wire change.** Ladder step 5 (§22): repair takes verified frames from **byte copies of the same archive** given explicitly (`--copy`). Trust comes from the source and bytes may come from a copy: a frame is donated only inside the commits the copy agrees on with the source, only where the source's frame fails its check and the copy's passes, and the survey verifies it again. See B.2.12 | — | C8 step 5; repair plan v2 |
+| D23 | **Decided [delegated 2026-10-12]; no wire change; new error code `ARCHIVE_ID_AMBIGUOUS`.** Ladder step 7 (§22): an explicit, bounded salvage scan. Scanned commits are used only when publication is confirmed; contradictory or self-inconsistent candidates are refused; any repair using it is partial. See B.2.13 | — | C8 step 7; D12 "explicit salvage" |
+| D24 | **Decided [delegated 2026-10-12].** The draft-to-1.0 boundary (§26; plan release gate 4): the draft identifier becomes 2 at the format freeze (gate G12). 1.0 writes `null`, refuses drafts with exit 4, and migrates only the last draft through `mochi migrate`. See B.2.14 | — | Format freeze; 1.0 release |
 
 Status of the open questions from the original v1.2 review: chunk-hash ordering — resolved (9.2); concurrent writers — resolved for Core (12.5); `content_index` schema — superseded, DDL is a ratification artifact (10.1); version-byte mapping — reframed by Section 26 and D1; Windows attribute defaults — D6.
 
@@ -1513,7 +1518,7 @@ Each entry below closes the decision above with the same ID. Rationale and conse
 | D4 | **TAR compatibility is opt-in, per archive, fixed at creation.** The default profile keeps dedup, dictionaries, and fragmentation. |
 | D5 | **Split volumes stay in 1.x.** The Segmented profile and R10 are not part of 1.0. |
 | D6 | **Section 10.4.1, made concrete.** POSIX: permission bits, numeric uid/gid, mtime with nanoseconds; setuid/setgid restored only on explicit request; uid/gid restored only with privilege, otherwise reported as an exception. Windows: `READONLY`, `HIDDEN`, `SYSTEM`, `ARCHIVE` attributes and mtime. Entry types: regular file, directory, symbolic link (target stored as bytes; restored as a link, never written through; reported as an exception where the platform cannot create it). Hard links are stored as separate files. Not promised: extended attributes, ACLs, alternate data streams, owner names, atime, ctime, creation time. |
-| D7 | **A read-only verifier in Python, written from this specification alone**, sharing no code with the reference implementation. Section 28's interoperability claim for 1.0 is scoped to the profiles 1.0 ships (Core, TAR-compatibility, Encrypted, Redundancy). |
+| D7 | **A read-only verifier in Python, written from this specification alone**, sharing no code with the reference implementation. Section 28's interoperability claim for 1.0 is scoped to the profiles 1.0 ships (Core, TAR-compatibility, Encrypted, Redundancy). **[Amendment, delegated 2026-10-12, plan K22, K23]** It is written by a session started cold on a checkout that does not contain the Rust code (`docs/`, `fixtures/golden/`, `interop/` only), reading only this specification, the ratification artifacts, the schemas, and vectors and fixtures as data. It lives in `interop/pyverify/`. Agreement with the reference implementation is exact equality of an interop summary over the R8 golden set (gate G14). |
 | D8 | **Layered, and the source is always reported.** With no anchor, freshness is `UNKNOWN`. A user-supplied expected head gives `PASS`/`FAIL`. Otherwise a client MAY keep the last-seen head per archive ID as a local anchor, giving `FAIL` on rollback or substitution. First sight is `UNKNOWN`, never `PASS`. The report names the anchor used. |
 | D9 | **The desktop application reads ZIP, 7z, RAR, and `.tar.gz`/`.tar` (browse, extract, test) and never writes them.** Outside this specification; see the plan, phase D8. |
 
@@ -1607,7 +1612,7 @@ No object contains the ID of the commit that references it. The commit ID covers
   - *Permitted:* head discovery, footer and commit validation, the structural walk, stored-integrity checks, and diagnostics.
   - *Reported:* `FAIL`.
   - *Refused:* interpretation (listing, extraction, replay), except through explicit salvage labelled partial; append.
-  - *Repair* may write a new archive with a descriptor that is labelled as reconstructed.
+  - *Repair* may write a new archive with a descriptor that is labelled as reconstructed. **[Amendment, delegated 2026-10-12, plan K20]** No descriptor is labelled or written as reconstructed. A repaired archive is a new archive with its own, accurate descriptor. The reconstruction is recorded in the repair plan and report, which is where every repair fact lives (plan C8). Without the source descriptor, the output profile follows B.2.13 item 8.
 - **Placement.** A descriptor frame at any offset other than 0 is invalid. Because there is exactly one descriptor, at offset 0, two commits of one archive that reference different descriptors cannot both be valid; D10.6 checks this for every commit a replay depends on.
 
 **D13 — Creation (plan O12; §12.2 step 9).**
@@ -1865,6 +1870,20 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - ≤ *m* damaged shards per group rebuild bit-identically, in every commit at once; *m* + 1 is `PARITY_CAPACITY_EXCEEDED` and nothing is rewritten.
   - Parity survives the loss of the whole catalog image; the descriptor and earlier footers are rebuilt; a contiguous burst spreads across groups.
   - Damaged parity is `PARITY_DAMAGED` with integrity unaffected; forged frames are `PROFILE_VIOLATION`. A fuzz target covers the frame decoder and reconstruction.
+- **G12 Format freeze (decided 2026-10-12, plan K12, K26).** Pending.
+  - R1, R2, R3, and R4 are frozen in one review, recorded in each artifact. R6 is frozen first (G11).
+  - The drift test and R3's mechanical CDDL check pass.
+  - R4 `user_version` is 1, and the draft identifier is 2 (D24). Whole-archive fixtures are regenerated deliberately, with the diff explained, and one draft-1 archive is kept as a reject fixture.
+  - A cold reading of each artifact, by a reader given only this specification and that artifact, is recorded with every ambiguity fixed or decided.
+- **G13 Golden set (R8).** Pending.
+  - `fixtures/golden/r8/` covers every 1.0 profile and allowed combination with valid, corrupt, and interrupted archives, plus copy and salvage cases.
+  - Coverage is checked by a test: every §24.2 row about archive bytes, and every violation-class error code reachable from archive bytes, has a case. Exemptions are named in the test.
+  - The B.2.6 G1 audit is complete in both encodings.
+- **G14 Interoperability (R9).** Pending.
+  - The independent verifier (B.1 D7) produces, for every R8 case, an interop summary equal to the reference implementation's, in CI.
+  - Every disagreement is resolved at its source and recorded in `docs/ratification/R9-interop-results.md`.
+- **G15 Report freeze (R7).** Pending, at Beta.
+  - R7 is frozen, with a JSON Schema for every machine-readable output, and real outputs are validated against them in tests.
 
 #### B.2.7 Writer lock (D17; decided by the owner 2026-10-06, plan Q54)
 
@@ -2023,6 +2042,59 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 15. **Evidence (gate G11).** The R6 vectors, from an independent implementation (bit-by-bit field arithmetic), reproduce in CI and match the Rust code byte for byte; every erasure pattern of up to *m* rebuilds for all *k* ≤ 6; ≤ *m* damaged shards per group rebuild bit-identically in every commit at once, including the descriptor, a commit record, a catalog image, and an earlier footer; *m* + 1 is reported and left unchanged; the whole catalog image destroyed is rebuilt; a contiguous burst spreads across groups; damaged and forged frames are reported as above; Encrypted and TAR-compatible archives carry parity; a fuzz target covers the frame decoder and reconstruction; golden fixtures `c12/` must keep verifying and healing.
 
 **Open items recorded here.** (a) The head commit's footer is unprotected (item 8); writing a second copy of the footer, or the §22 footer-history accelerator, would cover it at the cost of a wire change. (b) Damage at the end of the file reaches the newest parity first; a trailer copy or sidecar is a possible 1.x addition. (c) Each frame repeats its group's 32-byte shard hashes (32·*k* bytes), which dominates the overhead of small commits (a 100 KB commit at 10 % carries one 16 KiB shard plus 400 bytes of table); a separate index frame would shrink it at the cost of a single point of failure. (d) GF(2^8) bounds a group at 128 + 128 shards; larger commits use more groups rather than a larger field. (e) No throughput benchmark accompanies this slice, and none is claimed.
+
+#### B.2.12 Independent copies, ladder step 5 (D22; decided by delegation 2026-10-12, plan K18)
+
+**Status: decided, not implemented** (plan workstream W11). No wire change.
+
+1. **What a copy is.** A file given to `repair plan` or `repair apply` with `--copy PATH`, repeatable, and opened read-only. It is a copy of the source when one of these holds:
+   - (a) its frame at offset 0 is byte-identical to the source's descriptor frame;
+   - (b) the source's descriptor is damaged, and the copy's descriptor's stored-object hash equals the descriptor hash (commit key 10) that a self-verifying source commit records.
+
+   Anything else is reported as not a copy and is never used. Donation by stored hash from files that are not byte copies (rewrites, other archives) is not in 1.0.
+2. **Order.** Parity (step 6) first, then copies, then steps 1–4, which read the stacked in-memory overlay. Nothing is written to the source or to a copy.
+3. **Agreement.** The copy is opened as-is (its own parity is not applied in 1.0). A copy commit *agrees* with the source when its footer lies entirely within the source's length and one of these holds:
+   - (i) the source holds a self-verifying commit with the same sequence and commit ID at the same footer offset;
+   - (ii) its sequence is above the source's last self-verifying commit and it chains by parent commit ID to an agreed commit. Such a commit is labelled as confirmed by the copy.
+
+   Where the source holds a *different* self-verifying commit at that offset, the copy has **diverged**, and agreement stops below that point. Copy commits beyond the source's length are reported, never used.
+4. **Donation.** Within the agreed range, a frame is patched from a copy only when the copy's bytes verify against the expected hash taken from the agreed structure (footer digest, commit ID, stored-object hash, parity-frame digest, descriptor hash) and the source's bytes do not. Patches are whole frames. When several copies could donate, the first in argument order wins.
+5. **Re-verification.** The survey then verifies everything it uses against the commit chain, exactly as without copies. Donation proposes bytes; it never vouches for them.
+6. **Reporting (§22.2).** The plan names every copy (status, agreed range, divergence, later commits, what it donated) and lists every donated frame with its offset and copy. Each recovered snapshot is labelled by its trust: the chain, or confirmed by a copy. An I/O error on a copy disables that copy and is reported; it is not fatal. The plan format becomes `mochi-repair-plan-v2`.
+7. **Outcome.** The C8 rules are unchanged. A repair completed with donated frames is complete, because its result is fully verified.
+
+#### B.2.13 Bounded salvage, ladder step 7 (D23; decided by delegation 2026-10-12, plan K19, K20)
+
+**Status: decided, not implemented** (plan workstream W12). No wire change. New error code `ARCHIVE_ID_AMBIGUOUS` (operational, exit 3).
+
+1. **Explicit.** Salvage runs only when requested (`--salvage`), after steps 6, 5, and 1–4, and only when they leave one of these: no trusted head; snapshots that no trusted catalog covers after a chain break; an unrecoverable descriptor. This is D12's "explicit salvage labelled partial".
+2. **Bounded scan (§22.1).** The scanner walks frames forward. Where the walk fails, it resynchronizes by testing each later byte offset as a candidate frame start. It never resynchronizes inside a frame that walked validly. Each candidate counts against the reader limit `max-salvage-candidates` (default 1,048,576). At the limit the scan stops, and the step reports *incomplete*, never a pass. Every offset uses checked arithmetic.
+3. **Candidates kept.**
+   - A footer whose digest validates over the commit frame it names, and whose recorded commit offset, length, and sequence equal that frame's actual position and sequence.
+   - A commit frame whose commit ID recomputes and whose envelope is valid.
+   - Other frames are kept by position and interpreted only through a reference from a kept commit.
+
+   A magic-number match alone is never a candidate kept.
+4. **Identity.** The expected archive ID comes from the source descriptor; else from `--archive-id`; else from the kept commits. More than one archive ID among the kept commits, with neither of the first two sources available, is `ARCHIVE_ID_AMBIGUOUS`. Two kept commits with one sequence and different commit IDs are contradictory: neither is used, and both are reported.
+5. **Confirmation (§5.1).** A kept commit is *confirmed* when its own footer is kept, or when a confirmed commit's parent link names it. **An unconfirmed commit is never recovered.** It may be an interrupted publication, so it is reported with its sequence, commit ID, and offset.
+6. **Recovery.** Confirmed commits form chains linked by parent ID. Each chain's top commit is opened as a head, and its snapshots are recovered by the C8 rules (verified catalogs and manifests; verified versions only; nothing invented). A sequence the trusted chain recovered is never replaced.
+7. **Uncertainty is recorded, never filled in (§22.1).** Data objects that no recovered commit references are counted with their total size, and are never placed in a namespace. A raw export of them is not in 1.0.
+8. **Profile without a descriptor (D12 amendment).** When neither parity nor a copy restored the descriptor:
+   - Encrypted follows required feature 1 in the confirmed commits, which must agree.
+   - The recovery-record percentage follows intact parity frames, which must agree.
+   - TAR compatibility is not carried and is reported as a lost constraint.
+
+   The new archive has its own ordinary descriptor.
+9. **Outcome.** Any repair in which salvage was used or stopped incomplete is **partial** (exit 2). Without a trusted head, completeness cannot be established. Retention follows C8: with no trusted head, it is unresolved, and apply needs the recorded waiver.
+
+#### B.2.14 Draft-to-1.0 boundary (D24; decided by delegation 2026-10-12, plan K13, K25)
+
+**Status: decided, not implemented** (plan workstreams W15 and W20).
+
+1. **Draft identifier.** Descriptor key 3 becomes **2** in the change that freezes R1–R4 (gate G12), together with R4 `user_version` 1. Draft 2 names the frozen layout. Any later wire change before 1.0 increments it again, with an Annex B entry. A build refuses every draft other than its own (`UNSUPPORTED_FEATURE`, exit 4), naming the draft.
+2. **1.0.** A 1.0 writer writes `null` (a ratified archive). Every 1.0 command except `migrate` refuses a draft archive with exit 4, naming the draft.
+3. **Migration (§26).** `mochi migrate SRC --output DST` reads **only the last draft** and writes a new 1.0 archive through the rewrite path. It verifies the new archive at restoration level, compares restored file hashes and retained namespaces, and reports the mapping. The source is never modified. Older drafts are refused.
+4. **Golden set.** R8 is regenerated in the 1.0 format at the flip, R9 is run on it again, and draft-2 archives are kept as migration cases.
 
 ## Annex C. Document Lineage **[1.0 integration]**
 
