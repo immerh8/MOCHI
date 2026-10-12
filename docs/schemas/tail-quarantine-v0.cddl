@@ -25,8 +25,14 @@ quarantine = {
   7: [* uint],                ; frame magics of the complete frames in the tail, in order
   8: bool,                    ; true if the tail ends in a frame cut short by end-of-file
   9: tstr,                    ; tool name and version
-  10: tstr,                   ; time written, Annex B.2 D15 timestamp format
+  10: timestamp,              ; time written, Annex B.2 D15 timestamp format
 }
 
 archive-id = bstr .size 32
 hash32 = bstr .size 32
+
+; Annex B.2 D15: RFC 3339, UTC, "Z" suffix, exactly nine fractional digits,
+; years 0000 to 9999. The writer never emits second 60; a reader accepts it.
+; The calendar rules (month lengths) are checked by the code, not by this
+; pattern.
+timestamp = tstr .regexp "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z"

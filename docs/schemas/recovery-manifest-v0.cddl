@@ -1,6 +1,7 @@
-; SUPERSEDED by recovery-manifest-v1.cddl (Annex B.2 batch). Kept for reference only: this
-; is the pre-batch draft, and readers refuse it as legacy (spec §26). Do not
-; implement from this file.
+; LEGACY (refused). Schema version 0 is the pre-batch draft: a current reader
+; names it legacy and answers UNSUPPORTED_FEATURE (spec §26), and no writer
+; emits it. SUPERSEDED by recovery-manifest-v1.cddl (Annex B.2 batch). Kept for reference
+; only. Do not implement from this file.
 ;
 ; MOCHI recovery manifest, schema version 0 (DRAFT; ratification item R3).
 ; Spec §11; encoding per Annex B.1 D2: the deterministic-CBOR subset

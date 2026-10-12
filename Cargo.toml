@@ -50,3 +50,9 @@ panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
+
+# The `cddl` crate (dev-dependency of mochi-testkit only; R3's schema check)
+# validates one record in ~120 ms unoptimized and ~11 ms at opt-level 3, which
+# keeps crates/mochi-testkit/tests/r3_cddl.rs to seconds in a debug test run.
+[profile.dev.package.cddl]
+opt-level = 3
