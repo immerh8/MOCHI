@@ -587,3 +587,286 @@ fn c7_golden_archives_verify_as_labelled() {
     }
     assert!(seen.0 >= 3 && seen.1 >= 20, "fixtures found: {seen:?}");
 }
+
+// ---- W10 (plan K16, K17) ----------------------------------------------------
+
+/// Archive `archive()` plus a forged commit 3 (an empty delta), with
+/// `between` appended after the original head and before commit 3.
+fn with_forged_commit(between: &[u8]) -> SimStorage {
+    use mochi_testkit::forge::{empty_delta, rule_base, txid, Forge};
+    let mut f = Forge::new(archive().contents());
+    let head = f.history()[2].clone();
+    f.bytes.extend_from_slice(between);
+    let m = empty_delta(&head, txid(0x30));
+    let r = f.append_manifest(&m);
+    f.append_delta(&head, rule_base(&head), r, txid(0x30));
+    f.storage()
+}
+
+/// **Footer-history frames are skipped, never read as history (plan K16;
+/// spec §22 amendment).** 1.0 writes no `FOOTER_HISTORY` accelerator; a reader
+/// that meets one walks it and moves on. The injected frame is bait: its
+/// payload is a verbatim copy of commit 0's footer frame, so a reader that
+/// looked inside would find a footer pointing at commit 0 and lose or
+/// duplicate history. Control: the same forged commit without the frame.
+/// Verified at every level, deep included (`fsck`).
+#[test]
+fn c7_footer_history_frames_are_skipped_never_interpreted() {
+    use mochi_format::footer::encode_footer_frame;
+    use mochi_format::frame::encode_skippable_frame;
+    use mochi_format::registry::FrameKind;
+
+    let original = commit_history(&archive(), &ReadOptions::default()).unwrap();
+    let c0 = &original[0];
+    let c0_frame =
+        archive().contents()[c0.commit_offset as usize..(c0.footer_offset as usize)].to_vec();
+    let bait_footer = encode_footer_frame(c0.commit_offset, c0.commit.seq, &c0_frame);
+    assert_eq!(bait_footer.len() as u64, FOOTER_FRAME_LEN);
+    // Both shapes: a whole footer frame inside the payload, and a bare
+    // footer payload.
+    for payload in [bait_footer.to_vec(), bait_footer[8..].to_vec()] {
+        let frame = encode_skippable_frame(FrameKind::FooterHistory, &payload).unwrap();
+        let control = with_forged_commit(&[]);
+        let s = with_forged_commit(&frame);
+        assert_eq!(s.contents().len(), control.contents().len() + frame.len());
+
+        let history = commit_history(&s, &ReadOptions::default()).unwrap();
+        assert_eq!(
+            history.iter().map(|e| e.commit.seq).collect::<Vec<_>>(),
+            [0, 1, 2, 3],
+            "the frame is not a commit"
+        );
+        for (got, want) in history.iter().zip(&original) {
+            assert_eq!(got.footer_offset, want.footer_offset);
+            assert_eq!(got.commit_id, want.commit_id);
+        }
+
+        for level in LEVELS {
+            for deep in [false, true] {
+                let o = VerifyOptions {
+                    level,
+                    deep,
+                    ..VerifyOptions::default()
+                };
+                let (a, b) = (run(&s, o.clone()), run(&control, o));
+                assert_eq!(a.head.as_ref().unwrap().seq, 3, "{level:?} deep={deep}");
+                assert_eq!(a.report.exit_code, b.report.exit_code, "{level:?}");
+                assert_eq!(a.report.dimensions, b.report.dimensions, "{level:?}");
+                assert_eq!(a.report.coverage, b.report.coverage, "{level:?}");
+                assert!(
+                    a.report.findings.is_empty(),
+                    "{level:?} deep={deep}: {:?}",
+                    a.report.findings
+                );
+            }
+        }
+    }
+}
+
+/// `archive()` plus a forged commit 3 that puts `/dep` with one chunk. With
+/// `needs_dictionary` the chunk's record declares a dictionary dependency
+/// this build cannot satisfy (the same forgery as
+/// `c8_undecodable_content_refuses_the_plan`); the bytes are intact either
+/// way. Returns the storage and the forged file version.
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn with_dependency(
+    needs_dictionary: bool,
+    dictionary_present: bool,
+) -> (SimStorage, mochi_core::catalog::namespace::FileVersionId) {
+    use mochi_core::catalog::extent::{Extent, ExtentSource};
+    use mochi_core::catalog::namespace::{EntryKind, FileVersionId, NamespaceOp};
+    use mochi_core::catalog::FileVersion;
+    use mochi_core::manifest::{ChunkEntry, FileVersionEntry};
+    use mochi_core::object::{build_object, Dependency, ObjectId};
+    use mochi_format::codec::{EncodeParams, Protection};
+    use mochi_format::digest::file_content_hash;
+    use mochi_format::repr::{DecodedBytes, DecodedSlice};
+    use mochi_format::Limits;
+    use mochi_testkit::archive::path;
+    use mochi_testkit::forge::{empty_delta, rule_base, txid, Forge};
+    use mochi_testkit::replay::attrs;
+
+    let content = mochi_testkit::deterministic_bytes(77, 150);
+    let mut f = Forge::new(archive().contents());
+    let head = f.history()[2].clone();
+    let mut obj = build_object(
+        &DecodedBytes::new(content.clone()),
+        &EncodeParams::default(),
+        Protection::None,
+        &mut SeqIds::new(0x5000),
+        &Limits::default(),
+    )
+    .unwrap();
+    // The "dictionary": an intact catalog object. Nothing in 1.0 can use it
+    // as one, which is what makes the dependent chunk undecodable.
+    let dictionary = build_object(
+        &DecodedBytes::new(mochi_testkit::deterministic_bytes(78, 150)),
+        &EncodeParams::default(),
+        Protection::None,
+        &mut SeqIds::new(0x6000),
+        &Limits::default(),
+    )
+    .unwrap();
+    if needs_dictionary {
+        let dep = if dictionary_present {
+            dictionary.record.id
+        } else {
+            ObjectId::from_bytes([9; 32])
+        };
+        obj.record.dependencies.push(Dependency::Dictionary(dep));
+    }
+    let dictionary_at = (needs_dictionary && dictionary_present)
+        .then(|| f.append_object(&dictionary.stored).offset);
+    let at = f.append_object(&obj.stored).offset;
+    let id = FileVersionId::from_bytes([0xD7; 32]);
+    let mut m = empty_delta(&head, txid(0x31));
+    if let Some(dictionary_at) = dictionary_at {
+        m.chunks.push(ChunkEntry {
+            record: dictionary.record.clone(),
+            location: Some(dictionary_at),
+        });
+    }
+    m.chunks.push(ChunkEntry {
+        record: obj.record.clone(),
+        location: Some(at),
+    });
+    m.file_versions.push(FileVersionEntry {
+        version: FileVersion {
+            id,
+            kind: EntryKind::File,
+            logical_len: content.len() as u64,
+            content_hash: Some(file_content_hash(DecodedSlice::from_logical(&content))),
+        },
+        extents: vec![Extent {
+            ordinal: 0,
+            logical_offset: 0,
+            length: content.len() as u64,
+            source: ExtentSource::Chunk {
+                chunk: obj.record.id,
+                chunk_offset: 0,
+            },
+        }],
+        attributes: attrs(0o644, 8),
+    });
+    m.ops.push(NamespaceOp::Put {
+        path: path("dep"),
+        version: id,
+    });
+    m.canonicalize();
+    let r = f.append_manifest(&m);
+    f.append_delta(&head, rule_base(&head), r, txid(0x31));
+    (f.storage(), id)
+}
+
+/// **A dictionary dependency is reported, never skipped (plan K17; spec
+/// §24.2 amendment, row "missing shared dictionary").** 1.0 writes no
+/// dictionaries (O21), so a chunk that declares one is content this build
+/// cannot decode. At the content levels `verify` must say `UNSUPPORTED`
+/// (exit 4) with `UNSUPPORTED_FEATURE` naming the affected path, version
+/// and snapshot; it must not report the dimensions `PASS` or `FAIL`, and
+/// must not call the archive damaged. Control: the same commit without the
+/// dependency verifies `PASS` at every level.
+#[test]
+fn c7_a_dictionary_dependency_is_unsupported_with_the_affected_versions() {
+    let (control, _) = with_dependency(false, true);
+    for level in LEVELS {
+        let r = run(&control, at(level)).report;
+        assert!(!has(&r, ErrorCode::UnsupportedFeature), "{level:?}");
+    }
+    assert_eq!(
+        run(&control, at(VerificationLevel::Restoration))
+            .report
+            .exit_code,
+        exit::OK
+    );
+
+    let (s, id) = with_dependency(true, true);
+    for level in [
+        VerificationLevel::ContentIntegrity,
+        VerificationLevel::Restoration,
+    ] {
+        let v = run(&s, at(level));
+        let r = &v.report;
+        assert_eq!(r.exit_code, exit::UNSUPPORTED, "{level:?}");
+        assert!(has(r, ErrorCode::UnsupportedFeature), "{level:?}");
+        assert_eq!(dim(r, Dimension::Integrity), Status::Unsupported);
+        assert_eq!(dim(r, Dimension::Recoverability), Status::Unsupported);
+        assert!(
+            !r.findings.iter().any(|f| matches!(
+                f.code,
+                ErrorCode::StoredIntegrityFailed | ErrorCode::ContentIntegrityFailed
+            )),
+            "undecodable is not damaged: {:?}",
+            r.findings
+        );
+        // The affected version is named once: ID, path, and the snapshot
+        // that holds it (only the forged commit 3 does).
+        let versions: Vec<_> = r
+            .findings
+            .iter()
+            .filter(|f| f.code == ErrorCode::UnsupportedFeature)
+            .filter(|f| {
+                f.message
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("file version"))
+            })
+            .collect();
+        assert_eq!(versions.len(), 1, "{level:?}: {:?}", r.findings);
+        let m = versions[0].message.as_deref().unwrap();
+        assert!(m.contains(&hex(id.as_bytes())), "{m}");
+        assert!(m.contains("\"dep\"") && m.contains("snapshot 3"), "{m}");
+        assert_eq!(
+            versions[0].affected,
+            Some(mochi_core::report::SeqRange { first: 3, last: 3 })
+        );
+    }
+
+    // Levels that read no decoded bytes claim nothing about decodability.
+    let r = run(&s, at(VerificationLevel::StoredIntegrity)).report;
+    assert!(!has(&r, ErrorCode::UnsupportedFeature), "{:?}", r.findings);
+
+    // A dependency on an object the catalog does not hold is a dangling
+    // reference (§5.2): a violation, FAIL, exit 1, not a missing feature.
+    let (dangling, _) = with_dependency(true, false);
+    let r = run(&dangling, at(VerificationLevel::ContentIntegrity)).report;
+    assert!(has(&r, ErrorCode::ReferenceInvalid), "{:?}", r.findings);
+    assert_eq!(r.exit_code, exit::FAILED);
+}
+
+/// The forward scan for the head (taken when EOF is not a footer) walks the
+/// same frames, so the accelerator must be skipped there too (plan K16). A
+/// trailing frame whose payload is commit 1's footer payload (72 bytes in
+/// all, a footer's own size) must not become the head: the real head stays
+/// commit 2 and the history is unchanged. The tail screen refuses to call
+/// the frame "uncommitted" because it holds the footer magic (D14: refusing
+/// is always safe), so the run reports `TAIL_UNRESOLVED`; the head is the
+/// point here, not the tail verdict.
+#[test]
+fn c7_a_trailing_footer_history_frame_is_not_the_head() {
+    use mochi_format::footer::encode_footer_frame;
+    use mochi_format::frame::encode_skippable_frame;
+    use mochi_format::registry::FrameKind;
+
+    let base = archive();
+    let original = commit_history(&base, &ReadOptions::default()).unwrap();
+    let c1 = &original[1];
+    let c1_frame = base.contents()[c1.commit_offset as usize..c1.footer_offset as usize].to_vec();
+    let bait = encode_footer_frame(c1.commit_offset, c1.commit.seq, &c1_frame);
+    let frame = encode_skippable_frame(FrameKind::FooterHistory, &bait[8..]).unwrap();
+    assert_eq!(frame.len() as u64, FOOTER_FRAME_LEN);
+    let mut bytes = base.contents();
+    bytes.extend_from_slice(&frame);
+    let s = SimStorage::from_bytes(bytes);
+
+    let history = commit_history(&s, &ReadOptions::default()).unwrap();
+    assert_eq!(
+        history.iter().map(|e| e.commit_id).collect::<Vec<_>>(),
+        original.iter().map(|e| e.commit_id).collect::<Vec<_>>()
+    );
+    let v = run(&s, at(VerificationLevel::Restoration));
+    assert_eq!(v.head.as_ref().unwrap().seq, 2);
+    assert!(has(&v.report, ErrorCode::TailUnresolved));
+}
