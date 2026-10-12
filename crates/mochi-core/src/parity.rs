@@ -58,12 +58,17 @@ pub const PHASE: &str = "parity";
 /// not decode (bounded work on hostile input).
 const MAX_CANDIDATES: usize = 4096;
 
-/// A read-only view of an archive with rebuilt shards laid over it.
+/// A read-only view of an archive with rebuilt shards laid over it, and on
+/// top of those, whole frames donated by independent copies (ladder step 5,
+/// Annex B.2.12 D22; [`crate::copies`]).
 pub struct HealedSource<'a> {
     inner: &'a dyn ReadStorage,
     /// Offset → bytes. Patches never overlap: each is one shard's stored
     /// part, and the protected ranges of different commits are disjoint.
     patches: BTreeMap<u64, Vec<u8>>,
+    /// Offset → bytes of a whole frame a copy supplied. Frames never overlap
+    /// each other; they read over `patches`.
+    donated: BTreeMap<u64, Vec<u8>>,
 }
 
 impl<'a> HealedSource<'a> {
@@ -72,17 +77,49 @@ impl<'a> HealedSource<'a> {
         HealedSource {
             inner,
             patches: BTreeMap::new(),
+            donated: BTreeMap::new(),
         }
     }
 
     /// Whether any byte differs from the archive.
     pub fn is_patched(&self) -> bool {
-        !self.patches.is_empty()
+        !self.patches.is_empty() || !self.donated.is_empty()
     }
 
-    /// Bytes replaced.
+    /// Bytes replaced by parity.
     pub fn patched_bytes(&self) -> u64 {
         self.patches.values().map(|p| p.len() as u64).sum()
+    }
+
+    /// Lay a whole frame from a copy over the view (D22 item 4).
+    pub(crate) fn donate(&mut self, offset: u64, bytes: Vec<u8>) {
+        self.donated.insert(offset, bytes);
+    }
+
+    /// Take back a donation (a copy that failed part-way is dropped whole).
+    pub(crate) fn undonate(&mut self, offset: u64) {
+        self.donated.remove(&offset);
+    }
+}
+
+/// Lay the non-overlapping `patches` over `buf`, which holds the bytes at
+/// `offset`.
+fn overlay(patches: &BTreeMap<u64, Vec<u8>>, offset: u64, buf: &mut [u8], n: usize) {
+    let end = offset.saturating_add(n as u64);
+    // The patch starting at or before `offset`, then every one inside.
+    let first = patches
+        .range(..=offset)
+        .next_back()
+        .map_or(offset, |(at, _)| *at);
+    for (at, bytes) in patches.range(first..end) {
+        let p_end = at.saturating_add(bytes.len() as u64);
+        let lo = (*at).max(offset);
+        let hi = p_end.min(end);
+        if lo >= hi {
+            continue;
+        }
+        let dst = &mut buf[(lo - offset) as usize..(hi - offset) as usize];
+        dst.copy_from_slice(&bytes[(lo - at) as usize..(hi - at) as usize]);
     }
 }
 
@@ -93,23 +130,8 @@ impl ReadStorage for HealedSource<'_> {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::result::Result<usize, StorageError> {
         let n = self.inner.read_at(offset, buf)?;
-        let end = offset.saturating_add(n as u64);
-        // The patch starting at or before `offset`, then every one inside.
-        let first = self
-            .patches
-            .range(..=offset)
-            .next_back()
-            .map_or(offset, |(at, _)| *at);
-        for (at, bytes) in self.patches.range(first..end) {
-            let p_end = at.saturating_add(bytes.len() as u64);
-            let lo = (*at).max(offset);
-            let hi = p_end.min(end);
-            if lo >= hi {
-                continue;
-            }
-            let dst = &mut buf[(lo - offset) as usize..(hi - offset) as usize];
-            dst.copy_from_slice(&bytes[(lo - at) as usize..(hi - at) as usize]);
-        }
+        overlay(&self.patches, offset, buf, n);
+        overlay(&self.donated, offset, buf, n);
         Ok(n)
     }
 }

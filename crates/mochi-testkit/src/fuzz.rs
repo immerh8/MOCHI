@@ -356,6 +356,7 @@ pub fn exercise_archive_open(data: &[u8]) -> ArchiveOpenOutcome {
     baseline_recovery_is_sound(&storage, &opts);
     damage_assessment_is_sound(&storage, &opts);
     repair_plan_is_sound(&storage, &opts);
+    repair_with_copy_is_sound(&storage, data, &opts);
     deep_verify_is_sound(&storage, &opts);
     parity_scan_is_sound(&storage, data, &opts);
     let Ok(head) = mochi_core::publish::open_head(&storage, &opts) else {
@@ -593,6 +594,130 @@ fn repair_plan_is_sound(storage: &crate::SimStorage, opts: &mochi_core::publish:
             assert_eq!(p.tail.as_ref().map(|t| t.state.as_str()), Some("clean"));
         }
         Outcome::Partial => assert!(!recovered.is_empty()),
+    }
+}
+
+/// Ladder step 5 (Annex B.2.12 D22): planning with a copy equal to the input
+/// with one byte changed, in both directions (the input as the source and as
+/// the copy), returns, is bounded, and every donation is a whole frame that
+/// verifies against the chain: its bytes, laid over the source, validate as a
+/// footer, decode as a commit record or parity frame, or hash to the stored
+/// hash the opened head's commit or catalog records for that place. Donations
+/// are sorted, disjoint, and inside the source.
+fn repair_with_copy_is_sound(
+    storage: &crate::SimStorage,
+    data: &[u8],
+    opts: &mochi_core::publish::ReadOptions,
+) {
+    if data.is_empty() {
+        return;
+    }
+    let at = data.iter().fold(data.len(), |a, b| {
+        a.wrapping_mul(31).wrapping_add(usize::from(*b))
+    }) % data.len();
+    let mut mutated = data.to_vec();
+    mutated[at] ^= 0x5A;
+    let changed = crate::SimStorage::from_bytes(mutated.clone());
+    donations_verify(storage, data, &changed, &mutated, opts);
+    donations_verify(&changed, &mutated, storage, data, opts);
+}
+
+fn donations_verify(
+    source: &crate::SimStorage,
+    source_bytes: &[u8],
+    copy: &crate::SimStorage,
+    copy_bytes: &[u8],
+    opts: &mochi_core::publish::ReadOptions,
+) {
+    use mochi_core::commit::CommitRecord;
+    use mochi_core::copies::{CopySource, DonationKind};
+    use mochi_core::job::{CancellationToken, JobContext, NullProgress};
+    use mochi_core::repair::plan_with_copies;
+    use mochi_core::verify::{classify, ErrorClass};
+    use mochi_format::digest::stored_object_hash;
+    use mochi_format::parity::decode_frame;
+
+    let cancel = CancellationToken::new();
+    let ctx = JobContext {
+        progress: &NullProgress,
+        cancel: &cancel,
+    };
+    let copies = [CopySource {
+        label: "copy".into(),
+        storage: copy,
+    }];
+    let p = match plan_with_copies(source, &copies, opts, &ctx) {
+        Ok(p) => p,
+        Err(e) => {
+            assert_eq!(
+                classify(e.code),
+                ErrorClass::Operational,
+                "repair planning with a copy failed on evidence instead of recording it: {e}"
+            );
+            return;
+        }
+    };
+    assert_eq!(p.exit_code, p.outcome.exit_code());
+    assert_eq!(p.copies.len(), 1);
+    let mut image = source_bytes.to_vec();
+    let mut prev_end = 0u64;
+    for d in &p.donations {
+        assert_eq!(d.copy, 0);
+        assert!(d.len > 0 && d.offset >= prev_end, "sorted and disjoint");
+        prev_end = d.offset + d.len;
+        assert!(prev_end <= source_bytes.len() as u64 && prev_end <= copy_bytes.len() as u64);
+        let (lo, hi) = (d.offset as usize, prev_end as usize);
+        image[lo..hi].copy_from_slice(&copy_bytes[lo..hi]);
+    }
+    // A copy that donated nothing leaves the source as it was.
+    assert_eq!(p.donations.is_empty(), image == source_bytes);
+    if p.donations.is_empty() {
+        return;
+    }
+    let head = mochi_core::publish::open_head(&crate::SimStorage::from_bytes(image.clone()), opts);
+    let limits = &opts.limits;
+    let mut known: std::collections::BTreeMap<(u64, u64), mochi_format::digest::StoredObjectHash> =
+        Default::default();
+    if let Ok(h) = &head {
+        for (_, r) in h.commit.object_refs() {
+            known.insert((r.offset, r.stored_len), r.stored_hash);
+        }
+        for id in h.catalog.object_ids().unwrap_or_default() {
+            if let (Ok(Some(rec)), Ok(Some(at))) =
+                (h.catalog.object(&id), h.catalog.object_location(&id))
+            {
+                known.insert((at, rec.stored_len), rec.stored_hash);
+            }
+        }
+    }
+    for d in &p.donations {
+        let bytes = &image[d.offset as usize..(d.offset + d.len) as usize];
+        match d.kind {
+            DonationKind::Footer => {
+                validate_footer(&image[..], d.offset, limits).expect("a donated footer validates");
+            }
+            DonationKind::CommitRecord => {
+                CommitRecord::from_stored(bytes, limits, &Default::default())
+                    .expect("a donated commit record decodes");
+            }
+            DonationKind::ParityFrame => {
+                decode_frame(
+                    bytes,
+                    mochi_core::descriptor::KNOWN_REQUIRED_FEATURES,
+                    limits,
+                )
+                .expect("a donated parity frame decodes");
+            }
+            _ => {
+                if let Some(h) = known.get(&(d.offset, d.len)) {
+                    assert_eq!(
+                        stored_object_hash(StoredObject::from_loaded(bytes.to_vec()).view()),
+                        *h,
+                        "a donated object hashes to what the chain records"
+                    );
+                }
+            }
+        }
     }
 }
 

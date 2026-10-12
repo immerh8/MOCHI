@@ -23,20 +23,30 @@
 //!    the new archive records the repair (no wire-format change): the plan
 //!    and report are the record (§22.2 "record unrecoverable files and
 //!    affected snapshots explicitly").
-//! 3. **Ladder steps 1–4 and 6** in this build: the expected head and its
+//! 3. **Ladder steps 1–6** in this build: the expected head and its
 //!    footer, earlier footers (the forward scan of [`locate_head`]; the
 //!    footer-history accelerator is not written by this build), checkpoints
 //!    and metadata chains (catalog images), recovery manifests (a damaged
 //!    image's snapshot manifest), and parity (C12, Annex B.2.11 D21).
-//!    Independent copies (step 5) are not taken, and the bounded salvage
-//!    scan (step 7) is a later slice. Each is reported as such in
-//!    [`RepairPlan::ladder`], never as passed.
+//!    Independent copies (step 5, Annex B.2.12 D22) are taken when the caller
+//!    names them; the bounded salvage scan (step 7) is a later slice. Each is
+//!    reported as such in [`RepairPlan::ladder`], never as passed.
 //!
 //! **Parity runs first** although it is step 6: a Redundancy-profile
 //! archive's damaged shards are rebuilt into an overlay
 //! ([`crate::parity::HealedSource`]) and steps 1–4 then run over the healed
 //! bytes, so a commit record, footer, catalog, or chunk that parity rebuilt
 //! is used as if it had never been damaged (every hash is still checked).
+//! **Copies come next** ([`crate::copies`]): byte copies of the archive, named
+//! by the caller, donate whole frames over the parity-healed view where the
+//! source's frame fails its check and the copy's passes, inside the commits
+//! the copy agrees on with the source. A copy supplies bytes; the source
+//! supplies the trust, so the survey below still verifies everything it
+//! uses against the commit chain. Every donated frame is listed in
+//! [`RepairPlan::donations`], and a snapshot whose commit only a copy can
+//! show is labelled [`Trust::CopyConfirmed`]. A repair made complete by
+//! copies is complete: its result is fully verified (D22 item 7).
+//!
 //! A group whose damage exceeds its parity is listed in
 //! [`RepairPlan::parity`] (`PARITY_CAPACITY_EXCEEDED`), and what the damage
 //! touches is left out as before: never rebuilt wrong.
@@ -93,6 +103,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::namespace::{EntryKind, FileVersionId, Snapshot};
 use crate::catalog::path::ArchivePath;
 use crate::compact::{all_attributes, Copier};
+use crate::copies::{self, CopyReport, CopySource, CopyStatus, Donation, Trust};
 use crate::error::{ErrorCode, MochiError, Result};
 use crate::exit;
 use crate::gc::resolve_retention;
@@ -124,7 +135,10 @@ pub mod phase {
 }
 
 /// The `format` of every plan this build writes.
-pub const PLAN_FORMAT: &str = "mochi-repair-plan-v1";
+///
+/// v2 (Annex B.2.12 D22) adds `copies`, `donations`, and each recovered
+/// snapshot's `trust`. A v1 plan is refused by [`apply`]: plan again.
+pub const PLAN_FORMAT: &str = "mochi-repair-plan-v2";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -235,6 +249,9 @@ pub struct RecoveredSnapshot {
     /// [`RepairPlan::omitted`]).
     pub entries: u64,
     pub omitted: u64,
+    /// How its commit is established (D22 item 6).
+    #[serde(default)]
+    pub trust: Trust,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +370,14 @@ pub struct RepairPlan {
     /// recovery record: what was rebuilt, what was beyond capacity.
     #[serde(default)]
     pub parity: Option<crate::parity::ParityScan>,
+    /// The copies given (`--copy`), in argument order, and what each did
+    /// (step 5, Annex B.2.12 D22).
+    #[serde(default)]
+    pub copies: Vec<CopyReport>,
+    /// Every frame a copy supplies, sorted by offset: the source of each
+    /// reconstructed object (§22.2).
+    #[serde(default)]
+    pub donations: Vec<Donation>,
     /// Recorded by a catalog image and carried over; `None`: no image could
     /// be read, and the new archive records this build's defaults.
     pub writer_parameters: Option<WriterParameters>,
@@ -455,15 +480,15 @@ fn step(n: u8, name: &str, status: StepStatus, detail: impl Into<String>) -> Lad
     }
 }
 
-/// Steps 5–7 before step 6 is known: 5 and 7 are never taken by this build;
-/// [`survey_healed`] replaces step 6.
+/// Steps 5–7 before steps 5 and 6 are known: 7 is never taken by this build;
+/// [`survey_healed`] replaces steps 5 and 6.
 fn later_steps() -> [LadderStep; 3] {
     [
         step(
             5,
             "independent copies",
-            StepStatus::NotAttempted,
-            "this build takes no alternate copy",
+            StepStatus::NotAvailable,
+            "no --copy given",
         ),
         step(
             6,
@@ -498,6 +523,8 @@ fn nothing(source_len: u64, ladder: Vec<LadderStep>, head: Option<SourceHead>) -
             manifest_failures: Vec::new(),
             retention: None,
             parity: None,
+            copies: Vec::new(),
+            donations: Vec::new(),
             writer_parameters: None,
             damage_found: true,
             outcome,
@@ -534,7 +561,12 @@ impl AttributeSources {
     }
 }
 
-fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Result<Survey> {
+fn survey(
+    src: &dyn ReadStorage,
+    confirmed: &BTreeSet<u64>,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<Survey> {
     ctx.report(phase::SURVEY, 0, None);
     let source_len = src.size()?;
 
@@ -845,6 +877,11 @@ fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Re
                 },
                 entries: kept.len() as u64,
                 omitted: left.len() as u64,
+                trust: if confirmed.contains(&seq) {
+                    Trust::CopyConfirmed
+                } else {
+                    Trust::Chain
+                },
             });
             for l in left {
                 let key = (l.path.as_stored().to_vec(), l.version);
@@ -1017,6 +1054,8 @@ fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Re
             manifest_failures,
             retention: (outcome != Outcome::NothingRecoverable).then_some(retention),
             parity: None,
+            copies: Vec::new(),
+            donations: Vec::new(),
             writer_parameters,
             damage_found,
             outcome,
@@ -1040,19 +1079,79 @@ fn survey(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Re
 /// Errors only for what compromises the run itself (I/O, limits,
 /// cancellation): damage is the plan's content.
 pub fn plan(src: &dyn ReadStorage, opts: &ReadOptions, ctx: &JobContext<'_>) -> Result<RepairPlan> {
-    Ok(survey_healed(src, opts, ctx)?.0.plan)
+    plan_with_copies(src, &[], opts, ctx)
 }
 
-/// Step 6 first (module docs): rebuild what parity can, then survey the
-/// healed bytes, and record step 6 in the ladder.
+/// [`plan`] with independent copies (step 5, Annex B.2.12 D22): byte copies
+/// of the source, each opened read-only, in the order the caller gave them.
+pub fn plan_with_copies(
+    src: &dyn ReadStorage,
+    copies: &[CopySource<'_>],
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<RepairPlan> {
+    Ok(survey_healed(src, copies, opts, ctx)?.0.plan)
+}
+
+/// The ladder's step 5 from what the copies did.
+fn copies_step(copies: &[CopyReport], donations: &[Donation], damage_found: bool) -> LadderStep {
+    let name = "independent copies";
+    if copies.is_empty() {
+        return step(5, name, StepStatus::NotAvailable, "no --copy given");
+    }
+    if !donations.is_empty() {
+        let bytes: u64 = donations.iter().map(|d| d.len).sum();
+        let used: Vec<String> = copies
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.status == CopyStatus::Used)
+            .map(|(i, _)| (i + 1).to_string())
+            .collect();
+        return step(
+            5,
+            name,
+            StepStatus::Used,
+            format!(
+                "{} frame{} ({bytes} bytes) from copy {}; the survey verifies them against the commit chain like any other byte",
+                donations.len(),
+                if donations.len() == 1 { "" } else { "s" },
+                used.join(", ")
+            ),
+        );
+    }
+    let usable = copies.iter().any(|c| c.status == CopyStatus::NotNeeded);
+    if usable && !damage_found {
+        return step(
+            5,
+            name,
+            StepStatus::NotNeeded,
+            "earlier steps sufficed; the copies were consulted",
+        );
+    }
+    let detail = if usable {
+        "the copies were consulted and supplied nothing for the damage that remains".to_owned()
+    } else {
+        format!(
+            "{} cop{} given; none could supply anything (see each copy's status)",
+            copies.len(),
+            if copies.len() == 1 { "y" } else { "ies" }
+        )
+    };
+    step(5, name, StepStatus::NotAvailable, detail)
+}
+
+/// Step 6 first, then step 5 (module docs): rebuild what parity can, lay
+/// over it what the copies supply, then survey the result, and record steps
+/// 5 and 6 in the ladder.
 fn survey_healed<'a>(
     src: &'a dyn ReadStorage,
+    copies: &[CopySource<'_>],
     opts: &ReadOptions,
     ctx: &JobContext<'_>,
 ) -> Result<(Survey, HealedSource<'a>)> {
     let maybe =
         crate::parity::read_descriptor_raw(src, opts).is_none_or(|d| d.redundancy.is_some());
-    let (scan, view) = if maybe {
+    let (scan, mut view) = if maybe {
         let (scan, view) = crate::parity::scan(src, opts, ctx)?;
         if scan.declared_percent.is_some() {
             (Some(scan), view)
@@ -1062,7 +1161,8 @@ fn survey_healed<'a>(
     } else {
         (None, HealedSource::new(src))
     };
-    let mut s = survey(&view, opts, ctx)?;
+    let donated = copies::donate(&mut view, copies, opts, ctx)?;
+    let mut s = survey(&view, &donated.confirmed, opts, ctx)?;
     let step6 = match &scan {
         None => step(
             6,
@@ -1102,6 +1202,15 @@ fn survey_healed<'a>(
     if let Some(slot) = s.plan.ladder.iter_mut().find(|l| l.step == 6) {
         *slot = step6;
     }
+    let step5 = copies_step(&donated.copies, &donated.donations, s.plan.damage_found);
+    if let Some(slot) = s.plan.ladder.iter_mut().find(|l| l.step == 5) {
+        *slot = step5;
+    }
+    if !donated.donations.is_empty() {
+        s.plan.damage_found = true;
+    }
+    s.plan.copies = donated.copies;
+    s.plan.donations = donated.donations;
     if let Some(sc) = &scan {
         if sc.shards_damaged() > 0
             || sc.frames_damaged() > 0
@@ -1140,6 +1249,7 @@ pub struct RepairedCommit {
     pub new_commit_id: String,
     pub entries: u64,
     pub omitted: u64,
+    pub trust: Trust,
 }
 
 /// The independent verification of the new archive (§22.2).
@@ -1165,6 +1275,9 @@ pub struct RepairReport {
     pub commits: Vec<RepairedCommit>,
     pub lost_snapshots: Vec<LostSnapshot>,
     pub omitted: Vec<OmittedEntry>,
+    /// The copies consulted and every frame they supplied (step 5).
+    pub copies: Vec<CopyReport>,
+    pub donations: Vec<Donation>,
     pub retention: Option<RetentionPlan>,
     /// The caller accepted that retention could not be carried.
     pub retention_loss_accepted: bool,
@@ -1200,7 +1313,38 @@ where
     D: StorageDir,
     D::File: Storage,
 {
-    let (s, view) = survey_healed(src, read, ctx)?;
+    apply_with_copies(src, &[], approved, dir, name, ids, read, options, ctx)
+}
+
+/// [`apply`] with independent copies. They must be the copies the plan was
+/// made with, in the same order: the re-survey refuses any difference, as it
+/// does for the source.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_with_copies<D>(
+    src: &dyn ReadStorage,
+    copies: &[CopySource<'_>],
+    approved: &RepairPlan,
+    dir: &mut D,
+    name: &str,
+    ids: Box<dyn IdSource>,
+    read: &ReadOptions,
+    options: &RepairOptions,
+    ctx: &JobContext<'_>,
+) -> Result<RepairReport>
+where
+    D: StorageDir,
+    D::File: Storage,
+{
+    if approved.format != PLAN_FORMAT {
+        return Err(MochiError::new(
+            ErrorCode::InvalidArgument,
+            format!(
+                "the repair plan has format {:?}, but this build applies {PLAN_FORMAT:?} (the plan was made by another build, or before independent copies were taken into account): plan again. Nothing was written",
+                approved.format
+            ),
+        ));
+    }
+    let (s, view) = survey_healed(src, copies, read, ctx)?;
     // Everything below reads the healed bytes (step 6).
     let src: &dyn ReadStorage = &view;
     if s.plan != *approved {
@@ -1218,7 +1362,7 @@ where
             } else {
                 ErrorCode::RecordInvalid
             },
-            "nothing is recoverable through §22 steps 1–4 and 6 (the salvage scan is not built); \
+            "nothing is recoverable through §22 steps 1–6 (the salvage scan is not built); \
              nothing was written",
         ));
     }
@@ -1403,10 +1547,13 @@ where
                 new_commit_id: id,
                 entries: r.entries,
                 omitted: r.omitted,
+                trust: r.trust,
             })
             .collect(),
         lost_snapshots: plan.lost_snapshots.clone(),
         omitted: plan.omitted.clone(),
+        copies: plan.copies.clone(),
+        donations: plan.donations.clone(),
         retention_loss_accepted: matches!(plan.retention, Some(RetentionPlan::Unresolved { .. })),
         retention: plan.retention,
         chunks_copied: copier.chunks_copied,

@@ -2045,7 +2045,7 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 
 #### B.2.12 Independent copies, ladder step 5 (D22; decided by delegation 2026-10-12, plan K18)
 
-**Status: decided, not implemented** (plan workstream W11). No wire change.
+**Status: implemented** (plan workstream W11; `mochi_core::copies`; plan C8 status). No wire change.
 
 1. **What a copy is.** A file given to `repair plan` or `repair apply` with `--copy PATH`, repeatable, and opened read-only. It is a copy of the source when one of these holds:
    - (a) its frame at offset 0 is byte-identical to the source's descriptor frame;

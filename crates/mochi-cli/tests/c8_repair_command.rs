@@ -297,3 +297,100 @@ fn c8_repair_apply_needs_the_waiver_when_retention_is_unresolved() {
     assert!(out.contains("retention NOT carried"), "{out}");
     assert!(out.contains("NOT recovered: snapshot 2"), "{out}");
 }
+
+fn blake3_of(path: &str) -> String {
+    blake3::hash(&fs::read(path).unwrap()).to_hex().to_string()
+}
+
+/// **Independent copies (§22 step 5, Annex B.2.12).** `--copy` donates a
+/// verified frame, the plan names it and the copy, `apply` needs the same
+/// copies (a plan made with one is refused without it), a copy is never
+/// written (whole-file BLAKE3 before and after both commands), the archive
+/// itself is not a copy, and a v1 plan says to plan again.
+#[test]
+fn c8_repair_copy_takes_a_verified_frame_from_a_byte_copy() {
+    let a = Area::new();
+    let archive = a.history();
+    let good = a.s("good.mochi");
+    fs::copy(&archive, &good).unwrap();
+    flip(&archive, chunk_byte(&archive, "c"));
+    let (src_hash, copy_hash) = (blake3_of(&archive), blake3_of(&good));
+
+    // Text: the ladder names step 5 as used, the copy, and the frame.
+    let (code, out, err) = a.go(&["repair", "plan", &archive, "--copy", &good]);
+    assert_eq!(code, exit::OK, "{out}{err}");
+    assert!(out.contains("step 5 independent copies: used"), "{out}");
+    assert!(out.contains("copy 1 "), "{out}");
+    assert!(out.contains("identical descriptor"), "{out}");
+    assert!(out.contains("comes from copy 1"), "{out}");
+    assert!(out.starts_with("repair plan for archive"), "{out}");
+    assert!(out.contains("outcome: complete"), "{out}");
+
+    let plan = a.s("plan.json");
+    let (code, v) = a.json(&["repair", "plan", &archive, "--copy", &good, "-o", &plan]);
+    assert_eq!(code, exit::OK, "{v}");
+    assert_eq!(v["outcome"], "complete");
+    assert_eq!(v["plan"]["format"], "mochi-repair-plan-v2");
+    assert_eq!(v["plan"]["donations"].as_array().unwrap().len(), 1);
+    assert_eq!(v["plan"]["donations"][0]["kind"], "data_object");
+    assert_eq!(v["plan"]["donations"][0]["copy"], 0);
+    assert_eq!(v["plan"]["copies"][0]["match"], "identical_descriptor");
+    assert_eq!(v["plan"]["copies"][0]["status"], "used");
+    assert_eq!(v["plan"]["copies"][0]["path"], good.as_str());
+    assert_eq!(blake3_of(&good), copy_hash, "plan reads a copy only");
+    assert_eq!(blake3_of(&archive), src_hash);
+
+    // Without the copy the plan does not match any more.
+    let new = a.s("new.mochi");
+    let (code, v) = a.json(&["repair", "apply", &archive, "--plan", &plan, "-o", &new]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    assert!(!a.p("new.mochi").exists());
+
+    let (code, v) = a.json(&[
+        "repair", "apply", &archive, "--plan", &plan, "--copy", &good, "-o", &new,
+    ]);
+    assert_eq!(code, CREATED, "{v}");
+    assert_eq!(v["outcome"], "complete");
+    assert_eq!(v["donations"].as_array().unwrap().len(), 1);
+    assert_eq!(v["copies"][0]["frames_donated"], 1);
+    assert_eq!(blake3_of(&good), copy_hash, "apply reads a copy only");
+    assert_eq!(blake3_of(&archive), src_hash);
+    // Everything is back: the pristine copy lists what the repair lists.
+    let (_, l1) = a.json(&["list", &good]);
+    let (_, l2) = a.json(&["list", &new]);
+    assert_eq!(paths(&l1), paths(&l2));
+    let (code, v) = a.json(&["verify", &new]);
+    assert_eq!(code, exit::OK, "{v}");
+
+    // The archive is not its own copy; a missing copy is an error.
+    let (code, v) = a.json(&["repair", "plan", &archive, "--copy", &archive]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    let (code, v) = a.json(&["repair", "plan", &archive, "--copy", &a.s("missing.mochi")]);
+    assert_eq!(code, exit::ERROR, "{v}");
+
+    // A plan from before copies (v1) is refused with advice.
+    let mut old: Value = serde_json::from_str(&fs::read_to_string(&plan).unwrap()).unwrap();
+    old["format"] = "mochi-repair-plan-v1".into();
+    let v1 = a.s("v1.json");
+    fs::write(&v1, old.to_string()).unwrap();
+    let (code, v) = a.json(&[
+        "repair",
+        "apply",
+        &archive,
+        "--plan",
+        &v1,
+        "--copy",
+        &good,
+        "-o",
+        &a.s("v1.mochi"),
+    ]);
+    assert_eq!(code, exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("plan again"));
+    assert!(!a.p("v1.mochi").exists());
+}

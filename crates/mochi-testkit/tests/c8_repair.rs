@@ -206,7 +206,8 @@ fn c8_clean_archive_plans_complete_and_reproduces_every_snapshot() {
             StepStatus::NotNeeded,
             StepStatus::Used,
             StepStatus::NotNeeded,
-            StepStatus::NotAttempted,
+            // Step 5: no --copy given (D22 item 6).
+            StepStatus::NotAvailable,
             StepStatus::NotAvailable,
             StepStatus::NotAttempted,
         ]
