@@ -111,3 +111,10 @@ path = "fuzz_targets/parity_frame.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "salvage_scan"
+path = "fuzz_targets/salvage_scan.rs"
+test = false
+doc = false
+bench = false

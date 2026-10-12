@@ -278,6 +278,9 @@ pub fn classify(code: ErrorCode) -> ErrorClass {
         // Only ever an informational finding (D20 item 14), never raised as
         // an error; if one were, it would conclude nothing about the archive.
         | ErrorCode::KdfCostBelowDefault
+        // Repair's salvage scan could not decide which archive to recover
+        // (D23 item 4): the run could not look, so nothing is concluded.
+        | ErrorCode::ArchiveIdAmbiguous
         // Only ever an informational finding (R7, §20.5 configuration).
         | ErrorCode::LimitNotDefault => ErrorClass::Operational,
     }

@@ -140,6 +140,7 @@ order codes were added.
 | `LIMIT_NOT_DEFAULT` | 3 | operational | R7 | Informational finding only: a reader limit in force differs from its default (`--limit`); `expected` is the default, `observed` the value (§20.5 "configuration"); never raised as an error |
 | `PARITY_DAMAGED` | 1 | violation | C12 | A parity frame is damaged or missing, or a group has no intact frame (D21). Reported as a warning finding: integrity unaffected, recoverability `DEGRADED` |
 | `PARITY_CAPACITY_EXCEEDED` | 1 | violation | C12 | A parity group has more damaged shards than intact parity shards (D21): recoverability `FAIL`; repair leaves out what the damage touches, never rebuilding wrong bytes |
+| `ARCHIVE_ID_AMBIGUOUS` | 3 | operational | W12 | Repair's salvage scan (step 7) found commits of more than one archive, and neither the source descriptor nor `--archive-id` picks one (B.2.13 D23 item 4); the error lists the IDs; never a finding about the archive |
 
 Codes reported only as findings carry their meaning through the report (`findings[]`
 and the dimension they set); their "exit as error" column applies only if a command

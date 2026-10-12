@@ -29,7 +29,7 @@ and get CI green on Windows and Ubuntu.
 | Area | Item | State at `6172a99` | Workstream |
 |---|---|---|---|
 | Core | C8 ladder step 5: alternate objects from independent copies | `not_attempted` at that commit; **implemented by W11** (`mochi_core::copies`) | **W11** |
-| Core | C8 ladder step 7: bounded salvage scan | `not_attempted`; blocked on a D12 call | **W12** (call K19, K20) |
+| Core | C8 ladder step 7: bounded salvage scan | `not_attempted`; blocked on a D12 call at that commit; **implemented by W12** (`mochi_core::salvage`) | **W12** (call K19, K20) |
 | Core | DoD row "missing shared dictionary" | Nothing to exercise; K4 refuses the plan | **W10** (K17) |
 | Core | Footer-history accelerator `0x184D2A5E` (§22) | Registered, never written | **W10** (K16: not in 1.0) |
 | R1, R2, R4 | Frame registry, envelopes, DDL | Drafts; all open items decided 2026-10-11 | **W15** (format freeze) |

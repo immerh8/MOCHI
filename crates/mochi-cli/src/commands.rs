@@ -32,6 +32,7 @@ use mochi_core::read::{list, read_file};
 use mochi_core::repair::{self, Outcome, RepairOptions, RepairPlan, RetentionPlan};
 use mochi_core::report::{Finding, Report, Severity};
 use mochi_core::restore::{restore_selected, ExceptionKind, RestoreOptions, RestoreReport};
+use mochi_core::salvage::SalvageOptions;
 use mochi_core::search::{search, FullText, PathMatch, Query, SnapshotScope};
 use mochi_core::status::{Dimension, Status, VerificationLevel};
 use mochi_core::storage::os::{OsDir, OsReadStorage, OsRestoreDir, OsSourceTree, OsStorage};
@@ -193,6 +194,7 @@ pub fn read_options(limits: &[String]) -> Result<ReadOptions> {
             "max-kdf-iterations" => &mut l.max_kdf_iterations,
             "max-kdf-lanes" => &mut l.max_kdf_lanes,
             "max-key-envelopes" => &mut l.max_key_envelopes,
+            "max-salvage-candidates" => &mut l.max_salvage_candidates,
             _ => return Err(invalid(format!("--limit: unknown limit {name:?}"))),
         };
         *slot = value;
@@ -2095,6 +2097,7 @@ fn print_repair_plan(env: &mut Env<'_>, p: &RepairPlan) {
             repair::StepStatus::NotNeeded => "not needed",
             repair::StepStatus::NotAvailable => "not available",
             repair::StepStatus::NotAttempted => "NOT ATTEMPTED",
+            repair::StepStatus::Incomplete => "INCOMPLETE",
         };
         let detail = if s.detail.is_empty() {
             String::new()
@@ -2142,6 +2145,22 @@ fn print_repair_plan(env: &mut Env<'_>, p: &RepairPlan) {
         seqs.len(),
         seq_list(&seqs)
     ));
+    let by_salvage: Vec<u64> = p
+        .snapshots
+        .iter()
+        .filter(|s| s.trust == mochi_core::copies::Trust::Salvage)
+        .map(|s| s.seq)
+        .collect();
+    if !by_salvage.is_empty() {
+        env.line(format!(
+            "snapshots found by the salvage scan (no trusted head vouches for them; the repair \
+             is partial): {}",
+            seq_list(&by_salvage)
+        ));
+    }
+    if let Some(v) = &p.salvage {
+        print_salvage(env, v);
+    }
     let by_copy: Vec<u64> = p
         .snapshots
         .iter()
@@ -2208,6 +2227,117 @@ fn print_repair_plan(env: &mut Env<'_>, p: &RepairPlan) {
     env.line(format!("outcome: {}", outcome_line(p.outcome)));
 }
 
+/// What the salvage scan found (Annex B.2.13 D23 item 7).
+fn print_salvage(env: &mut Env<'_>, v: &mochi_core::salvage::SalvageReport) {
+    env.line(format!(
+        "salvage scan: {} candidate{} examined (limit {}{}), {} frame{} walked, {} \
+         resynchronization{}; archive {} (from the {})",
+        v.candidates,
+        if v.candidates == 1 { "" } else { "s" },
+        v.candidate_limit,
+        if v.limit_reached { ", REACHED" } else { "" },
+        v.frames_walked,
+        if v.frames_walked == 1 { "" } else { "s" },
+        v.resyncs,
+        if v.resyncs == 1 { "" } else { "s" },
+        v.archive_id.as_deref().unwrap_or("none"),
+        v.archive_id_source
+    ));
+    for c in &v.confirmed {
+        env.line(format!(
+            "  confirmed commit {} ({}) at offset {}, by {}",
+            c.seq, c.commit_id, c.offset, c.by
+        ));
+    }
+    for c in &v.unconfirmed {
+        env.line(format!(
+            "  NOT recovered: commit {} ({}) at offset {}: {}",
+            c.seq, c.commit_id, c.offset, c.by
+        ));
+    }
+    for c in &v.rejected {
+        env.line(format!(
+            "  rejected: commit {} ({}) at offset {}: {}",
+            c.seq, c.commit_id, c.offset, c.by
+        ));
+    }
+    for c in &v.contradictory {
+        let ids: Vec<String> = c
+            .commits
+            .iter()
+            .map(|x| format!("{} at {}", x.commit_id, x.offset))
+            .collect();
+        env.line(format!(
+            "  NOT recovered: contradictory commits at sequence {}: {}",
+            c.seq,
+            ids.join("; ")
+        ));
+    }
+    if v.foreign_commits > 0 {
+        env.line(format!(
+            "  {} commit{} of another archive ignored",
+            v.foreign_commits,
+            if v.foreign_commits == 1 { "" } else { "s" }
+        ));
+    }
+    if v.orphan_data_objects > 0 {
+        env.line(format!(
+            "  {} data object{} ({} bytes) belong{} to no recovered commit: counted, never \
+             placed in a namespace",
+            v.orphan_data_objects,
+            if v.orphan_data_objects == 1 { "" } else { "s" },
+            v.orphan_bytes,
+            if v.orphan_data_objects == 1 { "s" } else { "" }
+        ));
+    }
+    if let Some(i) = &v.profile_inference {
+        env.line(format!(
+            "  profile: {}; encrypted: {}, recovery record: {}; writer parameters: {}",
+            i.evidence,
+            i.encrypted,
+            i.redundancy_percent
+                .map_or("none".to_owned(), |p| format!("{p} %")),
+            i.writer_parameters
+        ));
+        if !i.profile_constraints_lost.is_empty() {
+            env.line(format!(
+                "  LOST in the repaired archive: {} (a repaired archive has its own ordinary \
+                 descriptor)",
+                i.profile_constraints_lost.join(", ")
+            ));
+        }
+    }
+    if v.lists_truncated {
+        env.line("  (lists are cut short; the counts and --json carry the totals)");
+    }
+}
+
+/// `--salvage` and `--archive-id` as core takes them.
+fn salvage_options(salvage: bool, archive_id: &Option<String>) -> Result<Option<SalvageOptions>> {
+    if !salvage {
+        return Ok(None);
+    }
+    let archive_id = match archive_id {
+        None => None,
+        Some(h) => {
+            let h = h.trim();
+            let bytes: Option<Vec<u8>> = (h.len() == 64 && h.is_ascii())
+                .then(|| {
+                    (0..64)
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
+                        .collect()
+                })
+                .flatten();
+            let bytes: [u8; 32] = bytes
+                .and_then(|b| b.try_into().ok())
+                .ok_or_else(|| invalid("--archive-id: expected 64 hexadecimal digits"))?;
+            Some(ArchiveId::from_bytes(bytes))
+        }
+    };
+    Ok(Some(SalvageOptions { archive_id }))
+}
+
 pub fn repair_plan(env: &mut Env<'_>, a: &RepairPlanArgs) -> Result<u8> {
     let (progress, cancel) = job();
     let ctx = JobContext {
@@ -2217,7 +2347,14 @@ pub fn repair_plan(env: &mut Env<'_>, a: &RepairPlanArgs) -> Result<u8> {
     env.unlock(&a.archive, Need::Required)?;
     let src = open_archive(&a.archive)?;
     let opened = open_copies(&a.archive, &a.copy)?;
-    let p = repair::plan_with_copies(&src, &copy_sources(&opened), &env.read, &ctx)?;
+    let salvage = salvage_options(a.salvage, &a.archive_id)?;
+    let p = repair::plan_with_salvage(
+        &src,
+        &copy_sources(&opened),
+        salvage.as_ref(),
+        &env.read,
+        &ctx,
+    )?;
     let value = serde_json::to_value(&p)
         .map_err(|e| MochiError::new(ErrorCode::IoError, format!("encoding the plan: {e}")))?;
     if let Some(out) = &a.output {
@@ -2287,9 +2424,11 @@ pub fn repair_apply(env: &mut Env<'_>, a: &RepairApplyArgs) -> Result<u8> {
         kdf: None,
         ..RepairOptions::default()
     };
-    let report = repair::apply_with_copies(
+    let salvage = salvage_options(a.salvage, &a.archive_id)?;
+    let report = repair::apply_with_salvage(
         &src,
         &copy_sources(&opened),
+        salvage.as_ref(),
         &approved,
         &mut out_dir,
         &out_name,
@@ -2389,6 +2528,9 @@ pub fn repair_apply(env: &mut Env<'_>, a: &RepairApplyArgs) -> Result<u8> {
                     "ies"
                 }
             ));
+        }
+        if let Some(v) = &report.salvage {
+            print_salvage(env, v);
         }
         if report.retention_loss_accepted {
             env.line(

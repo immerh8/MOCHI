@@ -49,6 +49,7 @@ pub mod repair;
 pub mod report;
 pub mod restore;
 pub mod retention;
+pub mod salvage;
 pub mod search;
 pub mod segment;
 pub mod state;

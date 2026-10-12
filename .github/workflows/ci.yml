@@ -210,6 +210,8 @@ jobs:
           - { target: sealed_object,     seeds: "../fixtures/golden/c11", args: "" }
           # C12 (D21): parity frames and reconstruction.
           - { target: parity_frame,      seeds: "../fixtures/golden/c12", args: "-max_len=4096" }
+          # C8 step 7 (D23): the bounded salvage scan over whole archives.
+          - { target: salvage_scan,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11 ../fixtures/golden/c12", args: "-max_len=400000" }
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly toolchain
