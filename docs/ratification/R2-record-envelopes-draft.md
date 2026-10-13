@@ -245,7 +245,7 @@ without their keys). Findings and calls:
 
 Text-only items: stale spec statements in B.2 ("None of it is done", "evidence
 pending") were corrected at the freeze (spec Annex B status paragraph); §8.3's
-"evidence pending" marker **stays** until the G1 audit passes in W16 (decision 4 above).
+"evidence pending" marker stayed until the G1 audit passed in W16 (decision 4 above) and was **removed 2026-10-13**: the audit is complete (`fixtures/golden/README.md`, "The G1 audit"; no byte or rule changed).
 `ENVELOPE_INVALID` for a CBOR identity mismatch while the descriptor uses
 `DESCRIPTOR_INVALID` is the D12 split, not an inconsistency.
 

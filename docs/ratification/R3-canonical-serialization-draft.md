@@ -547,6 +547,20 @@ in the *golden set*, not in the check. The data comes from
 | key-envelope-v0 | keys 0 to 10 | `c11/valid-key-envelope.bin` | `c11/reject-envelope-kdf-memory-below-8-per-lane.bin`, `c11/reject-envelope-kdf-zero-lanes.bin`; gap: a wrong size for the nonce, wrapped key, salt, or IDs; a suite or KDF other than 1; features other than [1] |
 | tail-quarantine-v0 | keys 0 to 10 | — | gap: no golden sidecar file; `r3_cddl.rs` builds one and `t24_quarantine.rs` reads real ones |
 
+**G1 audit result (2026-10-13, W16; a note, not an edit: the table above records the
+freeze).** The gaps are filled in `fixtures/golden/r8/g1/` (48 vectors: a verdict and a
+CDDL check for each, `g1/vectors.txt`) and in R8 whole-archive cases: the descriptor,
+commit schema 1 and 2, manifest schema 1 to 3, and key-envelope positions as vectors; the
+rules that need an archive (key envelopes in order and distinct, the data region, extents
+that cover the length, a wrong AEAD tag) as `enc-corrupt-envelopes-unordered`,
+`enc-corrupt-envelope-duplicate`, `enc-corrupt-data-region-kind`,
+`core-corrupt-short-extents`, and `enc-corrupt-aead-tag`; and a rewritten Encrypted archive
+as `enc-valid-reencrypted` (open item 8). Two findings, neither changing a byte:
+`Manifest::decode` accepts extents that do not cover the logical length (the catalog
+refuses them when the manifest is applied, `EXTENT_INVALID`), and 33 key operations are
+`RECORD_INVALID`, not `LIMIT_EXCEEDED`. The tail-quarantine sidecar is a tool file
+(Appendix A), not archive bytes, and has no R8 case.
+
 ### 7.3 Conventions the rules and schemas share
 
 Fixed at the freeze; each was a guess a reader would have had to make.

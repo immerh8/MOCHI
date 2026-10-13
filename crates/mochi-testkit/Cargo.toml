@@ -11,10 +11,10 @@ publish.workspace = true
 mochi-core = { workspace = true, features = ["test-controls"] }
 mochi-format.workspace = true
 blake3.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-serde_json.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
 # R3 (docs/ratification/R3-canonical-serialization-draft.md): validates the golden

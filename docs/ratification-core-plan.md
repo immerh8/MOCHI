@@ -37,7 +37,7 @@ and get CI green on Windows and Ubuntu.
 | R5 | Crypto | **Frozen** 2026-10-11 | — |
 | R6 | Erasure coding | **Frozen** 2026-10-12 (W14, G11 met; the row below was the state when this plan was written: draft with independent vectors, 5 open items, G11 not met) | — |
 | R7 | Reports and error codes | Draft; decided items; freezes at Beta | **W19** |
-| R8 | Golden valid, corrupt, and interrupted archives | Per-phase sets `c1`–`c12`, `b2`; no whole-set R8 | **W16** |
+| R8 | Golden valid, corrupt, and interrupted archives | Per-phase sets `c1`–`c12`, `b2`; no whole-set R8. **Built by W16 (2026-10-13, G13): 76 cases, `fixtures/golden/r8/`** | **W16** |
 | R9 | Independent reader results | Not started; author not chosen | **W17**, **W18** (call K22) |
 | Gate 4 | Draft-to-1.0 boundary (§26) | Descriptor key 3 = draft 1; a reader refuses any other draft | **W20** (K25) |
 | G6 | Windows durability evidence | Needs physical Windows hardware | Owner-only (T33). Not planned here |
