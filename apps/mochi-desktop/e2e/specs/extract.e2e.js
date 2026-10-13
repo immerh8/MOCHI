@@ -192,14 +192,28 @@ describe("extract", () => {
     expect(readdirSync(crowdedDir).sort()).toEqual(before);
     expect(await countElements("img")).toBe(0);
 
-    // A different folder has no conflict; going back to the first has them again.
+    // A different folder has none of these conflicts; going back has them again.
+    // (On Windows the markup names are unsupported in any folder, so the panel
+    // can still list conflicts: look at which ones, not whether there are any.)
+    const destinationIs = (folder) =>
+      browser.waitUntil(
+        async () => (await $('[data-testid="extract-destination"]').getText()) === folder,
+        { timeout: 60_000, timeoutMsg: `the panel never showed ${folder}` },
+      );
     queuePicks(emptyDir);
     await press("extract-change-folder");
-    await $('[data-testid="extract-no-conflicts"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(emptyDir);
+    await destinationIs(emptyDir);
+    if (windows) {
+      const there = await listed("extract-conflict");
+      expect(there.some((t) => t.startsWith("big") || t.startsWith("docs"))).toBe(false);
+    } else {
+      await $('[data-testid="extract-no-conflicts"]').waitForExist({ timeout: 60_000 });
+    }
     queuePicks(crowdedDir);
     await press("extract-change-folder");
+    await destinationIs(crowdedDir);
     await $('[data-testid="extract-conflicts"]').waitForExist({ timeout: 60_000 });
+    expect((await listed("extract-conflict")).some((t) => t.startsWith("big"))).toBe(true);
 
     await expect($('[data-testid="extract-confirm"]')).toHaveText("Extract the rest, skipping these");
     await press("extract-confirm");
