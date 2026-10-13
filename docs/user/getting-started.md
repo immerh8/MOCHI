@@ -1,0 +1,115 @@
+# Getting started with the `mochi` command line
+
+Sources: `docs/c14-cli.md`, spec §23. Every example below was run against a temporary
+directory with a build of this repository.
+
+> Experimental. Do not use it as your only copy ([experimental.md](experimental.md)).
+
+## Build
+
+```bash
+cargo build -p mochi-cli --release      # the binary is target/release/mochi
+mochi --help
+```
+
+(Rust 1.89 or newer; `rust-toolchain.toml` pins 1.91. Installers are not available yet.)
+The examples below assume `mochi` is on your `PATH`; otherwise use
+`cargo run -p mochi-cli --` in its place.
+
+## Create, change, list, restore
+
+```bash
+mochi create photos.mochi photos         # photos/ becomes a top-level entry
+mochi append photos.mochi new.txt --delete photos/2026/old.txt
+mochi list photos.mochi                  # the latest snapshot
+mochi list photos.mochi --snapshot 0     # an earlier snapshot, still there
+mochi snapshot list photos.mochi         # every commit
+mochi get photos.mochi -C restored       # everything, into ./restored
+mochi get photos.mochi photos/2026/a.txt --stdout
+```
+
+* `create` never replaces a file. If `photos.mochi` exists it stops with
+  `DESTINATION_EXISTS` (exit 3) and changes nothing.
+* Each input becomes a top-level entry named after its last component.
+* `append` writes one new commit: deletions first, then the inputs added or replaced.
+  The message says the entries were removed "from this snapshot (still in history)".
+* `get` verifies each file before it is published. A file that fails verification is absent, not
+  partial, and the exit code is 1. It never overwrites or merges into existing files.
+  The restore reports name collisions and unsupported names instead of renaming.
+* Symbolic links, devices, FIFOs, and sockets are skipped and listed, and the command
+  exits 2 (`docs/c14-cli.md` rule 5). Links are never followed.
+
+After each commit the tool prints `LOCAL_COMMITTED` and reminds you to keep an
+independent copy. That line means the commit is complete in this file
+([not-a-backup.md](not-a-backup.md)).
+
+## Check
+
+```bash
+mochi verify photos.mochi                # read-only; default level: restoration
+mochi verify photos.mochi --level stored # only read and hash the stored bytes
+mochi verify photos.mochi --json         # the machine-readable report
+mochi fsck photos.mochi                  # verify, plus every commit checked on its own
+mochi restore-test photos.mochi -C rt    # restore into a directory that must not exist
+mochi health photos.mochi                # summarize what earlier runs recorded
+```
+
+What each proves is in [verification.md](verification.md).
+
+## Search and inspect
+
+```bash
+mochi search photos.mochi a.txt          # names containing "a.txt"; prints its coverage
+mochi dump-index photos.mochi            # read-only: row counts per catalog table
+```
+
+`search` states how many snapshots it searched; file content is not searched, and
+`--content` exits 4.
+
+## Options for protection
+
+```bash
+mochi create --tar-compatible t.mochi src          # see tar-compatible.md
+mochi create --recovery-record 10 rr.mochi big.bin # see recovery-record.md
+mochi create --encrypted --passphrase-file pass.txt vault.mochi photos   # see encrypted.md
+```
+
+These are fixed when the archive is created; nothing converts an archive in place.
+(`--encrypted` cannot be combined with `--tar-compatible`.)
+
+## Maintenance (each writes a new archive; the old one is kept)
+
+```bash
+mochi checkpoint photos.mochi                            # one commit, namespace unchanged
+mochi compact photos.mochi --output photos-compact.mochi # every snapshot, new archive
+mochi gc plan photos.mochi --output gc.plan              # read-only plan
+mochi gc apply photos.mochi --plan gc.plan --output photos-gc.mochi
+mochi repair plan photos.mochi --output repair.plan      # read-only; see below
+mochi repair apply photos.mochi --plan repair.plan --output photos-fixed.mochi
+mochi snapshot expire photos.mochi 0 --confirm           # irreversible (no un-expire)
+```
+
+* `compact` and `gc apply` never remove or change the source; removing it is your decision.
+* `repair` is a plan, then an apply. The plan changes nothing. The apply writes a new
+  archive, re-verifies it before publishing, and leaves the damaged source alone. A repair
+  that recovered only part is labelled `PARTIAL` and exits 2.
+* `gc apply` refuses a plan that no longer matches the archive.
+
+## Exit codes (spec §23.2)
+
+| Code | Meaning |
+|---|---|
+| 0 | Requested checks passed |
+| 1 | Verification or policy failure |
+| 2 | Degraded, unknown, or overdue required evidence (also: some entries skipped) |
+| 3 | Invocation, configuration, or operational error (for example a missing or wrong passphrase) |
+| 4 | Unsupported required feature or capability |
+
+Not in 1.0, exit 4: `inventory`, `split`, `join`, `mount`.
+
+## Local history file
+
+The CLI keeps the last head it saw for each archive in a small state directory
+(`--state-dir`, or `$MOCHI_STATE_DIR`, or the platform default). It is how `verify` can tell
+that an older copy has replaced a newer archive. `--no-local-history` turns that off, and
+freshness is then `UNKNOWN` ([verification.md](verification.md)).

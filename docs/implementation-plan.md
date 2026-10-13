@@ -479,6 +479,7 @@ Rows not listed for 1.0 — deleted primary archive, original machine unavailabl
 3. R9 interop results show the independent reader verifying the R8 golden set. **Met 2026-10-13** (gate G14; `docs/ratification/R9-interop-results.md`, CI run 38364569151).
 4. The draft-to-1.0 boundary is enforced: pre-1.0 archives are rejected explicitly or migrated per §26, never misread.
 5. User documentation covers: a `.mochi` file is not a backup (§1.1); the encrypted-archive limits on tool fallback and self-healing without keys; the dedup-under-encryption leak; what "Test archive" does and does not prove.
+   **Status 2026-10-13:** user documentation written in `docs/user/` (T11; Markdown, CLI examples run against a build); the desktop "Test archive" screen text and installer-bundled help are not covered.
 6. Signed installers and signed updates for Windows and Ubuntu.
 7. All Annex B decisions that block 1.0 scope are recorded.
 8. A project license is chosen that permits distributing UnRAR (O23). **Met:** MIT OR Apache-2.0, with UnRAR's notice in `THIRD-PARTY-NOTICES.md`.
