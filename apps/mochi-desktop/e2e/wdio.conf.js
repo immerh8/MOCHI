@@ -12,8 +12,11 @@
 // (DIR is MOCHI_E2E_FIXTURES, default target/d1-fixtures). WebDriver cannot
 // drive a native file dialog, so the `e2e` build takes the paths of its
 // "Open archive" clicks from MOCHI_E2E_PICK, in order, once per app launch.
+// The D2 spec (create-add.e2e.js) builds its own source trees and takes the
+// paths of its dialogs from MOCHI_E2E_PICK_FILE.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +43,11 @@ for (const f of picks) {
 }
 // Inherited by tauri-driver, the native driver, and the app it starts.
 process.env.MOCHI_E2E_PICK = picks.join(path.delimiter);
+// The D2 spec rewrites this file before its clicks (one path per line; its
+// lines are used before MOCHI_E2E_PICK), and the walk of a create or add is
+// slowed per entry so that its cancel case is deterministic.
+process.env.MOCHI_E2E_PICK_FILE = path.join(os.tmpdir(), "mochi-e2e-picks.txt");
+process.env.MOCHI_E2E_PACE_MS = "100";
 
 let tauriDriver;
 
@@ -62,6 +70,8 @@ export const config = {
   waitforTimeout: 15_000,
 
   onPrepare: () => {
+    // No pick left over from an earlier run.
+    writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
     // On PATH after `cargo install tauri-driver` (~/.cargo/bin).
     const bin = process.env.TAURI_DRIVER ?? "tauri-driver";
     tauriDriver = spawn(bin, driverArgs, { stdio: [null, process.stdout, process.stderr] });

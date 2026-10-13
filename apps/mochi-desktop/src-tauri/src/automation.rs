@@ -12,7 +12,12 @@
 //! WebDriver cannot drive a native file dialog, so with `e2e` the open
 //! dialog first takes paths from `MOCHI_E2E_PICK` (a platform path list, one
 //! path per "Open archive" click, in order; `crate::picker`). Shipped builds
-//! never read the variable.
+//! never read the variable. D2's flows need different picks in each spec file
+//! (a new app per file, so the queue starts over): `MOCHI_E2E_PICK_FILE` names
+//! a text file with one path per line, which a spec rewrites before its
+//! clicks; its lines are used first, then `MOCHI_E2E_PICK`. `MOCHI_E2E_PACE_MS`
+//! slows the walk of a create or add by that many milliseconds per entry, so
+//! that a spec can cancel one deterministically (`crate::write::Tree`).
 
 use tauri::{App, WebviewWindowBuilder, Wry};
 
@@ -42,9 +47,25 @@ pub fn configure<'a>(
     builder
 }
 
-/// The next path from `MOCHI_E2E_PICK`, if any remain.
+/// The first path in the `MOCHI_E2E_PICK_FILE` file, which is removed from it.
+#[cfg(feature = "e2e")]
+fn next_file_pick() -> Option<std::path::PathBuf> {
+    let file = std::path::PathBuf::from(std::env::var_os("MOCHI_E2E_PICK_FILE")?);
+    let text = std::fs::read_to_string(&file).ok()?;
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let first = lines.next()?.to_owned();
+    let rest: Vec<&str> = lines.collect();
+    std::fs::write(&file, rest.join("\n")).ok()?;
+    Some(std::path::PathBuf::from(first))
+}
+
+/// The next path for a dialog: from `MOCHI_E2E_PICK_FILE`, else from
+/// `MOCHI_E2E_PICK`, if any remain.
 #[cfg(feature = "e2e")]
 pub fn next_pick() -> Option<std::path::PathBuf> {
+    if let Some(p) = next_file_pick() {
+        return Some(p);
+    }
     use std::collections::VecDeque;
     use std::sync::Mutex;
     static QUEUE: Mutex<Option<VecDeque<std::path::PathBuf>>> = Mutex::new(None);
