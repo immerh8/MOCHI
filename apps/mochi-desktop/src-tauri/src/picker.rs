@@ -86,6 +86,77 @@ pub fn pick_extract_folder<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
         .ok()
 }
 
+/// Show the open dialog for the archive to test or repair (plan D4). Any
+/// file can be chosen: a damaged archive may not end in `.mochi`. `None` if
+/// the user cancelled. Blocks: call it off the async runtime.
+pub fn pick_check_subject<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Choose an archive to test or repair")
+        .add_filter("MOCHI archive", &["mochi"])
+        .add_filter("All files", &["*"])
+        .blocking_pick_file()?
+        .into_path()
+        .ok()
+}
+
+/// Show the open dialog for an independent copy of the archive being
+/// repaired (plan D4, `--copy`). `None` if the user cancelled. Blocks.
+pub fn pick_copy<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Choose an independent copy of the same archive")
+        .add_filter("MOCHI archive", &["mochi"])
+        .add_filter("All files", &["*"])
+        .blocking_pick_file()?
+        .into_path()
+        .ok()
+}
+
+/// Show the save dialog for the new archive a repair writes (plan D4).
+/// `None` if the user cancelled. Blocks.
+pub fn pick_repair_output<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(with_extension(path));
+    }
+    let path = app
+        .dialog()
+        .file()
+        .set_title("Save the new archive as")
+        .set_file_name("new-archive.mochi")
+        .add_filter("MOCHI archive", &["mochi"])
+        .blocking_save_file()?
+        .into_path()
+        .ok()?;
+    Some(with_extension(path))
+}
+
+/// Show the save dialog for an exported report (plan D4). `None` if the user
+/// cancelled. Blocks.
+pub fn pick_report_destination<R: Runtime>(app: &AppHandle<R>, suggested: &str) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Export the report (JSON)")
+        .set_file_name(suggested)
+        .add_filter("JSON report", &["json"])
+        .blocking_save_file()?
+        .into_path()
+        .ok()
+}
+
 /// `path` with `.mochi` appended when it has no extension.
 pub fn with_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {

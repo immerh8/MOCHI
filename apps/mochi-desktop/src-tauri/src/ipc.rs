@@ -47,6 +47,35 @@ pub enum JobRequest {
         keys: Vec<PathKey>,
         on_conflict: ConflictChoice,
     },
+    /// D4 "Test archive": verify the chosen archive (`choose_check_subject`)
+    /// read-only with `mochi_core::verify`, as `mochi verify` (or `mochi
+    /// fsck` with `deep`) does. The webview names no path.
+    TestArchive {
+        subject: SubjectId,
+        level: CheckLevel,
+        /// Also open every commit at its own footer and recover every replay
+        /// segment (`fsck`).
+        deep: bool,
+    },
+    /// D4: plan a repair of the chosen archive (`mochi_core::repair`,
+    /// read-only), with the copies chosen through `repair_setup` and, when
+    /// `salvage`, the bounded salvage scan (step 7).
+    PlanRepair {
+        subject: SubjectId,
+        salvage: bool,
+        /// With `salvage`: the archive to keep when the scan finds several
+        /// (64 hexadecimal digits). Typed by the user.
+        archive_id: Option<String>,
+    },
+    /// D4: write the approved plan into the new file chosen through
+    /// `repair_setup` (never the source, never an existing file), then
+    /// re-verify it (`mochi_core::repair::apply`).
+    ApplyRepair {
+        subject: SubjectId,
+        /// The plan the user reviewed and approved.
+        plan: PlanId,
+        accept_retention_loss: bool,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -90,6 +119,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         extract: Option<Box<ExtractReport>>,
+        /// Set by the test and repair jobs (D4).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        check: Option<Box<CheckResult>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -531,4 +564,420 @@ pub struct ExtractReport {
     /// Set when the folder's directory entries are not confirmed durable.
     pub durability_note: Option<String>,
     pub case_insensitive: bool,
+}
+
+// ---- D4: test, health, and repair -------------------------------------------
+//
+// The archive to test or repair, the copies, and the new file are chosen in
+// native dialogs shown from Rust and kept there; the webview refers to them by
+// ID. Reports are converted from `mochi_core::report::Report` (schema v1) for
+// display, and the exact JSON core produced travels with them (`json`) and is
+// what "Export report JSON" writes. Archive-supplied text inside findings and
+// plans crosses as [`NameText`].
+
+/// Identifies the archive chosen for testing, health, or repair.
+pub type SubjectId = u32;
+/// Identifies a report kept for export.
+pub type ReportId = u32;
+/// Identifies a repair plan kept for approval.
+pub type PlanId = u32;
+
+/// The verification levels `mochi verify --level` offers that this build
+/// runs (spec §20.1). Inventory, search, and disaster recovery are
+/// `UNSUPPORTED` in 1.0 and not offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum CheckLevel {
+    Structural,
+    Referential,
+    StoredIntegrity,
+    ContentIntegrity,
+    Restoration,
+}
+
+/// Where the archive to test or repair comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "from", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum SubjectSource {
+    /// The native open dialog, shown from Rust (any file: an archive too
+    /// damaged, or an Encrypted one, cannot be opened in the browser).
+    Dialog,
+    /// The file of an archive open in the browser.
+    OpenArchive { handle: ArchiveHandle },
+    /// The new archive the last repair wrote.
+    RepairOutput,
+}
+
+/// The archive chosen for testing, health, or repair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SubjectView {
+    pub id: SubjectId,
+    /// The file's name on this computer (the user's, not archive data).
+    pub file_name: String,
+}
+
+/// A spec §20.4 status value, spelled as in the report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum StatusView {
+    Pass,
+    Fail,
+    Degraded,
+    Unknown,
+    Overdue,
+    Unsupported,
+}
+
+/// One health dimension of a report (spec §20.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct DimensionView {
+    /// As in the report (`integrity`, `key_availability`, …).
+    pub dimension: String,
+    pub status: StatusView,
+    /// The report's policy requires it.
+    pub required: bool,
+}
+
+/// One finding of a report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct FindingView {
+    /// A registered error code.
+    pub code: String,
+    /// `info`, `warning`, or `error`.
+    pub severity: String,
+    pub message: Option<NameText>,
+    pub expected: Option<NameText>,
+    pub observed: Option<NameText>,
+    /// The commits affected, as an inclusive range.
+    pub affected: Option<SeqRangeView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SeqRangeView {
+    #[ts(type = "number")]
+    pub first: u64,
+    #[ts(type = "number")]
+    pub last: u64,
+}
+
+/// Something a report did not check, or a note, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ReportNoteView {
+    pub item: NameText,
+    pub reason: NameText,
+}
+
+/// Objects and bytes checked versus expected, as decimal strings; `null`
+/// means not measured, which is not zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CoverageView {
+    pub expected_objects: Option<String>,
+    pub checked_objects: Option<String>,
+    pub expected_bytes: Option<String>,
+    pub checked_bytes: Option<String>,
+    pub evidence_age_seconds: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ReportKind {
+    /// "Test archive" (`verify`, or `fsck` when deep).
+    Test,
+    /// The health summary (`mochi_core::health`).
+    Health,
+}
+
+/// A report schema v1 (spec §20.5) for display, and its exact JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ReportView {
+    /// Pass to `export_report`.
+    pub report_id: ReportId,
+    pub kind: ReportKind,
+    /// The file that was checked (the user's name for it).
+    pub file_name: String,
+    /// Also opened every commit and recovered every segment (`fsck`).
+    pub deep: bool,
+    pub schema_version: u32,
+    pub archive_id: Option<String>,
+    pub checked_commit: Option<String>,
+    pub expected_head: Option<String>,
+    /// `none`, `user`, or `local-history`.
+    pub freshness_anchor: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// As in the report (`restoration`, `stored_integrity`, …).
+    pub level: String,
+    pub scope: Option<NameText>,
+    /// In the report's order.
+    pub dimensions: Vec<DimensionView>,
+    pub overall_status: StatusView,
+    pub policy_result: StatusView,
+    pub exit_code: u8,
+    pub operational_error: bool,
+    pub coverage: CoverageView,
+    pub findings: Vec<FindingView>,
+    pub skipped: Vec<ReportNoteView>,
+    /// The report exactly as `mochi verify --json` prints it (one line and a
+    /// newline). "Export report JSON" writes these bytes unchanged.
+    pub json: String,
+}
+
+/// The health summary (spec §20.3, §21; `mochi_core::health::assess`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct HealthView {
+    pub report: ReportView,
+    /// Evidence records of this archive that this app recorded since it
+    /// started (nothing is saved; plan D4 "Gap").
+    pub records: u32,
+}
+
+/// What the copies, the new file, and the plan of a repair are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct RepairSetupView {
+    /// File names of the independent copies, in the order given (step 5).
+    pub copies: Vec<String>,
+    /// File name of the new archive the repair would write, if chosen.
+    pub output: Option<String>,
+}
+
+/// Changes to a repair's setup. Files are chosen in native dialogs shown from
+/// Rust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "action", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum RepairSetupAction {
+    /// Show the open dialog and add the chosen file as a copy (`--copy`).
+    AddCopy,
+    RemoveCopy {
+        index: u32,
+    },
+    ClearCopies,
+    /// Show the save dialog for the new archive.
+    ChooseOutput,
+    /// Only report the setup.
+    Show,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum RepairOutcomeView {
+    /// Every snapshot and entry the archive's history holds, with retention.
+    Complete,
+    /// Something is left out, or the bounded salvage scan was used.
+    Partial,
+    /// Nothing can be written.
+    NothingRecoverable,
+}
+
+/// One rung of the §22 ladder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct LadderStepView {
+    pub step: u8,
+    pub name: String,
+    /// `used`, `not_needed`, `not_available`, `not_attempted`, or
+    /// `incomplete`.
+    pub status: String,
+    pub detail: NameText,
+}
+
+/// A snapshot the plan writes, one commit of the new archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct PlannedSnapshotView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    /// `null` before a chain break: the commit record is not trusted.
+    pub commit_id: Option<String>,
+    pub entries: String,
+    pub omitted: String,
+    /// `image` or `snapshot_manifest`.
+    pub catalog: String,
+    /// `chain`, `copy_confirmed`, or `salvage`.
+    pub trust: String,
+}
+
+/// A snapshot that is not written, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct LostSnapshotView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub commit_id: Option<String>,
+    pub code: String,
+    pub reason: NameText,
+}
+
+/// An entry left out of every written snapshot that held it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct OmittedView {
+    pub path: NameText,
+    /// `file` or `directory`.
+    pub kind: String,
+    /// The snapshots that held it.
+    #[ts(type = "Array<number>")]
+    pub snapshots: Vec<u64>,
+    pub code: String,
+    pub reason: NameText,
+}
+
+/// What a repair does with the source's retention state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum RetentionView {
+    Carried {
+        holds: u32,
+        /// Holds on snapshots that are lost: they are lost too.
+        holds_lost: u32,
+        expired: u32,
+    },
+    /// Not rebuildable: applying needs the user to accept writing the new
+    /// archive with no holds and nothing expired.
+    Unresolved { code: String, reason: NameText },
+}
+
+/// An independent copy (step 5) and what it did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CopyView {
+    pub file_name: String,
+    /// `used`, `not_needed`, `not_available`, or `unreadable`.
+    pub status: String,
+    pub frames_donated: String,
+    pub detail: NameText,
+}
+
+/// The parity scan (step 6) of an archive with a recovery record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ParityView {
+    pub declared_percent: Option<u16>,
+    pub shards_damaged: String,
+    pub shards_rebuilt: String,
+    pub groups_beyond_capacity: String,
+}
+
+/// The bounded salvage scan (step 7), when it ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SalvageView {
+    pub confirmed_commits: String,
+    /// Never recovered: nothing confirms their publication.
+    pub unconfirmed_commits: String,
+    pub orphan_data_objects: String,
+    pub limit_reached: bool,
+}
+
+/// A repair plan (`mochi_core::repair::RepairPlan`) for review. Nothing was
+/// written to make it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct RepairPlanView {
+    /// Pass to `ApplyRepair` to approve exactly this plan.
+    pub plan_id: PlanId,
+    pub file_name: String,
+    pub outcome: RepairOutcomeView,
+    /// As `mochi repair plan` exits: 0 complete, 2 partial, 1 nothing.
+    pub exit_code: u8,
+    pub archive_id: Option<String>,
+    /// How the head was found: `eof`, `scan`, or `null` when none was.
+    pub head_found_by: Option<String>,
+    #[ts(type = "number | null")]
+    pub head_seq: Option<u64>,
+    /// `clean`, `uncommitted`, or `unresolved`, and how many bytes.
+    pub tail_state: Option<String>,
+    pub tail_len: Option<String>,
+    /// The first trusted commit after a break in the chain, and why.
+    #[ts(type = "number | null")]
+    pub chain_break_at: Option<u64>,
+    pub chain_break_reason: Option<NameText>,
+    pub ladder: Vec<LadderStepView>,
+    pub snapshots: Vec<PlannedSnapshotView>,
+    pub lost: Vec<LostSnapshotView>,
+    /// The first entries left out (at most 1,000); the total is always given.
+    pub omitted: Vec<OmittedView>,
+    pub omitted_total: String,
+    pub manifest_failures: u32,
+    /// `null` when nothing is recoverable.
+    pub retention: Option<RetentionView>,
+    pub parity: Option<ParityView>,
+    pub copies: Vec<CopyView>,
+    pub donations: String,
+    pub salvage: Option<SalvageView>,
+    /// A snapshot the plan writes rests on the salvage scan.
+    pub salvage_used: bool,
+    pub damage_found: bool,
+}
+
+/// One commit a repair wrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct RepairedCommitView {
+    #[ts(type = "number")]
+    pub source_seq: u64,
+    #[ts(type = "number")]
+    pub new_seq: u64,
+    pub entries: String,
+    pub omitted: String,
+    pub trust: String,
+}
+
+/// The independent verification of the new archive before it was published
+/// (spec §22.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ReverificationView {
+    pub level: String,
+    pub overall_status: StatusView,
+    pub policy_result: StatusView,
+    pub exit_code: u8,
+    pub findings: String,
+}
+
+/// What a repair wrote (`mochi_core::repair::RepairReport`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct RepairResultView {
+    pub outcome: RepairOutcomeView,
+    pub exit_code: u8,
+    /// The new file (the user's name for it).
+    pub file_name: String,
+    pub new_archive_id: String,
+    pub new_len: String,
+    pub commits: Vec<RepairedCommitView>,
+    pub lost: Vec<LostSnapshotView>,
+    pub omitted: Vec<OmittedView>,
+    pub omitted_total: String,
+    pub profile_constraints_lost: Vec<String>,
+    pub retention_loss_accepted: bool,
+    pub reverification: ReverificationView,
+    pub durability_note: Option<String>,
+    pub source_kept: bool,
+    pub salvage_used: bool,
+}
+
+/// What a D4 job produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum CheckResult {
+    Test { report: ReportView },
+    Plan { plan: RepairPlanView },
+    Repair { result: RepairResultView },
 }
