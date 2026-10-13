@@ -30,12 +30,16 @@ impl fmt::Debug for Password {
     }
 }
 
-/// Formats this slice reads. 7z and RAR are a later slice.
+/// Formats this crate reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForeignFormat {
     Zip,
     Tar,
     TarGz,
+    SevenZ,
+    /// RAR 4 and RAR 5 (one library reads both; the per-entry checks differ
+    /// and are reported per entry).
+    Rar,
 }
 
 impl ForeignFormat {
@@ -44,6 +48,8 @@ impl ForeignFormat {
             ForeignFormat::Zip => 1,
             ForeignFormat::Tar => 2,
             ForeignFormat::TarGz => 3,
+            ForeignFormat::SevenZ => 4,
+            ForeignFormat::Rar => 5,
         }
     }
     pub fn from_code(c: u8) -> Option<Self> {
@@ -51,6 +57,8 @@ impl ForeignFormat {
             1 => Some(ForeignFormat::Zip),
             2 => Some(ForeignFormat::Tar),
             3 => Some(ForeignFormat::TarGz),
+            4 => Some(ForeignFormat::SevenZ),
+            5 => Some(ForeignFormat::Rar),
             _ => None,
         }
     }
@@ -59,6 +67,8 @@ impl ForeignFormat {
             ForeignFormat::Zip => "ZIP",
             ForeignFormat::Tar => "tar",
             ForeignFormat::TarGz => "tar.gz",
+            ForeignFormat::SevenZ => "7z",
+            ForeignFormat::Rar => "RAR",
         }
     }
 }
@@ -234,6 +244,8 @@ pub enum CheckKind {
     AesAuthCode,
     /// The gzip trailer: CRC-32 and length of the whole decompressed stream.
     GzipStreamCrc32,
+    /// RAR 5's BLAKE2sp file hash (used in place of CRC32 by some writers).
+    Blake2sp,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +264,7 @@ impl CheckSet {
             CheckKind::Crc32 => 1,
             CheckKind::AesAuthCode => 2,
             CheckKind::GzipStreamCrc32 => 4,
+            CheckKind::Blake2sp => 8,
         }
     }
     pub fn contains(self, k: CheckKind) -> bool {
@@ -267,6 +280,9 @@ impl CheckSet {
         }
         if self.contains(CheckKind::GzipStreamCrc32) {
             parts.push("gzip stream CRC32");
+        }
+        if self.contains(CheckKind::Blake2sp) {
+            parts.push("BLAKE2sp");
         }
         parts.join(" + ")
     }
@@ -397,6 +413,13 @@ pub enum ErrorCode {
     BadRequest,
     OpenFailed,
     HelperPanic,
+    /// The archive's names (or everything in it) are encrypted and no
+    /// password was given. Asked for before listing (plan D8 rule 7).
+    PasswordRequired,
+    /// The password was given and did not open the archive's headers.
+    WrongPassword,
+    /// A multi-volume archive is missing a volume (the name is in the text).
+    MissingVolume,
     // Reported by the parent.
     HelperSpawnFailed,
     HelperCrashed,
@@ -419,6 +442,9 @@ impl ErrorCode {
             ErrorCode::BadRequest => "BAD_REQUEST",
             ErrorCode::OpenFailed => "OPEN_FAILED",
             ErrorCode::HelperPanic => "HELPER_PANIC",
+            ErrorCode::PasswordRequired => "PASSWORD_REQUIRED",
+            ErrorCode::WrongPassword => "WRONG_PASSWORD",
+            ErrorCode::MissingVolume => "MISSING_VOLUME",
             ErrorCode::HelperSpawnFailed => "HELPER_SPAWN_FAILED",
             ErrorCode::HelperCrashed => "HELPER_CRASHED",
             ErrorCode::HelperTimeout => "HELPER_TIMEOUT",
@@ -455,6 +481,9 @@ impl ErrorCode {
             ErrorCode::HelperOutputLimit => 13,
             ErrorCode::HelperProtocol => 14,
             ErrorCode::SinkFailed => 15,
+            ErrorCode::PasswordRequired => 16,
+            ErrorCode::WrongPassword => 17,
+            ErrorCode::MissingVolume => 18,
         }
     }
 
@@ -470,6 +499,9 @@ impl ErrorCode {
             7 => Some(ErrorCode::BadRequest),
             8 => Some(ErrorCode::OpenFailed),
             9 => Some(ErrorCode::HelperPanic),
+            16 => Some(ErrorCode::PasswordRequired),
+            17 => Some(ErrorCode::WrongPassword),
+            18 => Some(ErrorCode::MissingVolume),
             _ => None,
         }
     }
@@ -510,14 +542,24 @@ pub enum Op {
     Test,
     /// Stream one entry's bytes out (for the C6 restore engine).
     Read,
+    /// Stream the entries named in the request, in the order the archive
+    /// stores them, in one pass (a solid archive is decoded once, not once
+    /// per entry). Each is announced (`ENTRY`), streamed (`DATA`), and closed
+    /// (`RESULT`).
+    ReadMany,
 }
 
 impl Op {
+    /// `Read` and `ReadMany` deliver entry bytes.
+    pub fn is_read(self) -> bool {
+        matches!(self, Op::Read | Op::ReadMany)
+    }
     pub fn code(self) -> u8 {
         match self {
             Op::List => 1,
             Op::Test => 2,
             Op::Read => 3,
+            Op::ReadMany => 4,
         }
     }
     pub fn from_code(c: u8) -> Option<Self> {
@@ -525,6 +567,7 @@ impl Op {
             1 => Some(Op::List),
             2 => Some(Op::Test),
             3 => Some(Op::Read),
+            4 => Some(Op::ReadMany),
             _ => None,
         }
     }

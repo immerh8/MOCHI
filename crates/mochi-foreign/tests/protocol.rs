@@ -157,7 +157,7 @@ fn unknown_kinds_and_codes_are_rejected() {
     assert!(Message::decode(kind::ERROR, &e.finish()).is_err());
     // A check set must name something.
     assert!(Message::decode(kind::STREAM_CHECK, &[1, 0]).is_err());
-    assert!(Message::decode(kind::STREAM_CHECK, &[1, 8]).is_err());
+    assert!(Message::decode(kind::STREAM_CHECK, &[1, 16]).is_err());
 }
 
 #[test]
@@ -200,6 +200,7 @@ fn request_round_trips_and_rejects_other_versions() {
     let r = Request {
         op: Op::Read,
         read_index: 9,
+        read_indices: vec![],
         limits: Limits {
             max_total_output: 1,
             max_entry_size: 2,
@@ -223,7 +224,7 @@ fn request_round_trips_and_rejects_other_versions() {
     assert_eq!(back.password.as_ref().unwrap().as_bytes(), &[0, 1, 2, 0xff]);
 
     let mut wrong = r.encode();
-    wrong[0] = 2; // protocol version 2
+    wrong[0] = 3; // a protocol version this build does not speak
     assert!(Request::decode(&wrong).is_err());
     let mut op = r.encode();
     op[2] = 0; // unknown operation
@@ -236,6 +237,7 @@ fn a_request_never_prints_its_password() {
     let r = Request {
         op: Op::List,
         read_index: 0,
+        read_indices: vec![],
         limits: Limits::default(),
         memory_limit: None,
         cpu_seconds: None,
@@ -260,4 +262,61 @@ fn error_text_is_truncated_on_a_character_boundary() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn read_many_request_round_trips_sorted_and_unique() {
+    let r = Request {
+        op: Op::ReadMany,
+        read_index: 0,
+        read_indices: vec![9, 2, 2, 5],
+        limits: Limits::default(),
+        memory_limit: None,
+        cpu_seconds: None,
+        archive_path: vec![b'a'],
+        password: None,
+    };
+    let back = Request::decode(&r.encode()).unwrap();
+    assert_eq!(back.op, Op::ReadMany);
+    assert_eq!(back.read_indices, vec![2, 5, 9], "sorted and deduplicated on decode");
+    assert!(back.wants(5) && back.wants(9) && !back.wants(3));
+    assert_eq!(back.wanted_count(), Some(3));
+    assert_eq!(Request { op: Op::List, ..back.clone() }.wanted_count(), None);
+    // A count that promises more indices than the body holds is refused
+    // before anything is allocated.
+    let mut enc = r.encode();
+    let at = 2 + 1 + 8; // version, op, read_index
+    enc[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(Request::decode(&enc).is_err());
+    let mut enc = r.encode();
+    enc[at..at + 4].copy_from_slice(&1_000_001u32.to_le_bytes());
+    assert!(Request::decode(&enc).is_err());
+}
+
+#[test]
+fn seven_z_and_rar_formats_and_their_error_codes_cross_the_wire() {
+    for f in [ForeignFormat::SevenZ, ForeignFormat::Rar] {
+        let (k, body) = Message::Format(f).encode();
+        assert_eq!(Message::decode(k, &body).unwrap(), Message::Format(f));
+    }
+    for code in [
+        ErrorCode::PasswordRequired,
+        ErrorCode::WrongPassword,
+        ErrorCode::MissingVolume,
+    ] {
+        let m = Message::Error { code, message: "x".into() };
+        let (k, body) = m.encode();
+        assert_eq!(Message::decode(k, &body).unwrap(), m);
+    }
+    // A parent-side code is never accepted from the helper.
+    let (k, mut body) = Message::Error { code: ErrorCode::BadRequest, message: String::new() }.encode();
+    body[0] = ErrorCode::HelperCrashed.code();
+    assert!(Message::decode(k, &body).is_err());
+    // BLAKE2sp is a check kind the decoder accepts.
+    let m = Message::Result {
+        index: 0,
+        outcome: EntryOutcome::Matched(CheckSet::of(&[CheckKind::Blake2sp])),
+    };
+    let (k, body) = m.encode();
+    assert_eq!(Message::decode(k, &body).unwrap(), m);
 }

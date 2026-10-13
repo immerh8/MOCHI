@@ -10,6 +10,11 @@ use flate2::read::GzDecoder;
 
 use crate::types::{ErrorCode, ForeignError, ForeignFormat};
 
+const SEVENZ_SIG: &[u8] = b"7z\xBC\xAF\x27\x1C";
+const RAR4_SIG: &[u8] = b"Rar!\x1A\x07\x00";
+const RAR5_SIG: &[u8] = b"Rar!\x1A\x07\x01\x00";
+/// How far into an executable a self-extractor's archive is looked for.
+const SFX_SEARCH: u64 = 1 << 20;
 const EOCD_SIG: [u8; 4] = *b"PK\x05\x06";
 const ZIP64_LOCATOR_SIG: [u8; 4] = *b"PK\x06\x07";
 const EOCD_FIXED: usize = 22;
@@ -71,6 +76,18 @@ fn find_eocd<R: Read + Seek>(r: &mut R, len: u64) -> Result<Eocd, ForeignError> 
     }
 }
 
+/// Whether the first megabyte of an executable holds a 7z or RAR signature.
+fn has_embedded_archive<R: Read + Seek>(r: &mut R, len: u64) -> Result<bool, ForeignError> {
+    r.seek(SeekFrom::Start(0)).map_err(io_err)?;
+    let mut buf = Vec::new();
+    r.by_ref()
+        .take(len.min(SFX_SEARCH))
+        .read_to_end(&mut buf)
+        .map_err(io_err)?;
+    let has = |sig: &[u8]| buf.windows(sig.len()).any(|w| w == sig);
+    Ok(has(SEVENZ_SIG) || has(RAR4_SIG) || has(RAR5_SIG))
+}
+
 fn parse_octal(field: &[u8]) -> Option<u64> {
     let mut v: u64 = 0;
     let mut seen = false;
@@ -119,16 +136,18 @@ pub fn detect<R: Read + Seek>(r: &mut R) -> Result<ForeignFormat, ForeignError> 
         .read_to_end(&mut head)
         .map_err(io_err)?;
 
-    if head.starts_with(b"7z\xBC\xAF\x27\x1C") {
-        return Err(err(
-            ErrorCode::UnsupportedFormat,
-            "7z archives are not supported by this build yet",
-        ));
+    // A signature is a candidate, not proof: the 7z and RAR readers validate
+    // their own headers (CRCs) and report a damaged one as malformed.
+    if head.starts_with(SEVENZ_SIG) {
+        return Ok(ForeignFormat::SevenZ);
     }
-    if head.starts_with(b"Rar!\x1A\x07") {
+    if head.starts_with(RAR5_SIG) || head.starts_with(RAR4_SIG) {
+        return Ok(ForeignFormat::Rar);
+    }
+    if head.starts_with(b"RE~^") {
         return Err(err(
             ErrorCode::UnsupportedFormat,
-            "RAR archives are not supported by this build yet",
+            "this is a RAR 1.x archive; only RAR 4 and RAR 5 are supported",
         ));
     }
     if head.starts_with(b"PK\x07\x08") || head.starts_with(b"PK00") {
@@ -139,6 +158,10 @@ pub fn detect<R: Read + Seek>(r: &mut R) -> Result<ForeignFormat, ForeignError> 
     }
     if head.starts_with(b"MZ") || head.starts_with(b"\x7fELF") {
         return match find_eocd(r, len)? {
+            Eocd::Missing if has_embedded_archive(r, len)? => Err(err(
+                ErrorCode::UnsupportedSfx,
+                "a self-extracting archive (an executable with a 7z or RAR archive inside); self-extracting archives are not supported",
+            )),
             Eocd::Missing => Err(err(
                 ErrorCode::UnsupportedFormat,
                 "an executable file, not an archive",
@@ -188,7 +211,7 @@ pub fn detect<R: Read + Seek>(r: &mut R) -> Result<ForeignFormat, ForeignError> 
     }
     Err(err(
         ErrorCode::NotAnArchive,
-        "not a ZIP, tar, or tar.gz archive",
+        "not a ZIP, 7z, RAR, tar, or tar.gz archive",
     ))
 }
 

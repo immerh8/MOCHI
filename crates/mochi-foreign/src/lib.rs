@@ -1,4 +1,5 @@
-//! Read-only foreign archive formats for MOCHI (plan D8): ZIP, tar, tar.gz.
+//! Read-only foreign archive formats for MOCHI (plan D8): ZIP, tar, tar.gz,
+//! 7z, and RAR.
 //!
 //! All parsing happens in the `mochi-foreign-helper` process; the app talks to
 //! it through [`client::ForeignClient`]. This crate never writes a file, never
@@ -7,6 +8,8 @@
 //! do not depend on it (`ci/check-invariants.sh`).
 
 pub mod client;
+#[cfg(windows)]
+mod jobobject;
 pub mod protocol;
 pub mod types;
 
@@ -21,11 +24,18 @@ pub mod fuzz;
 #[cfg(feature = "engine")]
 pub mod helper;
 #[cfg(feature = "engine")]
+mod rarfmt;
+#[cfg(feature = "engine")]
+mod sevenfmt;
+#[cfg(feature = "engine")]
 mod tarfmt;
+#[cfg(feature = "engine")]
+pub mod volumes;
 #[cfg(feature = "engine")]
 mod zipfmt;
 
 pub use client::{
-    default_helper_path, ForeignClient, ListReport, ReadReport, RunLimits, TestEntry, TestReport,
+    default_helper_path, ForeignClient, ListReport, ReadManyReport, ReadManySink, ReadReport,
+    RunLimits, TestEntry, TestReport,
 };
 pub use types::*;

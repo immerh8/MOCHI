@@ -40,7 +40,7 @@ fn a_helper_abort_is_reported_as_a_crash_with_the_signal() {
     assert_survived(&c);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn a_memory_limit_breach_is_a_reported_crash_not_a_dead_parent() {
     // The helper tries to allocate 2 GiB under a 256 MiB address-space limit.

@@ -6,12 +6,38 @@
 //! very code the helper runs, on in-memory bytes.
 
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::Path;
 
 use crate::detect::detect;
 use crate::protocol::{Done, Message, Request};
 use crate::tarfmt;
 use crate::types::*;
+use crate::volumes::SplitName;
 use crate::zipfmt;
+use crate::{rarfmt, sevenfmt};
+
+/// Where the bytes handed to [`run`] came from, for the formats that need
+/// more than a byte stream.
+#[derive(Clone, Copy)]
+pub struct Origin<'a> {
+    /// The archive's path. RAR is read by UnRAR, which opens files itself and
+    /// finds the next volume by name; without a path RAR is unavailable (the
+    /// in-memory fuzz harness uses a temporary file instead).
+    pub path: Option<&'a Path>,
+    /// The file name's `.7z.NNN` form, when it has one.
+    pub split: SplitName,
+    /// Volumes read as one stream (a 7z set); 1 otherwise.
+    pub volumes: usize,
+}
+
+impl Origin<'_> {
+    /// A plain, single stream with no path (tests, in-memory fuzzing).
+    pub const MEMORY: Origin<'static> = Origin {
+        path: None,
+        split: SplitName::NotSplit,
+        volumes: 1,
+    };
+}
 
 /// Where the engine sends messages. An `Err` means the consumer is gone.
 pub type Out<'a> = dyn FnMut(Message) -> io::Result<()> + 'a;
@@ -44,7 +70,12 @@ pub struct Tally {
     pub stop_reason: Option<String>,
 }
 
-pub fn run<R: Read + Seek>(mut src: R, req: &Request, out: &mut Out) -> Result<(), EngineError> {
+pub fn run<R: Read + Seek>(
+    mut src: R,
+    origin: &Origin<'_>,
+    req: &Request,
+    out: &mut Out,
+) -> Result<(), EngineError> {
     let len = src.seek(SeekFrom::End(0)).map_err(|e| {
         ForeignError::new(ErrorCode::OpenFailed, format!("cannot read archive: {e}"))
     })?;
@@ -57,6 +88,8 @@ pub fn run<R: Read + Seek>(mut src: R, req: &Request, out: &mut Out) -> Result<(
         ForeignFormat::Zip => zipfmt::run(src, len, req, out)?,
         ForeignFormat::Tar => tarfmt::run(src, len, false, req, out)?,
         ForeignFormat::TarGz => tarfmt::run(src, len, true, req, out)?,
+        ForeignFormat::SevenZ => sevenfmt::run(src, len, origin, req, out)?,
+        ForeignFormat::Rar => rarfmt::run(origin, req, out)?,
     };
     out(Message::Done(Done {
         complete: tally.complete,

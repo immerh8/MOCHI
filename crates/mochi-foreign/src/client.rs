@@ -25,9 +25,9 @@ use crate::types::*;
 pub struct RunLimits {
     /// Wall-clock time for one operation; the helper is killed after this.
     pub wall_time: Duration,
-    /// Address-space limit the helper applies to itself. Enforced on Unix;
-    /// not yet on Windows (a Job Object is a later task), where the field is
-    /// ignored and `memory_limit_enforced()` says so.
+    /// Memory limit for the helper. On Unix the helper applies it to itself
+    /// (`RLIMIT_AS`); on Windows the parent puts it in a Job Object
+    /// (`jobobject.rs`). `memory_limit_enforced()` says whether it is applied.
     pub memory_bytes: Option<u64>,
     /// Total non-data bytes (entry listings, results) accepted from the helper.
     pub max_metadata_bytes: u64,
@@ -46,7 +46,7 @@ impl Default for RunLimits {
 impl RunLimits {
     /// Whether `memory_bytes` is actually applied on this platform.
     pub const fn memory_limit_enforced() -> bool {
-        cfg!(unix)
+        cfg!(any(unix, windows))
     }
 }
 
@@ -117,6 +117,30 @@ pub struct ReadReport {
     pub stream_check: StreamCheck,
 }
 
+/// What [`ForeignClient::read_many`] reports besides what it gave the sink.
+#[derive(Debug)]
+pub struct ReadManyReport {
+    pub format: ForeignFormat,
+    /// Entries the helper delivered (each requested entry exactly once).
+    pub delivered: u64,
+    pub breaches: Vec<Breach>,
+    pub complete: bool,
+    pub stop_reason: Option<String>,
+    /// For `.tar.gz`, a failed stream check vouches for no entry.
+    pub stream_check: StreamCheck,
+}
+
+/// Receives the entries of [`ForeignClient::read_many`], one at a time.
+pub trait ReadManySink {
+    /// An entry is about to be delivered.
+    fn begin(&mut self, info: &EntryInfo) -> io::Result<()>;
+    /// Bytes of the current entry.
+    fn data(&mut self, bytes: &[u8]) -> io::Result<()>;
+    /// The current entry ended with `outcome`. Anything other than a clean
+    /// outcome means the bytes just delivered must be discarded.
+    fn finish(&mut self, info: &EntryInfo, outcome: &EntryOutcome) -> io::Result<()>;
+}
+
 #[derive(Clone, Debug)]
 pub struct ForeignClient {
     helper: PathBuf,
@@ -180,7 +204,16 @@ fn describe_exit(status: Option<ExitStatus>, memory_limited: bool) -> String {
             return t;
         }
     }
+    // On Windows a Job Object memory breach makes the helper's allocation fail
+    // and Rust abort it: a non-zero status with no signal to name.
     let _ = memory_limited;
+    #[cfg(windows)]
+    if memory_limited && s.code().is_some_and(|c| c != 0) {
+        return format!(
+            "the helper exited with status {}; a memory-limit breach is a possible cause",
+            s.code().unwrap_or(-1)
+        );
+    }
     match s.code() {
         Some(c) => format!("the helper exited with status {c}"),
         None => "the helper ended abnormally".to_string(),
@@ -218,7 +251,7 @@ impl ForeignClient {
         password: Option<&Password>,
     ) -> Result<ListReport, ForeignError> {
         let mut c = Collector::new(Op::List, self.limits);
-        self.exchange(archive, Op::List, 0, password, &mut |m| c.push(m))?;
+        self.exchange(archive, Op::List, 0, Vec::new(), password, &mut |m| c.push(m))?;
         c.into_list()
     }
 
@@ -230,7 +263,7 @@ impl ForeignClient {
         password: Option<&Password>,
     ) -> Result<TestReport, ForeignError> {
         let mut c = Collector::new(Op::Test, self.limits);
-        self.exchange(archive, Op::Test, 0, password, &mut |m| c.push(m))?;
+        self.exchange(archive, Op::Test, 0, Vec::new(), password, &mut |m| c.push(m))?;
         c.into_test()
     }
 
@@ -245,7 +278,7 @@ impl ForeignClient {
         sink: &mut dyn FnMut(&[u8]) -> io::Result<()>,
     ) -> Result<ReadReport, ForeignError> {
         let mut c = Collector::new(Op::Read, self.limits);
-        self.exchange(archive, Op::Read, index, password, &mut |m| {
+        self.exchange(archive, Op::Read, index, Vec::new(), password, &mut |m| {
             if let Message::Data(b) = &m {
                 sink(b).map_err(|e| {
                     ForeignError::new(ErrorCode::SinkFailed, format!("the byte sink failed: {e}"))
@@ -256,11 +289,66 @@ impl ForeignClient {
         c.into_read()
     }
 
+    /// Stream the named entries in **one** helper run, so a solid archive is
+    /// decoded once rather than once per entry. The helper delivers entries in
+    /// the order the archive stores them (not the order of `indices`); `sink`
+    /// is told when each begins, receives its bytes, and is told how it ended.
+    /// Bytes delivered for an entry whose outcome is not clean must be
+    /// discarded by the sink (the sink's `finish` is where it learns that).
+    /// Encrypted entries are delivered only after their authentication passed.
+    pub fn read_many(
+        &self,
+        archive: &Path,
+        indices: &[u64],
+        password: Option<&Password>,
+        sink: &mut dyn ReadManySink,
+    ) -> Result<ReadManyReport, ForeignError> {
+        let mut want: Vec<u64> = indices.to_vec();
+        want.sort_unstable();
+        want.dedup();
+        if want.len() > crate::protocol::MAX_READ_INDICES {
+            return Err(ForeignError::new(
+                ErrorCode::BadRequest,
+                "too many entries requested in one read",
+            ));
+        }
+        let mut c = Collector::new_many(self.limits, want.clone());
+        let sink_failed = |e: io::Error| {
+            ForeignError::new(ErrorCode::SinkFailed, format!("the byte sink failed: {e}"))
+        };
+        self.exchange(archive, Op::ReadMany, 0, want, password, &mut |m| {
+            match &m {
+                Message::Entry(info) => {
+                    c.push(m.clone())?;
+                    return sink.begin(info).map_err(sink_failed);
+                }
+                Message::Data(b) => {
+                    c.push(m.clone())?;
+                    return sink.data(b).map_err(sink_failed);
+                }
+                Message::Result { index, outcome } => {
+                    let info = c.current_entry().cloned();
+                    c.push(m.clone())?;
+                    return match info {
+                        Some(info) if info.index == *index => {
+                            sink.finish(&info, outcome).map_err(sink_failed)
+                        }
+                        _ => Err(Collector::bad("result does not match the pending entry")),
+                    };
+                }
+                _ => {}
+            }
+            c.push(m)
+        })?;
+        c.into_read_many()
+    }
+
     fn exchange(
         &self,
         archive: &Path,
         op: Op,
         read_index: u64,
+        read_indices: Vec<u64>,
         password: Option<&Password>,
         on_msg: &mut dyn FnMut(Message) -> Result<(), ForeignError>,
     ) -> Result<(), ForeignError> {
@@ -272,11 +360,19 @@ impl ForeignClient {
         let req = Request {
             op,
             read_index,
+            read_indices,
             limits: self.limits,
             memory_limit,
             cpu_seconds: Some(self.run.wall_time.as_secs().saturating_add(5)),
             archive_path: path_to_bytes(archive),
             password: password.cloned(),
+        };
+        // On Windows the limit is the parent's to apply (the helper has no
+        // RLIMIT_AS), so the request does not carry it.
+        #[cfg(windows)]
+        let req = Request {
+            memory_limit: None,
+            ..req
         };
         let mut child = Command::new(&self.helper)
             .stdin(Stdio::piped())
@@ -289,6 +385,29 @@ impl ForeignClient {
                     format!("cannot start the helper: {}", e.kind()),
                 )
             })?;
+        // Confine the helper before it is sent anything. A limit that was
+        // asked for and cannot be applied is an error, never a silent skip.
+        #[cfg(windows)]
+        let _job = match memory_limit {
+            None => None,
+            Some(bytes) => {
+                let applied = crate::jobobject::Job::with_memory_limit(bytes).and_then(|job| {
+                    job.assign(&child)?;
+                    Ok(job)
+                });
+                match applied {
+                    Ok(job) => Some(job),
+                    Err(e) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(ForeignError::new(
+                            ErrorCode::HelperSpawnFailed,
+                            format!("cannot apply the helper's memory limit: {e}"),
+                        ));
+                    }
+                }
+            }
+        };
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
@@ -413,6 +532,7 @@ impl ForeignClient {
 
         let mut meta_bytes: u64 = 0;
         let mut data_bytes: u64 = 0;
+        let mut total_data: u64 = 0;
         loop {
             let (k, body) = match read_frame(&mut stdout) {
                 Ok(Some(f)) => f,
@@ -422,13 +542,19 @@ impl ForeignClient {
             let frame_bytes = body.len() as u64 + 5;
             if k == kind::DATA {
                 data_bytes = data_bytes.saturating_add(body.len() as u64);
-                if req.op != Op::Read {
+                total_data = total_data.saturating_add(body.len() as u64);
+                if !req.op.is_read() {
                     return proto("entry data outside a read operation");
                 }
-                if data_bytes > self.limits.max_entry_size {
+                if data_bytes > self.limits.max_entry_size
+                    || total_data > self.limits.max_total_output
+                {
                     return DriveEnd::OutputLimit;
                 }
             } else {
+                if k == kind::ENTRY {
+                    data_bytes = 0;
+                }
                 meta_bytes = meta_bytes.saturating_add(frame_bytes);
                 if meta_bytes > self.run.max_metadata_bytes {
                     return DriveEnd::OutputLimit;
@@ -471,6 +597,10 @@ struct Collector {
     read_outcome: Option<EntryOutcome>,
     data_bytes: u64,
     done: Option<Done>,
+    /// `ReadMany`: the indices asked for, sorted; and the ones delivered.
+    wanted: Vec<u64>,
+    delivered: Vec<u64>,
+    current: Option<EntryInfo>,
 }
 
 impl Collector {
@@ -486,7 +616,20 @@ impl Collector {
             read_outcome: None,
             data_bytes: 0,
             done: None,
+            wanted: Vec::new(),
+            delivered: Vec::new(),
+            current: None,
         }
+    }
+
+    fn new_many(limits: Limits, wanted: Vec<u64>) -> Self {
+        let mut c = Collector::new(Op::ReadMany, limits);
+        c.wanted = wanted;
+        c
+    }
+
+    fn current_entry(&self) -> Option<&EntryInfo> {
+        self.current.as_ref()
     }
 
     fn bad(m: &str) -> ForeignError {
@@ -504,6 +647,22 @@ impl Collector {
                 }
             }
             _ if self.format.is_none() => return Err(Self::bad("message before format")),
+            Message::Entry(info) if self.op == Op::ReadMany => {
+                if self.current.is_some() {
+                    return Err(Self::bad("entry before the previous result"));
+                }
+                if self.wanted.binary_search(&info.index).is_err() {
+                    return Err(Self::bad("an entry that was not requested"));
+                }
+                if self.delivered.contains(&info.index) {
+                    return Err(Self::bad("an entry delivered twice"));
+                }
+                if info.name.len() as u64 > u64::from(self.limits.max_name_len) {
+                    return Err(Self::bad("entry name over the limit"));
+                }
+                self.delivered.push(info.index);
+                self.current = Some(info);
+            }
             Message::Entry(info) => {
                 if self.op == Op::Read {
                     return Err(Self::bad("entry listing during a read"));
@@ -542,11 +701,18 @@ impl Collector {
                         return Err(Self::bad("two results for one read"));
                     }
                 }
+                Op::ReadMany => match self.current.take() {
+                    Some(e) if e.index == index => {}
+                    _ => return Err(Self::bad("result does not match the pending entry")),
+                },
                 Op::List => return Err(Self::bad("result during a listing")),
             },
             Message::Data(b) => {
-                if self.op != Op::Read {
+                if !self.op.is_read() {
                     return Err(Self::bad("data outside a read"));
+                }
+                if self.op == Op::ReadMany && self.current.is_none() {
+                    return Err(Self::bad("data outside an entry"));
                 }
                 self.data_bytes = self.data_bytes.saturating_add(b.len() as u64);
             }
@@ -607,6 +773,24 @@ impl Collector {
             stream_check,
             bytes_read: done.bytes_out,
             dimensions: FOREIGN_DIMENSIONS,
+        })
+    }
+
+    fn into_read_many(mut self) -> Result<ReadManyReport, ForeignError> {
+        let (format, done, stream_check) = self.finish()?;
+        if self.current.is_some() {
+            return Err(Self::bad("an entry without a result"));
+        }
+        if done.complete && self.delivered.len() != self.wanted.len() {
+            return Err(Self::bad("fewer entries delivered than requested"));
+        }
+        Ok(ReadManyReport {
+            format,
+            delivered: self.delivered.len() as u64,
+            breaches: self.breaches,
+            complete: done.complete,
+            stop_reason: done.stop_reason,
+            stream_check,
         })
     }
 
