@@ -35,6 +35,18 @@ pub enum JobRequest {
         /// Entries of the head snapshot, as the listing returned them.
         keys: Vec<PathKey>,
     },
+    /// D3: extract entries of one snapshot of an open archive into the folder
+    /// the user chose (`plan_extract` shows the native folder dialog from
+    /// Rust and remembers the choice). The webview names no path.
+    ExtractArchive {
+        handle: ArchiveHandle,
+        /// The snapshot on screen.
+        seq: u32,
+        /// Entries (and what is under them) as the listing returned them;
+        /// empty extracts the whole snapshot.
+        keys: Vec<PathKey>,
+        on_conflict: ConflictChoice,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -74,6 +86,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         commit: Option<Box<CommitReport>>,
+        /// Set by the extract job (D3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        extract: Option<Box<ExtractReport>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -410,4 +426,109 @@ pub struct CommitReport {
 pub struct StageOutcome {
     pub staged: StagedView,
     pub problems: Vec<IpcError>,
+}
+
+// ---- D3: extract ------------------------------------------------------------
+//
+// The folder is chosen in a native dialog shown from Rust and kept there; the
+// webview sees its display text and what the destination holds, never names a
+// path. Archive-supplied strings cross as [`NameText`], as in D1.
+
+/// What an extract does about names that cannot be extracted into the folder
+/// (an entry with that name is already there, the folder treats two names as
+/// one, or the file system cannot hold the name).
+///
+/// The restore engine (plan C6) has exactly one behaviour for these: the entry
+/// is skipped, nothing is overwritten, and no name is changed. Keeping both
+/// under a new name and replacing need engine support that does not exist
+/// (plan D3 status, "Gap").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ConflictChoice {
+    /// End the job before anything is written if any entry cannot be
+    /// extracted (what the plan showed was none).
+    Stop,
+    /// Skip those entries (and what is under a skipped folder), extract the
+    /// rest, and report each one.
+    SkipConflicts,
+}
+
+/// One entry that cannot be extracted into the chosen folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ConflictView {
+    pub path: NameText,
+    /// `NAME_COLLISION` or `NAME_UNSUPPORTED`.
+    pub code: String,
+    /// Why, as one sentence.
+    pub reason: String,
+}
+
+/// What extracting would meet in the chosen folder, found before anything is
+/// written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ExtractPlan {
+    /// The folder the user chose (their own path, not archive data).
+    pub destination: String,
+    /// Entries the extraction handles: the selection, what is under it, and
+    /// the folders above it.
+    pub entries: u32,
+    /// The first conflicts, in path order (at most 200).
+    pub conflicts: Vec<ConflictView>,
+    pub conflicts_total: u32,
+    /// Whether the folder treats names that differ only in case as one.
+    pub case_insensitive: bool,
+}
+
+/// One entry an extraction did not restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct NotExtractedView {
+    pub path: NameText,
+    /// A registered error code (`NAME_COLLISION`, `NAME_UNSUPPORTED`,
+    /// `CONTENT_INTEGRITY_FAILED`, …).
+    pub code: String,
+    pub reason: NameText,
+}
+
+/// An attribute that was not applied to extracted entries, summarised per
+/// kind (plan O6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct AttributeNote {
+    /// What was not applied, in words ("owner and group", …).
+    pub attribute: String,
+    #[ts(type = "number")]
+    pub count: u64,
+    pub first_path: NameText,
+    pub reason: NameText,
+}
+
+/// What an extract job did. It is not a verification: it speaks only of the
+/// entries it extracted (spec §23.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ExtractReport {
+    pub destination: String,
+    pub seq: u32,
+    #[ts(type = "number")]
+    pub files: u64,
+    #[ts(type = "number")]
+    pub directories: u64,
+    /// Content bytes written to extracted files.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The first entries not extracted (at most 1,000).
+    pub not_extracted: Vec<NotExtractedView>,
+    #[ts(type = "number")]
+    pub not_extracted_total: u64,
+    pub attribute_notes: Vec<AttributeNote>,
+    /// Why no attribute was applied, when the promised attributes could not
+    /// be reconstructed.
+    pub attributes_unavailable: Option<NameText>,
+    /// Set when the folder's directory entries are not confirmed durable.
+    pub durability_note: Option<String>,
+    pub case_insensitive: bool,
 }

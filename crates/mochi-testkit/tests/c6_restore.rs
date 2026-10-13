@@ -7,7 +7,9 @@ use mochi_core::job::{CancellationToken, JobContext, NullProgress};
 use mochi_core::manifest::Attributes;
 use mochi_core::publish::{open_head, ArchiveWriter, ReadOptions, Transaction};
 use mochi_core::report::Severity;
-use mochi_core::restore::{restore, ExceptionKind, RestoreOptions, RestoreReport};
+use mochi_core::restore::{
+    preflight_selected, restore, ExceptionKind, RestoreOptions, RestoreReport,
+};
 use mochi_core::storage::os::OsRestoreDir;
 use mochi_core::storage::{CaseBehavior, DirectoryDurability, NameIssue, RestoreDir};
 use mochi_core::ErrorCode;
@@ -474,4 +476,61 @@ fn c6_restore_cancellation_before_a_directory() {
     .unwrap_err();
     assert_eq!(e.code, ErrorCode::Cancelled);
     assert!(tree.paths().is_empty(), "{:?}", tree.paths());
+}
+
+/// **D3 (preflight without restoring).** `preflight_selected` answers what
+/// the job would meet for the same selection, writes nothing, counts the
+/// entries a restore of that selection handles, and agrees with the
+/// exceptions the real restore then reports. A path the commit lacks is
+/// refused.
+#[test]
+fn c6_preflight_selected_reports_without_writing() {
+    let s = archive_with(&[
+        ("a", None),
+        ("a/x", Some(b"ex")),
+        ("A", None),
+        ("b", Some(b"bee")),
+        ("CON", Some(b"device")),
+    ]);
+    let head = open_head(&s, &opts()).unwrap();
+    let tree = SimTree::new().case_insensitive().windows_rules();
+    tree.insert_file("B", b"already here");
+    let before = tree.paths();
+    let mut root = tree.clone();
+    let (pre, total) = preflight_selected(&head, &[], &mut root).unwrap();
+    assert_eq!(total, 5);
+    assert_eq!(tree.paths(), before, "nothing written");
+    assert_eq!(pre.case_behavior, CaseBehavior::Insensitive);
+    let mut found: Vec<_> = pre
+        .exceptions
+        .iter()
+        .map(|(p, k)| {
+            (
+                String::from_utf8_lossy(p.as_stored()).into_owned(),
+                k.code(),
+            )
+        })
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            // Byte order puts "A" first, so "a" is the one that collides.
+            ("CON".to_owned(), ErrorCode::NameUnsupported),
+            ("a".to_owned(), ErrorCode::NameCollision),
+            ("b".to_owned(), ErrorCode::NameCollision),
+        ]
+    );
+    // The restore then reports those same entries (and "a/x", skipped with
+    // its parent).
+    let r = run(&s, None, tree.clone());
+    for (p, code) in &found {
+        assert_eq!(exception(&r, p).map(|k| k.code()), Some(*code), "{p}");
+    }
+    // A selection counts the entry, its descendants, and the directories above.
+    let mut root = SimTree::new();
+    let (_, total) = preflight_selected(&head, &[path("a/x")], &mut root).unwrap();
+    assert_eq!(total, 2, "a and a/x");
+    let e = preflight_selected(&head, &[path("missing")], &mut root).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
 }

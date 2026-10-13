@@ -222,3 +222,23 @@ progress {
   padding: 0.75rem;
   text-align: center;
 }
+
+/* ---- D3: extract ------------------------------------------------------------
+   Neutral: an extraction is not a verification, so nothing here is green
+   (spec §23.3 #2). Lists of names are text only. */
+.extractor {
+  margin: 1rem 0;
+}
+.extractor dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+}
+.extractor dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.extractor .staged li {
+  flex-wrap: wrap;
+}

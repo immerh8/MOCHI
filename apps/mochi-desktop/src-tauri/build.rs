@@ -27,6 +27,7 @@ fn main() {
         "unstage_source",
         "clear_staged",
         "choose_destination",
+        "plan_extract",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

@@ -41,6 +41,8 @@ for (const f of picks) {
     process.exit(1);
   }
 }
+// The D3 spec opens the same archives through MOCHI_E2E_PICK_FILE.
+process.env.MOCHI_E2E_FIXTURES = fixtures;
 // Inherited by tauri-driver, the native driver, and the app it starts.
 process.env.MOCHI_E2E_PICK = picks.join(path.delimiter);
 // The D2 spec rewrites this file before its clicks (one path per line; its

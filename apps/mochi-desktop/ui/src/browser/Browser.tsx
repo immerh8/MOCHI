@@ -19,6 +19,7 @@ import { Name } from "./Name";
 import { Tree } from "./Tree";
 import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
+import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 
 /** Row height of the file list, in pixels (must match `.vrow` in CSS). */
@@ -279,6 +280,11 @@ export function Browser() {
         viewingHead={open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1)}
         selected={details ? { key: details.key, name: details.path } : null}
         onCommitted={(a) => void adopt(a)}
+      />
+      <Extractor
+        archive={open?.archive ?? null}
+        seq={open?.snapshot.seq ?? null}
+        selected={details ? { key: details.key, name: details.path } : null}
       />
       {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
       {open && (

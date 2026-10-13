@@ -239,6 +239,30 @@ impl Archives {
         Ok(lock(&*self.session(handle)?).path.clone())
     }
 
+    /// A private reader and the verified commit `seq` of an open archive, for
+    /// a job that reads for a long time (extraction, D3). It opens the file
+    /// again instead of borrowing the session's, so browsing is not blocked
+    /// while the job runs.
+    pub fn open_for_read(
+        &self,
+        handle: ArchiveHandle,
+        seq: u64,
+    ) -> Result<(OsReadStorage, OpenedHead, ReadOptions)> {
+        let (path, opts, footer_offset) = {
+            let session = self.session(handle)?;
+            let s = lock(&session);
+            let entry = s
+                .history
+                .iter()
+                .find(|e| e.commit.seq == seq)
+                .ok_or_else(|| invalid(format!("this archive has no commit {seq}")))?;
+            (s.path.clone(), s.opts.clone(), entry.footer_offset)
+        };
+        let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
+        let head = open_at_footer(&src, footer_offset, &opts)?;
+        Ok((src, head, opts))
+    }
+
     /// Read the archive at the same path again, under the same handle: after
     /// a commit, so the timeline and snapshots show it. The old session is
     /// replaced only once the new one has fully opened.

@@ -303,6 +303,52 @@ pub fn preflight<D: RestoreDir>(root: &mut D, selected: &[Selected]) -> Result<P
     })
 }
 
+/// The entries a restoration of `selection` would handle, in path order:
+/// every entry at or under any selected path, with the directories above
+/// each. An empty `selection` is the whole commit. A path the commit lacks
+/// is `INVALID_ARGUMENT`, before anything is written.
+fn select(head: &OpenedHead, selection: &[ArchivePath]) -> Result<Vec<Selected>> {
+    let snapshot = head.catalog.replay(None)?;
+    for u in selection {
+        if snapshot.get(u).is_none() {
+            return Err(MochiError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "no entry {:?} in commit {}",
+                    String::from_utf8_lossy(u.as_stored()),
+                    head.seq()
+                ),
+            ));
+        }
+    }
+    Ok(snapshot
+        .iter()
+        .filter(|(p, _)| {
+            selection.is_empty()
+                || selection
+                    .iter()
+                    .any(|u| p.is_descendant_of(u) || *p == u || u.is_descendant_of(p))
+        })
+        .map(|(p, e)| (p.clone(), e.kind, e.version))
+        .collect())
+}
+
+/// What [`restore_selected`] of the same `selection` would meet in `root`,
+/// found without restoring anything (the same [`preflight`] the job runs
+/// first): collisions and names the destination cannot hold, for a caller
+/// that wants to ask the user before it starts. Only the case probe touches
+/// `root`, and it removes what it creates. The answer is advice: exclusive
+/// creation stays the authority when the job runs.
+pub fn preflight_selected<D: RestoreDir>(
+    head: &OpenedHead,
+    selection: &[ArchivePath],
+    root: &mut D,
+) -> Result<(Preflight, u64)> {
+    let selected = select(head, selection)?;
+    let total = selected.len() as u64;
+    Ok((preflight(root, &selected)?, total))
+}
+
 /// Restore the opened commit's entries, or only `under` and its subtree
 /// (with the directories above it), into `root`, which must exist. Entries
 /// keep their full archive paths below `root`.
@@ -340,29 +386,7 @@ pub fn restore_selected<D: RestoreDir>(
     ctx: &JobContext<'_>,
 ) -> Result<RestoreReport> {
     let cat = &head.catalog;
-    let snapshot = cat.replay(None)?;
-    for u in selection {
-        if snapshot.get(u).is_none() {
-            return Err(MochiError::new(
-                ErrorCode::InvalidArgument,
-                format!(
-                    "no entry {:?} in commit {}",
-                    String::from_utf8_lossy(u.as_stored()),
-                    head.seq()
-                ),
-            ));
-        }
-    }
-    let selected: Vec<Selected> = snapshot
-        .iter()
-        .filter(|(p, _)| {
-            selection.is_empty()
-                || selection
-                    .iter()
-                    .any(|u| p.is_descendant_of(u) || *p == u || u.is_descendant_of(p))
-        })
-        .map(|(p, e)| (p.clone(), e.kind, e.version))
-        .collect();
+    let selected = select(head, selection)?;
     let total = selected.len() as u64;
 
     ctx.check_cancelled()?;

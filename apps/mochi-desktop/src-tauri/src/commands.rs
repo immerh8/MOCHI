@@ -8,9 +8,10 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
 use crate::browse::Archives;
+use crate::extract::Destination;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, IpcError, JobEvent,
-    JobId, JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
+    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan, IpcError,
+    JobEvent, JobId, JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::write::{DropSink, DropWatch, Staging};
@@ -197,6 +198,38 @@ pub async fn choose_destination(
     let staging = Arc::clone(&staging);
     blocking(move || {
         Ok(crate::picker::pick_destination(&app).map(|path| staging.set_destination(path)))
+    })
+    .await
+}
+
+/// Plan an extraction (D3): optionally show the native folder dialog (in
+/// Rust; the webview never names a path), then say what extracting `keys` of
+/// snapshot `seq` would meet there, before anything is written. `null` if
+/// the user cancelled the dialog. With `pick` false the folder chosen earlier
+/// is checked again.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn plan_extract(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    seq: u32,
+    keys: Vec<PathKey>,
+    pick: bool,
+    archives: State<'_, Arc<Archives>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<Option<ExtractPlan>, IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let picked = if pick {
+            match crate::picker::pick_extract_folder(&app) {
+                Some(folder) => Some(folder),
+                None => return Ok(None),
+            }
+        } else {
+            None
+        };
+        crate::extract::plan(&archives, &destination, picked, handle, seq, &keys).map(Some)
     })
     .await
 }
