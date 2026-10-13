@@ -657,6 +657,18 @@ The fields mean:
 - Encrypted cases are summarized **with** the passphrase. Keyless cases have their own
   case names, in which content-level fields are null.
 
+**Clarified by W18 (2026-10-13; the format, `mochi-interop-summary-v1`, is unchanged).**
+Where the list above leaves room, the rules in `fixtures/golden/README.md`, "R8
+summaries", are part of the format: `head.status` may also be `keyless`; the head's
+refusal code is one of the `findings` (a wrong passphrase is a refused head with
+`KEY_UNAVAILABLE`, not a missing summary); `object` names a stored-object hash only
+for a damaged data chunk, once per code; `snapshots` has one entry per commit of the
+chain whose state opens (retention marks collectability, it removes nothing);
+`parity.commits` counts every commit the scan reaches; `findings` come from the bytes
+as stored, and the chain and snapshots from the parity-rebuilt view. The case's
+passphrase and freshness anchor are the `passphrase` and `expected_head` of
+`cases.json`.
+
 **Work.**
 1. Read the spec and R1–R7, and write `interop/pyverify/READING-LOG.md`: every ambiguity
    met, with the reading taken. This is evidence for W18.
