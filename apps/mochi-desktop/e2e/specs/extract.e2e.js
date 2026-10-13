@@ -11,7 +11,7 @@
 // `"`, `:` or control characters in a name, so there the same entries are
 // reported NAME_UNSUPPORTED instead of being extracted. Either way the name is
 // shown as text and the app never writes outside the chosen folder.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
@@ -87,6 +87,15 @@ const listed = async (testId) =>
     testId,
   );
 
+// The fixture records mode 0644 for the folder `hostile` (no search bit), and
+// the engine restores recorded modes. A non-root user cannot open anything
+// inside it until it is opened up, so check the mode, then chmod.
+function openUp(folder) {
+  if (windows) return;
+  expect(statSync(folder).mode & 0o777).toBe(0o644);
+  chmodSync(folder, 0o755);
+}
+
 const size = (...p) => statSync(path.join(...p)).size;
 
 describe("extract", () => {
@@ -124,6 +133,7 @@ describe("extract", () => {
     expect(size(allDir, "docs", "empty")).toBe(0);
     expect(size(allDir, "big")).toBe(1000);
     expect(existsSync(path.join(allDir, "docs", "c.bin"))).toBe(false); // deleted at commit 2
+    openUp(path.join(allDir, "hostile"));
     expect(readFileSync(path.join(allDir, "hostile", "&lt;b&gt;entity"), "utf8")).toBe("&lt;b&gt;entity");
     expect(readdirSync(allDir).some((n) => n.includes(".mochi-restore."))).toBe(false);
 
@@ -203,6 +213,7 @@ describe("extract", () => {
       expect(readFileSync(path.join(crowdedDir, HOSTILE_ROOT), "utf8")).toBe("mine too");
     }
     // The rest was extracted.
+    openUp(path.join(crowdedDir, "hostile"));
     expect(size(crowdedDir, "hostile", "&lt;b&gt;entity")).toBe("&lt;b&gt;entity".length);
 
     const status = await $('[data-testid="extract-status"]');
