@@ -1,0 +1,46 @@
+[package]
+name = "mochi-foreign"
+description = "Read-only foreign archive formats (ZIP, tar, tar.gz) parsed in an isolated helper process (plan D8)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "mochi_foreign"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mochi-foreign-helper"
+path = "src/bin/helper.rs"
+required-features = ["engine"]
+
+[features]
+default = ["engine"]
+# The parsers and the helper's body. The app (and anything else that only
+# talks to the helper) depends on this crate with `default-features = false`,
+# so no ZIP/tar/gzip parser is linked into its process; ci/check-invariants.sh
+# checks that.
+engine = ["dep:zip", "dep:tar", "dep:flate2", "dep:rustix"]
+# Fault hooks for the crash/limit tests (panic, abort, huge allocation, hang,
+# stdout flood). Enabled only by this crate's own dev-dependency below;
+# ci/check-invariants.sh forbids it anywhere else.
+test-faults = ["engine"]
+
+[dependencies]
+# MIT. No bzip2/lzma/zstd/ppmd: C or large decoders we do not need yet; such
+# entries are reported UNSUPPORTED per entry. aes-crypto = AES + ZipCrypto.
+zip = { version = "8", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"], optional = true }
+# MIT OR Apache-2.0 each.
+tar = { version = "0.4", default-features = false, optional = true }
+flate2 = { version = "1", optional = true }
+zeroize.workspace = true
+rustix = { workspace = true, features = ["process"], optional = true }
+
+[dev-dependencies]
+mochi-foreign = { path = ".", features = ["test-faults"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
