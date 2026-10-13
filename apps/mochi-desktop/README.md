@@ -1,8 +1,8 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 and D1 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
-and the read-only archive browser (snapshot timeline, folder tree, virtualized list,
-details).
+**Phases D0 to D2 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+the archive browser (snapshot timeline, folder tree, virtualized list, details), and
+create, add, and remove (D2).
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
@@ -17,10 +17,12 @@ apps/mochi-desktop/
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
-│       ├── picker.rs   # D1: the native open dialog, shown from Rust
-│       └── self_test.rs# the D0 sample job (no archive I/O)
+│       ├── picker.rs   # D1/D2: the native open, choose, and save dialogs, shown from Rust
+│       ├── self_test.rs# the D0 sample job (no archive I/O)
+│       └── write.rs    # D2: staged sources, drop handling, create/add/remove jobs
 ├── ui/                 # React + TypeScript + Vite
 │   ├── src/browser/    # D1: Browser, Tree, VirtualList, Name (text-only names)
+│   ├── src/write/      # D2: Writer (create, add, remove), messages (wording rules)
 │   └── src/ipc/        # typed invoke wrappers; generated/ is never edited by hand
 └── e2e/                # WebdriverIO + tauri-driver
 ```
@@ -67,7 +69,10 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
   `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
-  `allow-entry-details` (D1, each needed by the browser). The commands are declared in
+  `allow-entry-details` (D1, each needed by the browser), and `allow-watch-drops`,
+  `allow-staged-sources`, `allow-stage-sources`, `allow-unstage-source`,
+  `allow-clear-staged`, and `allow-choose-destination` (D2, each needed by the create
+  and add panel; all are the app's own commands, not plugin permissions). The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
@@ -83,6 +88,18 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   are opened read-only (`OsReadStorage`); nothing in D1 writes. With the `e2e`
   feature only, the dialog first takes paths from `MOCHI_E2E_PICK`, because WebDriver
   cannot drive a native dialog; shipped builds never read it.
+- **Sources and destinations are chosen in Rust (D2).** `stage_sources` and
+  `choose_destination` show the operating system's dialogs from Rust, and files dragged
+  onto the window arrive as the window's drag-and-drop event, which Rust receives
+  (`on_window_event`) and stages itself. Rust keeps the paths; the webview sees only
+  display names (`StagedView`) and starts a job with options, never a path. A script in
+  the webview therefore cannot make the app read or write a file the user did not pick
+  or drop, and the webview needs no `dialog`, `fs`, or event permission. The drop
+  channel is a Tauri `Channel`, which needs no permission. Create never replaces an
+  existing file. With the `e2e` feature only, dialogs take paths from
+  `MOCHI_E2E_PICK_FILE` (one per line, rewritten by the spec) before `MOCHI_E2E_PICK`,
+  and `MOCHI_E2E_PACE_MS` slows the walk of a create or add per entry so a spec can
+  cancel it; shipped builds read neither.
 - **Browsing pages over IPC (D1 exit).** `mochi_core::browse::SnapshotIndex` keeps a
   snapshot's tree in Rust; the webview asks for at most 1,000 entries per call (the
   list asks for 200) and renders only the rows in view, so a folder of 100,000 entries
@@ -126,6 +143,12 @@ fails to send and the job is cancelled. A job that unwinds still reports `finish
 with outcome `aborted`. Only a `completed` outcome is described as complete, and
 nothing on screen gets success styling (spec §23.3: success styling is for a
 verification `PASS`).
+
+Write jobs (D2) use the same runner: `CreateArchive`, `AddToArchive`, and
+`DeleteFromArchive` finish with `completed` carrying a `CommitReport` (status
+`LOCAL_COMMITTED`, never more). Cancelling before the commit is published leaves the
+previous head valid, and a cancelled create leaves no file. The wording after a commit
+is in `ui/src/write/messages.ts` and is tested against spec §23.3 #5 and #6.
 
 ## Rules that apply from the first commit (AGENTS.md, spec §23.3)
 
