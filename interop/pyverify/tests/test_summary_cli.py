@@ -56,13 +56,14 @@ def test_recovery_record_profile_and_parity_block():
     s = summary(GOLDEN / "c12" / "damaged-within-capacity.mochi")
     assert s["profile"]["recovery_percent"] == 50
     assert s["parity"] == {"commits": 3, "damaged_shards": 4, "rebuilt": 4, "beyond_capacity": 0}
-    assert s["findings"] == []
+    assert s["findings"] == [{"code": "STORED_INTEGRITY_FAILED", "object": None}]     # raw bytes are reported
 
 
-def test_beyond_capacity_findings_carry_the_stored_hash():
+def test_beyond_capacity_findings_name_a_hash_only_for_a_data_chunk():
     s = summary(GOLDEN / "c12" / "damaged-beyond-capacity.mochi")
     codes = {(f["code"], f["object"] is None) for f in s["findings"]}
-    assert ("PARITY_CAPACITY_EXCEEDED", True) in codes and ("STORED_INTEGRITY_FAILED", False) in codes
+    # the damage here is in a catalog image, not a data chunk: its object is null
+    assert codes == {("PARITY_CAPACITY_EXCEEDED", True), ("STORED_INTEGRITY_FAILED", True)}
     assert s["findings"] == sorted(s["findings"], key=lambda f: (f["code"], f["object"] or ""))
 
 
@@ -78,17 +79,23 @@ def test_encrypted_with_and_without_a_passphrase(tmp_path):
     assert all(e["path"] for snap in keyed["snapshots"] for e in snap["entries"])
 
 
-def test_wrong_passphrase_is_operational_exit_3(tmp_path):
+def test_wrong_passphrase_is_a_refused_summary_and_operational_exit_3_without_it(tmp_path):
     pw = tmp_path / "pw.txt"
     pw.write_text("not the passphrase\n")
-    p = run(GOLDEN / "c11" / "valid-archive-encrypted.mochi", "--passphrase-file", pw, "--summary", check=False)
-    assert p.returncode == 3 and "KEY_UNAVAILABLE" in p.stderr and p.stdout == ""
+    arch = GOLDEN / "c11" / "valid-archive-encrypted.mochi"
+    p = run(arch, "--passphrase-file", pw, "--summary", check=False)
+    s = json.loads(p.stdout)
+    assert p.returncode == 0 and s["head"] == {"status": "refused", "code": "KEY_UNAVAILABLE"}
+    assert s["findings"] == [{"code": "KEY_UNAVAILABLE", "object": None}] and s["commits"] == []
+    p = run(arch, "--passphrase-file", pw, check=False)
+    assert p.returncode == 3 and "KEY_UNAVAILABLE" in p.stderr
 
 
 def test_refused_summary():
     s = summary(GOLDEN / "c5" / "reject-archive-duplicate-version.mochi")
     assert s["head"] == {"status": "refused", "code": "RECORD_INVALID"}
-    assert s["commits"] == [] and s["snapshots"] == [] and s["findings"] == [] and s["archive_id"] is None
+    assert s["commits"] == [] and s["snapshots"] == [] and s["archive_id"] is None
+    assert s["findings"] == [{"code": "RECORD_INVALID", "object": None}]       # the refusal is a finding too
 
 
 def test_no_valid_head_summary(tmp_path):

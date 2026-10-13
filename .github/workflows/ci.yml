@@ -374,9 +374,10 @@ jobs:
     # verifier in interop/pyverify, written from the specification alone. It
     # shares no code with the Rust crates. The job installs the hash-pinned
     # dependencies, runs the verifier's own tests (R5 and R6 vectors, the
-    # per-phase golden verdicts, truncation at every byte), and, once the R8
-    # golden set exists, diffs the verifier's summary of every case against the
-    # reference summary, failing on any mismatch and printing the list.
+    # per-phase golden verdicts, truncation at every byte), and diffs the
+    # verifier's summary of every R8 case against the reference summary,
+    # failing on any mismatch and printing the list. Results and the record of
+    # every disagreement: docs/ratification/R9-interop-results.md.
     name: r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -403,12 +404,9 @@ jobs:
         run: '"$RUNNER_TEMP/r9/bin/python" -m pytest -q --durations=5'
       - name: Summaries of the R8 golden set against the reference summaries
         run: |
-          if [ -d fixtures/golden/r8 ]; then
-            status=0
-            "$RUNNER_TEMP/r9/bin/python" interop/pyverify/tools/compare_r8.py fixtures/golden/r8 > "$RUNNER_TEMP/r9-compare.txt" || status=$?
-            cat "$RUNNER_TEMP/r9-compare.txt"
-            { echo '### r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})'; echo '```'; cat "$RUNNER_TEMP/r9-compare.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            exit "$status"
-          else
-            echo "fixtures/golden/r8 does not exist yet: no summaries to compare"
-          fi
+          # The golden set exists (G13): a missing directory fails the job, it is never skipped.
+          status=0
+          "$RUNNER_TEMP/r9/bin/python" interop/pyverify/tools/compare_r8.py fixtures/golden/r8 > "$RUNNER_TEMP/r9-compare.txt" || status=$?
+          cat "$RUNNER_TEMP/r9-compare.txt"
+          { echo '### r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})'; echo '```'; cat "$RUNNER_TEMP/r9-compare.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run the verifier over every case of the R8 golden set and compare with the reference summaries.
 
-For each ``<case>.summary.json`` under the R8 directory the archive is the sibling named after the case
-(``<case>.mochi``, or ``<case>`` itself).  Optional siblings: ``<case>.passphrase`` (first line is the
-passphrase) and ``<case>.expected-head`` (64 hex digits).  The two JSON documents are compared as
+``cases.json`` is the index (fixtures/golden/README.md, "R8"): for each case the archive is
+``<case>.mochi``, the passphrase is the case's ``passphrase`` (null: read keylessly) and the freshness anchor
+is its ``expected_head``.  Every case must have a summary and every summary a case.  The two JSON documents are compared as
 parsed values, so whitespace and key order are irrelevant.  The exit status is 1 if any case differs, and
 the differing cases are listed.
 """
@@ -14,6 +14,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 
 def diff(a, b, path="$", out=None, limit=12):
@@ -53,24 +54,32 @@ def main() -> int:
     args = ap.parse_args()
     root = pathlib.Path(args.r8)
     if not root.is_dir():
-        print(f"{root} does not exist: nothing to compare")
-        return 0
+        print(f"{root} does not exist: the comparison cannot run")
+        return 2
+    cases = {c["name"]: c for c in json.loads((root / "cases.json").read_text())}
     expected = sorted(root.rglob("*.summary.json"))
+    on_disk = {p.name[: -len(".summary.json")] for p in expected if p.parent == root}
     bad: dict[str, list[str]] = {}
+    for stem in sorted(set(cases) ^ on_disk):
+        bad[stem] = ["in cases.json but no summary" if stem in cases else "a summary but not in cases.json"]
     for exp_path in expected:
         stem = exp_path.name[: -len(".summary.json")]
+        if exp_path.parent != root or stem not in cases:
+            continue
+        case = cases[stem]
         archive = find_archive(exp_path.parent, stem)
         if archive is None:
             bad[stem] = ["no archive file next to the summary"]
             continue
         cmd = [sys.executable, "-I", "-m", "mochi_verify", str(archive), "--summary", "--case", stem]
-        pw = exp_path.parent / f"{stem}.passphrase"
-        if pw.is_file():
-            cmd += ["--passphrase-file", str(pw)]
-        eh = exp_path.parent / f"{stem}.expected-head"
-        if eh.is_file():
-            cmd += ["--expected-head", eh.read_text().strip()]
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            if case["passphrase"] is not None:
+                pw = pathlib.Path(tmp) / "passphrase"
+                pw.write_text(case["passphrase"] + "\n")
+                cmd += ["--passphrase-file", str(pw)]
+            if case["expected_head"] is not None:
+                cmd += ["--expected-head", case["expected_head"]]
+            p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode != 0:
             bad[stem] = [f"verifier exited {p.returncode}: {p.stderr.strip()[:200]}"]
             continue
@@ -79,7 +88,7 @@ def main() -> int:
         d = diff(want, got)
         if d:
             bad[stem] = d
-    print(f"{len(expected)} cases compared, {len(bad)} differ")
+    print(f"{len(cases)} cases compared, {len(bad)} differ")
     for stem, d in bad.items():
         print(f"MISMATCH {stem}")
         for line in d:

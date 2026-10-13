@@ -305,3 +305,38 @@ Salvage (ladder step 7), copies (step 5), repair, quarantine, `LIMIT_NOT_DEFAULT
 information finding (it would not appear in the summary anyway), search, anything Windows-specific,
 declared-limit (key 6) enforcement (decoded, never acted on, D16), and reader limits beyond the
 frame, CBOR depth/item and KDF limits.
+
+---
+
+## W18. Changes after the comparison with R8 (2026-10-13)
+
+The sections above are the log as the cold session left it, and they stay as written. W18 ran the
+verifier over `fixtures/golden/r8/` for the first time: 53 of 76 cases differed. Each difference is
+in `docs/ratification/R9-interop-results.md` with its class and resolution. This list says which
+entries above no longer describe the verifier, and why. Where the text was silent, the clarification went
+into the specification or the ratification artifact first, and the verifier followed it.
+
+* **A3 (tail) and A2.** The eligible tail is still `UNCOMMITTED_TAIL` (operational), but a head found by
+  scanning, because the file does not end in its footer, is also a `FOOTER_INVALID` finding (R7 clarified).
+* **A6 (what refuses).** A hash-verified head base image that fails R4 §3 refuses the head (D10 item 9
+  clarified); the head's key envelopes out of order, repeated, or under two key IDs refuse it with
+  `RECORD_INVALID` (R3 §7.1 already said "refused"; the cold session had made it a finding, against its own
+  rule for commit-record violations).
+* **A7 (what a refused summary contains), D1, D2.** The head's refusal code is a finding of the summary; the
+  `object` of a finding is a stored-object hash only for a damaged data chunk, and a code that has such a row
+  has no null row. Both are in `fixtures/golden/README.md`, "R8 summaries".
+* **C3 (retained snapshots), E3 (keyless).** `snapshots` holds one entry per commit of the chain whose state
+  opens; retention marks collectability, it does not remove a snapshot. An Encrypted archive read without a
+  passphrase has `head.status` `keyless`.
+* **D4 (dictionaries).** A chunk dependency that names an object the catalog does not hold is
+  `REFERENCE_INVALID` (spec §24.2, the W10 clarification, which the cold session had missed); one that
+  resolves to a catalog object stays `UNSUPPORTED_FEATURE`.
+* **D5, G1 (double reports).** A damaged TAR framing chunk is reported once, as the stored-integrity failure,
+  not again as a content failure (R7: `CONTENT_INTEGRITY_FAILED` means the stored bytes verified).
+* **E2 (wrong passphrase).** The summary says `head` refused with `KEY_UNAVAILABLE`; the command line still
+  exits 3 without `--summary`.
+* **F3, F4 (parity).** `parity.commits` counts every commit the scan reaches. Findings come from the bytes as
+  stored (spec B.2.11 item 12 clarified); the chain, the snapshots and the unhealed chunks come from the rebuilt
+  view, so the verifier makes two passes.
+* **Comparator.** `tools/compare_r8.py` read a passphrase and an anchor from sibling files that W16 does not
+  write; it now reads them from `cases.json`, and a missing case, summary or directory fails.

@@ -17,12 +17,12 @@ LARGER = ["c5/valid-archive-3-commits.mochi", "c5/valid-archive-delta-segment.mo
 
 def check_all(raw: bytes, points):
     full = archive.verify(raw)                      # keyless for the Encrypted archive: commits are plaintext
-    assert full.head_status == "opened"
+    assert full.head_status in ("opened", "keyless")
     chain = [(n.commit.commit_id, n.footer.offset + 72) for n in full.nodes]
     for n in points:
         res = archive.verify(raw[:n])
         k = sum(1 for _, end in chain if end <= n)
-        got = [nd.commit.commit_id for nd in res.nodes] if res.head_status == "opened" else []
+        got = [nd.commit.commit_id for nd in res.nodes] if res.head_status in ("opened", "keyless") else []
         want = [cid for cid, _ in chain[:k]]
         assert got == want, f"truncated at {n}: {len(got)} commits, expected the first {k}"
         if k == 0:

@@ -29,12 +29,13 @@ def test_clean_archive_has_no_tail(raw):
 def test_complete_frames_after_the_head_are_an_uncommitted_tail(raw):
     res = archive.verify(raw + first_data_frame(raw) * 2)
     assert res.head_status == "opened" and len(res.nodes) == 3
-    assert res.tail == "uncommitted" and not res.findings
+    # the file does not end in the head's footer (FOOTER_INVALID); the tail is eligible, so no TAIL_UNRESOLVED
+    assert res.tail == "uncommitted" and res.findings == {("FOOTER_INVALID", None)}
 
 
 def test_a_frame_cut_short_by_the_end_of_the_file_is_still_eligible(raw):
     res = archive.verify(raw + first_data_frame(raw)[:9])
-    assert res.tail == "uncommitted" and not res.findings
+    assert res.tail == "uncommitted" and res.findings == {("FOOTER_INVALID", None)}
 
 
 def test_unrecognised_bytes_are_not_eligible(raw):
@@ -67,4 +68,4 @@ def test_a_cut_commit_without_its_footer_is_an_uncommitted_tail(raw):
     full = archive.verify(raw)
     foot = full.nodes[-1].footer.offset
     res = archive.verify(raw[:foot])                    # the last commit frame is complete, its footer is missing
-    assert len(res.nodes) == 2 and res.tail == "uncommitted" and not res.findings
+    assert len(res.nodes) == 2 and res.tail == "uncommitted" and res.findings == {("FOOTER_INVALID", None)}

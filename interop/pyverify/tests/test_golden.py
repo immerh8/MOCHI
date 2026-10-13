@@ -230,15 +230,14 @@ def test_c11_archive_with_and_without_the_key():
     keyed = archive.verify(raw, crypto.passphrase_bytes(GOLDEN_PASSPHRASE))
     assert keyed.head_status == "opened" and not keyed.findings and keyed.snapshots and not keyed.keyless
     keyless = archive.verify(raw)
-    assert keyless.head_status == "opened" and keyless.keyless and not keyless.findings and not keyless.snapshots
+    assert keyless.head_status == "keyless" and keyless.keyless and not keyless.findings and not keyless.snapshots
     assert [n.commit.commit_id for n in keyless.nodes] == [n.commit.commit_id for n in keyed.nodes]
 
 
 def test_c11_wrong_passphrase_is_key_unavailable_not_a_verdict():
     raw = read(GOLDEN / "c11" / "valid-archive-encrypted.mochi")
-    with pytest.raises(MochiError) as ei:
-        archive.verify(raw, b"definitely wrong")
-    assert ei.value.code == "KEY_UNAVAILABLE"
+    res = archive.verify(raw, b"definitely wrong")      # a refusal, never a verification result
+    assert res.head_status == "refused" and res.head_code == "KEY_UNAVAILABLE" and not res.snapshots
 
 
 def test_c11_damage_is_found_keyless_and_keyed():
@@ -248,7 +247,7 @@ def test_c11_damage_is_found_keyless_and_keyed():
     raw[reg.offset + 60] ^= 0x40                       # a ciphertext byte of the first sealed chunk
     for pw in (None, crypto.passphrase_bytes(GOLDEN_PASSPHRASE)):
         res = archive.verify(bytes(raw), pw)
-        assert res.head_status == "opened"
+        assert res.head_status == ("opened" if pw else "keyless")
         assert any(c == "STORED_INTEGRITY_FAILED" for c, _ in res.findings)
 
 
@@ -324,7 +323,9 @@ def test_c12_damage_within_capacity_rebuilds_bit_identically():
     res = archive.verify(read(GOLDEN / "c12" / "damaged-within-capacity.mochi"))
     assert res.healed == valid
     assert res.head_status == "opened" and res.parity["rebuilt"] == res.parity["damaged_shards"] == 4
-    assert res.parity["beyond_capacity"] == 0 and not res.findings
+    assert res.parity["beyond_capacity"] == 0
+    # the bytes as stored are damaged and that is reported (B.2.11 item 12); the rebuilt view is what the rest reads
+    assert res.findings == {("STORED_INTEGRITY_FAILED", None)}
 
 
 def test_c12_damage_beyond_capacity_is_reported_and_left_alone():
