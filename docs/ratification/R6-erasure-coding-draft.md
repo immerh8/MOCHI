@@ -1,7 +1,7 @@
 # R6 — Erasure-coding suite and vectors (FROZEN 2026-10-12)
 
-> **Status 2026-10-12: frozen** (self-review under plan K11; the owner reviews it at the
-> next desktop-phase checkpoint). Implemented (plan C12): `mochi-format/src/parity.rs`
+> **Status 2026-10-12: frozen** (self-review under plan K11; final under the standing
+> delegation of 2026-10-13, AGENTS.md "Decision authority"). Implemented (plan C12): `mochi-format/src/parity.rs`
 > (suite, layout rule, frame codec), `mochi-core/src/parity.rs` (scan, rebuild, overlay),
 > `mochi-core/src/publish.rs` (`append_parity`). Tables marked *(checked)* are compared
 > with the code by `crates/mochi-cli/tests/ratification_drafts.rs`. The vectors in
@@ -228,8 +228,8 @@ code: `mochi-format/src/parity.rs` and `mochi-core/src/parity.rs` in full,
 `append_parity` in `mochi-core/src/publish.rs`, the descriptor's constraint-1 check, and the
 fuzz exercisers. The byte strings (`registry.rs`, `digest.rs`) and the frame offsets were
 compared by the drift test rather than by reading. The plan's authority for the
-freeze is K11: a self-review recorded here, marked [delegated 2026-10-12], that the owner
-reviews at the next desktop-phase checkpoint. The rule it was run under: **if any byte
+freeze is K11: a self-review recorded here, marked [delegated 2026-10-12], final under the
+standing delegation of 2026-10-13 (AGENTS.md "Decision authority"). The rule it was run under: **if any byte
 should change, stop and do not freeze.** None did.
 
 **Checked.**

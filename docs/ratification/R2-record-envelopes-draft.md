@@ -1,7 +1,7 @@
 # R2 — Record-envelope layouts (FROZEN, draft 2)
 
 > **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
-> owner review pending at the desktop checkpoint, plan K11), with R1, R3, and R4, by the
+> final under the standing delegation, AGENTS.md "Decision authority"), with R1, R3, and R4, by the
 > review in §6. Written 2026-10-11 from the working code at `main` commit `57e3a69` and
 > the golden vectors in `fixtures/golden/` (`b2/`, `c11/`). The file name keeps "draft"
 > for links. A change to a layout or rule below is a new draft identifier with an Annex B

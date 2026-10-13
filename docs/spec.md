@@ -1880,16 +1880,16 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - ≤ *m* damaged shards per group rebuild bit-identically, in every commit at once; *m* + 1 is `PARITY_CAPACITY_EXCEEDED` and nothing is rewritten.
   - Parity survives the loss of the whole catalog image; the descriptor and earlier footers are rebuilt; a contiguous burst spreads across groups.
   - Damaged parity is `PARITY_DAMAGED` with integrity unaffected; forged frames are `PROFILE_VIOLATION`. A fuzz target covers the frame decoder and reconstruction.
-- **G12 Format freeze (decided 2026-10-12, plan K12, K26).** **Met 2026-10-12** [delegated; owner review pending at the desktop checkpoint, plan K11]: each of R1 to R4 ends with its freeze review, the drift test and `r3_cddl.rs` pass, `user_version` is 1, the draft identifier is 2, and `b2/reject-archive-draft-1.mochi` is the draft-1 reject fixture.
+- **G12 Format freeze (decided 2026-10-12, plan K12, K26).** **Met 2026-10-12** [delegated; final under the standing delegation of 2026-10-13, AGENTS.md]: each of R1 to R4 ends with its freeze review, the drift test and `r3_cddl.rs` pass, `user_version` is 1, the draft identifier is 2, and `b2/reject-archive-draft-1.mochi` is the draft-1 reject fixture.
   - R1, R2, R3, and R4 are frozen in one review, recorded in each artifact. R6 is frozen first (G11).
   - The drift test and R3's mechanical CDDL check pass.
   - R4 `user_version` is 1, and the draft identifier is 2 (D24). Whole-archive fixtures are regenerated deliberately, with the diff explained, and one draft-1 archive is kept as a reject fixture.
   - A cold reading of each artifact, by a reader given only this specification and that artifact, is recorded with every ambiguity fixed or decided.
-- **G13 Golden set (R8).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: `fixtures/golden/r8/` holds 76 cases and 48 G1 audit vectors (`r8/g1/`), checked by `crates/mochi-testkit/tests/r8_golden.rs`.
+- **G13 Golden set (R8).** **Met 2026-10-13** [delegated; final under the standing delegation of 2026-10-13, AGENTS.md]: `fixtures/golden/r8/` holds 76 cases and 48 G1 audit vectors (`r8/g1/`), checked by `crates/mochi-testkit/tests/r8_golden.rs`.
   - `fixtures/golden/r8/` covers every 1.0 profile and allowed combination with valid, corrupt, and interrupted archives, plus copy and salvage cases.
   - Coverage is checked by a test: every §24.2 row about archive bytes, and every violation-class error code reachable from archive bytes, has a case. Exemptions are named in the test.
   - The B.2.6 G1 audit is complete in both encodings.
-- **G14 Interoperability (R9).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: CI run 38364569151, job `r9-interop`, 76 of 76 R8 cases equal; results and every disagreement in `docs/ratification/R9-interop-results.md`. No byte changed.
+- **G14 Interoperability (R9).** **Met 2026-10-13** [delegated; final under the standing delegation of 2026-10-13, AGENTS.md]: CI run 38364569151, job `r9-interop`, 76 of 76 R8 cases equal; results and every disagreement in `docs/ratification/R9-interop-results.md`. No byte changed.
   - The independent verifier (B.1 D7) produces, for every R8 case, an interop summary equal to the reference implementation's, in CI.
   - Every disagreement is resolved at its source and recorded in `docs/ratification/R9-interop-results.md`.
 - **G15 Report freeze (R7).** Pending, at Beta.

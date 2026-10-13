@@ -1,7 +1,7 @@
 # R1 — Frame registry and version mapping (FROZEN, draft 2)
 
 > **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
-> owner review pending at the desktop checkpoint, plan K11). It was written 2026-10-11
+> final under the standing delegation, AGENTS.md "Decision authority"). It was written 2026-10-11
 > from the working code at `main` commit `57e3a69` and the golden vectors in
 > `fixtures/golden/`, and frozen with R2, R3, and R4 by the review in §7. The file name
 > keeps "draft" for links (as R5 and R6 did). A change to any byte or rule below is a
@@ -195,8 +195,8 @@ recorded where it now lives; nothing in this section changes a byte on the wire.
 
 The review gate G12 asks for, in the form of R5 §12, run once for R1 to R4 (the other
 three artifacts carry the same section for their own findings). Plan authority: K11
-(a self-review recorded here, marked [delegated 2026-10-12]; the owner reviews it at
-the next desktop-phase checkpoint), K12, K13, and W15. The rule it ran under: **if any
+(a self-review recorded here, marked [delegated 2026-10-12]; final under the standing
+delegation of 2026-10-13, AGENTS.md "Decision authority"), K12, K13, and W15. The rule it ran under: **if any
 byte other than R4 `user_version` and the draft identifier should change, stop and do
 not freeze.** None did.
 

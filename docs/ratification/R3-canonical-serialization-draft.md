@@ -1,7 +1,7 @@
 # R3 — Canonical serialization and domain separators (FROZEN, draft 2)
 
 > **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
-> owner review pending at the desktop checkpoint, plan K11), with R1, R2, and R4, by the
+> final under the standing delegation, AGENTS.md "Decision authority"), with R1, R2, and R4, by the
 > review in §11. Written the same day from the working code at `main` commit `17fe094`
 > and the golden vectors in `fixtures/golden/`, as plan §6 and
 > `docs/ratification-core-plan.md` W13 require. The file name keeps "draft" for links.

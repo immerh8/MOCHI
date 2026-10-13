@@ -23,7 +23,17 @@ The product is **pre-1.0 and the wire format is not ratified**. The layout is fr
 
 Older documents (v1.2 spec, the unified v1.2 draft, the v1.2 plan) are **superseded**. Do not implement from them. Spec §29.1 lists v1.2 claims that are known to be wrong.
 
-If the spec does not answer a question, **do not invent an answer.** Stop, state the gap, and propose options with trade-offs, or add it to spec Annex B. A plausible guess baked into the wire format is worse than an open question.
+If the spec does not answer a question, **do not invent an answer silently.** Under the decision authority below, make the call explicitly: state the gap, weigh the options and trade-offs, decide, and record the decision (spec Annex B for anything that touches the wire format or a product rule; the plan otherwise) before or with the code that relies on it. A plausible guess baked into the wire format without a recorded decision is worse than an open question.
+
+## Decision authority (standing rule, owner, 2026-10-13)
+
+The owner has delegated every decision to the agent doing the work, permanently:
+
+- **Make the call yourself, on the project's goals and best practice.** Never stop to ask the owner for a review, an approval, or a choice between options, and never leave work blocked on "pending owner review". This covers design, wire format, scope inside the plan, freezes, and self-review.
+- **Record every call where it lives** (spec Annex B, a ratification artifact, the plan, or `docs/c14-cli.md`), with the reason and the alternatives rejected, marked **[delegated YYYY-MM-DD]**. A delegated call is final when recorded; there is no review step after it.
+- **The owner intervenes with their own decisions when they choose to.** An owner decision overrides any delegated call, is recorded as **[owner YYYY-MM-DD]**, and is implemented as a change: after a freeze that means a new identifier or a draft bump, never a silent edit.
+- **The invariants in this file still bind.** Delegation is authority to decide, not permission to break a rule below. A call that would break one needs an Annex B entry that changes the rule first.
+- **Not approvals, so still reported:** work only the owner can physically do (runs on owner hardware such as gate G6, signing keys, credentials, accounts, store or vendor sign-ups). Report it once as a blocker with what is needed, and continue with everything else.
 
 ## Commands
 

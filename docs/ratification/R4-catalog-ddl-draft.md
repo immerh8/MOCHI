@@ -1,7 +1,7 @@
 # R4 — Catalog SQLite DDL and constraints (FROZEN, draft 2)
 
 > **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
-> owner review pending at the desktop checkpoint, plan K11), with R1, R2, and R3, by the
+> final under the standing delegation, AGENTS.md "Decision authority"), with R1, R2, and R3, by the
 > review in §6. Written 2026-10-11 from the working code at `main` commit `57e3a69`; the
 > freeze set `user_version` to **1** (decision 3). The file name keeps "draft" for links.
 > A change to the DDL, a header value, or a rule below is a new draft identifier and an

@@ -35,7 +35,7 @@ These are the conventions the C5–C9 and C13 PRs followed. Reviewers expect the
 
 **Before coding**
 - Start from the latest `main`. Read `AGENTS.md`, the spec sections the workstream cites, and its plan section.
-- If something the workstream needs is not answered by the spec, this file, or the plan: **stop and write the gap into the PR** (options and trade-offs) instead of guessing. Do not invent wire-format answers. A guess baked into the format is worse than an open question (AGENTS.md).
+- If something the workstream needs is not answered by the spec, this file, or the plan: **make the call yourself** on the project's goals and best practice, and record it with its reason and the rejected options (spec Annex B for wire format or product rules, the plan otherwise), marked [delegated]. Never stop to ask the owner for approval (AGENTS.md "Decision authority", 2026-10-13). What is forbidden is a silent guess: an unrecorded answer baked into the format.
 
 **While coding**
 - `mochi-core` does all I/O through `Storage`. No `unwrap`/`expect`/`panic!` on paths reachable from archive bytes. Checked arithmetic on archive-derived values. Long operations are jobs (progress plus cancellation).

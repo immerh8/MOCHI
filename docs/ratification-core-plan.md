@@ -9,8 +9,10 @@ It was written at `main` `6172a99`, after C12 and the R6 draft merged
 (immerh8/MOCHI#26).
 
 **Authority.** The owner delegated every call in this file on 2026-10-12. They asked that
-each call be made on best practice and the project's goals, that it be self-reviewed,
-and that the owner review it at the next desktop-phase checkpoint. Calls are marked
+each call be made on best practice and the project's goals and that it be self-reviewed.
+**Since 2026-10-13 a standing rule (AGENTS.md "Decision authority") makes every
+delegated call final when recorded: there is no owner review step, and the owner
+intervenes with their own decisions when they choose to.** Calls are marked
 **[delegated 2026-10-12]**. Where a call changes a spec rule, it is already written into
 `docs/spec.md` Annex B (D22–D24, gates G12–G15). Where it is a plan matter, it is written
 into `docs/implementation-plan.md`. This file does not override the spec or the
@@ -53,7 +55,7 @@ and get CI green on Windows and Ubuntu.
 | # | Question | Call | Why | Recorded in |
 |---|---|---|---|---|
 | K10 | **Order of the remaining ratification work** | (1) Finish the Core work that could touch the format (W10–W12). (2) Write R3 and freeze R6 (W13, W14). (3) Freeze the wire artifacts R1–R4 together (W15). (4) Build R8 on the frozen format (W16). (5) Write R9 against frozen artifacts (W17) and run it over R8 (W18). (6) Freeze R7 at Beta (W19). (7) Make the 1.0 flip (W20). | Golden archives made before the freeze would be regenerated twice (R4 decision 3 already says so for `user_version`). An independent reader written against drafts chases churn. R7 has consumers still unbuilt (desktop D4, W12's new code). | This file; plan §6 |
-| K11 | **Who approves a freeze** | **A self-review recorded in the artifact**, in the form of R5 §12. It lists what was checked, what was found and fixed, and a call on every open item, marked [delegated 2026-10-12]. The owner reviews all freezes at the next desktop-phase checkpoint. A change the owner asks for after a freeze is a **new identifier** where one exists (schema version, suite, envelope version). Otherwise it is a draft-identifier bump (K13), never a silent edit. | The owner delegated review. Recording the review in the artifact keeps it auditable, and the bump rule keeps "frozen" meaningful while the owner's review is pending. | This file; each artifact's freeze section |
+| K11 | **Who approves a freeze** | **A self-review recorded in the artifact**, in the form of R5 §12. It lists what was checked, what was found and fixed, and a call on every open item, marked [delegated 2026-10-12]. **Superseded 2026-10-13 by the standing delegation (AGENTS.md "Decision authority"): the self-review is final; there is no owner review step.** A change the owner decides on after a freeze is a **new identifier** where one exists (schema version, suite, envelope version). Otherwise it is a draft-identifier bump (K13), never a silent edit. | The owner delegated review. Recording the review in the artifact keeps it auditable, and the bump rule keeps "frozen" meaningful if the owner later intervenes. | This file; each artifact's freeze section |
 | K12 | **When R1–R4 freeze** | **At a "format freeze" milestone (gate G12), not at Beta.** R1, R2, R3, and R4 freeze together in one review (W15), after R6 has frozen (W14). Desktop phases do not wait for it and are not waited for. **Reader-side indexes are not wire:** a reader, the desktop app included, may `CREATE INDEX` on the in-memory catalog after `Catalog::open_image`. The stored image and its DDL do not change for that. | The desktop app changes no stored byte. Waiting for Beta (which includes D0–D8) would hold R8 and R9, the longest items, behind the desktop track. D1's 100k-entry browsing is the one plausible desktop pressure on R4, and in-memory indexes answer it without a wire change (catalogs are in-memory SQLite, O25). | Spec B.2.6 G12; plan §6 |
 | K13 | **The draft identifier at the freeze** | **Bump `descriptor::DRAFT_ID` from 1 to 2 in the W15 freeze change**, in the same change that sets R4 `user_version` to 1. Draft 2 names the frozen layout. Keep one draft-1 archive as a reject fixture (`UNSUPPORTED_FEATURE`, exit 4, the message naming draft 1). Regenerate every other whole-archive fixture deliberately; the PR explains the diff (only descriptor key 3, `user_version`, and the hashes, IDs, and nonces downstream of them change). Any later wire change before 1.0 bumps the draft again, with an Annex B entry. | Rules changed under unchanged schema numbers during C5–C12 (Q64, parity placement, retention encodings). "Never misread" (release gate 4) can be proved mechanically only if the frozen layout has its own identifier. The fixture churn is a one-time, explained regeneration. | Spec Annex B D24; R1 §1 at the freeze |
 
@@ -86,8 +88,8 @@ and get CI green on Windows and Ubuntu.
 | K26 | **New evidence gates** | **G12** format freeze (R1–R4 frozen, draft 2), **G13** golden set (R8 complete with mechanical coverage), **G14** interoperability (R9 agrees with R8 on every case; disagreements resolved and recorded), **G15** report freeze (R7). | Each later step depends on a checkable state of the one before. Naming the gates makes "done" testable. | Spec B.2.6 |
 
 Nothing in Core or ratification scope is still waiting on a decision. The remaining
-owner-only items are **G6** (Windows hardware, T33) and the owner's review of these calls
-at the desktop checkpoint.
+owner-only item is **G6** (Windows hardware, T33). Since 2026-10-13 no call waits on an owner
+review (AGENTS.md "Decision authority").
 
 ---
 
@@ -500,7 +502,7 @@ last section.
 6. **Annex B bookkeeping.** Move to B.1 every B.2 decision whose implementation is done
    and whose gates pass. D13 stays in B.2 until G6. Update the B.2 status paragraph.
 7. Each artifact gets a "Freeze review (date)" section and is marked **frozen
-   [delegated 2026-10-12]; owner review pending at the desktop checkpoint** (K11).
+   [delegated 2026-10-12]; final under the standing delegation** (K11).
    Update the ratification README, spec §28 (status sentence), B.2.6 G12 → met, and
    plan §6.
 
@@ -880,6 +882,6 @@ against AGENTS.md's invariants and against each other.
     loss, and the content is intact.
   - (4) Copies are read without their own parity in 1.0. It is a documented limit:
     repair the copy first.
-- **Open for the owner's checkpoint review:** K12 (freeze before Beta), K13 (draft bump
-  and fixture churn), K22 (the sparse-checkout cold session as the R9 author), and K25
-  (`migrate` as a new 1.0 command).
+- **Final (2026-10-13).** K12, K13, K22, and K25, earlier listed here for an owner
+  checkpoint review, are final under the standing delegation (AGENTS.md "Decision
+  authority"). The owner may still intervene with a decision of their own.
