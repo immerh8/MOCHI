@@ -457,7 +457,7 @@ be refused.
 | commit | the descriptor reference is at offset 0 | `commit.rs` `check_structure` | `c5/reject-commit-descriptor-offset.bin` |
 | commit | key 9 equals the recomputed commit ID (§4) | `commit.rs` `decode` | `c5/reject-commit-id-mismatch.bin` |
 | commit | a parent's footer offset resolves to a valid footer of that commit; every reference ends before the commit frame | `publish.rs` | `c5/reject-archive-parent-offset-no-footer.mochi` |
-| commit v2 | key 11 envelopes exist, are distinct, and are listed in increasing envelope-ID order | `keys::read_envelopes` | gap |
+| commit v2 | key 11 envelopes exist, are distinct, carry one key ID, and are listed in increasing envelope-ID order. **[Clarified, W18, no byte changes]** A head commit that breaks this is refused with `RECORD_INVALID`; the rule needs the envelope frames (hash-verified first), so it is checked when the archive is opened, not when the commit record alone is decoded | `keys::read_envelopes` | `enc-corrupt-envelope-duplicate`, `enc-corrupt-envelopes-unordered` (R8) |
 | commit v2 | the data region ends before the delta manifest and walks as complete sealed frames of kind data | `commit.rs`, `publish.rs` | gap |
 | commit v2 | schema 2 and required feature 1 agree | `commit.rs` `decode` | gap |
 | manifest | arrays 5, 6, and 8 are sorted by their first field without duplicates; dependencies sorted | `manifest.rs` `check_structure` | `c4/reject-manifest-unsorted-versions.bin` (versions only; chunks, entries, and dependencies are gaps) |

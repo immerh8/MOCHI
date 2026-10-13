@@ -31,17 +31,17 @@ def _entry(path: bytes, ver) -> dict:
 
 def _parity(res: Result):
     d = res.descriptor
-    if res.head_status != "opened":
+    if res.head_status not in ("opened", "keyless"):
         return None
     if res.parity is not None:
         return res.parity
-    if d is not None and d.recovery is not None and res.head_status == "opened":
+    if d is not None and d.recovery is not None:
         return {"commits": 0, "damaged_shards": 0, "rebuilt": 0, "beyond_capacity": 0}
     return None
 
 
 def summarize(case: str, res: Result) -> dict:
-    opened = res.head_status == "opened"
+    opened = res.head_status in ("opened", "keyless")
     # A refused head verified nothing: the document then carries the refusal and nothing else.
     d = res.descriptor if opened else None
     profile = {
@@ -62,7 +62,13 @@ def summarize(case: str, res: Result) -> dict:
                 st = res.snapshots[seq]
                 entries = [_entry(p, st.versions[st.ns[p]]) for p in sorted(st.ns)]
                 snapshots.append({"seq": seq, "entries": entries})
-    findings = sorted(({"code": c, "object": o} for c, o in res.findings) if opened else [],
+    # One row per damaged data chunk; a code with no such chunk appears once, with a null object
+    # (fixtures/golden/README.md, "R8 summaries").  The head's refusal is a finding too.
+    rows = set(res.findings)
+    if res.head_status == "refused" and res.head_code:
+        rows.add((res.head_code, None))
+    with_object = {c for c, o in rows if o is not None}
+    findings = sorted(({"code": c, "object": o} for c, o in rows if o is not None or c not in with_object),
                       key=lambda f: (f["code"], f["object"] or ""))
     return {
         "format": FORMAT,

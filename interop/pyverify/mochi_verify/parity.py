@@ -364,6 +364,7 @@ def heal_commit(healed: bytearray, commit, footer, parent_footer_offset: int, de
     a = parent_footer_offset
     c_end = footer.commit_offset + footer.commit_length
     region_len = footer.offset - c_end
+    res.commits += 1            # every commit the scan reaches counts, whatever its frames hold
     if region_len == 0:
         res.findings.append(("PROFILE_VIOLATION", None))
         res.notes.append(f"commit {commit.sequence}: Redundancy-profile commit without parity frames")
@@ -373,7 +374,6 @@ def heal_commit(healed: bytearray, commit, footer, parent_footer_offset: int, de
         res.findings.append(("PARITY_DAMAGED", None))
         res.notes.append(f"commit {commit.sequence}: no parity frame decodes")
         return
-    res.commits += 1
     lay = Layout.compute(tmpl.range_len, tmpl.percent)
     flen = tmpl.length
     nframes = lay.groups * lay.parity_shards

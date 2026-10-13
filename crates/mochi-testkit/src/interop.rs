@@ -240,6 +240,15 @@ pub fn summarize(i: &Input<'_>) -> Value {
             if let Some(h) = history.last() {
                 out["archive_id"] = json!(h.commit.archive_id.to_hex());
             }
+            // The descriptor is plaintext: the profile is known without the key.
+            if let Some(d) = mochi_core::parity::read_descriptor_raw(view, &ro) {
+                let d = d.profile();
+                out["profile"] = json!({
+                    "encrypted": d.encrypted,
+                    "tar_compatible": d.tar_compatible,
+                    "recovery_percent": d.redundancy,
+                });
+            }
         }
         (_, Err(e)) | (Err(e), _) => {
             out["head"] = json!({"status": "refused", "code": e.code.as_str()});

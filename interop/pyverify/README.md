@@ -59,7 +59,9 @@ independence claim.
    document states it); and one TAR reject fixture has an off-by-one pax record length.
 6. **The reading log** (`READING-LOG.md`) was written alongside the code and finished at the end. It lists
    every place where I interpreted or guessed, with the reading chosen and its section.
-7. **No expected summary was opened.** `fixtures/golden/r8/` does not exist yet.
+7. **No expected summary was opened** by the session that wrote the verifier: `fixtures/golden/r8/` did not
+   exist yet. The W18 session that ran the comparison (see `READING-LOG.md`, section W18) did read them, by
+   design, and changed the verifier only where the table in `docs/ratification/R9-interop-results.md` says so.
 
 ## Layout
 
@@ -101,11 +103,12 @@ python3 -I -m mochi_verify ARCHIVE [--passphrase-file F] [--expected-head HEX] -
   hex). `--case` sets the `case` field; it defaults to the file name without its extension.
 * `--passphrase-file F`: the first line, line ending removed (a passphrase is never a command-line
   argument). Without it an Encrypted archive gets the keyless view: structure and stored bytes
-  only, `snapshots` is `null`. A passphrase that opens nothing exits 3 (`KEY_UNAVAILABLE`) and prints no summary.
+  only, `snapshots` is `null`. A passphrase that opens nothing is `KEY_UNAVAILABLE` (see Exit status).
 * `--expected-head HEX`: a commit ID; absent from the verified chain gives a `FRESHNESS_FAILED` finding.
 * Exit status: 0 after printing a summary (the document, not the exit status, carries the verdict);
   3 for an operational error; without `--summary` a short text report, exit 1 if the head is refused or
-  there are findings.
+  there are findings. A passphrase that opens nothing is `KEY_UNAVAILABLE`: with `--summary` the document says
+  `head` refused with that code (the reference does the same, `fixtures/golden/README.md`), without it exit 3.
 
 `python3 -I` is used by the tests too, so the package must be installed (not just on `PYTHONPATH`).
 
@@ -127,10 +130,11 @@ cd interop/pyverify && python -m pytest -q
 * the summary document, the tail rules, the command line.
 
 CI runs the suite as job `r9-interop` on ubuntu-22.04 (Python 3.10) and ubuntu-24.04 (Python 3.12),
-and, once `fixtures/golden/r8/` exists, `tools/compare_r8.py` over every `<case>.summary.json`
-(the archive is `<case>.mochi` beside it, an optional `<case>.passphrase` supplies the passphrase and
-an optional `<case>.expected-head` the anchor). Any mismatch fails the job and the list is printed.
-Those file names are my guess; W16 may name them differently.
+and `tools/compare_r8.py` over `fixtures/golden/r8/`: `cases.json` lists the cases, each case's archive is
+`<case>.mochi`, its `passphrase` and `expected_head` come from `cases.json`, and its summary is compared exactly
+with `<case>.summary.json` (a case without a summary, or a summary without a case, fails). Any mismatch fails the
+job and the list is printed. The results, with every disagreement found, are in
+`docs/ratification/R9-interop-results.md`.
 
 ## Dependencies
 

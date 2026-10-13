@@ -136,7 +136,14 @@ so that an independent reader can match them exactly:
   stored bytes fail their recorded length or hash, or that decode to the wrong content, or
   fail their AEAD tag) for `STORED_INTEGRITY_FAILED` and `CONTENT_INTEGRITY_FAILED`; a code
   with no such object appears once with `object` null. Sorted by code, then object.
-* `parity`: null without a recovery record; otherwise the number of commits scanned,
+  **[Clarified, W18 (R9), 2026-10-13]** The rule is per code: a code that has a damaged-chunk
+  row has no null row, and damage to any other object (a manifest, a catalog image, a key
+  envelope, a data region, a parity frame) never names an object. The refused summary of a
+  wrong passphrase is `{"status": "refused", "code": "KEY_UNAVAILABLE"}` with that one finding:
+  the summary is how R9 expresses the operational refusal, not a verification verdict. A
+  keyless summary takes `profile` from the plaintext descriptor (an Encrypted archive says so).
+* `parity`: null without a recovery record; otherwise the number of commits scanned
+  (every commit the scan reaches counts, whether or not one of its frames decodes),
   data shards found damaged, shards rebuilt, and groups beyond capacity. **The chain and
   snapshots are read through the parity-healed view** (damage within capacity is rebuilt in
   memory, as `verify` does); `findings` still report the raw bytes.

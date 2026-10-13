@@ -27,9 +27,12 @@ def test_matching_and_mismatching_cases(tmp_path):
     shutil.copy(GOLDEN / "c5" / "valid-archive-3-commits.mochi", tmp_path / "plain.mochi")
     (tmp_path / "plain.summary.json").write_text(verify(tmp_path / "plain.mochi", "--case", "plain"))
     shutil.copy(GOLDEN / "c11" / "valid-archive-encrypted.mochi", tmp_path / "sealed.mochi")
-    (tmp_path / "sealed.passphrase").write_text(GOLDEN_PASSPHRASE + "\n")
+    (tmp_path / "pw").write_text(GOLDEN_PASSPHRASE + "\n")
     (tmp_path / "sealed.summary.json").write_text(
-        verify(tmp_path / "sealed.mochi", "--case", "sealed", "--passphrase-file", tmp_path / "sealed.passphrase"))
+        verify(tmp_path / "sealed.mochi", "--case", "sealed", "--passphrase-file", tmp_path / "pw"))
+    cases = [{"name": "plain", "passphrase": None, "expected_head": None},
+             {"name": "sealed", "passphrase": GOLDEN_PASSPHRASE, "expected_head": None}]
+    (tmp_path / "cases.json").write_text(json.dumps(cases))
     ok = compare(tmp_path)
     assert ok.returncode == 0 and "2 cases compared, 0 differ" in ok.stdout
 
@@ -42,6 +45,19 @@ def test_matching_and_mismatching_cases(tmp_path):
     assert "$.snapshots[0].entries[0].size" in bad.stdout and "$.findings" in bad.stdout
 
 
-def test_missing_directory_is_not_an_error(tmp_path):
+def test_a_case_without_a_summary_or_a_summary_without_a_case_fails(tmp_path):
+    shutil.copy(GOLDEN / "c5" / "valid-archive-3-commits.mochi", tmp_path / "plain.mochi")
+    (tmp_path / "plain.summary.json").write_text(verify(tmp_path / "plain.mochi", "--case", "plain"))
+    (tmp_path / "cases.json").write_text(json.dumps([
+        {"name": "plain", "passphrase": None, "expected_head": None},
+        {"name": "ghost", "passphrase": None, "expected_head": None}]))
+    p = compare(tmp_path)
+    assert p.returncode == 1 and "MISMATCH ghost" in p.stdout
+    (tmp_path / "cases.json").write_text("[]")
+    p = compare(tmp_path)
+    assert p.returncode == 1 and "MISMATCH plain" in p.stdout
+
+
+def test_missing_directory_is_an_error(tmp_path):
     p = compare(tmp_path / "does-not-exist")
-    assert p.returncode == 0 and "nothing to compare" in p.stdout
+    assert p.returncode == 2 and "does not exist" in p.stdout

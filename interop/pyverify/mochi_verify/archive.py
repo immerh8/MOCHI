@@ -49,10 +49,13 @@ class Result:
     keyless: bool = False
     tail: str = "none"                                 # none | uncommitted | unresolved
     healed: bytes | None = None
+    stored_notes: list = field(default_factory=list)
 
 
 class Verifier:
-    def __init__(self, raw: bytes, passphrase: bytes | None = None, expected_head: bytes | None = None):
+    def __init__(self, raw: bytes, passphrase: bytes | None = None, expected_head: bytes | None = None,
+                 use_parity: bool = True):
+        self.use_parity = use_parity
         self.raw = bytes(raw)
         self.view = bytearray(self.raw)
         self.passphrase = passphrase
@@ -61,14 +64,21 @@ class Verifier:
         self.dek: bytes | None = None
         self.desc: desc_mod.Descriptor | None = None
         self.nodes: list[Node] = []
+        self.bad_offsets: set[int] = set()   # stored data frames already reported as failing their hash
 
     # ------------------------------------------------------------ helpers
-    def find(self, code: str, msg: str = "", obj: bytes | str | None = None) -> None:
+    def find(self, code: str, msg: str = "", obj: bytes | str | None = None, chunk: bool = False) -> None:
+        """Record a finding.  The summary names the stored-object hash only for a damaged
+        data chunk (fixtures/golden/README.md, "R8 summaries"); any other object is a note."""
         if not is_violation(code):
             self.res.notes.append(f"{code}: {msg}")
             return
         if isinstance(obj, bytes):
             obj = obj.hex()
+        if not chunk:
+            if obj is not None:
+                msg = f"{msg} [object {obj}]"
+            obj = None
         self.res.findings.add((code, obj))
         if msg:
             self.res.notes.append(f"{code}: {msg}")
@@ -91,10 +101,10 @@ class Verifier:
             self._segments()
             self._open_head()
         except MochiError as e:
-            if e.code in ("KEY_UNAVAILABLE", "INVALID_ARGUMENT"):
+            if e.code == "INVALID_ARGUMENT":
                 raise
             return self.refuse(e)
-        self.res.head_status = "opened"
+        self.res.head_status = "keyless" if self.res.keyless else "opened"
         self.res.head_code = None
         self._verify_all()
         self._finish()
@@ -105,6 +115,8 @@ class Verifier:
         """Use parity in memory only (ladder step 6).  Applies when the descriptor
         asks for a recovery record, or (descriptor unreadable) when a parity frame
         follows the head's commit frame."""
+        if not self.use_parity:
+            return
         v = self.view
         want = None
         try:
@@ -241,6 +253,7 @@ class Verifier:
         start = head.offset + footer_mod.FOOTER_LEN
         if start >= len(v):
             return
+        self.find("FOOTER_INVALID", "the end of the file is not the head's footer; the head was found by scanning")
         tail = bytes(v[start:])
         eligible = True
         fr, stop, err = frames.walk_all(v, start)
@@ -364,6 +377,14 @@ class Verifier:
                 envs.append(self._decode_envelope(data, head))
             except MochiError as e:
                 self.find(e.code, "key envelope: " + e.message)
+        # R3 7.1 (commit v2): the head's envelopes carry one key ID and are listed in strictly
+        # increasing envelope-ID order; a record that breaks this is refused, whatever its CDDL says
+        if len(envs) == len(head.key_envelopes):
+            if len({e.key_id for e in envs}) > 1:
+                raise MochiError("RECORD_INVALID", "the head's key envelopes name different data keys")
+            ids = [e.envelope_id for e in envs]
+            if ids != sorted(set(ids)):
+                raise MochiError("RECORD_INVALID", "the head's key envelopes are not distinct and in increasing ID order")
         self.res.keyless = self.passphrase is None
         if self.passphrase is None:
             return
@@ -527,10 +548,14 @@ class Verifier:
                     raise nd.state_err
             raise MochiError("RECORD_INVALID", "head state unavailable")
         # the base image (or, failing that, the snapshot manifest) establishes the segment's start
-        self._check_image(self.nodes[base], strict=False)
+        self._check_image(self.nodes[base], strict=False, refuse=True)
 
     # ------------------------------------------------------------ verification pass
-    def _check_image(self, nd: Node, strict: bool) -> None:
+    def _check_image(self, nd: Node, strict: bool, refuse: bool = False) -> None:
+        """An image that fails its stored hash (or its AEAD tag) is damage: reads rebuild the catalog from
+        the snapshot manifest (D10 item 9) and the failure is a finding.  An image whose bytes are
+        authentic but which then fails the envelope, schema or relationship checks (R4 3) is not
+        damage; when it is the head's base image the head is refused (spec D10 item 9, clarified)."""
         c = nd.commit
         if not c.checkpoint or getattr(nd, "image_done", False):
             return
@@ -551,6 +576,8 @@ class Verifier:
                 raise MochiError("RECORD_INVALID", "image's archive id or head sequence differs from the commit's")
             self._compare_image(nd, st)
         except MochiError as e:
+            if refuse and e.code not in ("STORED_INTEGRITY_FAILED", "CONTENT_INTEGRITY_FAILED", "KEY_UNAVAILABLE"):
+                raise
             self.find(e.code, f"commit {nd.seq} catalog image: {e.message}", e.obj)
 
     def _compare_image(self, nd: Node, im: catalog.ImageState) -> None:
@@ -711,7 +738,12 @@ class Verifier:
         cache_bytes = 0
         for cid, (ch, seq) in chunks.items():
             if ch.deps:
-                self.res.notes.append("UNSUPPORTED_FEATURE: chunk depends on a dictionary or key envelope")
+                # spec 24.2 (missing shared dictionary): a dependency that resolves to a catalog
+                # object is UNSUPPORTED_FEATURE; one naming an object the catalog lacks is dangling
+                if any(dep_id not in chunks for _, dep_id in ch.deps):
+                    self.find("REFERENCE_INVALID", "chunk depends on an object the catalog does not hold")
+                else:
+                    self.res.notes.append("UNSUPPORTED_FEATURE: chunk depends on a dictionary or key envelope")
                 bad.add(cid)
                 continue
             off = ch.offset
@@ -720,12 +752,13 @@ class Verifier:
                     index = self._hash_index()
                 off = index.get(ch.stored_hash)
                 if off is None:
-                    self.find("STORED_INTEGRITY_FAILED", "chunk cannot be rediscovered by its stored hash", ch.stored_hash)
+                    self.find("STORED_INTEGRITY_FAILED", "chunk cannot be rediscovered by its stored hash", ch.stored_hash, chunk=True)
                     bad.add(cid)
                     continue
             data = bytes(self.view[off:off + ch.stored_len])
             if len(data) != ch.stored_len or digest.stored_object(data) != ch.stored_hash:
-                self.find("STORED_INTEGRITY_FAILED", "chunk stored length or hash mismatch", ch.stored_hash)
+                self.find("STORED_INTEGRITY_FAILED", "chunk stored length or hash mismatch", ch.stored_hash, chunk=True)
+                self.bad_offsets.add(off)
                 bad.add(cid)
                 continue
             plain = self._chunk_plain(data, ch, cid, seq)
@@ -786,7 +819,7 @@ class Verifier:
                 pt = data
             return self._decode_zstd(pt, ch)
         except MochiError as e:
-            self.find(e.code, f"chunk: {e.message}", ch.stored_hash)
+            self.find(e.code, f"chunk: {e.message}", ch.stored_hash, chunk=True)
             return None
 
     def _decode_zstd(self, frame: bytes, ch: manifest_mod.Chunk) -> bytes:
@@ -811,6 +844,9 @@ class Verifier:
                 if fr.magic == ZSTD_MAGIC:
                     data_frames.append(fr)
                 pos = fr.end
+            if any(fr.offset in self.bad_offsets for fr in data_frames):
+                self.res.notes.append(f"commit {nd.seq}: framing chunk already reported as failing its stored hash")
+                continue
             puts = [op for op in m.ops if op[0] == "put"]
             if not puts:
                 if data_frames:
@@ -855,16 +891,28 @@ class Verifier:
         r.healed = bytes(self.view)
         if self.res.keyless or not self.nodes:
             return
-        head = self.nodes[-1]
-        hs = head.state
-        if hs is None:
-            return
         for nd in self.nodes:
-            if nd.state is None:
-                continue
-            if state_mod.retained(hs, head.seq, nd.seq):
+            if nd.state is not None:
                 r.snapshots[nd.seq] = nd.state
 
 
 def verify(raw: bytes, passphrase: bytes | None = None, expected_head: bytes | None = None) -> Result:
-    return Verifier(raw, passphrase, expected_head).run()
+    """Two passes, as the reference does (spec B.2.11 item 12): the bytes as stored, whose findings are
+    all reported, then, when a recovery record rebuilds anything, the in-memory rebuilt view, which
+    gives the chain, the snapshots and the damaged data chunks the rebuild could not heal."""
+    stored = Verifier(raw, passphrase, expected_head, use_parity=False).run()
+    healed = Verifier(raw, passphrase, expected_head).run()
+    if healed.parity is None:
+        return healed
+    codes = {c for c, _ in stored.findings}
+    if stored.head_status == "refused" and stored.head_code:
+        codes.add(stored.head_code)
+    out_findings = {(c, o) for c, o in healed.findings if o is not None}
+    out_findings |= {(c, None) for c in codes}
+    out_findings |= {(c, o) for c, o in healed.findings if c in PARITY_CODES}
+    healed.findings = out_findings
+    healed.stored_notes = stored.notes
+    return healed
+
+
+PARITY_CODES = ("PARITY_DAMAGED", "PARITY_CAPACITY_EXCEEDED", "PROFILE_VIOLATION")
