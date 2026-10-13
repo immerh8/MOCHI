@@ -12,7 +12,7 @@ MOCHI is an archive format and archiver, shipped like WinRAR: a format library p
 - `crates/mochi-testkit` — fault-injecting storage and fixture builders.
 - `apps/mochi-desktop` — Tauri v2 application (`src-tauri/` Rust backend, `ui/` frontend).
 
-The product is **pre-1.0 and the wire format is not frozen**. Every build before 1.0 is "experimental / draft-compatible" (spec §28).
+The product is **pre-1.0 and the wire format is not ratified**. The layout is frozen as **draft 2** (R1–R6, gate G12): a change to any byte or rule in `docs/ratification/` is a new draft identifier (`descriptor::DRAFT_ID`) with an Annex B entry, never an edit. Every build before 1.0 is "experimental / draft-compatible" (spec §28).
 
 ## Sources of truth, in order
 

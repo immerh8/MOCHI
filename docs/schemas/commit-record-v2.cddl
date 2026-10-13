@@ -1,4 +1,4 @@
-; MOCHI commit record, schema version 2 (DRAFT; ratification items R3, R5).
+; MOCHI commit record, schema version 2 (FROZEN with draft 2; ratification items R3, R5).
 ; Keys 11 and 12 are FROZEN with R5 (2026-10-11); the rest of this file
 ; freezes with R3. This file is complete and standalone: every rule it uses is
 ; defined here.

@@ -1,4 +1,4 @@
-; MOCHI recovery manifest, schema version 1 (DRAFT; ratification item R3).
+; MOCHI recovery manifest, schema version 1 (FROZEN with draft 2; ratification item R3).
 ; Decisions: spec Annex B.2 D10, D11. Supersedes recovery-manifest-v0.cddl.
 ; Changes from v0: keys 9 (required features) and 10 (transaction ID) are
 ; added, and the parent-link and snapshot rules below are made exact.

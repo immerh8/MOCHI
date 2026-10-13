@@ -1,10 +1,14 @@
-# R2 — Record-envelope layouts (DRAFT, not frozen)
+# R2 — Record-envelope layouts (FROZEN, draft 2)
 
-> **Status 2026-10-11: draft.** Written from the working code at `main` commit
-> `57e3a69` and the golden vectors in `fixtures/golden/` (`b2/`, `c11/`), as plan §6
-> requires. It is **not frozen**: it freezes at Beta, together with R3 (the CBOR
-> schemas whose envelope keys are restated here). Tables marked *(checked)* are
-> compared with the code by `crates/mochi-cli/tests/ratification_drafts.rs`.
+> **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
+> owner review pending at the desktop checkpoint, plan K11), with R1, R3, and R4, by the
+> review in §6. Written 2026-10-11 from the working code at `main` commit `57e3a69` and
+> the golden vectors in `fixtures/golden/` (`b2/`, `c11/`). The file name keeps "draft"
+> for links. A change to a layout or rule below is a new draft identifier with an Annex B
+> entry (spec B.2.14), never an edit. Tables marked *(checked)* are compared with the
+> code by `crates/mochi-cli/tests/ratification_drafts.rs`. Names in code font
+> (`decode_binary_record`, `Candidate::bind`, …) are the reference implementation's; the
+> rules stand without them.
 
 Sources: spec §8.3 and its D11 amendment, Annex B.2 D10 item 11, D11, D12, B.2.2,
 B.2.10 (D20). Code: `crates/mochi-format/src/envelope.rs` (binary envelope v0 and the
@@ -92,11 +96,43 @@ may interpret its payload until `Candidate::bind` has checked its identity again
 the referencing commit. Encoding refuses everything decoding refuses, plus anything
 over the writer's limits (`CAPACITY_EXCEEDED`).
 
+**Fault codes**, in decode order (`FormatError` mapped by `MochiError::from`; the
+registry is R7's). Where a record has two faults the first in this order is the one
+reported; no golden case has two, and the order among simultaneous faults is not wire
+format.
+
+| Step | Fault | Code |
+|---|---|---|
+| kind | frame kind is not the one the referencing field names, or has no envelope | `ENVELOPE_INVALID` |
+| fixed header | fewer than 80 bytes, or fewer than the header length declares | `ENVELOPE_INVALID` |
+| envelope version | ≠ 0 | `UNSUPPORTED_FEATURE` |
+| feature count | n > 64 (the wire rule) | `ENVELOPE_INVALID` |
+| header length | ≠ 80 + 8·n | `ENVELOPE_INVALID` |
+| payload length | header field ≠ frame payload − header | `ENVELOPE_INVALID` |
+| payload budget | payload > *S* − 592 | `LIMIT_EXCEEDED` (a writer: `CAPACITY_EXCEEDED`) |
+| payload encoding | not registered; or not the kind's own | `ENVELOPE_INVALID` |
+| required features | n above the reader limit (default 64) | `LIMIT_EXCEEDED` |
+| | not strictly increasing | `ENVELOPE_INVALID` |
+| | an entry the build does not know | `UNSUPPORTED_FEATURE` |
+| record schema version | not in the kind's list | `UNSUPPORTED_FEATURE` |
+| signature, `user_version` | payload lacks the encoding's signature; or SQLite `user_version` ≠ the record schema version | `ENVELOPE_INVALID` |
+| identity (`bind`) | archive ID, commit sequence, or transaction ID differs from the referencing commit's | `ENVELOPE_INVALID` |
+
+`user_version` is the big-endian signed 32-bit integer at bytes 60 to 63 of the SQLite
+header; it is compared as an integer, so a value outside 0 to 65535 never matches.
+A catalog image's features must also equal `[1]` exactly in an Encrypted archive and be
+empty otherwise (`RECORD_INVALID`). The same identity mismatches in a CBOR record
+(a manifest whose archive ID, sequence, or transaction ID differs from its commit's)
+are `ENVELOPE_INVALID` too (`c5/reject-archive-manifest-*`). Known features: `{1}`
+(the Encrypted profile, R5), on every kind that lists features.
+
 ## 3. CBOR-native envelope keys
 
 The schemas are R3's; this table restates only which keys carry the envelope.
 Restated from the CDDL files named; where they differ, the CDDL wins and this table
-is wrong.
+is wrong. The envelope keys of a commit are 0, 1, 3, and 7; its sequence (key 2) is
+identity, listed in the same column because §1 checks it the same way. There is no
+"optional features" field in envelope v0.
 
 | Record | Schema file | Schema version (key 0) | Archive ID | Sequence | Transaction ID | Required features |
 |---|---|---|---|---|---|---|
@@ -141,6 +177,10 @@ is wrong.
   after opening. The seal's associated data binds the archive ID and the object or
   commit identity, so a sealed frame opens only in its own place.
 
+**Names.** This file calls `0x184D2A50` the *catalog image* (the spec's registry says
+"metadata delta or checkpoint") and `0x184D2A5F` the *parity frame* (the registry's
+"parity object"); R1 §2 has both names.
+
 ## 5. Decisions on the open items (delegated, 2026-10-11)
 
 1. **The feature-count cap is permanent for envelope version 0.** n ≤ 64 is a wire
@@ -160,3 +200,56 @@ is wrong.
    CDDL rule and every D11 obligation, in both encodings" is checked when the golden
    set R8 is assembled, not in this draft. §8.3's "evidence pending" marker stays until
    that audit passes.
+
+## 6. Freeze review (2026-10-12)
+
+Run together with R1's (R1 §7 has the method, authority, and the stop rule). This section
+records what concerns the envelopes.
+
+**Checked.**
+
+* **The drift test passes** with the tables above: the D11 obligations against spec §8.3,
+  the binary offsets against an encoded record, the payload encodings, and the kinds that
+  carry an envelope. The new fault-code table was written from `envelope.rs` and
+  `error.rs`, and its rows are pinned by the `b2/reject-envelope-*` vectors (15 rejects, one
+  fault each, unchanged by the freeze) and `c5/reject-archive-manifest-*`.
+* **No R2 byte changed.** The envelope vectors use their own rules (schema 0 in a test
+  `EnvelopeRules`), so they are byte-identical to the pre-freeze set; the catalog image's
+  record schema version moved from 0 to 1 with R4 and is the only envelope value that
+  moved (the golden archives that embed an image were regenerated, R4 §6).
+
+**Found and fixed at the freeze** (text only).
+
+1. **The fault codes were nowhere in the text** (cold read 1): the table above.
+2. **The order of the feature checks and the two meanings of 64** (cold read 2): §2 table
+   — 64 as a wire rule is `ENVELOPE_INVALID`, 64 as a reader limit is `LIMIT_EXCEEDED`.
+3. **Where `user_version` sits and what a mismatch is** (cold read 4).
+4. **What an image's features must equal** (cold read 2), and that the same identity
+   mismatches in a CBOR record share the code (cold read 5).
+5. **Stale status** ("not frozen", "freezes at Beta"), and the two registry names.
+
+**Cold read.** A fresh subagent was given only `docs/spec.md`, this file, and the
+`docs/schemas/*.cddl` texts it defers to (they are R3's, but R2 is not implementable
+without their keys). Findings and calls:
+
+| # | Finding | Call |
+|---|---|---|
+| 1 | Error code per binary decode step | **Fixed** (table in §2). |
+| 2 | Feature checks: 64 as wire or limit; order; known set; image equality | **Fixed** (§2). For a CBOR record's *exact-list* rules (`7: [1]`, `9: [1]`), R3 §6 owns the schema and `UNSUPPORTED_FEATURE` for an unknown entry is raised first, by the same shared check. |
+| 3 | CBOR-side decode order is not stated | **Decided.** Three steps are ordered: the stored-object hash (before parsing), then canonical decode (R3 §1), then key 0 (R3 §3, an unknown version is refused before any other key is read). R3 §2.2 and §6 list every later rule with its vector. Precedence among simultaneous faults is not pinned (§2), and each golden reject has one defect. |
+| 4 | Accepted catalog schema versions; where `user_version` lives | **Fixed** (R4 §1: only 1; §2 above). |
+| 5 | Identity comparison rules and codes | **Fixed** (§2). The descriptor's archive ID is compared with every commit's key 1 (a disagreement is `DESCRIPTOR_INVALID`, D12). |
+| 6 | Sealed objects: which kind and budget the plaintext is checked against | **Decided as §4 says:** the opened plaintext is exactly what a Core archive stores, so it is decoded as a `0x184D2A50` record with the *S* − 592 budget; the sealed frame's own kind field must match what the referencing record names (R5 §4). |
+| 7 | A parity frame with a valid digest and a bad envelope | **Open item, call:** R6 §5 owns the parity decode order and codes (frozen); R2 adds nothing. W16's `expect` records the code of each parity reject. |
+| 8 | Draft identifier and declared limits (key 6) | **Fixed in the spec / unchanged:** draft 2 (R1 §1). Key 6 is decoded and not acted on (spec D16, out of 1.0). |
+
+Text-only items: stale spec statements in B.2 ("None of it is done", "evidence
+pending") were corrected at the freeze (spec Annex B status paragraph); §8.3's
+"evidence pending" marker **stays** until the G1 audit passes in W16 (decision 4 above).
+`ENVELOPE_INVALID` for a CBOR identity mismatch while the descriptor uses
+`DESCRIPTOR_INVALID` is the D12 split, not an inconsistency.
+
+**Calls on the open items.** Decisions 1 to 4 (§5) stand; none changed a byte.
+
+**What the review did not do.** It did not repeat the cold read after the fixes; it did
+not run a fuzz campaign.

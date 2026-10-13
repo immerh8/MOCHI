@@ -23,9 +23,10 @@
 /// SQLite `application_id` for MOCHI catalogs: ASCII `MOCH`. Draft (R4).
 pub const APPLICATION_ID: i32 = 0x4D4F_4348;
 
-/// SQLite `user_version`: catalog schema version. `0` = this draft; ratified
-/// schemas start at 1 (the same convention as the draft record envelope).
-pub const SCHEMA_VERSION: i32 = 0;
+/// SQLite `user_version`: catalog schema version. `1` = the schema frozen with
+/// R4 at the format freeze (draft 2); `0` was the pre-freeze draft and is
+/// refused as `UNSUPPORTED_FEATURE`.
+pub const SCHEMA_VERSION: i32 = 1;
 
 /// Page size (spec §10.5).
 pub const PAGE_SIZE: u32 = 4096;

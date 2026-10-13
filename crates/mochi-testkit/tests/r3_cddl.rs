@@ -668,7 +668,12 @@ const REJECTS: &[(&str, Rec, Defect)] = &[
         Schema,
     ),
     (
-        "b2/reject-descriptor-draft-2.bin",
+        "b2/reject-descriptor-draft-1.bin",
+        Rec::Descriptor,
+        Semantic("the draft identifier is the build's own (D24); 1 is the pre-freeze draft"),
+    ),
+    (
+        "b2/reject-descriptor-draft-3.bin",
         Rec::Descriptor,
         Semantic("the draft identifier is the build's own (D24)"),
     ),

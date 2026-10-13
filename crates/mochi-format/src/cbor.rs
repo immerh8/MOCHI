@@ -68,7 +68,8 @@ pub enum CborFault {
     NotCanonical,
 }
 
-/// Bounds for decoding untrusted input. Placeholder defaults (plan O18).
+/// Bounds for decoding untrusted input. The defaults are the reader limits of
+/// spec B.2.3 (depth 64, 16 Mi items); they are reader limits, not wire rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CborLimits {
     pub max_depth: usize,

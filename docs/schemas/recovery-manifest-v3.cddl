@@ -1,4 +1,4 @@
-; MOCHI recovery manifest, schema version 3 (DRAFT; ratification items R3, R5).
+; MOCHI recovery manifest, schema version 3 (FROZEN with draft 2; ratification items R3, R5).
 ; Key 13 and the provenance reason (key 12.3) are FROZEN with R5 (2026-10-11);
 ; the rest of this file freezes with R3. This file is complete and standalone:
 ; every rule it uses is defined here.

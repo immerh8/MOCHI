@@ -1,4 +1,4 @@
-; MOCHI recovery manifest, schema version 2 (DRAFT; ratification item R3).
+; MOCHI recovery manifest, schema version 2 (FROZEN with draft 2; ratification item R3).
 ; Decisions: spec Annex B.2 D10, D11, and Annex B D18 (retention, plan C9),
 ; with the provenance of a rewritten archive (D18, plan C9).
 ; Extends recovery-manifest-v1.cddl with key 11, retention, and key 12,

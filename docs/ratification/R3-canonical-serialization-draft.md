@@ -1,13 +1,17 @@
-# R3 — Canonical serialization and domain separators (DRAFT, not frozen)
+# R3 — Canonical serialization and domain separators (FROZEN, draft 2)
 
-> **Status 2026-10-12: draft.** Written from the working code at `main` commit
-> `17fe094` and the golden vectors in `fixtures/golden/`, as plan §6 and
-> `docs/ratification-core-plan.md` W13 require. It is **not frozen**: it freezes with
-> R1, R2, and R4 at the format freeze (W15, gate G12). Tables marked *(checked)* are
-> compared with the code by `crates/mochi-cli/tests/ratification_drafts.rs`. The CDDL
-> files in `docs/schemas/` are checked against the bytes the code writes by
-> `crates/mochi-testkit/tests/r3_cddl.rs` (§8). **Nothing in this draft changes a byte the
-> code writes**; the schema texts it corrects are listed in §9.
+> **Status 2026-10-12: frozen as part of draft 2** (gate G12, [delegated 2026-10-12];
+> owner review pending at the desktop checkpoint, plan K11), with R1, R2, and R4, by the
+> review in §11. Written the same day from the working code at `main` commit `17fe094`
+> and the golden vectors in `fixtures/golden/`, as plan §6 and
+> `docs/ratification-core-plan.md` W13 require. The file name keeps "draft" for links.
+> A change to an encoding rule, a schema, a separator, or the commit ID construction is
+> a new draft identifier and an Annex B entry (spec B.2.14), never an edit. Tables marked
+> *(checked)* are compared with the code by
+> `crates/mochi-cli/tests/ratification_drafts.rs`. The CDDL files in `docs/schemas/` are
+> checked against the bytes the code writes by `crates/mochi-testkit/tests/r3_cddl.rs`
+> (§8). The schema texts the writing of this file corrected are listed in §9; the freeze
+> changed no schema rule.
 
 Sources: spec §9.2, Annex B.1 D2, Annex B.2 D10, D11, D12, D14, D15, B.2.2, B.2.3, and
 the Encrypted and Redundancy profiles (B.2.10 D20, B.2.11 D21). Plan O2 and O20.
@@ -268,16 +272,16 @@ equal the code's constants.)* The **Written when** column is stated exactly in �
 
 | Record | Version | Frame kind | CDDL file | Written when | Status |
 |---|---|---|---|---|---|
-| Archive descriptor | 0 | `0x184D2A57` | `archive-descriptor-v0.cddl` | always | draft |
+| Archive descriptor | 0 | `0x184D2A57` | `archive-descriptor-v0.cddl` | always | frozen |
 | Commit record | 0 | `0x184D2A51` | `commit-record-v0.cddl` | never: legacy, refused | legacy |
-| Commit record | 1 | `0x184D2A51` | `commit-record-v1.cddl` | the commit lists no required feature | draft |
-| Commit record | 2 | `0x184D2A51` | `commit-record-v2.cddl` | Encrypted profile | draft; keys 11 and 12 frozen with R5 |
+| Commit record | 1 | `0x184D2A51` | `commit-record-v1.cddl` | the commit lists no required feature | frozen |
+| Commit record | 2 | `0x184D2A51` | `commit-record-v2.cddl` | Encrypted profile | frozen; keys 11 and 12 frozen with R5 |
 | Recovery manifest | 0 | `0x184D2A58` | `recovery-manifest-v0.cddl` | never: legacy, refused | legacy |
-| Recovery manifest | 1 | `0x184D2A58` | `recovery-manifest-v1.cddl` | no retention data, no provenance, not Encrypted | draft |
-| Recovery manifest | 2 | `0x184D2A58` | `recovery-manifest-v2.cddl` | retention data or provenance, not Encrypted | draft |
-| Recovery manifest | 3 | `0x184D2A58` | `recovery-manifest-v3.cddl` | Encrypted profile | draft; key 13 and the provenance reason frozen with R5 |
+| Recovery manifest | 1 | `0x184D2A58` | `recovery-manifest-v1.cddl` | no retention data, no provenance, not Encrypted | frozen |
+| Recovery manifest | 2 | `0x184D2A58` | `recovery-manifest-v2.cddl` | retention data or provenance, not Encrypted | frozen |
+| Recovery manifest | 3 | `0x184D2A58` | `recovery-manifest-v3.cddl` | Encrypted profile | frozen; key 13 and the provenance reason frozen with R5 |
 | Key envelope | 0 | `0x184D2A5C` | `key-envelope-v0.cddl` | Encrypted profile | frozen with R5 |
-| Tail-quarantine sidecar metadata | 0 | none (a tool file) | `tail-quarantine-v0.cddl` | `append --truncate-tail` | draft (Appendix A) |
+| Tail-quarantine sidecar metadata | 0 | none (a tool file) | `tail-quarantine-v0.cddl` | `append --truncate-tail` | frozen (Appendix A) |
 
 The catalog image, the sealed object, and the parity frame are not CBOR records. Their
 layouts are R2 (binary envelope v0), R5 §5 (sealed object, frozen), and R6 §4 (parity
@@ -334,8 +338,8 @@ nothing but a CBOR decoder, a CBOR encoder that honours §1, and BLAKE3.
 
 Every BLAKE3 digest scope except two begins with a **domain separator**: the ASCII
 string `MOCHI2-<SCOPE>` followed by **one zero byte**. The footer's separator is
-spec-given (§8.4); the others are the drafts of `digest.rs`, which this document
-freezes as written (K14 a). Two AEAD associated-data prefixes follow the same shape.
+spec-given (§8.4); the others are the strings of `digest.rs`, which this document
+froze as written (K14 a). Two AEAD associated-data prefixes follow the same shape.
 Each is defined once, in `mochi-format/src/digest.rs`; no other module spells one.
 
 *(checked: the bytes, the lengths, and the scope names equal `digest::ALL_DOMAINS`,
@@ -385,7 +389,7 @@ digest keeps scopes in distinct, labelled fields (catalog columns, manifest keys
 reports). **A separate implementation must do the same.**
 
 Final strings: the seven BLAKE3 separators and the two AEAD prefixes above are frozen
-with R3 at W15. A change to any of them is a new wire generation, not an edit.
+with R3 (draft 2). A change to any of them is a new wire generation, not an edit.
 
 ## 6. One logical structure, one encoding
 
@@ -445,7 +449,7 @@ be refused.
 | Schema | Rule | Checked in | Vector |
 |---|---|---|---|
 | all | features strictly increasing, and every entry known | `envelope::check_required_features` | `c5/reject-commit-features-not-increasing.bin`, `c5/reject-commit-required-feature.bin` |
-| descriptor | the draft identifier is the build's own (null is a ratified archive) | `descriptor.rs` | `b2/reject-descriptor-draft-2.bin`, `b2/reject-descriptor-draft-null.bin` |
+| descriptor | the draft identifier is the build's own (null is a ratified archive) | `descriptor.rs` | `b2/reject-descriptor-draft-1.bin`, `b2/reject-descriptor-draft-3.bin`, `b2/reject-descriptor-draft-null.bin` |
 | descriptor | the redundancy suite is known | `descriptor.rs` | gap |
 | descriptor | the Encrypted feature cannot be combined with the TAR-compatible constraint | `descriptor.rs` | gap |
 | commit | parent sequence = sequence − 1 | `commit.rs` `check_structure` | `c5/reject-commit-parent-seq-gap.bin` |
@@ -543,6 +547,49 @@ in the *golden set*, not in the check. The data comes from
 | key-envelope-v0 | keys 0 to 10 | `c11/valid-key-envelope.bin` | `c11/reject-envelope-kdf-memory-below-8-per-lane.bin`, `c11/reject-envelope-kdf-zero-lanes.bin`; gap: a wrong size for the nonce, wrapped key, salt, or IDs; a suite or KDF other than 1; features other than [1] |
 | tail-quarantine-v0 | keys 0 to 10 | — | gap: no golden sidecar file; `r3_cddl.rs` builds one and `t24_quarantine.rs` reads real ones |
 
+### 7.3 Conventions the rules and schemas share
+
+Fixed at the freeze; each was a guess a reader would have had to make.
+
+* **"Sorted" means the order of the first field's value, not of its CBOR encoding.**
+  Byte strings and text strings compare lexicographically on their raw bytes (shorter
+  first when one is a prefix of the other); unsigned integers compare numerically. (CBOR's
+  encoded-bytes order differs for variable-length strings, because the length comes
+  first.) Entries sort by stored path bytes, chunks and file versions by ID, retention
+  holds by label bytes. Duplicates are refused wherever "without duplicates" is said.
+* **Codes for value-level violations.** A closed-schema violation — a wrong type, a byte
+  string of the wrong size, an integer outside its drawn range (nanoseconds ≥ 10⁹, a mode
+  above 0o7777, Windows attributes outside the mask, a chunk encoding or protection not
+  drawn), a hole with a non-zero chunk offset, an unknown file-version or operation
+  kind — is `RECORD_INVALID` (`DESCRIPTOR_INVALID` in the descriptor, §1.2). The
+  refusals are `UNSUPPORTED_FEATURE`: an unknown schema version, an unknown required
+  feature, a reserved file-version kind (symbolic link), and an unknown suite, KDF, or
+  version identifier in a key envelope.
+* **Seconds** in an mtime are an integer in [−2⁶³, 2⁶³ − 1]; the codec admits down to
+  −2⁶⁴ and the record refuses the rest as `RECORD_INVALID`.
+* **Codec codes survive in the records.** The commit, manifest, key envelope and
+  sidecar decoders propagate the codec's code unchanged (`TRUNCATED`, `LIMIT_EXCEEDED`,
+  `RECORD_INVALID`); only the descriptor re-maps (§1.2). Order among simultaneous faults
+  in one input is **not** wire format: every golden reject has one defect, and the
+  precedence tables of §1.1 ("order of checks") and R2 §2 describe the reference.
+* **Which hash an object reference holds.** Every object reference in a commit — the
+  descriptor, each manifest, the catalog image, each key envelope, and the data region
+  (key 12) — holds the `STORED_OBJECT_DOMAIN` hash of the exact stored bytes (§5). The
+  footer holds its own scope. No reference holds a hash of decoded or decrypted bytes.
+* **16 and 32 in the Encrypted schemas.** The numbers in `commit-record-v2.cddl` (at
+  most 16 key envelopes) and `recovery-manifest-v3.cddl` (key state 1 to 16, 32
+  operations) are the defaults. The envelope count is a reader limit
+  (`max-key-envelopes`, B.2.10 item 14): a reader configured higher accepts more, a
+  default reader refuses more as `LIMIT_EXCEEDED`, and writers never write more
+  (the writer default rule). The CDDL draws the default so that the check is exact for a
+  default reader.
+* **Key-envelope cost fields are not refused at decode.** A reader must not refuse an
+  envelope whose `m`, `p`, or `t` violates the lower bounds the schema draws until a
+  passphrase is applied (`RECORD_INVALID` then); a keyless read lists it. The schema is
+  stricter than that on purpose (it states the writer's obligation), and `r3_cddl.rs`
+  names the position as an exception.
+* **Paths** in a manifest are valid by the rules in R4 §3.1 (`PATH_INVALID`).
+
 ## 8. How the schemas are checked
 
 `crates/mochi-testkit/tests/r3_cddl.rs` (dev-dependency `cddl` 0.10.7, MIT, in
@@ -559,7 +606,7 @@ in the *golden set*, not in the check. The data comes from
    each provenance reason, and the sidecar metadata of Appendix A. The production decoder
    accepts each one.
 3. **Every CBOR reject vector is classified**, and the classification is enforced
-   (87 vectors). *Schema*: the schema rejects it. *Semantic*: the schema accepts it and
+   (88 vectors). *Schema*: the schema rejects it. *Semantic*: the schema accepts it and
    the code refuses it, for a rule §7.1 lists. *Frame*: the payload is valid and its
    frame is wrong. *Codec*: the payload is not canonical CBOR (§1). *Version* and
    *Legacy*: no current schema applies, or the legacy schema accepts it and no current
@@ -620,8 +667,9 @@ empty. They are listed so that the W15 reviewer sees every semantic edit to a sc
 
 ## 10. Open items
 
-Each item is a place where the spec, the code, and the schemas disagree, or where the
-spec is silent. Each has a **proposed call**. None is decided here and no byte changes.
+Each item is a place where the spec, the code, and the schemas disagreed, or where the
+spec was silent. Each had a **proposed call** when this file was a draft; the calls were
+confirmed at the freeze (table after item 9). No byte changed.
 
 1. **Codec faults and error codes (plan W13 vs the code).** W13 says every codec
    rejection is `RECORD_INVALID`. The code maps a cut-short input to `TRUNCATED` and a
@@ -669,6 +717,20 @@ spec is silent. Each has a **proposed call**. None is decided here and no byte c
    sentence is corrected here as text only; the W15 review should confirm it as an
    erratum, together with item 2.
 
+**Calls at the freeze (2026-10-12; confirmed as proposed, none changes a byte).**
+
+| Item | Call | Done |
+|---|---|---|
+| 1. Codec fault codes | **Code stands.** The plan text follows §1.2. | Plan W13 status note and K14 corrected at the freeze. |
+| 2. Provenance reason 0 | **Code stands**; the narrowed `? 3: 1` is an erratum to the partly frozen R5 schema (no archive ever written carries an explicit 0, which the code has always refused). | Spec B.2.10 item 10 says reason 0 is the absence of key 3. |
+| 3. Descriptor key 5.1 | **Added** to B.2.2. | Spec B.2.2. |
+| 4. KDF lower bounds | **Keep at use, not at decode** (no code change in a format freeze). It is now a rule (§7.3), because a keyless reader is a conformance case. | §7.3. |
+| 5. Wire generation and draft identifier | **Decided with D24:** both are schema-valid and refused as `UNSUPPORTED_FEATURE`; the draft identifier is 2. | R1 §1. |
+| 6. `CborLimits` comment | **Fixed** (comment only). | `cbor.rs`. |
+| 7. Missing reject vectors | **W16** (G1 audit). Kept as gaps in §7.2. | — |
+| 8. No rewritten Encrypted archive | **W16.** | — |
+| 9. Encrypted-profile disagreement code | **Code stands**: a commit that disagrees with the descriptor is `DESCRIPTOR_INVALID`. | Spec B.2.10 item 4 and the v2 header. |
+
 ## Appendix A. Tail-quarantine sidecar (a tool file, not archive format)
 
 `tail-quarantine-v0` is written beside an archive by `mochi append --truncate-tail`
@@ -708,3 +770,67 @@ tail hash of 32 bytes `7a`: `a.mochi.tail-4096-7a7a7a7a7a7a7a7a.mochiq`.
 
 *(checked: the key set equals the keys the code writes.)* The JSON tool formats (plans,
 reports) belong to R7, not here (K14 f).
+
+## 11. Freeze review (2026-10-12)
+
+Run together with R1's (R1 §7 has the method, authority, and the stop rule). This section
+records what concerns serialization.
+
+**Checked.**
+
+* **Drift test and CDDL check pass.** The drift test's R3 tests (codec table, fault
+  table, schema registry, commit IDs, separators, record-level causes, vector index) and
+  `r3_cddl.rs` (7 tests: standalone schemas, every valid golden record, every reject
+  vector classified — 88 now, the draft-1 and draft-3 descriptor vectors replacing the one
+  draft-2 vector — the differential run over mutants, and the bounded values) all pass
+  after the regeneration.
+* **The commit IDs of the three commit vectors are unchanged**
+  (`b4592ef9…`, `d899e308…`, `a7cf5aed…`): those `.bin` vectors are hand-built and hold no
+  descriptor hash, so the freeze did not touch `c5/*.bin`, `c4/*`, `c2/*`, or `c1/*`.
+* **The separators and the codec are the code's.** Compared by the drift test; the nine
+  digest and AEAD strings are unchanged.
+* **The schemas carry no new rule.** The freeze edited their header comments only
+  ("DRAFT" → "FROZEN with draft 2", the descriptor's draft identifier text, one
+  "draft separator" wording); `r3_cddl.rs` classifies the files as before.
+
+**Found and fixed at the freeze** (text only).
+
+1. **The path rules** were not in the text (R4 §3.1 now states them; §7.3 points there).
+2. **Eight conventions a reader would have guessed** — sort order, value-level codes,
+   the seconds range, codec codes in records, hash scopes, the meaning of 16 and 32, key
+   envelope cost fields, and paths — are §7.3.
+3. **The open items had only proposed calls**; the table in §10 records the calls, and
+   spec B.2.10 items 4 and 10 and B.2.2 now say what the table says.
+4. **Stale status**: the banner, the §3 status column, "freezes with R3 at W15", and the
+   schemas' "DRAFT" headers.
+
+**Cold read.** A fresh subagent was given only `docs/spec.md`, this file, and the ten
+`docs/schemas/*.cddl` files (the schemas are R3's, and it is not implementable without
+them). Findings and calls (B = could change a verdict, code, or digest):
+
+| # | Finding | Call |
+|---|---|---|
+| 1 | B: open items 1, 2, 4, 5, 9 undecided; items 2 and 9 contradicted the spec | **Fixed** (table in §10; the spec corrected). |
+| 2 | B: which draft identifier value | **Fixed** (R1 §1: 2). |
+| 3 | B: "sorted bytewise" | **Fixed** (§7.3). |
+| 4 | B: fault precedence in one input | **Decided** (§7.3): not wire format; single-defect vectors. |
+| 5 | B: record-layer precedence | **Decided** (R2 §6 finding 3; §7.3). |
+| 6 | B: codec versus record codes | **Fixed** (§7.3). The sidecar is a tool file that an archive reader never opens; its failure codes are the tool's and R9 has no obligation to read it. |
+| 7 | B: value-level violations with no code | **Fixed** (§7.3). |
+| 8 | B: seconds range | **Fixed** (§7.3). |
+| 9 | B: path validity | **Fixed** (R4 §3.1). |
+| 10 | B: hash scope of descriptor, key envelope, commit references | **Fixed** (§7.3). |
+| 11 | B: 16 as wire rule or reader limit | **Fixed** (§7.3). |
+| 12 | Sidecar rules (zero tail length, key 7 and 8 cross-checks, name check, `:60` seconds) | **Decided:** a tool file (Appendix A), not archive format; the reference refuses a zero tail length (key 5 > 0), checks the length and the tail hash only, and does not cross-check keys 7 and 8 or the file name. An archive reader needs none of it. Key 7 lists the 4-byte little-endian frame magics, as the numbers in R1 §2. |
+
+Text-only items fixed: "restated from" / "unchanged from v0" wording in the v1 schema's
+commit-ID comment; the D20 item 6 stale open item (g) ("v2 manifest lacks key 12") is
+spec text that §9 already corrected; stale draft wording throughout (banner, §3, §5).
+Dependencies the reader was not given (R1, R2, R4, R5, R6, R7, plan O20/O24, `digest.rs`,
+the golden files) are cross-references; the three commit IDs of §4 cannot be reproduced
+without the three files, which is R9's input, not a gap in the text.
+
+**Calls on the open items.** The nine calls of §10 are confirmed; none changes a byte.
+
+**What the review did not do.** It did not repeat the cold read after the fixes; it did
+not run a fuzz campaign; and the G1 audit's gaps (§7.2) are W16's, not closed here.

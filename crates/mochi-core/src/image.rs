@@ -268,10 +268,29 @@ mod tests {
         assert_eq!(e.code, ErrorCode::MalformedFrame);
     }
 
+    /// The pre-envelope form (a bare SQLite image in a metadata frame) is
+    /// refused at the envelope, never handed to SQLite (T10, Q12).
+    #[test]
+    fn a_bare_image_is_unsupported_not_damage() {
+        let mut frame = mochi_format::registry::METADATA_DELTA
+            .to_le_bytes()
+            .to_vec();
+        let img = real_image();
+        frame.extend_from_slice(&(img.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&img);
+        let e = decode_image_record(
+            &StoredObject::from_loaded(frame),
+            &identity(0),
+            &Limits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnsupportedFeature);
+    }
+
     #[test]
     fn the_writer_refuses_a_payload_that_is_not_a_catalog_of_this_schema() {
         let mut img = real_image();
-        img[63] = 1; // user_version = 1, not IMAGE_RECORD_SCHEMA
+        img[63] = 0; // user_version = 0, the pre-freeze draft, not IMAGE_RECORD_SCHEMA
         assert_eq!(
             encode_image_record(&img, identity(0), false)
                 .unwrap_err()

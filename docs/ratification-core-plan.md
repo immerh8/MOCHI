@@ -32,8 +32,8 @@ and get CI green on Windows and Ubuntu.
 | Core | C8 ladder step 7: bounded salvage scan | `not_attempted`; blocked on a D12 call at that commit; **implemented by W12** (`mochi_core::salvage`) | **W12** (call K19, K20) |
 | Core | DoD row "missing shared dictionary" | Nothing to exercise; K4 refuses the plan | **W10** (K17) |
 | Core | Footer-history accelerator `0x184D2A5E` (§22) | Registered, never written | **W10** (K16: not in 1.0) |
-| R1, R2, R4 | Frame registry, envelopes, DDL | Drafts; all open items decided 2026-10-11 | **W15** (format freeze) |
-| R3 | Canonical serialization and separators | No artifact. The encoding, schemas, and separators exist as drafts in code and CDDL | **W13**, frozen in **W15** |
+| R1, R2, R4 | Frame registry, envelopes, DDL | Drafts; all open items decided 2026-10-11. **Frozen 2026-10-12 by W15 (G12, draft 2)** | **W15** (format freeze) |
+| R3 | Canonical serialization and separators | No artifact at that commit. The encoding, schemas, and separators existed as drafts in code and CDDL. **Written by W13; frozen 2026-10-12 by W15** | **W13**, frozen in **W15** |
 | R5 | Crypto | **Frozen** 2026-10-11 | — |
 | R6 | Erasure coding | **Frozen** 2026-10-12 (W14, G11 met; the row below was the state when this plan was written: draft with independent vectors, 5 open items, G11 not met) | — |
 | R7 | Reports and error codes | Draft; decided items; freezes at Beta | **W19** |
@@ -439,7 +439,7 @@ edit one separator, one schema rule, and one CDDL key, and see each fail.
 and standalone, `r3_cddl.rs`, and the drift tests; the results and the 9 open items are
 in the plan §6 status bullet and in R3 §9 and §10. Two things differ from the text
 above. (1) Codec rejections are not all `RECORD_INVALID`: truncation is `TRUNCATED` and a
-limit overrun is `LIMIT_EXCEEDED` (R3 §1.2, open item 1). (2) The `cddl` crate needs
+limit overrun is `LIMIT_EXCEEDED` (R3 §1.2, open item 1; the call at the W15 freeze is that the code stands, so this text, W13's goal list, and K14's "every rejection … `RECORD_INVALID`" are corrected here). (2) The `cddl` crate needs
 `ast-span`, `ast-comments`, `ast-parent`, `json`, and `additional-controls` enabled to
 compile its CBOR validator, and `[profile.dev.package.cddl] opt-level = 3` to run in
 seconds; both are in the workspace manifests and explained in R3 §8. The crate matches a
@@ -506,6 +506,27 @@ last section.
 
 **Not in this PR:** any byte change other than items 3 and 4. If the review finds one,
 stop; it needs its own Annex B entry first.
+
+**Status (2026-10-12): done.** The review is written into R1 §7, R2 §6, R3 §11, and R4 §6. No byte
+other than the two planned ones changed. Results:
+
+- **Item 1.** The drift test and `r3_cddl.rs` pass.
+- **Items 3 and 4.** `DRAFT_ID` is 2 and R4 `user_version` is 1. Fixtures: `b2` descriptor
+  vectors regenerated (each file differs in exactly one byte, key 3; `reject-descriptor-draft-2`
+  became `-draft-1` and `-draft-3`); `c3` catalog (one byte, offset 63); the `c5`, `c10`, `c11`,
+  and `c12` whole archives regenerated (same sizes; first difference at offset 49, descriptor
+  key 3; the rest follows from hashes, offsets, IDs and, for `c11`, fresh OS-random nonces and
+  keys); `c12` damaged pair rebuilt from its recipe with the byte-for-byte assertion unchanged;
+  `c5`/`c4`/`c2`/`c1` frame vectors **unchanged** (no descriptor hash inside); the frozen
+  draft-1 `c5/reject-archive-bare-image.mochi` and `reject-archive-legacy-v0.mochi` kept, the
+  first now refused as draft 1. The draft-1 reject fixture is `b2/reject-archive-draft-1.mochi`
+  (the pre-freeze `c5/valid-archive-3-commits.mochi`, byte for byte).
+- **Item 5.** Four cold reads. They found no byte to change. They found missing rules that the
+  code already had (the path rules, extent and namespace rules, the fault codes of the binary
+  envelope, the footer validation order, sort order, value-level codes), and the texts now state
+  them; calls on the rest are in each review's table.
+- **Items 2, 6, 7.** Spec "Proposed" removed; D17 to D23 moved to B.1; B.2 status paragraph,
+  §28 status, G12 met, B.2.14 item 1 implemented; README and this plan updated.
 
 **PR:** "Format freeze: R1–R4 frozen, draft 2 (G12)".
 
