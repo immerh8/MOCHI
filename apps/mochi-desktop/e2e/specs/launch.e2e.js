@@ -14,9 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { $, expect } from "@wdio/globals";
 
-const exe = process.platform === "win32" ? "mochi-desktop.exe" : "mochi-desktop";
-const application =
-  process.env.MOCHI_DESKTOP_BINARY ?? path.resolve(import.meta.dirname, "../../../target/debug", exe);
+// Set by wdio.conf.js to the binary it launches.
+const application = process.env.MOCHI_DESKTOP_BINARY;
 const fixture = path.join(process.env.MOCHI_E2E_FIXTURES, "browse.mochi");
 
 /** Start the app again with `args`; resolves with how the second process ended. */
