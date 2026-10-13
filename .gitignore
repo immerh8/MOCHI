@@ -7,3 +7,5 @@ draft_docs/
 # Signing keys and secrets never live in the repo (plan D7).
 *.key
 *.pem
+__pycache__/
+*.pyc
