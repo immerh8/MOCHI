@@ -18,6 +18,9 @@ function fakeBackend(startResult: () => unknown = () => 7) {
   let index = 0;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
+    // The Writer's start-up calls (D2) are tested in write/Writer.test.tsx.
+    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "watch_drops") return null;
     calls.push({ cmd, args: a });
     if (cmd === "start_job") {
       channel = a.onEvent as Channel<JobEvent>;

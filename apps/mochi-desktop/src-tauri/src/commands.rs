@@ -188,18 +188,15 @@ pub fn clear_staged(staging: State<'_, Arc<Staging>>) -> StagedView {
 }
 
 /// Show the save dialog for a new archive (in Rust) and remember the choice.
-/// Cancelling changes nothing.
+/// `null` if the user cancelled the dialog (an earlier choice is not reused).
 #[tauri::command]
 pub async fn choose_destination(
     app: AppHandle,
     staging: State<'_, Arc<Staging>>,
-) -> Result<StagedView, IpcError> {
+) -> Result<Option<StagedView>, IpcError> {
     let staging = Arc::clone(&staging);
     blocking(move || {
-        Ok(match crate::picker::pick_destination(&app) {
-            Some(path) => staging.set_destination(path),
-            None => staging.view(),
-        })
+        Ok(crate::picker::pick_destination(&app).map(|path| staging.set_destination(path)))
     })
     .await
 }
