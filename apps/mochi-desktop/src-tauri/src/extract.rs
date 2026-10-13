@@ -487,6 +487,17 @@ mod tests {
         t
     }
 
+    /// The choice for extracting the whole head: Windows cannot hold the
+    /// markup name, so there the job must be told to skip it (`Stop` would
+    /// refuse before writing, which `stopping_on_a_conflict…` covers).
+    fn whole() -> ConflictChoice {
+        if cfg!(windows) {
+            ConflictChoice::SkipConflicts
+        } else {
+            ConflictChoice::Stop
+        }
+    }
+
     fn request(f: &Fx, seq: u32, keys: &[&str], on_conflict: ConflictChoice) -> JobRequest {
         JobRequest::ExtractArchive {
             handle: f.handle,
@@ -528,7 +539,7 @@ mod tests {
     fn extract_all_writes_the_head_and_leaves_the_archive_untouched() {
         let f = fx();
         let before = std::fs::read(&f.archive).unwrap();
-        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).unwrap());
+        let r = report(go(&f, &request(&f, 1, &[], whole())).unwrap());
         let got = tree(&f.dest);
         assert_eq!(got, head_tree());
         no_temporaries(&got);
@@ -542,7 +553,7 @@ mod tests {
                 .map(|b| b.len() as u64)
                 .sum::<u64>()
         );
-        assert_eq!(r.not_extracted_total, 0);
+        assert_eq!(r.not_extracted_total, u64::from(cfg!(windows)));
         assert_eq!(std::fs::read(&f.archive).unwrap(), before, "read-only");
         #[cfg(unix)]
         {
@@ -576,10 +587,10 @@ mod tests {
     #[test]
     fn the_snapshot_on_screen_is_the_one_extracted() {
         let f = fx();
-        go(&f, &request(&f, 0, &[], ConflictChoice::Stop)).unwrap();
+        go(&f, &request(&f, 0, &[], whole())).unwrap();
         assert_eq!(tree(&f.dest)["docs/a.txt"], file("alpha v1"));
         let g = fx();
-        go(&g, &request(&g, 1, &[], ConflictChoice::Stop)).unwrap();
+        go(&g, &request(&g, 1, &[], whole())).unwrap();
         assert_eq!(tree(&g.dest)["docs/a.txt"], file("alpha v2"));
     }
 
@@ -692,7 +703,13 @@ mod tests {
         crowded(&f);
         let before = tree(&f.dest);
         let e = go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).unwrap_err();
-        assert_eq!(e.code, ErrorCode::NameCollision);
+        // The first conflict in path order: on Windows, the markup name.
+        let first = if cfg!(windows) {
+            ErrorCode::NameUnsupported
+        } else {
+            ErrorCode::NameCollision
+        };
+        assert_eq!(e.code, first);
         assert!(e.message.contains("nothing was written"), "{e}");
         assert_eq!(tree(&f.dest), before);
     }
@@ -786,7 +803,7 @@ mod tests {
         let f = fx();
         let token = CancellationToken::new();
         let sink = CancelAfter(token.clone(), 4);
-        let req = request(&f, 1, &[], ConflictChoice::Stop);
+        let req = request(&f, 1, &[], whole());
         validate(&f.archives, &f.destination, &req).unwrap();
         let e = run(
             &f.archives,
@@ -873,7 +890,7 @@ mod tests {
     fn an_extract_streams_progress_and_one_finished_with_its_report() {
         let f = fx();
         let reg = registry(&f);
-        let (id, events) = finish(&reg, request(&f, 1, &[], ConflictChoice::Stop), u64::MAX);
+        let (id, events) = finish(&reg, request(&f, 1, &[], whole()), u64::MAX);
         assert_eq!(events[0], JobEvent::Started { job_id: id });
         let totals: Vec<(u64, Option<u64>)> = events
             .iter()
@@ -912,7 +929,7 @@ mod tests {
     fn cancelling_over_the_registry_reports_cancelled_and_leaves_no_partial_file() {
         let f = fx();
         let reg = registry(&f);
-        let (_, events) = finish(&reg, request(&f, 1, &[], ConflictChoice::Stop), 3);
+        let (_, events) = finish(&reg, request(&f, 1, &[], whole()), 3);
         assert!(matches!(
             events.last(),
             Some(JobEvent::Finished {
