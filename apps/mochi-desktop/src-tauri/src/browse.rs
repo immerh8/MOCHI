@@ -9,7 +9,7 @@
 //! AGENTS.md "Verification is read-only"), and nothing here writes.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use mochi_core::browse::{BrowseEntry, Children, SnapshotIndex, MAX_PAGE};
@@ -62,6 +62,8 @@ impl View {
 }
 
 struct Session {
+    /// The file this session reads (D2 appends to it through this path).
+    path: PathBuf,
     src: OsReadStorage,
     opts: ReadOptions,
     history: Vec<HistoryEntry>,
@@ -78,6 +80,7 @@ impl Session {
             opts,
             history,
             views,
+            ..
         } = self;
         if let Some(i) = views.iter().position(|v| v.seq == seq) {
             if let Some(v) = views.remove(i) {
@@ -218,6 +221,45 @@ impl Archives {
                 format!("at most {MAX_OPEN} archives can be open at once; close one first"),
             ));
         }
+        let (summary, session) = Self::load(path, opts)?;
+        let mut reg = lock(&self.inner);
+        let handle = reg.last.checked_add(1).ok_or_else(|| {
+            MochiError::new(
+                ErrorCode::LimitExceeded,
+                "this process has opened the maximum number of archives; restart the app",
+            )
+        })?;
+        reg.last = handle;
+        reg.open.insert(handle, Arc::new(Mutex::new(session)));
+        Ok(ArchiveSummary { handle, ..summary })
+    }
+
+    /// The file an open archive was opened from.
+    pub fn path(&self, handle: ArchiveHandle) -> Result<PathBuf> {
+        Ok(lock(&*self.session(handle)?).path.clone())
+    }
+
+    /// Read the archive at the same path again, under the same handle: after
+    /// a commit, so the timeline and snapshots show it. The old session is
+    /// replaced only once the new one has fully opened.
+    pub fn reopen(&self, handle: ArchiveHandle) -> Result<ArchiveSummary> {
+        let (path, opts) = {
+            let session = self.session(handle)?;
+            let s = lock(&session);
+            (s.path.clone(), s.opts.clone())
+        };
+        let (summary, session) = Self::load(&path, opts)?;
+        let mut reg = lock(&self.inner);
+        match reg.open.get_mut(&handle) {
+            Some(slot) => *slot = Arc::new(Mutex::new(session)),
+            None => return Err(invalid("that archive is not open (it was closed)")),
+        }
+        Ok(ArchiveSummary { handle, ..summary })
+    }
+
+    /// Read `path` into a session and its summary (handle 0 until
+    /// registered).
+    fn load(path: &Path, opts: ReadOptions) -> Result<(ArchiveSummary, Session)> {
         let src = OsReadStorage::open(path).map_err(MochiError::from)?;
         let history = commit_history(&src, &opts)?;
         let head = open_head(&src, &opts)?;
@@ -274,21 +316,13 @@ impl Archives {
         let mut views = VecDeque::new();
         views.push_back(View::open(head)?);
         let session = Session {
+            path: path.to_path_buf(),
             src,
             opts,
             history,
             views,
         };
-        let mut reg = lock(&self.inner);
-        let handle = reg.last.checked_add(1).ok_or_else(|| {
-            MochiError::new(
-                ErrorCode::LimitExceeded,
-                "this process has opened the maximum number of archives; restart the app",
-            )
-        })?;
-        reg.last = handle;
-        reg.open.insert(handle, Arc::new(Mutex::new(session)));
-        Ok(ArchiveSummary { handle, ..summary })
+        Ok((summary, session))
     }
 
     /// Close an archive. `false` if it was not open.

@@ -15,6 +15,7 @@ use mochi_core::job::{CancellationToken, JobContext, ProgressEvent, ProgressSink
 use mochi_core::{ErrorCode, MochiError};
 
 use crate::ipc::{IpcError, JobEvent, JobId, JobOutcome, JobRequest};
+use crate::write::{JobDone, Services};
 
 /// Where a job's events go. `send` returns `false` once nobody is listening
 /// (the window was closed or reloaded); the runner then cancels the job.
@@ -26,9 +27,11 @@ pub trait EventSink: Send + Sync + 'static {
 pub type Spawner = dyn FnOnce(Box<dyn FnOnce() + Send + 'static>);
 
 /// The jobs that are running, by ID, with their cancellation tokens.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct JobRegistry {
     inner: Mutex<Registry>,
+    /// What the write jobs (D2) work on.
+    services: Services,
 }
 
 #[derive(Debug, Default)]
@@ -38,6 +41,14 @@ struct Registry {
 }
 
 impl JobRegistry {
+    /// A registry whose write jobs work on `services`.
+    pub fn with_services(services: Services) -> Self {
+        JobRegistry {
+            inner: Mutex::default(),
+            services,
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, Registry> {
         // A poisoned lock only means another thread panicked while holding
         // it; the map itself is still consistent (every update is a single
@@ -53,7 +64,7 @@ impl JobRegistry {
         sink: Arc<dyn EventSink>,
         spawn: Box<Spawner>,
     ) -> Result<JobId, IpcError> {
-        validate(&request)?;
+        validate(&request, &self.services)?;
         let token = CancellationToken::new();
         let id = {
             let mut reg = self.lock();
@@ -97,8 +108,11 @@ impl JobRegistry {
     }
 }
 
-fn validate(request: &JobRequest) -> Result<(), IpcError> {
+fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
     match request {
+        JobRequest::CreateArchive { .. }
+        | JobRequest::AddToArchive { .. }
+        | JobRequest::DeleteFromArchive { .. } => services.validate(request)?,
         JobRequest::SelfTest { steps, step_ms } => {
             if !(1..=crate::self_test::MAX_STEPS).contains(steps)
                 || *step_ms > crate::self_test::MAX_STEP_MS
@@ -189,10 +203,20 @@ fn run_job(
         cancel: token,
     };
     let result = match request {
-        JobRequest::SelfTest { steps, step_ms } => crate::self_test::run(*steps, *step_ms, &ctx),
+        JobRequest::SelfTest { steps, step_ms } => crate::self_test::run(*steps, *step_ms, &ctx)
+            .map(|summary| JobDone {
+                summary,
+                commit: None,
+            }),
+        write => registry.services.run(write, &ctx).unwrap_or_else(|| {
+            Err(MochiError::new(
+                ErrorCode::NotImplemented,
+                "this job kind is not routed",
+            ))
+        }),
     };
     finisher.outcome = Some(match result {
-        Ok(summary) => JobOutcome::Completed { summary },
+        Ok(JobDone { summary, commit }) => JobOutcome::Completed { summary, commit },
         Err(e) if e.code == ErrorCode::Cancelled => JobOutcome::Cancelled,
         Err(e) => JobOutcome::Failed {
             code: e.code.as_str().to_owned(),
