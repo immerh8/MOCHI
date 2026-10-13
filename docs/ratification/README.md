@@ -14,7 +14,7 @@ more precise than the spec and wins for its topic (AGENTS.md, "Sources of truth"
 | R6 | Erasure-coding suite and vectors | C12 | **frozen 2026-10-12** (D21, spec Annex B.2.11; gate G11 met, self-review K11 in §10): `R6-erasure-coding-draft.md` (name kept for links), from `mochi-format/src/parity.rs` and `mochi-core/src/parity.rs`; vectors in `R6-vectors/` from an independent Python implementation, regenerated and diffed by CI; cost measured in `docs/benchmarks/c12-parity.md`; its 5 open items decided at the freeze (none changed a byte) |
 | R7 | Report schema and stable error codes | C7 | **draft 2026-10-11, not frozen** (freezes at Beta): `R7-reports-and-error-codes-draft.md`, from `mochi-core` (`error.rs`, `report.rs` v1, `status.rs`, `exit.rs`, `verify::classify`) and `mochi_cli::exit_code_for` at `57e3a69`; its 6 open items decided 2026-10-11 (delegated) |
 | R8 | Golden valid/corrupt/interrupted archives | all C phases | **built 2026-10-13** (W16, gate G13 met [delegated]): `fixtures/golden/r8/`, 76 cases (21 valid, 38 corrupt, 10 interrupted, 3 copy, 3 salvage, 1 legacy) over the six 1.0 profiles, each with an expected `mochi-interop-summary-v1`; **frozen when written**; mechanical coverage (profiles x classes, the spec 24.2 rows about archive bytes, every reachable violation-class code; exemptions named in the test); 9.6 MiB of a 12 MiB budget; the G1 audit adds 48 vectors in `r8/g1/`. See `fixtures/golden/README.md`. The per-phase sets `c1` to `c12` and `b2` remain |
-| R9 | Independent reader/writer interop results | R1–R8 | not started; planned (W17 by a cold session without the Rust code, W18 results, gate G14; spec B.1 D7 amendment) |
+| R9 | Independent reader/writer interop results | R1–R8 | **met 2026-10-13** (W17 verifier `interop/pyverify`, W18 results, gate G14 met [delegated]): the Python verifier produces the reference `mochi-interop-summary-v1` for all 76 R8 cases in CI (job `r9-interop`, run 38364569151); every disagreement (53 cases, 70 field differences) is in `R9-interop-results.md` with class and resolution; no byte changed, draft 2 stands |
 | R10 | Segmented-location rules | none | post-1.0 |
 
 **Drafts and drift.** R7 is a draft; R1, R2, R3, R4, and R6 were drafts until they froze, written from the code (plan §6,
@@ -39,7 +39,7 @@ remaining calls and orders the work:
    draft identifier at 2 (spec D24) and `user_version` 1. Each ends with its freeze review,
    including a cold reading by a reader given only the spec and that artifact.
 4. R8 is built on the frozen format (W16, G13): done 2026-10-13.
-5. R9 runs against R8 (W17, W18, G14).
+5. R9 runs against R8 (W17, W18, G14): done 2026-10-13.
 6. R7 freezes at Beta (W19, G15).
 
 Freezes are self-reviewed in the form of R5 §12 and reviewed by the owner at the desktop

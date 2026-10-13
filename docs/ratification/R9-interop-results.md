@@ -128,3 +128,18 @@ after that and were resolved as the tag's row above says.
 | `tar-interrupted-after-commit-frame` | `findings` | FI | (a) | 4aa4e1a, addc7e3 |
 | `tar-red-corrupt-within-capacity` | `findings` | RAW | (a) | 4aa4e1a, addc7e3 |
 | `tar-red-interrupted-after-parity` | `findings` | FI | (a) | 4aa4e1a, addc7e3 |
+
+## Final result
+
+* **Final CI run:** [38364569151](https://github.com/immerh8/MOCHI/actions/runs/38364569151), workflow `ci`, run
+  number 117, on commit `ed6661e` (the head before this file's last edit; this edit changes only documentation),
+  conclusion `success`. The `r9-interop` job passed on ubuntu-22.04 (Python 3.10) and ubuntu-24.04 (Python 3.12):
+  pytest, then `compare_r8.py` over `fixtures/golden/r8/`: 76 cases compared, 0 differ.
+* **Versions** (hash-pinned in `interop/pyverify/requirements.txt`): blake3 1.0.8, zstandard 0.25.0, PyNaCl 1.6.2,
+  argon2-cffi 25.1.0, pytest 9.1.1; Python 3.10 and 3.12 in CI (3.13.16 locally); SQLite 3.37 or later;
+  reference side built with Rust 1.91 (`rust-toolchain.toml`). Draft identifier 2, `user_version` 1.
+* **Local checks before the push:** `cargo fmt --all --check`, `cargo clippy --workspace --exclude mochi-desktop
+  --all-targets -- -D warnings`, `cargo test --workspace --exclude mochi-desktop` (957 passed), `ci/check-invariants.sh`,
+  pyverify pytest (315 passed). `mochi-desktop` needs the webkit2gtk system libraries and was left to CI.
+
+R9 verifies every R8 case.

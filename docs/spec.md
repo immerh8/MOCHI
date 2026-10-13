@@ -1395,7 +1395,7 @@ Before claiming preservation readiness, demonstrate:
 
 Until these gates pass, implementations MUST describe support as experimental or draft-compatible.
 
-**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). R7 (G15) and the independent results R9 (G14) are pending, so the description above still applies.
+**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). The independent results R9 (G14) are met (2026-10-13). R7 (G15) is pending, so the description above still applies.
 
 ## 29. Summary of Changes from v1.2
 
@@ -1889,7 +1889,7 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - `fixtures/golden/r8/` covers every 1.0 profile and allowed combination with valid, corrupt, and interrupted archives, plus copy and salvage cases.
   - Coverage is checked by a test: every §24.2 row about archive bytes, and every violation-class error code reachable from archive bytes, has a case. Exemptions are named in the test.
   - The B.2.6 G1 audit is complete in both encodings.
-- **G14 Interoperability (R9).** Pending.
+- **G14 Interoperability (R9).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: CI run 38364569151, job `r9-interop`, 76 of 76 R8 cases equal; results and every disagreement in `docs/ratification/R9-interop-results.md`. No byte changed.
   - The independent verifier (B.1 D7) produces, for every R8 case, an interop summary equal to the reference implementation's, in CI.
   - Every disagreement is resolved at its source and recorded in `docs/ratification/R9-interop-results.md`.
 - **G15 Report freeze (R7).** Pending, at Beta.
