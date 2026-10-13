@@ -1,0 +1,460 @@
+import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { Channel } from "@tauri-apps/api/core";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { afterEach, expect, test } from "vitest";
+
+import { Browser } from "../browser/Browser";
+import type { ArchiveSummary } from "../ipc/browse";
+import type { ExtractPlan, ExtractReport } from "../ipc/extract";
+import type { JobEvent } from "../ipc/jobs";
+import { Extractor } from "./Extractor";
+import type { ExtractorProps } from "./Extractor";
+
+type Internals = { runCallback: (id: number, data: unknown) => void };
+const internals = () =>
+  (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+
+const HOSTILE = '<img src=x onerror="alert(1)">';
+const SELECTED = { key: "6162", name: { text: "docs", verbatim: true } };
+
+function summary(handle = 3): ArchiveSummary {
+  return {
+    handle,
+    file_name: "fake.mochi",
+    archive_id: "ab".repeat(16),
+    profile: { tar_compatible: false, encrypted: false, redundancy_percent: null },
+    commits: [0, 1].map((seq) => ({
+      seq,
+      commit_id: String(seq).repeat(64),
+      time: null,
+      checkpoint: seq === 0,
+      retained: true,
+      expired: false,
+      holds: [],
+    })),
+    retention_error: null,
+  };
+}
+
+function plan(extra: Partial<ExtractPlan> = {}): ExtractPlan {
+  return {
+    destination: "/home/me/out",
+    entries: 5,
+    conflicts: [],
+    conflicts_total: 0,
+    case_insensitive: false,
+    ...extra,
+  };
+}
+
+function report(extra: Partial<ExtractReport> = {}): ExtractReport {
+  return {
+    destination: "/home/me/out",
+    seq: 1,
+    files: 3,
+    directories: 1,
+    bytes: 100,
+    not_extracted: [],
+    not_extracted_total: 0,
+    attribute_notes: [],
+    attributes_unavailable: null,
+    durability_note: null,
+    case_insensitive: false,
+    ...extra,
+  };
+}
+
+/** A fake backend: `plans` are answered in order; the test pushes job events. */
+function backend(plans: (ExtractPlan | null | { error: { code: string; message: string } })[]) {
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  let channel: Channel<JobEvent> | undefined;
+  let index = 0;
+  const next = new Map<number, number>();
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    calls.push({ cmd, args: a });
+    switch (cmd) {
+      case "plan_extract": {
+        const p = plans[Math.min(index++, plans.length - 1)] ?? null;
+        if (p !== null && "error" in p) throw p.error;
+        return p;
+      }
+      case "start_job":
+        channel = a.onEvent as Channel<JobEvent>;
+        return 7;
+      case "cancel_job":
+        return true;
+    }
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  return {
+    calls,
+    job: (m: JobEvent) => {
+      if (!channel) throw new Error("no channel yet");
+      const id = channel.id;
+      const i = next.get(id) ?? 0;
+      next.set(id, i + 1);
+      act(() => internals().runCallback(id, { index: i, message: m }));
+    },
+    planCalls: () => calls.filter((c) => c.cmd === "plan_extract").map((c) => c.args),
+    request: () => calls.find((c) => c.cmd === "start_job")?.args.request,
+  };
+}
+
+afterEach(() => clearMocks());
+
+function renderExtractor(props: Partial<ExtractorProps> = {}) {
+  return render(<Extractor archive={summary()} seq={1} selected={null} {...props} />);
+}
+
+const BANNED = ["backed up", "backup", "safe", "preserved", "secure"];
+
+test("nothing can be extracted without an archive; a selection is needed for 'selected'", () => {
+  backend([plan()]);
+  const { rerender } = render(<Extractor archive={null} seq={null} selected={null} />);
+  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  expect(screen.getByTestId("extract-selected")).toBeDisabled();
+  rerender(<Extractor archive={summary()} seq={1} selected={null} />);
+  expect(screen.getByTestId("extract-all")).toBeEnabled();
+  expect(screen.getByTestId("extract-selected")).toBeDisabled();
+  expect(screen.getByTestId("extract-selected")).toHaveAttribute("title", "Select an entry first");
+  rerender(<Extractor archive={summary()} seq={1} selected={SELECTED} />);
+  expect(screen.getByTestId("extract-selected")).toBeEnabled();
+});
+
+test("extract all: Rust shows the folder dialog, the plan is shown, and the job names no path", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  const panel = await screen.findByTestId("extract-panel");
+  expect(b.planCalls()).toEqual([{ handle: 3, seq: 1, keys: [], pick: true }]);
+  expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/out");
+  expect(screen.getByTestId("extract-scope")).toHaveTextContent("The whole of commit 1 (5 entries)");
+  expect(panel).toHaveTextContent("Extract into a folder only you can modify.");
+  expect(screen.getByTestId("extract-no-conflicts")).toBeInTheDocument();
+  expect(screen.queryByTestId("extract-conflicts")).toBeNull();
+
+  await user.click(screen.getByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  // Only an archive handle, a snapshot, entry keys, and the conflict choice.
+  expect(b.request()).toEqual({
+    kind: "extract_archive",
+    handle: 3,
+    seq: 1,
+    keys: [],
+    on_conflict: "stop",
+  });
+});
+
+test("extract selected sends the selected entry's key and says the folders above are created", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan({ entries: 3 })]);
+  renderExtractor({ selected: SELECTED });
+  await user.click(screen.getByTestId("extract-selected"));
+  await screen.findByTestId("extract-panel");
+  expect(b.planCalls()).toEqual([{ handle: 3, seq: 1, keys: ["6162"], pick: true }]);
+  expect(screen.getByTestId("extract-scope")).toHaveTextContent("docs from commit 1 (3 entries)");
+  expect(screen.getByTestId("extract-panel")).toHaveTextContent("folders above a selected entry are created too");
+  await user.click(screen.getByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  expect(b.request()).toMatchObject({ keys: ["6162"], on_conflict: "stop" });
+});
+
+test("cancelling the folder dialog shows nothing and starts nothing", async () => {
+  const user = userEvent.setup();
+  const b = backend([null]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await act(async () => undefined);
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(b.calls.map((c) => c.cmd)).toEqual(["plan_extract"]);
+});
+
+test("a folder the engine refuses shows the error and no panel", async () => {
+  const user = userEvent.setup();
+  backend([{ error: { code: "UNSUPPORTED_FEATURE", message: "other users can modify this folder" } }]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  expect(await screen.findByTestId("extract-error")).toHaveTextContent(
+    "Could not check the folder (UNSUPPORTED_FEATURE): other users can modify this folder",
+  );
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+});
+
+const CONFLICTS = plan({
+  conflicts_total: 202,
+  conflicts: [
+    {
+      path: { text: HOSTILE, verbatim: true },
+      code: "NAME_COLLISION",
+      reason: "an entry with this name is already in the folder",
+    },
+    {
+      path: { text: "rtl\\u{202e}gpj.exe", verbatim: false },
+      code: "NAME_UNSUPPORTED",
+      reason: "this folder's file system cannot hold the name",
+    },
+  ],
+});
+
+test("conflicts are listed as text before anything is written; the choice is skip, another folder, or close", async () => {
+  const user = userEvent.setup();
+  const b = backend([CONFLICTS]);
+  const { container } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  const list = await screen.findByTestId("extract-conflicts");
+  const items = within(list).getAllByTestId("extract-conflict");
+  expect(items).toHaveLength(2);
+  expect(items[0]).toHaveTextContent(`${HOSTILE} (NAME_COLLISION)`);
+  expect(items[1]).toHaveTextContent("rtl\\u{202e}gpj.exe (escaped) (NAME_UNSUPPORTED)");
+  expect(list).toHaveTextContent("202 entries cannot be extracted into this folder");
+  expect(list).toHaveTextContent("…and 200 more.");
+  expect(screen.getByTestId("extract-conflict-note")).toHaveTextContent("Nothing is overwritten and no name is changed");
+  expect(screen.getByTestId("extract-not-offered")).toHaveTextContent(
+    "Replacing existing items, or keeping both under a new name, is not available yet",
+  );
+  // Archive text stays inert.
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("a[href], [src]")).toBeNull();
+
+  expect(screen.getByTestId("extract-confirm")).toHaveTextContent("Extract the rest, skipping these");
+  await user.click(screen.getByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  expect(b.request()).toMatchObject({ on_conflict: "skip_conflicts" });
+});
+
+test("choose a different folder asks Rust to pick again; check again re-plans the same folder", async () => {
+  const user = userEvent.setup();
+  const b = backend([CONFLICTS, plan({ destination: "/home/me/other" }), plan({ destination: "/home/me/other" })]);
+  renderExtractor({ selected: SELECTED });
+  await user.click(screen.getByTestId("extract-selected"));
+  await screen.findByTestId("extract-conflicts");
+
+  await user.click(screen.getByTestId("extract-change-folder"));
+  await screen.findByTestId("extract-no-conflicts");
+  expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/other");
+  expect(screen.getByTestId("extract-confirm")).toHaveTextContent(/^Extract$/);
+
+  await user.click(screen.getByTestId("extract-recheck"));
+  await act(async () => undefined);
+  expect(b.planCalls().map((c) => c.pick)).toEqual([true, true, false]);
+  // The same selection each time.
+  expect(b.planCalls().map((c) => c.keys)).toEqual([["6162"], ["6162"], ["6162"]]);
+
+  await user.click(screen.getByTestId("extract-close"));
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(b.calls.map((c) => c.cmd)).not.toContain("start_job");
+});
+
+test("progress and cancel: the job is cancelled by id, and the result says what stays", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({ event: "progress", job_id: 7, phase: "restore", completed: 2, total: 5 });
+  expect(screen.getByTestId("extract-progress")).toHaveTextContent("Extracting: 2 of 5 entries");
+  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  expect(screen.getByTestId("extract-confirm")).toBeDisabled();
+
+  await user.click(screen.getByTestId("extract-cancel"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "cancel_job", args: { jobId: 7 } });
+  expect(screen.getByTestId("extract-progress")).toHaveTextContent("(cancelling…)");
+  expect(screen.getByTestId("extract-cancel")).toBeDisabled();
+
+  b.job({ event: "finished", job_id: 7, outcome: { status: "cancelled" } });
+  const status = screen.getByTestId("extract-status");
+  expect(status).toHaveAttribute("data-state", "cancelled");
+  expect(status).toHaveAttribute("data-complete", "false");
+  expect(status).toHaveTextContent("Cancelled. The extraction stopped before it finished.");
+  expect(status).toHaveTextContent("each one complete");
+  expect(screen.queryByTestId("extract-running")).toBeNull();
+  // The panel stays, so the user can try again.
+  expect(screen.getByTestId("extract-panel")).toBeInTheDocument();
+  expect(screen.getByTestId("extract-all")).toBeEnabled();
+});
+
+test("a finished extraction lists what was not extracted and which attributes were not applied, as text", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  const { container } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({
+    event: "finished",
+    job_id: 7,
+    outcome: {
+      status: "completed",
+      summary: "s",
+      extract: report({
+        not_extracted_total: 3,
+        not_extracted: [
+          {
+            path: { text: HOSTILE, verbatim: true },
+            code: "NAME_UNSUPPORTED",
+            reason: { text: "this folder's file system cannot hold the name", verbatim: true },
+          },
+          {
+            path: { text: "line\\u{a}break", verbatim: false },
+            code: "NAME_COLLISION",
+            reason: { text: "an entry with this name is already in the folder", verbatim: true },
+          },
+        ],
+        attribute_notes: [
+          {
+            attribute: "owner and group",
+            count: 3,
+            first_path: { text: "a/b", verbatim: true },
+            reason: { text: "changing the owner needs privilege", verbatim: true },
+          },
+          {
+            attribute: "setuid and setgid bits",
+            count: 1,
+            first_path: { text: "tool", verbatim: true },
+            reason: { text: "setuid/setgid are restored only on request", verbatim: true },
+          },
+        ],
+      }),
+    },
+  });
+  const status = screen.getByTestId("extract-status");
+  expect(status).toHaveAttribute("data-state", "completed");
+  expect(status).toHaveAttribute("data-complete", "false");
+  expect(screen.getByTestId("extract-headline")).toHaveTextContent("3 entries were not extracted.");
+  const items = screen.getAllByTestId("extract-not-extracted-item");
+  expect(items[0]).toHaveTextContent(`${HOSTILE} (NAME_UNSUPPORTED)`);
+  expect(items[1]).toHaveTextContent("line\\u{a}break (escaped) (NAME_COLLISION)");
+  expect(status).toHaveTextContent("…and 1 more.");
+  const notes = screen.getAllByTestId("extract-attribute-note");
+  expect(notes[0]).toHaveTextContent("Not applied: owner and group, on 3 entries. First: a/b.");
+  expect(notes[1]).toHaveTextContent("setuid and setgid bits");
+  expect(status).toHaveTextContent("not a verification of the archive");
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("[src], a[href]")).toBeNull();
+});
+
+test("a clean extraction is plain text: no success styling, no backed-up, safe, or preserved", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  const { container } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({ event: "finished", job_id: 7, outcome: { status: "completed", summary: "s", extract: report() } });
+  expect(screen.getByTestId("extract-headline")).toHaveTextContent(
+    "Extracted 3 files (100 bytes) and 1 folder from commit 1 to /home/me/out.",
+  );
+  expect(screen.getByTestId("extract-status")).toHaveAttribute("data-complete", "true");
+  // The plan is stale once what it described has been written.
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  const text = (container.textContent ?? "").toLowerCase();
+  for (const banned of BANNED) expect(text).not.toContain(banned);
+  expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
+});
+
+test("a failed job shows its code and that nothing was written; a job that cannot start shows the error", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({
+    event: "finished",
+    job_id: 7,
+    outcome: { status: "failed", code: "NAME_COLLISION", message: "1 entry cannot be restored here" },
+  });
+  const status = screen.getByTestId("extract-status");
+  expect(status).toHaveTextContent("Failed (NAME_COLLISION): 1 entry cannot be restored here");
+  expect(status).toHaveTextContent("Nothing was written.");
+  expect(status).toHaveAttribute("data-state", "failed");
+  expect(screen.getByTestId("extract-panel")).toBeInTheDocument();
+});
+
+test("a start that is refused shows the error and leaves the panel usable", async () => {
+  const user = userEvent.setup();
+  mockIPC((cmd) => {
+    if (cmd === "plan_extract") return plan();
+    if (cmd === "start_job") throw { code: "INVALID_ARGUMENT", message: "choose the folder to extract into first" };
+    throw new Error(cmd);
+  });
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  expect(await screen.findByTestId("extract-error")).toHaveTextContent(
+    "Could not start (INVALID_ARGUMENT): choose the folder to extract into first",
+  );
+  expect(screen.getByTestId("extract-panel")).toBeInTheDocument();
+  expect(screen.queryByTestId("extract-running")).toBeNull();
+});
+
+test("showing another snapshot drops the plan and the last result", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  const { rerender } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await screen.findByTestId("extract-panel");
+  rerender(<Extractor archive={summary()} seq={0} selected={null} />);
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(b.calls.map((c) => c.cmd)).not.toContain("start_job");
+});
+
+test("the browser shows the extract buttons and 'selected' follows the details pane", async () => {
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    switch (cmd) {
+      case "watch_drops":
+        return null;
+      case "staged_sources":
+        return { items: [], destination: null };
+      case "open_archive":
+        return summary();
+      case "open_snapshot":
+        return {
+          seq: a.seq,
+          commit_id: "c".repeat(64),
+          entries: 1,
+          root_dirs: 0,
+          root_files: 1,
+          catalog_source: { source: "image" },
+        };
+      case "list_children":
+        return {
+          total: 1,
+          offset: 0,
+          entries: [
+            { key: "6162", name: { text: "ab", verbatim: true }, kind: "file", size: "3", child_dirs: 0, child_files: 0 },
+          ],
+        };
+      case "entry_details":
+        return {
+          key: "6162",
+          path: { text: "ab", verbatim: true },
+          kind: "file",
+          size: "3",
+          content_hash: "00",
+          file_version_id: "11",
+          attributes: { state: "recorded", posix: null, windows: null, mtime: null },
+        };
+    }
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  const user = userEvent.setup();
+  render(<Browser />);
+  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  await user.click(screen.getByTestId("open-archive"));
+  await screen.findByTestId("archive-meta");
+  expect(screen.getByTestId("extract-all")).toBeEnabled();
+  expect(screen.getByTestId("extract-selected")).toBeDisabled();
+  await user.click(await screen.findByTestId("entry"));
+  await screen.findByTestId("details");
+  expect(screen.getByTestId("extract-selected")).toBeEnabled();
+});

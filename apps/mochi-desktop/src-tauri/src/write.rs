@@ -315,6 +315,8 @@ pub fn on_drag_drop(event: &DragDropEvent, staging: &Staging, watch: &DropWatch)
 pub struct Services {
     pub archives: Arc<Archives>,
     pub staging: Arc<Staging>,
+    /// The folder the user chose to extract into (D3).
+    pub destination: Arc<crate::extract::Destination>,
 }
 
 /// What a finished job reports.
@@ -322,6 +324,8 @@ pub struct Services {
 pub struct JobDone {
     pub summary: String,
     pub commit: Option<Box<CommitReport>>,
+    /// Set by the extract job (D3).
+    pub extract: Option<Box<crate::ipc::ExtractReport>>,
 }
 
 impl Services {
@@ -329,6 +333,9 @@ impl Services {
     pub fn validate(&self, request: &JobRequest) -> Result<()> {
         match request {
             JobRequest::SelfTest { .. } => Ok(()),
+            JobRequest::ExtractArchive { .. } => {
+                crate::extract::validate(&self.archives, &self.destination, request)
+            }
             JobRequest::CreateArchive { .. } => {
                 let t = self.staging.take();
                 if t.items.is_empty() {
@@ -358,11 +365,14 @@ impl Services {
         }
     }
 
-    /// Run a write job. Only the three D2 requests; the caller routes
-    /// the rest.
+    /// Run a write or extract job. Only the D2 and D3 requests; the caller
+    /// routes the rest.
     pub fn run(&self, request: &JobRequest, ctx: &JobContext<'_>) -> Option<Result<JobDone>> {
         Some(match request {
             JobRequest::SelfTest { .. } => return None,
+            JobRequest::ExtractArchive { .. } => {
+                crate::extract::run(&self.archives, &self.destination, request, ctx)
+            }
             JobRequest::CreateArchive {
                 preset,
                 tar_compatible,
@@ -581,6 +591,7 @@ fn done(
             outcome.status.as_str()
         ),
         commit: Some(Box::new(commit)),
+        extract: None,
     }
 }
 

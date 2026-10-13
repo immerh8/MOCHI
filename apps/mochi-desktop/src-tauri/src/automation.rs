@@ -16,8 +16,10 @@
 //! (a new app per file, so the queue starts over): `MOCHI_E2E_PICK_FILE` names
 //! a text file with one path per line, which a spec rewrites before its
 //! clicks; its lines are used first, then `MOCHI_E2E_PICK`. `MOCHI_E2E_PACE_MS`
-//! slows the walk of a create or add by that many milliseconds per entry, so
-//! that a spec can cancel one deterministically (`crate::write::Tree`).
+//! slows the walk of a create or add, and an extraction (D3), by that many
+//! milliseconds per entry, so that a spec can cancel one deterministically
+//! (`crate::write::Tree`, `crate::extract`). The folder dialog of an extraction
+//! takes its path from the same pick queue.
 
 use tauri::{App, WebviewWindowBuilder, Wry};
 

@@ -71,6 +71,21 @@ pub fn pick_destination<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     Some(with_extension(path))
 }
 
+/// Show the folder dialog for an extraction (plan D3). `None` if the user
+/// cancelled. Blocks: call it off the async runtime.
+pub fn pick_extract_folder<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Extract to…")
+        .blocking_pick_folder()?
+        .into_path()
+        .ok()
+}
+
 /// `path` with `.mochi` appended when it has no extension.
 pub fn with_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {

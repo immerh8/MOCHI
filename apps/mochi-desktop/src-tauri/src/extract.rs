@@ -1,0 +1,1113 @@
+//! Extracting from the desktop app (plan D3): the folder the user chose, the
+//! plan that shows what would collide before anything is written, and the job
+//! that restores. Thin over `mochi-core` (AGENTS.md "No format logic in the UI
+//! or in Tauri commands"): every byte that reaches the disk is written by the
+//! C6 restore engine (`mochi_core::restore`), which rejects unsupported
+//! names, never follows a link, never overwrites, and publishes a file only
+//! after its chunks and content hash verified. This module keeps the chosen
+//! folder, calls the engine, and converts its report. Independent of Tauri
+//! (the dialog is shown by `commands.rs`), so it is tested without a window.
+//!
+//! # The webview names no path
+//!
+//! The folder comes from a native dialog shown by Rust. The webview sees its
+//! display text and the plan, and asks for a job by archive handle, snapshot,
+//! and entry keys. A script in the webview cannot make the app write
+//! anywhere the user did not pick, and the app needs no `fs` or `dialog`
+//! permission.
+//!
+//! # Rules (delegated decisions, recorded in plan D3)
+//!
+//! * **Collisions.** The engine has exactly one policy: an entry whose name
+//!   exists in the folder, or that the folder treats as another entry's name,
+//!   is skipped, and nothing is overwritten or renamed. [`plan`] shows the
+//!   list before anything is written; the job either stops
+//!   ([`ConflictChoice::Stop`]) or skips them ([`ConflictChoice::SkipConflicts`]).
+//!   Keep-both and overwrite are not offered: the engine lacks them, and the
+//!   app does not invent them (plan D3 "Gap").
+//! * **Setuid and setgid are never restored** (plan O6: only on explicit
+//!   request, and the app makes no request), and the report says so.
+//! * **Cancellation.** The engine discards the file it is writing and stops;
+//!   files already published stay, each complete and verified. Directories
+//!   made so far keep their private creation modes, because attributes are
+//!   applied at the end. The outcome is `cancelled` and carries no counts.
+//! * **An extraction is not a verification** (spec §23.3). The report speaks
+//!   only of what it extracted.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
+
+use mochi_core::catalog::path::ArchivePath;
+use mochi_core::job::JobContext;
+use mochi_core::restore::{
+    preflight_selected, restore_selected, ExceptionKind, Preflight, RestoreOptions, RestoreReport,
+};
+use mochi_core::storage::os::OsRestoreDir;
+use mochi_core::storage::{AttributeKind, CaseBehavior, DirectoryDurability};
+use mochi_core::{ErrorCode, MochiError, Result};
+
+use crate::browse::{parse_key, Archives};
+use crate::ipc::{
+    AttributeNote, ConflictChoice, ConflictView, ExtractPlan, ExtractReport, JobRequest, NameText,
+    NotExtractedView, PathKey,
+};
+use crate::write::JobDone;
+
+/// Most entries one extract may name.
+pub const MAX_KEYS: usize = 10_000;
+
+/// Conflicts a plan lists (the total is always given).
+pub const MAX_CONFLICTS_SHOWN: usize = 200;
+
+/// Entries a report lists as not extracted (the total is always given).
+pub const MAX_NOT_EXTRACTED_SHOWN: usize = 1_000;
+
+fn invalid(what: impl Into<String>) -> MochiError {
+    MochiError::new(ErrorCode::InvalidArgument, what)
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    // Only a path lives behind this lock; a panic elsewhere cannot leave it
+    // half-updated.
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The folder the user chose to extract into, kept in Rust.
+#[derive(Debug, Default)]
+pub struct Destination {
+    chosen: Mutex<Option<PathBuf>>,
+}
+
+impl Destination {
+    pub fn get(&self) -> Option<PathBuf> {
+        lock(&self.chosen).clone()
+    }
+
+    pub fn set(&self, folder: PathBuf) {
+        *lock(&self.chosen) = Some(folder);
+    }
+}
+
+fn selection(keys: &[PathKey]) -> Result<Vec<ArchivePath>> {
+    if keys.len() > MAX_KEYS {
+        return Err(invalid(format!(
+            "an extract names at most {MAX_KEYS} entries"
+        )));
+    }
+    keys.iter().map(|k| parse_key(k)).collect()
+}
+
+/// `text` as one escaped line: engine and OS messages can carry archive
+/// bytes, and the UI shows them as text only.
+fn escaped(text: &str) -> NameText {
+    NameText::of(text.as_bytes())
+}
+
+/// Why an entry was not extracted, as one sentence.
+fn reason(kind: &ExceptionKind) -> NameText {
+    match kind {
+        ExceptionKind::Collision => NameText {
+            text: "an entry with this name is already in the folder, or the folder treats the \
+                   name as the same as another entry's; nothing was overwritten"
+                .to_owned(),
+            verbatim: true,
+        },
+        ExceptionKind::UnsupportedName(issue) => NameText {
+            text: format!("this folder's file system cannot hold the name: {issue}"),
+            verbatim: true,
+        },
+        ExceptionKind::ParentNotRestored { .. } => NameText {
+            text: "skipped because the folder it belongs to was not extracted".to_owned(),
+            verbatim: true,
+        },
+        ExceptionKind::Integrity { message, .. } => escaped(&format!(
+            "the content failed its check against the archive's hashes and was not written: \
+             {message}"
+        )),
+        ExceptionKind::Failed { message, .. } => escaped(message),
+    }
+}
+
+fn attribute_name(kind: AttributeKind) -> &'static str {
+    match kind {
+        AttributeKind::Mtime => "modification time",
+        AttributeKind::Mode => "permissions",
+        AttributeKind::SetId => "setuid and setgid bits",
+        AttributeKind::Ownership => "owner and group",
+        AttributeKind::ReadOnly => "read-only bit",
+        AttributeKind::HiddenOrSystem => "hidden and system bits",
+    }
+}
+
+fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Refuse a request that cannot work, before a job starts.
+pub fn validate(
+    archives: &Archives,
+    destination: &Destination,
+    request: &JobRequest,
+) -> Result<()> {
+    let JobRequest::ExtractArchive {
+        handle, seq, keys, ..
+    } = request
+    else {
+        return Err(invalid("not an extract request"));
+    };
+    archives.path(*handle)?;
+    let _ = seq; // an unknown snapshot is refused when the job opens it
+    selection(keys)?;
+    if destination.get().is_none() {
+        return Err(invalid("choose the folder to extract into first"));
+    }
+    Ok(())
+}
+
+/// What extracting `keys` of snapshot `seq` would meet in the folder, found
+/// before anything is written. `picked` is a folder the user just chose (it
+/// becomes the destination once the plan succeeds); `None` re-checks the one
+/// chosen earlier.
+///
+/// The folder must be one the engine accepts as a root (on Linux, owned by
+/// the user and not writable by others): otherwise the plan fails with the
+/// engine's error and nothing was written.
+pub fn plan(
+    archives: &Archives,
+    destination: &Destination,
+    picked: Option<PathBuf>,
+    handle: u32,
+    seq: u32,
+    keys: &[PathKey],
+) -> Result<ExtractPlan> {
+    let folder = match &picked {
+        Some(p) => p.clone(),
+        None => destination
+            .get()
+            .ok_or_else(|| invalid("choose the folder to extract into first"))?,
+    };
+    let wanted = selection(keys)?;
+    let (_src, head, _opts) = archives.open_for_read(handle, u64::from(seq))?;
+    let mut root = OsRestoreDir::open(&folder)?;
+    let (pre, entries) = preflight_selected(&head, &wanted, &mut root)?;
+    if let Some(p) = picked {
+        destination.set(p);
+    }
+    Ok(plan_view(&folder, &pre, entries))
+}
+
+/// The preflight as IPC text: the first conflicts in path order, the total,
+/// and the folder's case behaviour.
+fn plan_view(folder: &Path, pre: &Preflight, entries: u64) -> ExtractPlan {
+    let conflicts = pre
+        .exceptions
+        .iter()
+        .take(MAX_CONFLICTS_SHOWN)
+        .map(|(path, kind)| ConflictView {
+            path: NameText::of(path.as_stored()),
+            code: kind.code().as_str().to_owned(),
+            reason: reason(kind).text,
+        })
+        .collect();
+    ExtractPlan {
+        destination: folder.display().to_string(),
+        entries: u32::try_from(entries).unwrap_or(u32::MAX),
+        conflicts,
+        conflicts_total: count(pre.exceptions.len()),
+        case_insensitive: pre.case_behavior == CaseBehavior::Insensitive,
+    }
+}
+
+/// E2E builds only: slows the restore per entry (`MOCHI_E2E_PACE_MS`) so
+/// that a spec can cancel one deterministically. Shipped builds never read
+/// the variable.
+#[cfg(feature = "e2e")]
+struct Paced<'a>(&'a dyn mochi_core::job::ProgressSink);
+
+#[cfg(feature = "e2e")]
+impl mochi_core::job::ProgressSink for Paced<'_> {
+    fn report(&self, event: &mochi_core::job::ProgressEvent) {
+        self.0.report(event);
+        if let Some(ms) = std::env::var("MOCHI_E2E_PACE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+    }
+}
+
+/// Run an extract job.
+pub fn run(
+    archives: &Archives,
+    destination: &Destination,
+    request: &JobRequest,
+    ctx: &JobContext<'_>,
+) -> Result<JobDone> {
+    let JobRequest::ExtractArchive {
+        handle,
+        seq,
+        keys,
+        on_conflict,
+    } = request
+    else {
+        return Err(invalid("not an extract request"));
+    };
+    let wanted = selection(keys)?;
+    let folder = destination
+        .get()
+        .ok_or_else(|| invalid("choose the folder to extract into first"))?;
+    let (src, head, opts) = archives.open_for_read(*handle, u64::from(*seq))?;
+    let root = OsRestoreDir::open(&folder)?;
+    let options = RestoreOptions {
+        restore_setid: false,
+        refuse_on_preflight_exceptions: *on_conflict == ConflictChoice::Stop,
+    };
+    #[cfg(feature = "e2e")]
+    let paced = Paced(ctx.progress);
+    #[cfg(feature = "e2e")]
+    let ctx = &JobContext {
+        progress: &paced,
+        cancel: ctx.cancel,
+    };
+    let report = restore_selected(&src, &head, &wanted, root, &options, &opts, ctx)?;
+    let view = report_view(&report, &folder, *seq);
+    let summary = format!(
+        "extracted {} file{} and {} folder{} to {}{}",
+        view.files,
+        if view.files == 1 { "" } else { "s" },
+        view.directories,
+        if view.directories == 1 { "" } else { "s" },
+        view.destination,
+        if view.not_extracted_total == 0 {
+            String::new()
+        } else {
+            format!("; {} not extracted", view.not_extracted_total)
+        }
+    );
+    Ok(JobDone {
+        summary,
+        commit: None,
+        extract: Some(Box::new(view)),
+    })
+}
+
+/// The engine's report as IPC text (archive strings escaped).
+pub fn report_view(report: &RestoreReport, folder: &Path, seq: u32) -> ExtractReport {
+    let not_extracted = report
+        .exceptions
+        .iter()
+        .take(MAX_NOT_EXTRACTED_SHOWN)
+        .map(|e| NotExtractedView {
+            path: NameText::of(e.path.as_stored()),
+            code: e.kind.code().as_str().to_owned(),
+            reason: reason(&e.kind),
+        })
+        .collect();
+    let mut by_kind: std::collections::BTreeMap<AttributeKind, (u64, &_)> =
+        std::collections::BTreeMap::new();
+    for e in &report.attribute_exceptions {
+        by_kind.entry(e.issue.attribute).or_insert((0, e)).0 += 1;
+    }
+    let attribute_notes = by_kind
+        .into_iter()
+        .map(|(kind, (count, first))| AttributeNote {
+            attribute: attribute_name(kind).to_owned(),
+            count,
+            first_path: NameText::of(first.path.as_stored()),
+            reason: escaped(&first.issue.reason),
+        })
+        .collect();
+    ExtractReport {
+        destination: folder.display().to_string(),
+        seq,
+        files: report.files,
+        directories: report.directories,
+        bytes: report.bytes,
+        not_extracted,
+        not_extracted_total: report.exceptions.len() as u64,
+        attribute_notes,
+        attributes_unavailable: report.attributes_unavailable.as_deref().map(escaped),
+        durability_note: match &report.directory_durability {
+            DirectoryDurability::Confirmed => None,
+            DirectoryDurability::Unconfirmed(why) => Some(why.clone()),
+        },
+        case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    use mochi_core::job::{CancellationToken, NullProgress, ProgressEvent, ProgressSink};
+    use mochi_core::manifest::{Attributes, Mtime, PosixAttributes};
+    use mochi_core::publish::{ArchiveWriter, ReadOptions, Transaction};
+    use mochi_core::restore::{AttributeException, RestoreException};
+    use mochi_core::storage::os::OsStorage;
+    use mochi_core::storage::AttributeIssue;
+    use mochi_testkit::archive::{test_options, Job};
+    use mochi_testkit::SeqIds;
+
+    use super::*;
+    use crate::ipc::{JobEvent, JobOutcome};
+    use crate::jobs::{EventSink, JobRegistry};
+    use crate::write::Services;
+
+    type Tree = BTreeMap<String, Option<Vec<u8>>>;
+
+    const HOSTILE: &str = "<img src=x onerror=alert(1)>";
+    const BIDI: &str = "rtl\u{202E}gpj.exe";
+
+    fn attrs(mode: u32) -> Attributes {
+        Attributes {
+            posix: Some(PosixAttributes {
+                mode,
+                uid: 1000,
+                gid: 1000,
+            }),
+            windows: None,
+            mtime: Some(Mtime {
+                secs: 1_700_000_000,
+                nanos: 0,
+            }),
+        }
+    }
+
+    fn p(s: &str) -> ArchivePath {
+        ArchivePath::from_stored(s.as_bytes()).unwrap()
+    }
+
+    /// Two commits. The head holds: `docs/`, `docs/a.txt` ("alpha v2"),
+    /// `docs/deep/`, `docs/deep/b.txt`, `top.txt`, `tool` (setuid), and
+    /// names that are markup and bidi text. Commit 0 had `docs/a.txt` as
+    /// "alpha v1".
+    fn archive(dir: &Path) -> PathBuf {
+        let path = dir.join("fixture.mochi");
+        let mut w = ArchiveWriter::create(
+            OsStorage::create_new(&path).unwrap(),
+            Box::new(SeqIds::new(9)),
+            test_options(),
+        )
+        .unwrap();
+        let job = Job::new();
+        let mut tx = Transaction::new();
+        tx.put_dir(p("docs"), attrs(0o755));
+        tx.put_file(p("docs/a.txt"), b"alpha v1".to_vec(), attrs(0o644));
+        tx.put_dir(p("docs/deep"), attrs(0o755));
+        tx.put_file(p("docs/deep/b.txt"), b"bravo".to_vec(), attrs(0o644));
+        tx.put_file(p("top.txt"), b"top".to_vec(), attrs(0o640));
+        tx.put_file(p("tool"), b"#!tool".to_vec(), attrs(0o4755));
+        tx.put_file(p(HOSTILE), b"markup".to_vec(), attrs(0o644));
+        tx.put_file(p(BIDI), b"bidi".to_vec(), attrs(0o644));
+        w.commit(tx, &job.ctx()).unwrap();
+        let mut tx = Transaction::new();
+        tx.put_file(p("docs/a.txt"), b"alpha v2".to_vec(), attrs(0o644));
+        w.commit(tx, &job.ctx()).unwrap();
+        w.close().unwrap();
+        path
+    }
+
+    struct Fx {
+        tmp: tempfile::TempDir,
+        archive: PathBuf,
+        dest: PathBuf,
+        archives: Arc<Archives>,
+        destination: Arc<Destination>,
+        handle: u32,
+    }
+
+    fn fx() -> Fx {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = archive(tmp.path());
+        let dest = tmp.path().join("out");
+        std::fs::create_dir(&dest).unwrap();
+        let archives = Arc::new(Archives::default());
+        let handle = archives
+            .open(&archive, ReadOptions::default())
+            .unwrap()
+            .handle;
+        let destination = Arc::new(Destination::default());
+        destination.set(dest.clone());
+        Fx {
+            tmp,
+            archive,
+            dest,
+            archives,
+            destination,
+            handle,
+        }
+    }
+
+    fn walk(base: &Path, dir: &Path, out: &mut Tree) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let rel = e
+                .path()
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if e.file_type().unwrap().is_dir() {
+                out.insert(rel, None);
+                walk(base, &e.path(), out);
+            } else {
+                out.insert(rel, Some(std::fs::read(e.path()).unwrap()));
+            }
+        }
+    }
+
+    fn tree(root: &Path) -> Tree {
+        let mut out = Tree::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    fn file(s: &str) -> Option<Vec<u8>> {
+        Some(s.as_bytes().to_vec())
+    }
+
+    /// The head's namespace as the destination can hold it: Windows cannot
+    /// hold the markup name.
+    fn head_tree() -> Tree {
+        let mut t = Tree::new();
+        t.insert("docs".into(), None);
+        t.insert("docs/a.txt".into(), file("alpha v2"));
+        t.insert("docs/deep".into(), None);
+        t.insert("docs/deep/b.txt".into(), file("bravo"));
+        t.insert("top.txt".into(), file("top"));
+        t.insert("tool".into(), file("#!tool"));
+        t.insert(BIDI.into(), file("bidi"));
+        if !cfg!(windows) {
+            t.insert(HOSTILE.into(), file("markup"));
+        }
+        t
+    }
+
+    fn request(f: &Fx, seq: u32, keys: &[&str], on_conflict: ConflictChoice) -> JobRequest {
+        JobRequest::ExtractArchive {
+            handle: f.handle,
+            seq,
+            keys: keys.iter().map(|k| hex(k.as_bytes())).collect(),
+            on_conflict,
+        }
+    }
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn go(f: &Fx, req: &JobRequest) -> Result<JobDone> {
+        validate(&f.archives, &f.destination, req)?;
+        let cancel = CancellationToken::new();
+        run(
+            &f.archives,
+            &f.destination,
+            req,
+            &JobContext {
+                progress: &NullProgress,
+                cancel: &cancel,
+            },
+        )
+    }
+
+    fn report(done: JobDone) -> ExtractReport {
+        *done.extract.expect("an extract report")
+    }
+
+    fn no_temporaries(t: &Tree) {
+        assert!(t.keys().all(|k| !k.contains(".mochi-restore.")), "{t:?}");
+    }
+
+    // ---- extract all, a snapshot, a selection ----
+
+    #[test]
+    fn extract_all_writes_the_head_and_leaves_the_archive_untouched() {
+        let f = fx();
+        let before = std::fs::read(&f.archive).unwrap();
+        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).unwrap());
+        let got = tree(&f.dest);
+        assert_eq!(got, head_tree());
+        no_temporaries(&got);
+        let files = head_tree().values().filter(|v| v.is_some()).count() as u64;
+        assert_eq!((r.files, r.directories), (files, 2));
+        assert_eq!(
+            r.bytes,
+            head_tree()
+                .values()
+                .flatten()
+                .map(|b| b.len() as u64)
+                .sum::<u64>()
+        );
+        assert_eq!(r.not_extracted_total, 0);
+        assert_eq!(std::fs::read(&f.archive).unwrap(), before, "read-only");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let m = std::fs::metadata(f.dest.join("top.txt")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o7777, 0o640);
+            assert_eq!(m.mtime(), 1_700_000_000);
+        }
+    }
+
+    /// The windows case: the markup name is reported, as text.
+    #[test]
+    fn a_name_the_folder_cannot_hold_is_reported_not_renamed() {
+        let f = fx();
+        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap());
+        if cfg!(windows) {
+            let e = r
+                .not_extracted
+                .iter()
+                .find(|e| e.path.text == HOSTILE)
+                .expect("the markup name is listed");
+            assert_eq!(e.code, "NAME_UNSUPPORTED");
+            assert!(e.path.verbatim, "markup is shown as it is, as text");
+            assert_eq!(r.not_extracted_total, 1);
+        } else {
+            assert!(r.not_extracted.is_empty());
+            assert!(f.dest.join(HOSTILE).exists());
+        }
+    }
+
+    #[test]
+    fn the_snapshot_on_screen_is_the_one_extracted() {
+        let f = fx();
+        go(&f, &request(&f, 0, &[], ConflictChoice::Stop)).unwrap();
+        assert_eq!(tree(&f.dest)["docs/a.txt"], file("alpha v1"));
+        let g = fx();
+        go(&g, &request(&g, 1, &[], ConflictChoice::Stop)).unwrap();
+        assert_eq!(tree(&g.dest)["docs/a.txt"], file("alpha v2"));
+    }
+
+    #[test]
+    fn a_selected_file_comes_with_its_folders_and_nothing_else() {
+        let f = fx();
+        let r = report(
+            go(
+                &f,
+                &request(&f, 1, &["docs/deep/b.txt"], ConflictChoice::Stop),
+            )
+            .unwrap(),
+        );
+        let mut want = Tree::new();
+        want.insert("docs".into(), None);
+        want.insert("docs/deep".into(), None);
+        want.insert("docs/deep/b.txt".into(), file("bravo"));
+        assert_eq!(tree(&f.dest), want);
+        assert_eq!((r.files, r.directories), (1, 2));
+    }
+
+    #[test]
+    fn a_selected_folder_brings_its_subtree_and_several_selections_combine() {
+        let f = fx();
+        go(&f, &request(&f, 1, &["docs"], ConflictChoice::Stop)).unwrap();
+        let want: Tree = head_tree()
+            .into_iter()
+            .filter(|(k, _)| k.starts_with("docs"))
+            .collect();
+        assert_eq!(tree(&f.dest), want);
+
+        let g = fx();
+        go(
+            &g,
+            &request(&g, 1, &["top.txt", "tool"], ConflictChoice::Stop),
+        )
+        .unwrap();
+        let want: Tree = head_tree()
+            .into_iter()
+            .filter(|(k, _)| k == "top.txt" || k == "tool")
+            .collect();
+        assert_eq!(tree(&g.dest), want);
+    }
+
+    #[test]
+    fn an_entry_the_snapshot_lacks_is_refused_before_anything_is_written() {
+        let f = fx();
+        let e = go(&f, &request(&f, 1, &["nope"], ConflictChoice::Stop)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(tree(&f.dest).is_empty());
+        let e = plan(
+            &f.archives,
+            &f.destination,
+            None,
+            f.handle,
+            1,
+            &[hex(b"nope")],
+        )
+        .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        let e = go(&f, &request(&f, 9, &[], ConflictChoice::Stop)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument, "no commit 9");
+    }
+
+    // ---- collisions ----
+
+    /// An existing `top.txt`, an existing folder `docs`, and an existing
+    /// file named like the bidi entry.
+    fn crowded(f: &Fx) {
+        std::fs::write(f.dest.join("top.txt"), b"mine").unwrap();
+        std::fs::create_dir(f.dest.join("docs")).unwrap();
+        std::fs::write(f.dest.join("docs/keep.txt"), b"keep").unwrap();
+        std::fs::write(f.dest.join(BIDI), b"mine too").unwrap();
+    }
+
+    #[test]
+    fn the_plan_lists_what_would_collide_and_writes_nothing() {
+        let f = fx();
+        crowded(&f);
+        let before = tree(&f.dest);
+        let plan = plan(&f.archives, &f.destination, None, f.handle, 1, &[]).unwrap();
+        assert_eq!(tree(&f.dest), before, "the plan wrote nothing");
+        assert_eq!(plan.conflicts_total, 3 + u32::from(cfg!(windows)));
+        let mut codes: Vec<(String, String)> = plan
+            .conflicts
+            .iter()
+            .map(|c| (c.path.text.clone(), c.code.clone()))
+            .collect();
+        codes.sort();
+        let mut want = vec![
+            ("docs".to_owned(), "NAME_COLLISION".to_owned()),
+            (
+                "rtl\\u{202e}gpj.exe".to_owned(),
+                "NAME_COLLISION".to_owned(),
+            ),
+            ("top.txt".to_owned(), "NAME_COLLISION".to_owned()),
+        ];
+        if cfg!(windows) {
+            want.push((HOSTILE.to_owned(), "NAME_UNSUPPORTED".to_owned()));
+        }
+        want.sort();
+        assert_eq!(codes, want);
+        assert_eq!(plan.entries, 8);
+        assert_eq!(plan.destination, f.dest.display().to_string());
+    }
+
+    #[test]
+    fn stopping_on_a_conflict_writes_nothing_and_keeps_every_existing_byte() {
+        let f = fx();
+        crowded(&f);
+        let before = tree(&f.dest);
+        let e = go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::NameCollision);
+        assert!(e.message.contains("nothing was written"), "{e}");
+        assert_eq!(tree(&f.dest), before);
+    }
+
+    #[test]
+    fn skipping_conflicts_extracts_the_rest_overwrites_nothing_and_reports_each() {
+        let f = fx();
+        crowded(&f);
+        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap());
+        let got = tree(&f.dest);
+        assert_eq!(got["top.txt"], file("mine"), "never overwritten");
+        assert_eq!(got["docs/keep.txt"], file("keep"));
+        assert_eq!(got[BIDI], file("mine too"));
+        assert!(
+            !got.contains_key("docs/a.txt"),
+            "a skipped folder's subtree is skipped"
+        );
+        assert_eq!(got["tool"], file("#!tool"), "the rest is extracted");
+        no_temporaries(&got);
+        let by_path: BTreeMap<&str, &NotExtractedView> = r
+            .not_extracted
+            .iter()
+            .map(|e| (e.path.text.as_str(), e))
+            .collect();
+        assert_eq!(by_path["top.txt"].code, "NAME_COLLISION");
+        assert_eq!(by_path["docs"].code, "NAME_COLLISION");
+        // Entries inside the skipped folder are skipped with its cause.
+        assert_eq!(by_path["docs/a.txt"].code, "NAME_COLLISION");
+        assert!(by_path["docs/a.txt"].reason.text.contains("not extracted"));
+        assert_eq!(
+            r.not_extracted_total,
+            r.not_extracted.len() as u64,
+            "all listed (fewer than the cap)"
+        );
+    }
+
+    /// Archive text in the report is escaped: the bidi override is not
+    /// shown raw, and is marked as escaped.
+    #[test]
+    fn names_in_the_report_are_escaped_text() {
+        let f = fx();
+        crowded(&f);
+        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap());
+        let e = r
+            .not_extracted
+            .iter()
+            .find(|e| e.path.text.starts_with("rtl"))
+            .unwrap();
+        assert_eq!(e.path.text, "rtl\\u{202e}gpj.exe");
+        assert!(!e.path.verbatim);
+        assert!(!e.path.text.contains('\u{202E}'));
+    }
+
+    // ---- attributes ----
+
+    #[cfg(unix)]
+    #[test]
+    fn setuid_is_never_restored_and_the_report_says_so() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = fx();
+        let r = report(go(&f, &request(&f, 1, &["tool"], ConflictChoice::Stop)).unwrap());
+        let mode = std::fs::metadata(f.dest.join("tool"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7000, 0, "no setuid bit: {mode:o}");
+        assert_eq!(mode & 0o777, 0o755);
+        let note = r
+            .attribute_notes
+            .iter()
+            .find(|n| n.attribute == "setuid and setgid bits")
+            .expect("reported");
+        assert_eq!(note.count, 1);
+        assert_eq!(note.first_path.text, "tool");
+    }
+
+    // ---- cancellation ----
+
+    /// Cancels once the restore has handled `n` entries.
+    struct CancelAfter(CancellationToken, u64);
+    impl ProgressSink for CancelAfter {
+        fn report(&self, e: &ProgressEvent) {
+            if e.phase == "restore" && e.completed >= self.1 {
+                self.0.cancel();
+            }
+        }
+    }
+
+    #[test]
+    fn a_cancelled_extraction_leaves_only_complete_files() {
+        let f = fx();
+        let token = CancellationToken::new();
+        let sink = CancelAfter(token.clone(), 4);
+        let req = request(&f, 1, &[], ConflictChoice::Stop);
+        validate(&f.archives, &f.destination, &req).unwrap();
+        let e = run(
+            &f.archives,
+            &f.destination,
+            &req,
+            &JobContext {
+                progress: &sink,
+                cancel: &token,
+            },
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Cancelled);
+        let got = tree(&f.dest);
+        no_temporaries(&got);
+        assert!(!got.is_empty(), "the entries before the cancel stay");
+        let all = head_tree();
+        assert!(got.len() < all.len(), "stopped early: {got:?}");
+        for (k, v) in &got {
+            assert_eq!(all.get(k), Some(v), "{k} is complete, not partial");
+        }
+    }
+
+    // ---- the registry ----
+
+    struct Collect(
+        std::sync::Mutex<mpsc::Sender<JobEvent>>,
+        Arc<JobRegistry>,
+        u64,
+    );
+    impl EventSink for Collect {
+        fn send(&self, e: JobEvent) -> bool {
+            if let JobEvent::Progress {
+                job_id,
+                phase,
+                completed,
+                ..
+            } = &e
+            {
+                if phase == "restore" && *completed >= self.2 {
+                    self.1.cancel(*job_id);
+                }
+            }
+            let _ = self.0.lock().unwrap().send(e);
+            true
+        }
+    }
+
+    fn registry(f: &Fx) -> Arc<JobRegistry> {
+        Arc::new(JobRegistry::with_services(Services {
+            archives: Arc::clone(&f.archives),
+            staging: Arc::default(),
+            destination: Arc::clone(&f.destination),
+        }))
+    }
+
+    fn finish(reg: &Arc<JobRegistry>, req: JobRequest, cancel_at: u64) -> (u32, Vec<JobEvent>) {
+        let (tx, rx) = mpsc::channel();
+        let id = reg
+            .start(
+                req,
+                Arc::new(Collect(
+                    std::sync::Mutex::new(tx),
+                    Arc::clone(reg),
+                    cancel_at,
+                )),
+                Box::new(|w| {
+                    std::thread::spawn(w);
+                }),
+            )
+            .unwrap();
+        let mut events = Vec::new();
+        loop {
+            let e = rx.recv_timeout(Duration::from_secs(60)).unwrap();
+            let end = matches!(e, JobEvent::Finished { .. });
+            events.push(e);
+            if end {
+                return (id, events);
+            }
+        }
+    }
+
+    #[test]
+    fn an_extract_streams_progress_and_one_finished_with_its_report() {
+        let f = fx();
+        let reg = registry(&f);
+        let (id, events) = finish(&reg, request(&f, 1, &[], ConflictChoice::Stop), u64::MAX);
+        assert_eq!(events[0], JobEvent::Started { job_id: id });
+        let totals: Vec<(u64, Option<u64>)> = events
+            .iter()
+            .filter_map(|e| match e {
+                JobEvent::Progress {
+                    phase,
+                    completed,
+                    total,
+                    ..
+                } if phase == "restore" => Some((*completed, *total)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(totals.first(), Some(&(0, Some(8))));
+        assert_eq!(totals.last(), Some(&(8, Some(8))));
+        let finished: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, JobEvent::Finished { .. }))
+            .collect();
+        assert_eq!(finished.len(), 1);
+        let JobEvent::Finished {
+            outcome: JobOutcome::Completed {
+                extract, commit, ..
+            },
+            ..
+        } = finished[0]
+        else {
+            panic!("completed: {finished:?}")
+        };
+        assert!(commit.is_none());
+        assert_eq!(extract.as_ref().unwrap().directories, 2);
+        assert_eq!(tree(&f.dest), head_tree());
+    }
+
+    #[test]
+    fn cancelling_over_the_registry_reports_cancelled_and_leaves_no_partial_file() {
+        let f = fx();
+        let reg = registry(&f);
+        let (_, events) = finish(&reg, request(&f, 1, &[], ConflictChoice::Stop), 3);
+        assert!(matches!(
+            events.last(),
+            Some(JobEvent::Finished {
+                outcome: JobOutcome::Cancelled,
+                ..
+            })
+        ));
+        let got = tree(&f.dest);
+        no_temporaries(&got);
+        let all = head_tree();
+        for (k, v) in &got {
+            assert_eq!(all.get(k), Some(v), "{k}");
+        }
+        assert!(got.len() < all.len());
+        // The registry is free again, and the archive is still open.
+        assert_eq!(reg.running(), 0);
+        assert!(f.archives.children(f.handle, 1, None, false, 0, 10).is_ok());
+    }
+
+    // ---- requests the app refuses ----
+
+    #[test]
+    fn requests_that_cannot_work_are_refused_before_a_job_starts() {
+        let f = fx();
+        let none = Destination::default();
+        let req = request(&f, 1, &[], ConflictChoice::Stop);
+        let e = validate(&f.archives, &none, &req).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument, "no folder chosen");
+        let closed = JobRequest::ExtractArchive {
+            handle: 999,
+            seq: 1,
+            keys: vec![],
+            on_conflict: ConflictChoice::Stop,
+        };
+        assert!(validate(&f.archives, &f.destination, &closed).is_err());
+        let bad_key = JobRequest::ExtractArchive {
+            handle: f.handle,
+            seq: 1,
+            keys: vec!["not hex".into()],
+            on_conflict: ConflictChoice::Stop,
+        };
+        assert!(validate(&f.archives, &f.destination, &bad_key).is_err());
+        let many = JobRequest::ExtractArchive {
+            handle: f.handle,
+            seq: 1,
+            keys: vec![hex(b"a"); MAX_KEYS + 1],
+            on_conflict: ConflictChoice::Stop,
+        };
+        assert!(validate(&f.archives, &f.destination, &many).is_err());
+        let e = plan(&f.archives, &none, None, f.handle, 1, &[]).unwrap_err();
+        assert_eq!(
+            e.code,
+            ErrorCode::InvalidArgument,
+            "nothing chosen to re-check"
+        );
+        assert!(tree(&f.dest).is_empty());
+    }
+
+    #[test]
+    fn a_chosen_folder_is_remembered_only_when_the_plan_succeeds() {
+        let f = fx();
+        let other = f.tmp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let d = Destination::default();
+        plan(&f.archives, &d, Some(other.clone()), f.handle, 1, &[]).unwrap();
+        assert_eq!(d.get(), Some(other));
+        // A failing plan keeps the earlier choice.
+        let missing = f.tmp.path().join("missing");
+        assert!(plan(&f.archives, &d, Some(missing), f.handle, 1, &[hex(b"nope")]).is_err());
+        assert_eq!(d.get(), Some(f.tmp.path().join("other")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_other_users_can_modify_is_refused_before_anything_is_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = fx();
+        std::fs::set_permissions(&f.dest, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let e = plan(&f.archives, &f.destination, None, f.handle, 1, &[]).unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnsupportedFeature, "{e}");
+        let e = go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnsupportedFeature, "{e}");
+        assert!(tree(&f.dest).is_empty());
+    }
+
+    #[test]
+    fn open_for_read_gives_each_snapshot_and_refuses_unknown_ones() {
+        let f = fx();
+        let (_, head, _) = f.archives.open_for_read(f.handle, 0).unwrap();
+        assert_eq!(head.seq(), 0);
+        let (_, head, _) = f.archives.open_for_read(f.handle, 1).unwrap();
+        assert_eq!(head.seq(), 1);
+        assert_eq!(
+            f.archives
+                .open_for_read(f.handle, 5)
+                .map(|_| ())
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        f.archives.close(f.handle);
+        assert!(f.archives.open_for_read(f.handle, 1).is_err());
+    }
+
+    // ---- the report ----
+
+    #[test]
+    fn a_long_report_is_capped_but_counts_everything() {
+        let mut r = RestoreReport {
+            files: 3,
+            directories: 1,
+            bytes: 10,
+            exceptions: Vec::new(),
+            directory_durability: DirectoryDurability::Unconfirmed("no sync".into()),
+            attributes_unavailable: Some("bad\u{1b}[31m manifest".into()),
+            attribute_exceptions: Vec::new(),
+            case_behavior: CaseBehavior::Insensitive,
+        };
+        for i in 0..MAX_NOT_EXTRACTED_SHOWN + 5 {
+            r.exceptions.push(RestoreException {
+                path: p(&format!("f{i:05}")),
+                kind: ExceptionKind::Failed {
+                    code: ErrorCode::IoError,
+                    message: "disk\nfull".into(),
+                },
+            });
+        }
+        for path in ["a", "b"] {
+            r.attribute_exceptions.push(AttributeException {
+                path: p(path),
+                issue: AttributeIssue {
+                    attribute: AttributeKind::Ownership,
+                    reason: "needs privilege".into(),
+                },
+            });
+        }
+        let v = report_view(&r, Path::new("/x"), 4);
+        assert_eq!(v.not_extracted.len(), MAX_NOT_EXTRACTED_SHOWN);
+        assert_eq!(v.not_extracted_total, (MAX_NOT_EXTRACTED_SHOWN + 5) as u64);
+        assert_eq!(v.not_extracted[0].code, "IO_ERROR");
+        assert_eq!(v.not_extracted[0].reason.text, "disk\\u{a}full");
+        assert!(!v.not_extracted[0].reason.verbatim);
+        assert_eq!(v.attribute_notes.len(), 1, "one note per kind");
+        assert_eq!(v.attribute_notes[0].count, 2);
+        assert_eq!(v.attribute_notes[0].first_path.text, "a");
+        assert_eq!(v.durability_note.as_deref(), Some("no sync"));
+        assert!(v.case_insensitive);
+        let why = v.attributes_unavailable.unwrap();
+        assert!(!why.text.contains('\u{1b}') && !why.verbatim);
+        assert_eq!(v.seq, 4);
+    }
+
+    #[test]
+    fn a_plan_says_when_the_folder_folds_case() {
+        let mut pre = Preflight {
+            case_behavior: CaseBehavior::Insensitive,
+            exceptions: BTreeMap::new(),
+        };
+        pre.exceptions.insert(p("Readme"), ExceptionKind::Collision);
+        let v = plan_view(Path::new("/x"), &pre, 7);
+        assert!(v.case_insensitive);
+        assert_eq!((v.entries, v.conflicts_total), (7, 1));
+        assert_eq!(v.conflicts[0].code, "NAME_COLLISION");
+        pre.case_behavior = CaseBehavior::Sensitive;
+        assert!(!plan_view(Path::new("/x"), &pre, 7).case_insensitive);
+    }
+
+    #[test]
+    fn a_plan_lists_at_most_the_cap_but_counts_every_conflict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("many.mochi");
+        let mut w = ArchiveWriter::create(
+            OsStorage::create_new(&path).unwrap(),
+            Box::new(SeqIds::new(3)),
+            test_options(),
+        )
+        .unwrap();
+        let n = MAX_CONFLICTS_SHOWN + 30;
+        let mut tx = Transaction::new();
+        let dest = tmp.path().join("out");
+        std::fs::create_dir(&dest).unwrap();
+        for i in 0..n {
+            tx.put_file(p(&format!("f{i:04}")), vec![1], attrs(0o644));
+            std::fs::write(dest.join(format!("f{i:04}")), b"mine").unwrap();
+        }
+        w.commit(tx, &Job::new().ctx()).unwrap();
+        w.close().unwrap();
+        let archives = Archives::default();
+        let handle = archives.open(&path, ReadOptions::default()).unwrap().handle;
+        let d = Destination::default();
+        d.set(dest);
+        let plan = plan(&archives, &d, None, handle, 0, &[]).unwrap();
+        assert_eq!(plan.conflicts.len(), MAX_CONFLICTS_SHOWN);
+        assert_eq!(plan.conflicts_total as usize, n);
+        assert_eq!(plan.entries as usize, n);
+        assert_eq!(plan.conflicts[0].path.text, "f0000", "in path order");
+    }
+}
