@@ -12,6 +12,7 @@ every dependency grouped by license text. Exit 1 on a disallowed or
 unreadable license. Standard library only.
 """
 import json
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -38,6 +39,9 @@ def expr_allowed(expr, accepted):
 
 
 def run(cmd, cwd=None):
+    # Windows: corepack's pnpm is a pnpm.cmd shim, which CreateProcess only finds by full
+    # path (no PATHEXT lookup for a bare name). No shell=True.
+    cmd = [shutil.which(cmd[0]) or cmd[0], *cmd[1:]]
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     if r.returncode != 0:
