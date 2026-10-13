@@ -14,11 +14,13 @@ cd "$(dirname "$0")/.."
 licenses=target/packaging/THIRD-PARTY-LICENSES.txt
 
 # 1. The full third-party license list; fails on a license outside packaging/about.toml.
-pnpm --dir apps/mochi-desktop/ui install --frozen-lockfile
+# pnpm runs inside the UI directory: corepack takes the version from the nearest
+# package.json's `packageManager`, and the repository root has none.
+(cd apps/mochi-desktop/ui && pnpm install --frozen-lockfile)
 python3 packaging/licenses.py "$licenses"
 
 # 2. The UI that the release binary embeds (build.frontendDist).
-pnpm --dir apps/mochi-desktop/ui build
+(cd apps/mochi-desktop/ui && pnpm build)
 
 # 3. Overlay config: ship the list inside the installer (merged over tauri.conf.json).
 python3 - "$kind" "$licenses" <<'PY'
