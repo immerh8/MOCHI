@@ -1293,7 +1293,27 @@ fn salvage_pass(
     let mut chains = Vec::new();
     if new_roots || prep.footers_regenerated > 0 || prep.descriptor_restored {
         for r in &roots {
-            if let Some(c) = chain_at(&*view, *r, opts)? {
+            let Some(mut c) = chain_at(&*view, *r, opts)? else {
+                continue;
+            };
+            if Some(*r) != head_footer {
+                // A salvaged chain holds only commits the scan confirmed (D23
+                // items 5, 11(c)). The walk follows parent links by footer
+                // alone, so it can reach a commit whose link the scan refused
+                // (its footer lies inside a frame that walked validly). Below
+                // the first such commit, the chain's catalogs still supply
+                // the older snapshots, but no commit record is trusted.
+                let keep = c
+                    .iter()
+                    .rev()
+                    .take_while(|e| {
+                        prep.confirmed
+                            .contains(&(e.commit_offset, *e.commit_id.as_bytes()))
+                    })
+                    .count();
+                c.drain(..c.len() - keep);
+            }
+            if !c.is_empty() {
                 chains.push(c);
             }
         }
