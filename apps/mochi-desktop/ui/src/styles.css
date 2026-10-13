@@ -1,5 +1,6 @@
 /* Neutral styling throughout: spec §23.3 allows success styling only for a
-   verification PASS, and nothing in the app yet is a verification. Browsing
+   verification PASS. The one success style is .status-pass (D4), given only
+   to a PASS status; everything else stays neutral. Browsing
    (D1) shows recorded facts and warnings, never a green state. */
 :root {
   font-family: system-ui, sans-serif;
@@ -241,4 +242,61 @@ progress {
 }
 .extractor .staged li {
   flex-wrap: wrap;
+}
+
+/* ---- D4: test, health, and repair -------------------------------------------
+   Only .status-pass may look like success, and only PASS gets it
+   (check/messages.ts statusClass, tested). FAIL is marked as a failure;
+   DEGRADED, UNKNOWN, OVERDUE, and UNSUPPORTED stay neutral with an outline. */
+.status {
+  display: inline-block;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0 0.4rem;
+  border: 1px solid #59636e;
+  border-radius: 3px;
+}
+.status-pass {
+  color: #fff;
+  background: #1a7f37;
+  border-color: #1a7f37;
+}
+.status-fail {
+  color: #fff;
+  background: #82071e;
+  border-color: #82071e;
+}
+.status-attention {
+  color: #1f2328;
+  background: #fff;
+  border-style: dashed;
+}
+.checker fieldset {
+  margin: 1rem 0;
+  border: 1px solid #d1d9e0;
+}
+.dimensions {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.dimensions th,
+.dimensions td {
+  text-align: left;
+  padding: 0.2rem 0.75rem 0.2rem 0;
+}
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #d1d9e0;
+  padding: 0.5rem;
+}
+.report-facts dd {
+  margin-left: 1rem;
 }

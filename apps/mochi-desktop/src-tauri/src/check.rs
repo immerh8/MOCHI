@@ -315,7 +315,7 @@ impl Checks {
             },
             &health::HealthPolicy::default(),
         );
-        let report = self.keep(ReportKind::Health, &path, false, report)?;
+        let report = self.keep(ReportKind::Health, &path, false, false, report)?;
         Ok(HealthView {
             report,
             records: u32::try_from(records.len()).unwrap_or(u32::MAX),
@@ -340,6 +340,7 @@ impl Checks {
         kind: ReportKind,
         path: &Path,
         deep: bool,
+        keyless: bool,
         report: Report,
     ) -> Result<ReportView> {
         if let Err(violations) = report.validate() {
@@ -371,7 +372,15 @@ impl Checks {
             s.reports.push_back((id, suggested, json.clone()));
             id
         };
-        Ok(report_view(id, kind, file_name(path), deep, &report, json))
+        Ok(report_view(
+            id,
+            kind,
+            file_name(path),
+            deep,
+            keyless,
+            &report,
+            json,
+        ))
     }
 
     fn record(&self, archive_id: String, record: Option<EvidenceRecord>) {
@@ -470,7 +479,8 @@ impl Checks {
         if ctx.cancel.is_cancelled() && v.report.operational_error {
             return Err(MochiError::new(ErrorCode::Cancelled, "cancelled"));
         }
-        let report = self.keep(ReportKind::Test, &path, deep, v.report.clone())?;
+        let keyless = head_encrypted(&src, &opts.read);
+        let report = self.keep(ReportKind::Test, &path, deep, keyless, v.report.clone())?;
         if let Some(h) = v.head {
             let command = if deep {
                 EvidenceCommand::Fsck
@@ -729,15 +739,20 @@ fn salvage_options(salvage: bool, archive_id: Option<&str>) -> Result<Option<Sal
     Ok(Some(SalvageOptions { archive_id }))
 }
 
+/// Whether the head commit, as located, says the archive is Encrypted.
+/// `false` when the head cannot be read (the check itself reports that).
+fn head_encrypted(src: &OsReadStorage, read: &ReadOptions) -> bool {
+    locate_head(src, &read.limits)
+        .ok()
+        .and_then(|loc| read_commit(src, &loc.footer, read).ok())
+        .is_some_and(|(c, _)| c.encrypted())
+}
+
 /// A repair of an Encrypted archive needs the passphrase (D20), which the app
 /// cannot take yet (D5): refuse before reading anything else. An archive whose
 /// head cannot be read is left to the repair itself.
 fn refuse_encrypted(src: &OsReadStorage, read: &ReadOptions) -> Result<()> {
-    let encrypted = locate_head(src, &read.limits)
-        .ok()
-        .and_then(|loc| read_commit(src, &loc.footer, read).ok())
-        .is_some_and(|(c, _)| c.encrypted());
-    if encrypted {
+    if head_encrypted(src, read) {
         return Err(MochiError::new(
             ErrorCode::KeyUnavailable,
             "this archive is encrypted: a repair re-seals what it writes and needs the \
@@ -793,6 +808,7 @@ pub fn report_view(
     kind: ReportKind,
     file_name: String,
     deep: bool,
+    keyless: bool,
     r: &Report,
     json: String,
 ) -> ReportView {
@@ -801,6 +817,7 @@ pub fn report_view(
         kind,
         file_name,
         deep,
+        keyless,
         schema_version: r.schema_version,
         archive_id: r.archive_id.clone(),
         checked_commit: r.checked_commit.clone(),
@@ -1231,7 +1248,7 @@ mod tests {
             "durability is never observed"
         );
         assert_eq!((r.exit_code, r.level.as_str()), (0, "restoration"));
-        assert!(!r.deep);
+        assert!(!r.deep && !r.keyless);
         assert_eq!(r.file_name, "good.mochi");
         assert!(r.json.ends_with('\n') && !r.json.trim_end().contains('\n'));
         let ours: serde_json::Value = serde_json::from_str(&r.json).unwrap();
@@ -1349,6 +1366,8 @@ mod tests {
         w.close().unwrap();
         let id = f.choose(&path);
         let r = f.test(id, CheckLevel::Restoration, false);
+        assert!(r.keyless);
+        assert_eq!(status(&r, "key_availability"), StatusView::Unknown);
         assert_ne!(r.overall_status, StatusView::Pass);
         assert_ne!(r.exit_code, 0);
         assert!(r

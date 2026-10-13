@@ -708,6 +708,10 @@ pub struct ReportView {
     pub file_name: String,
     /// Also opened every commit and recovered every segment (`fsck`).
     pub deep: bool,
+    /// The archive is Encrypted and was checked without its key (stored
+    /// integrity only; names, content, and recoverability need the
+    /// passphrase, which the app cannot take until D5).
+    pub keyless: bool,
     pub schema_version: u32,
     pub archive_id: Option<String>,
     pub checked_commit: Option<String>,

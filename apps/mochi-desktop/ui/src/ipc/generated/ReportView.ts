@@ -22,7 +22,13 @@ file_name: string,
 /**
  * Also opened every commit and recovered every segment (`fsck`).
  */
-deep: boolean, schema_version: number, archive_id: string | null, checked_commit: string | null, expected_head: string | null, 
+deep: boolean, 
+/**
+ * The archive is Encrypted and was checked without its key (stored
+ * integrity only; names, content, and recoverability need the
+ * passphrase, which the app cannot take until D5).
+ */
+keyless: boolean, schema_version: number, archive_id: string | null, checked_commit: string | null, expected_head: string | null, 
 /**
  * `none`, `user`, or `local-history`.
  */
