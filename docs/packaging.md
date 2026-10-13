@@ -16,7 +16,7 @@ packaging/build-installer.sh nsis    # Windows (Git Bash or CI's bash)
 Output: `target/release/bundle/{deb,nsis}/` and `target/packaging/THIRD-PARTY-LICENSES.txt`.
 The base configuration is `apps/mochi-desktop/src-tauri/tauri.conf.json` (`bundle`:
 targets `nsis` and `deb`, `installMode: currentUser`, `webviewInstallMode:
-downloadBootstrapper`, deb `depends: libwebkit2gtk-4.1-0, libgtk-3-0`). The build
+downloadBootstrapper`, the `.deb` gets `libwebkit2gtk-4.1-0` and `libgtk-3-0` from Tauri's own default `Depends`, which `smoke-deb.sh` asserts, so the config lists none). The build
 script merges an overlay that adds the generated license list, so `cargo build` and
 `cargo test` never depend on a generated file.
 
