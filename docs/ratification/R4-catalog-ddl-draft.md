@@ -189,7 +189,11 @@ the largest image that is also a whole number of pages is 268,431,360 bytes (65,
 pages). The envelope's own comparison of record schema version with `user_version`
 (R2 §2) runs before the catalog sees the image. Step 3 and the `PRAGMA` checks of step 4
 are `CATALOG_INVALID`; the extent rules are `EXTENT_INVALID`, the namespace replay
-`NAMESPACE_INVALID`, and a stored path `PATH_INVALID`, each from the rules in §3.1. The
+`NAMESPACE_INVALID`, and a stored path `PATH_INVALID`, each from the rules in §3.1. **[Clarified, W18 (R9), 2026-10-13; no byte
+changes]** These checks run on an image whose stored-object hash (and, when sealed, AEAD tag) has
+already verified; an image that fails the hash is damage, not an invalid catalog, and reads
+rebuild from the snapshot manifest (spec D10 item 9). A hash-verified head base image that
+fails any check of this section refuses the head. The
 header fields not listed (text encoding, reserved space, change counter, free-list and
 vacuum fields) are not checked by `check_header`; `PRAGMA integrity_check` and the
 exact-schema step decide the rest. Hostile storage-class values (a REAL or TEXT in an

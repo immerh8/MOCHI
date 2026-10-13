@@ -106,7 +106,7 @@ order codes were added.
 | `REPORT_INCONSISTENT` | 3 | operational | C0 | A report contradicts the reporting invariants (§5.4, §20.3) |
 | `MALFORMED_FRAME` | 1 | violation | C1 | Bytes are not a structurally valid frame (§8.5, §8.6) |
 | `TRUNCATED` | 1 | violation | C1 | Input ended inside a structure |
-| `FOOTER_INVALID` | 1 | violation | C1 | A footer failed validation (§8.4) |
+| `FOOTER_INVALID` | 1 | violation | C1 | A footer failed validation (§8.4). **[Clarified, W18, no byte changes]** Also a finding, not a refusal, when the last 72 bytes of the file are not the valid footer of the head and the head was found by the forward scan (an interrupted publication, a torn or damaged final footer) |
 | `ENVELOPE_INVALID` | 1 | violation | C1 | A record envelope failed validation (§8.3, D11) |
 | `STORED_INTEGRITY_FAILED` | 1 | violation | C2 | Stored length or stored-object hash mismatch |
 | `CONTENT_INTEGRITY_FAILED` | 1 | violation | C2 | Stored bytes verified but decoding (or AEAD opening) did not yield the recorded length and content hash |
