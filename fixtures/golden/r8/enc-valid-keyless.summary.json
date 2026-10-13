@@ -53,7 +53,7 @@
   },
   "parity": null,
   "profile": {
-    "encrypted": false,
+    "encrypted": true,
     "recovery_percent": null,
     "tar_compatible": false
   },
