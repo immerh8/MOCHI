@@ -32,6 +32,8 @@ grep -q "Rust crates:" "$dir/$lic" && grep -q "npm packages (UI bundle):" "$dir/
   && grep -q "MIT License" "$dir/$lic" || fail "license list lacks an expected section"
 
 if [ "$install" = 1 ]; then
+  # Runner images ship a package index that can lag the archive (404s on dependencies).
+  sudo apt-get update
   sudo apt-get install -y --no-install-recommends "./$deb"
   bin="/$exe"
   [ -x "$bin" ] || fail "$bin not installed"
