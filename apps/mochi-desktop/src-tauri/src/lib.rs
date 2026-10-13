@@ -1,4 +1,4 @@
-//! The MOCHI desktop application (plan §7, phases D0 and D1).
+//! The MOCHI desktop application (plan §7, phases D0 to D2).
 //!
 //! Commands are thin adapters (AGENTS.md "Tauri v2 rules"): they validate
 //! input, call into `mochi-core` or the job runner, and return typed
@@ -13,15 +13,33 @@ pub mod ipc;
 pub mod jobs;
 mod picker;
 pub mod self_test;
+pub mod write;
 
 use std::sync::Arc;
 
 /// Build and run the application until its last window closes.
 pub fn run() -> Result<(), tauri::Error> {
+    let archives = Arc::new(browse::Archives::default());
+    let staging = Arc::new(write::Staging::default());
+    let drops = Arc::new(write::DropWatch::default());
+    let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
+        archives: Arc::clone(&archives),
+        staging: Arc::clone(&staging),
+    }));
+    let window_staging = Arc::clone(&staging);
+    let window_drops = Arc::clone(&drops);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Arc::new(jobs::JobRegistry::default()))
-        .manage(Arc::new(browse::Archives::default()))
+        .manage(jobs)
+        .manage(archives)
+        .manage(staging)
+        .manage(drops)
+        .on_window_event(move |_window, event| {
+            // Items dragged from the file manager arrive here, in Rust.
+            if let tauri::WindowEvent::DragDrop(drag) = event {
+                write::on_drag_drop(drag, &window_staging, &window_drops);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::start_job,
             commands::cancel_job,
@@ -29,7 +47,13 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::close_archive,
             commands::open_snapshot,
             commands::list_children,
-            commands::entry_details
+            commands::entry_details,
+            commands::watch_drops,
+            commands::staged_sources,
+            commands::stage_sources,
+            commands::unstage_source,
+            commands::clear_staged,
+            commands::choose_destination
         ])
         .setup(|app| {
             main_window(app)?;
