@@ -1,6 +1,8 @@
 # MOCHI desktop (Tauri v2)
 
-**Phase D0 built** (plan §7): the shell, the job runner, typed IPC, and E2E tests.
+**Phases D0 and D1 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+and the read-only archive browser (snapshot timeline, folder tree, virtualized list,
+details).
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
@@ -11,11 +13,14 @@ apps/mochi-desktop/
 ├── src-tauri/          # Rust: thin commands over mochi-core (a workspace member)
 │   ├── capabilities/   # least-privilege capability files
 │   └── src/
+│       ├── browse.rs   # D1: open archives and snapshots, paged listings, details
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
+│       ├── picker.rs   # D1: the native open dialog, shown from Rust
 │       └── self_test.rs# the D0 sample job (no archive I/O)
 ├── ui/                 # React + TypeScript + Vite
+│   ├── src/browser/    # D1: Browser, Tree, VirtualList, Name (text-only names)
 │   └── src/ipc/        # typed invoke wrappers; generated/ is never edited by hand
 └── e2e/                # WebdriverIO + tauri-driver
 ```
@@ -46,6 +51,8 @@ cargo test -p mochi-desktop        # writes ui/src/ipc/generated/*.ts; commit th
 pnpm --dir apps/mochi-desktop/ui build
 cargo build -p mochi-desktop --features custom-protocol,e2e   # embeds ui/dist; e2e: see below
 cargo install tauri-driver --locked
+# The archives the D1 spec opens (target/d1-fixtures; MOCHI_E2E_FIXTURES overrides):
+cargo run --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures
 cd apps/mochi-desktop/e2e && pnpm install --frozen-lockfile
 xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnpm test,
                           # with MOCHI_NATIVE_DRIVER pointing at a matching msedgedriver.exe
@@ -57,15 +64,34 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 
 ## Security decisions (each is a reason AGENTS.md asks for)
 
-- **Capabilities.** `capabilities/main.json` grants the main window exactly two
-  permissions, `allow-start-job` and `allow-cancel-job`. The app's own commands are
-  declared in `build.rs` (`AppManifest`), so any command not listed there or not
-  granted is refused. `core:default` is **not** granted: D0 needs no window, event,
-  path, menu, tray, or image API, and job events travel over a Channel, which needs no
-  permission. No `fs`, `shell`, `http`, `process`, or `dialog` permission and no such
-  plugin. The file dialog arrives with D1, the first phase that picks paths.
-  `ci/check-invariants.sh` rule 10 refuses broad permissions; the E2E test fails if
+- **Capabilities.** `capabilities/main.json` grants the main window only the app's own
+  commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
+  `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
+  `allow-entry-details` (D1, each needed by the browser). The commands are declared in
+  `build.rs` (`AppManifest`), so any command not listed there or not granted is
+  refused. `core:default` is **not** granted: the app needs no window, event, path,
+  menu, tray, or image API, and job events travel over a Channel, which needs no
+  permission. No `fs`, `shell`, `http`, `process`, or `dialog` permission.
+  `ci/check-invariants.sh` rule 10 refuses them; the E2E test fails if
   `allow-cancel-job` is removed (checked).
+- **The open dialog runs in Rust (D1).** `open_archive` shows the operating system's
+  dialog from Rust (`tauri-plugin-dialog`, MIT OR Apache-2.0, registered for its Rust
+  API only) and opens the chosen file itself. The webview never names a path, so no
+  script in it can ask the app to read a file the user did not pick, and it needs no
+  dialog permission. The plugin brings the `tauri-plugin-fs` crate as a Rust
+  dependency; no `fs` permission is granted, so the webview cannot call it. Archives
+  are opened read-only (`OsReadStorage`); nothing in D1 writes. With the `e2e`
+  feature only, the dialog first takes paths from `MOCHI_E2E_PICK`, because WebDriver
+  cannot drive a native dialog; shipped builds never read it.
+- **Browsing pages over IPC (D1 exit).** `mochi_core::browse::SnapshotIndex` keeps a
+  snapshot's tree in Rust; the webview asks for at most 1,000 entries per call (the
+  list asks for 200) and renders only the rows in view, so a folder of 100,000 entries
+  never crosses IPC or enters the DOM whole. Paths cross as hex of their stored bytes,
+  so names that are not UTF-8 round-trip exactly; names cross as text escaped by
+  `mochi_core::text::escape` (the CLI's rule) and are marked "(escaped)" when that
+  changed them. Sizes cross as decimal strings, because an archive may claim values
+  above 2^53. Encrypted archives are refused with `KEY_UNAVAILABLE` until passphrase
+  entry (D5).
 - **CSP.** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none';
   form-action 'none'; frame-ancestors 'none'`. `connect-src` names Tauri's IPC
@@ -105,7 +131,7 @@ verification `PASS`).
 
 - No format logic in the UI or in Tauri commands. Commands validate input, call `mochi-core`, return typed results.
 - Grant the webview no broad filesystem, shell, or HTTP permissions. Users pick paths
-  through the dialog plugin; Rust does the I/O. Every new permission needs a written reason.
+  in the native dialog, which Rust shows; Rust does the I/O. Every new permission needs a written reason.
 - Archive-supplied strings (names, labels, comments) render as text only: never
   `dangerouslySetInnerHTML`, never into `href`/`src`.
 - No success styling for `UNKNOWN` / `OVERDUE` / `UNSUPPORTED` / `DEGRADED`.

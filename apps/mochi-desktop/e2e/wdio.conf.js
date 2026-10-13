@@ -6,7 +6,14 @@
 //   pnpm --dir ../ui build
 //   cargo build -p mochi-desktop --features custom-protocol,e2e
 // Linux needs a display: run under `xvfb-run`.
+//
+// The D1 browse spec opens archives written by
+//   cargo run --release -p mochi-testkit --example d1_browse_fixtures -- DIR
+// (DIR is MOCHI_E2E_FIXTURES, default target/d1-fixtures). WebDriver cannot
+// drive a native file dialog, so the `e2e` build takes the paths of its
+// "Open archive" clicks from MOCHI_E2E_PICK, in order, once per app launch.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +26,20 @@ const driverArgs = [];
 if (process.env.MOCHI_NATIVE_DRIVER) {
   driverArgs.push("--native-driver", process.env.MOCHI_NATIVE_DRIVER);
 }
+
+const fixtures =
+  process.env.MOCHI_E2E_FIXTURES ?? path.resolve(here, "../../../target/d1-fixtures");
+const picks = ["browse.mochi", "large.mochi"].map((f) => path.join(fixtures, f));
+for (const f of picks) {
+  if (!existsSync(f)) {
+    console.error(
+      `missing E2E fixture ${f}: run cargo run --release -p mochi-testkit --example d1_browse_fixtures -- ${fixtures}`,
+    );
+    process.exit(1);
+  }
+}
+// Inherited by tauri-driver, the native driver, and the app it starts.
+process.env.MOCHI_E2E_PICK = picks.join(path.delimiter);
 
 let tauriDriver;
 

@@ -13,7 +13,15 @@
 
 fn main() {
     let release = std::env::var("PROFILE").is_ok_and(|p| p == "release");
-    let manifest = tauri_build::AppManifest::new().commands(&["start_job", "cancel_job"]);
+    let manifest = tauri_build::AppManifest::new().commands(&[
+        "start_job",
+        "cancel_job",
+        "open_archive",
+        "close_archive",
+        "open_snapshot",
+        "list_children",
+        "entry_details",
+    ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()
         .app_manifest(manifest)

@@ -86,10 +86,12 @@ done
 
 # 10. Least privilege for the webview (AGENTS.md "Tauri v2 rules"): no
 #     filesystem, shell, process, or HTTP permission in any capability, and a
-#     CSP with no eval and no remote origin (only the app and its IPC).
+#     CSP with no eval and no remote origin (only the app and its IPC). No
+#     dialog permission either: the open dialog runs in Rust (D1,
+#     src-tauri/src/picker.rs), so the webview never names a path.
 caps=apps/mochi-desktop/src-tauri/capabilities
 if [ -d "$caps" ]; then
-  hits=$(grep -rnE '"(fs|shell|http|process|opener|updater):' "$caps" 2>/dev/null || true)
+  hits=$(grep -rnE '"(fs|shell|http|process|opener|updater|dialog):' "$caps" 2>/dev/null || true)
   [ -n "$hits" ] && report "broad webview permission in a capability (AGENTS.md: least privilege)" "$hits"
 fi
 conf=apps/mochi-desktop/src-tauri/tauri.conf.json

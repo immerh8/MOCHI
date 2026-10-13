@@ -855,6 +855,43 @@ impl Catalog {
             .collect()
     }
 
+    /// Every file version in the catalog without its extents, in one query:
+    /// the same columns and checks as [`Catalog::file_version`], for callers
+    /// that list many versions (browsing, plan D1).
+    pub fn file_versions(&self) -> Result<HashMap<FileVersionId, FileVersion>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT file_version_id, kind, logical_len, content_hash FROM file_versions")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, Option<Vec<u8>>>(3)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (id, kind, len, hash) = row.map_err(sql)?;
+            let id = FileVersionId::from_bytes(id32(id, "file version id")?);
+            out.insert(
+                id,
+                FileVersion {
+                    id,
+                    kind: kind_from(&kind)?,
+                    logical_len: to_u64(len, "logical length")?,
+                    content_hash: hash
+                        .map(|h| id32(h, "content hash").map(FileContentHash::from_bytes))
+                        .transpose()?,
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// Every file-version ID in the catalog, sorted: every version of the
     /// retained history, reachable at the head or not. Verification's
     /// restoration level (C7) reassembles each one.

@@ -85,3 +85,182 @@ impl From<mochi_core::MochiError> for IpcError {
         }
     }
 }
+
+// ---- D1: browsing an archive ------------------------------------------------
+//
+// Archive-supplied strings (names, hold labels) cross as [`NameText`]: an
+// escaped, single-line rendering (`mochi_core::text::escape`, the CLI's rule)
+// that the UI shows as text only. Paths are identified by [`PathKey`], the
+// stored bytes in hex, so a name that is not UTF-8 round-trips exactly.
+// Sizes and other archive-derived 64-bit values are decimal strings: an
+// archive is untrusted and may claim values above 2^53.
+
+/// Identifies one opened archive for the lifetime of the process.
+pub type ArchiveHandle = u32;
+
+/// An archive path's stored bytes as lowercase hex.
+pub type PathKey = String;
+
+/// An archive-supplied string, rendered for display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct NameText {
+    /// One line, control and bidi characters and non-UTF-8 bytes escaped.
+    pub text: String,
+    /// `false` when `text` differs from the stored bytes (something was
+    /// escaped); the UI then says so.
+    pub verbatim: bool,
+}
+
+impl NameText {
+    pub fn of(bytes: &[u8]) -> Self {
+        NameText {
+            text: mochi_core::text::escape(bytes),
+            verbatim: mochi_core::text::is_verbatim(bytes),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum EntryKindView {
+    File,
+    Directory,
+}
+
+/// The profile fixed at the archive's creation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ProfileView {
+    pub tar_compatible: bool,
+    pub encrypted: bool,
+    /// Parity percentage of the recovery record, if the archive has one.
+    pub redundancy_percent: Option<u16>,
+}
+
+/// One commit of the published history (the snapshot timeline).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CommitView {
+    /// Commit sequence numbers are verified to run 0, 1, 2, … along the
+    /// parent chain, so they count commits and stay below 2^53.
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub commit_id: String,
+    /// RFC 3339 UTC, or `null` when the commit recorded no time.
+    pub time: Option<String>,
+    pub checkpoint: bool,
+    /// `null` when retention could not be determined.
+    pub retained: Option<bool>,
+    pub expired: Option<bool>,
+    pub holds: Vec<NameText>,
+}
+
+/// An archive opened for browsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ArchiveSummary {
+    pub handle: ArchiveHandle,
+    /// The file's name on this computer (chosen by the user, not archive data).
+    pub file_name: String,
+    pub archive_id: String,
+    pub profile: ProfileView,
+    /// Oldest first; the last one is the head.
+    pub commits: Vec<CommitView>,
+    /// Why retention is unknown, when it is (`retained`/`expired` are then
+    /// `null` on every commit).
+    pub retention_error: Option<IpcError>,
+}
+
+/// Where an opened snapshot's catalog came from (`CatalogSource`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "source", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum CatalogSourceView {
+    Image,
+    /// The catalog image was damaged; the same commit's snapshot manifest
+    /// stood in for it.
+    SnapshotManifest {
+        image_error: IpcError,
+    },
+}
+
+/// One snapshot opened for browsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SnapshotView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub commit_id: String,
+    /// Entries in the snapshot, directories included.
+    pub entries: u32,
+    pub root_dirs: u32,
+    pub root_files: u32,
+    pub catalog_source: CatalogSourceView,
+}
+
+/// One row of a directory listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct EntryRow {
+    pub key: PathKey,
+    pub name: NameText,
+    pub kind: EntryKindView,
+    /// Logical size in bytes, decimal; "0" for a directory.
+    pub size: String,
+    pub child_dirs: u32,
+    pub child_files: u32,
+}
+
+/// A slice of one directory's children (`mochi_core::browse` order:
+/// directories first, then files, each in name byte order).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ChildrenPage {
+    pub total: u32,
+    pub offset: u32,
+    pub entries: Vec<EntryRow>,
+}
+
+/// POSIX attributes as recorded (spec D6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct PosixView {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// The promised attributes of an entry (spec §10.4.1, D6). `null` fields
+/// were not recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum AttributesView {
+    Recorded {
+        posix: Option<PosixView>,
+        /// Windows attribute bits MOCHI promises, by name.
+        windows: Option<Vec<String>>,
+        /// RFC 3339 UTC; `null` if not recorded or not representable.
+        mtime: Option<String>,
+    },
+    /// The attributes could not be read (for example a damaged manifest);
+    /// they are not guessed.
+    Unavailable { error: IpcError },
+}
+
+/// Everything the details pane shows for one entry. Listing reads the
+/// catalog only: the content hash is the recorded one, not a verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct EntryDetails {
+    pub key: PathKey,
+    pub path: NameText,
+    pub kind: EntryKindView,
+    pub size: String,
+    /// Plain BLAKE3 of the content (O20), hex; `null` for a directory.
+    pub content_hash: Option<String>,
+    pub file_version_id: String,
+    pub attributes: AttributesView,
+}

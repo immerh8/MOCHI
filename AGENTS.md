@@ -64,7 +64,7 @@ R6 vectors come from an independent Python implementation; CI regenerates them (
 python3 docs/ratification/R6-vectors/gen_vectors.py | diff - docs/ratification/R6-vectors/vectors.json
 ```
 
-Desktop (React + TypeScript + Vite, pnpm, Node 24 LTS — plan decision O1; D0 built, `apps/mochi-desktop/README.md`). On Linux the workspace build needs webkit2gtk 4.1 (`libwebkit2gtk-4.1-dev` and companions, listed in that README):
+Desktop (React + TypeScript + Vite, pnpm, Node 24 LTS — plan decision O1; D0 and D1 built, `apps/mochi-desktop/README.md`). On Linux the workspace build needs webkit2gtk 4.1 (`libwebkit2gtk-4.1-dev` and companions, listed in that README):
 
 ```bash
 cd apps/mochi-desktop/ui && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test

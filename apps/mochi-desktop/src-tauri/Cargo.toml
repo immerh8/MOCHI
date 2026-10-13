@@ -31,7 +31,15 @@ mochi-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
+# The native open dialog, called from Rust only (D1): the webview gets no
+# dialog permission and never names a path (README "Security decisions").
+tauri-plugin-dialog = "2"
 ts-rs = "12"
+
+[dev-dependencies]
+mochi-testkit.workspace = true
+tempfile.workspace = true
+blake3.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
