@@ -25,7 +25,7 @@ LICENSE_FILES = ("LICENSE", "LICENCE", "LICENSE.md", "LICENSE.txt", "LICENSE-MIT
 
 
 def accepted_list():
-    return set(tomllib.loads(ABOUT.read_text())["accepted"])
+    return set(tomllib.loads(ABOUT.read_text(encoding="utf-8"))["accepted"])
 
 
 def expr_allowed(expr, accepted):
@@ -38,7 +38,8 @@ def expr_allowed(expr, accepted):
 
 
 def run(cmd, cwd=None):
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if r.returncode != 0:
         sys.stderr.write(r.stderr)
         sys.exit(f"licenses.py: {' '.join(cmd)} failed ({r.returncode})")
@@ -67,7 +68,7 @@ def js_entries(accepted):
                 bad.append(f"{p['name']} ({spdx})")
                 continue
             for ver, path in zip(p["versions"], p["paths"]):
-                text = next((f.read_text(errors="replace") for n in LICENSE_FILES
+                text = next((f.read_text(encoding="utf-8", errors="replace") for n in LICENSE_FILES
                              if (f := Path(path) / n).is_file()), None)
                 if text is None:
                     bad.append(f"{p['name']}@{ver}: no license file in {path}")
@@ -84,7 +85,8 @@ def render(rust, js):
              "MOCHI is licensed under MIT OR Apache-2.0. Generated at build time from the\n"
              "dependency graph of this installer's app and UI bundle (plan D7, O23).\n\n"]
     for f in ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.md"):
-        parts.append(f"\n{'#' * 78}\n# {f}\n{'#' * 78}\n\n{(ROOT / f).read_text()}\n")
+        body = (ROOT / f).read_text(encoding="utf-8")
+        parts.append(f"\n{'#' * 78}\n# {f}\n{'#' * 78}\n\n{body}\n")
     for title, entries in (("Rust crates", rust), ("npm packages (UI bundle)", js)):
         groups = {}
         for name, ver, spdx, text in entries:
@@ -96,6 +98,9 @@ def render(rust, js):
 
 
 def main():
+    # Windows consoles default to a locale codec; never die printing a name.
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
     if len(sys.argv) != 2:
         sys.exit("usage: licenses.py OUTPUT_FILE")
     accepted = accepted_list()
@@ -104,7 +109,7 @@ def main():
         sys.exit("licenses.py: empty dependency list; refusing to write a bogus file")
     out = Path(sys.argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(rust, js))
+    out.write_text(render(rust, js), encoding="utf-8")
     print(f"wrote {out}: {len(rust)} Rust crate entries, {len(js)} npm entries")
 
 

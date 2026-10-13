@@ -439,6 +439,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: package-${{ matrix.os }}
+      - uses: actions/setup-python@v5
+        with:
+          # packaging/licenses.py needs tomllib (3.11+); 22.04's system Python is 3.10.
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
