@@ -58,7 +58,9 @@ fn apply_process_limits(req: &Request) -> Result<(), String> {
 #[allow(clippy::panic)]
 fn inject_fault(path: &[u8], out: &mut Out) -> Option<Result<(), EngineError>> {
     use std::time::Duration;
-    let name = path.strip_prefix(b"fault:")?;
+    // The path is platform bytes (UTF-16LE on Windows), so decode it first.
+    let decoded = path_from_bytes(path);
+    let name = decoded.to_str()?.strip_prefix("fault:")?.as_bytes();
     Some(match name {
         b"panic" => panic!("injected panic"),
         b"abort" => std::process::abort(),
