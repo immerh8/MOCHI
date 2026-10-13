@@ -95,7 +95,8 @@ jobs:
 
   e2e:
     # Plan D0 exit: the built app streams a sample job's progress and cancels
-    # it cleanly, driven through tauri-driver on every supported platform
+    # it cleanly; plan D1 exit: it browses snapshots, hostile names stay text,
+    # and a 100,000-entry folder pages; driven through tauri-driver on every supported platform
     # (O11). GitHub's Windows runners are Windows Server; client-only
     # behaviour goes on the release checklist.
     name: desktop e2e (${{ matrix.os }})
@@ -142,6 +143,9 @@ jobs:
       - name: Build the app with the UI embedded
         # `e2e`: test builds only; lets msedgedriver configure WebView2 (src/automation.rs).
         run: cargo build --locked -p mochi-desktop --features custom-protocol,e2e
+      - name: Write the archives the D1 browse spec opens
+        shell: bash
+        run: cargo run --locked --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures
       - name: Install the E2E runner
         working-directory: apps/mochi-desktop/e2e
         run: pnpm install --frozen-lockfile

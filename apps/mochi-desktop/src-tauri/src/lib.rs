@@ -1,4 +1,4 @@
-//! The MOCHI desktop application (plan §7, phase D0).
+//! The MOCHI desktop application (plan §7, phases D0 and D1).
 //!
 //! Commands are thin adapters (AGENTS.md "Tauri v2 rules"): they validate
 //! input, call into `mochi-core` or the job runner, and return typed
@@ -7,9 +7,11 @@
 //! CI fails if the checked-in copies are stale.
 
 mod automation;
+pub mod browse;
 pub mod commands;
 pub mod ipc;
 pub mod jobs;
+mod picker;
 pub mod self_test;
 
 use std::sync::Arc;
@@ -17,10 +19,17 @@ use std::sync::Arc;
 /// Build and run the application until its last window closes.
 pub fn run() -> Result<(), tauri::Error> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(jobs::JobRegistry::default()))
+        .manage(Arc::new(browse::Archives::default()))
         .invoke_handler(tauri::generate_handler![
             commands::start_job,
-            commands::cancel_job
+            commands::cancel_job,
+            commands::open_archive,
+            commands::close_archive,
+            commands::open_snapshot,
+            commands::list_children,
+            commands::entry_details
         ])
         .setup(|app| {
             main_window(app)?;

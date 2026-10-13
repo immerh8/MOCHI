@@ -23,6 +23,7 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod browse;
 pub mod catalog;
 pub mod commit;
 pub mod compact;
@@ -56,6 +57,7 @@ pub mod state;
 pub mod status;
 pub mod storage;
 pub mod tar;
+pub mod text;
 pub mod timestamp;
 pub mod verify;
 

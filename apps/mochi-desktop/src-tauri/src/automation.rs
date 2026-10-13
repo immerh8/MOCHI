@@ -8,6 +8,11 @@
 //! (CI: "DevToolsActivePort file doesn't exist"). With `e2e`, the main
 //! window passes both through. Shipped builds never enable the feature, so
 //! an environment variable can never open a debugging port in them.
+//!
+//! WebDriver cannot drive a native file dialog, so with `e2e` the open
+//! dialog first takes paths from `MOCHI_E2E_PICK` (a platform path list, one
+//! path per "Open archive" click, in order; `crate::picker`). Shipped builds
+//! never read the variable.
 
 use tauri::{App, WebviewWindowBuilder, Wry};
 
@@ -35,4 +40,19 @@ pub fn configure<'a>(
     builder: WebviewWindowBuilder<'a, Wry, App>,
 ) -> WebviewWindowBuilder<'a, Wry, App> {
     builder
+}
+
+/// The next path from `MOCHI_E2E_PICK`, if any remain.
+#[cfg(feature = "e2e")]
+pub fn next_pick() -> Option<std::path::PathBuf> {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    static QUEUE: Mutex<Option<VecDeque<std::path::PathBuf>>> = Mutex::new(None);
+    let mut q = QUEUE.lock().unwrap_or_else(|p| p.into_inner());
+    q.get_or_insert_with(|| {
+        std::env::var_os("MOCHI_E2E_PICK")
+            .map(|v| std::env::split_paths(&v).collect())
+            .unwrap_or_default()
+    })
+    .pop_front()
 }

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import { Browser } from "./browser/Browser";
 import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
 import type { JobEvent, JobOutcome } from "./ipc/jobs";
 
@@ -94,6 +95,7 @@ export function App() {
   return (
     <main>
       <h1>MOCHI</h1>
+      <Browser />
       <section aria-labelledby="self-test-heading">
         <h2 id="self-test-heading">Job runner self-test</h2>
         <p>

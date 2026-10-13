@@ -12,31 +12,10 @@
 
 use serde_json::{json, Value};
 
-fn escaped_char(c: char) -> bool {
-    c.is_control()
-        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}')
-        || ('\u{202A}'..='\u{202E}').contains(&c)
-        || ('\u{2066}'..='\u{2069}').contains(&c)
-}
-
-/// One terminal-safe line for archive bytes.
+/// One terminal-safe line for archive bytes. The rule lives in
+/// [`mochi_core::text::escape`], shared with the desktop app.
 pub fn text(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len());
-    for chunk in bytes.utf8_chunks() {
-        for c in chunk.valid().chars() {
-            if c == '\\' {
-                out.push_str("\\\\");
-            } else if escaped_char(c) {
-                out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
-            } else {
-                out.push(c);
-            }
-        }
-        for b in chunk.invalid() {
-            out.push_str(&format!("\\x{b:02x}"));
-        }
-    }
-    out
+    mochi_core::text::escape(bytes)
 }
 
 /// A path for JSON: `{"path": …}`, plus `"path_hex"` with the exact bytes
