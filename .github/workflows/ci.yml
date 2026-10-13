@@ -414,3 +414,94 @@ jobs:
           cat "$RUNNER_TEMP/r9-compare.txt"
           { echo '### r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})'; echo '```'; cat "$RUNNER_TEMP/r9-compare.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
+  package:
+    # Plan D7 (first slice), O11, O23: UNSIGNED installers. Windows NSIS (per-user,
+    # WebView2 bootstrapper) and an Ubuntu .deb built on 22.04 (declares
+    # libwebkit2gtk-4.1-0). The build generates the full third-party license list
+    # and fails on a license outside packaging/about.toml. Signing and the updater
+    # need owner-provided keys: docs/packaging.md. Both uploads are workflow
+    # artifacts only; nothing is published.
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            bundle: deb
+          - os: windows-latest
+            bundle: nsis
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-${{ matrix.os }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm (corepack, the version in package.json)
+        run: corepack enable
+      - name: Desktop app build dependencies (Ubuntu 22.04; webkit2gtk 4.1, plan O11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
+      - name: Install cargo-about and the Tauri CLI (pinned)
+        # Both are MIT OR Apache-2.0 tools that run at build time only.
+        run: |
+          cargo install cargo-about --version 0.9.2 --locked --features cli
+          cargo install tauri-cli --version 2.12.2 --locked
+      - name: Build the installer (license list, UI, bundle)
+        shell: bash
+        run: packaging/build-installer.sh ${{ matrix.bundle }}
+      # --- Signing placeholder (docs/packaging.md; NOT active) -------------
+      # Windows: sign the setup exe with the owner's code-signing certificate,
+      # e.g. bundle.windows.signCommand / certificateThumbprint, with secrets
+      # such as WINDOWS_CERTIFICATE supplied by the owner. Never commit keys.
+      # Updater: TAURI_SIGNING_PRIVATE_KEY(_PASSWORD) from secrets.
+      # ------------------------------------------------------------------------
+      - name: Smoke check the .deb (metadata, dependency, contents, install, ldd, remove)
+        if: matrix.bundle == 'deb'
+        run: |
+          deb=$(ls target/release/bundle/deb/*.deb)
+          packaging/smoke-deb.sh --install "$deb"
+      - name: Smoke check the installer (silent per-user install, uninstall)
+        if: matrix.bundle == 'nsis'
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem target\release\bundle\nsis\*-setup.exe).FullName
+          packaging\smoke-nsis.ps1 -Setup $setup
+      - name: Collect the installer and its license list
+        shell: bash
+        run: |
+          mkdir -p target/installer-out
+          cp target/release/bundle/${{ matrix.bundle }}/*.deb target/release/bundle/${{ matrix.bundle }}/*-setup.exe target/installer-out/ 2>/dev/null || true
+          cp target/packaging/THIRD-PARTY-LICENSES.txt target/installer-out/
+          ls -l target/installer-out
+          [ "$(ls target/installer-out | wc -l)" = 2 ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mochi-installer-${{ matrix.bundle }}-unsigned
+          path: target/installer-out/*
+          if-no-files-found: error
+
+  package-ubuntu-24:
+    # The 22.04-built .deb must also install and run its libraries on the
+    # current LTS (O11: both Ubuntu releases are supported).
+    name: package smoke (ubuntu-24.04)
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mochi-installer-deb-unsigned
+          path: installer
+      - name: Smoke check the .deb on 24.04
+        run: |
+          deb=$(ls installer/*.deb)
+          packaging/smoke-deb.sh --install "$deb"
