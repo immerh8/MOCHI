@@ -405,9 +405,7 @@ impl Services {
         // The commit is published; a failure to close does not undo it.
         let _ = w.close();
         self.staging.consume(&taken, true);
-        let opened = self
-            .archives
-            .open(&destination, ReadOptions::default());
+        let opened = self.archives.open(&destination, ReadOptions::default());
         Ok(done(CommitOperation::Create, &outcome, &import, 0, opened))
     }
 
@@ -715,7 +713,10 @@ mod tests {
             .collect();
         assert_eq!(
             shown,
-            [("docs", StagedKind::Folder), ("loose.bin", StagedKind::File)]
+            [
+                ("docs", StagedKind::Folder),
+                ("loose.bin", StagedKind::File)
+            ]
         );
         assert_eq!(out.staged.destination, None);
     }
@@ -731,7 +732,11 @@ mod tests {
             clash,
             fx.root.join("loose.bin"),
         ]);
-        assert_eq!(out.staged.items.len(), 2, "the duplicate and the clash left");
+        assert_eq!(
+            out.staged.items.len(),
+            2,
+            "the duplicate and the clash left"
+        );
         assert_eq!(out.problems.len(), 1);
         assert_eq!(out.problems[0].code, "INVALID_ARGUMENT");
         assert!(out.problems[0].message.contains("same name"));
@@ -770,7 +775,10 @@ mod tests {
         let v = fx.svc.staging.remove(0).unwrap();
         assert_eq!(v.items.len(), 1);
         assert_eq!(v.items[0].name.text, "loose.bin");
-        assert_eq!(fx.svc.staging.remove(5).unwrap_err().code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            fx.svc.staging.remove(5).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
         let v = fx.svc.staging.clear();
         assert!(v.items.is_empty());
         assert_eq!(v.destination, None);
@@ -794,20 +802,51 @@ mod tests {
         let fx = fixture();
         let svc = &fx.svc;
         // Nothing staged.
-        assert_eq!(svc.validate(&create_request()).unwrap_err().code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            svc.validate(&create_request()).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
         stage_ok(svc, &[fx.root.join("loose.bin")]);
         // Staged, but nowhere to save it.
         let e = svc.validate(&create_request()).unwrap_err();
         assert!(e.message.contains("where to save"), "{}", e.message);
         // An archive that is not open.
-        let e = svc.validate(&JobRequest::AddToArchive { handle: 99 }).unwrap_err();
+        let e = svc
+            .validate(&JobRequest::AddToArchive { handle: 99 })
+            .unwrap_err();
         assert_eq!(e.code, ErrorCode::InvalidArgument);
-        for keys in [vec![], vec!["zz".to_owned()], vec!["61".to_owned(); MAX_DELETE_KEYS + 1]] {
+        for keys in [
+            vec![],
+            vec!["zz".to_owned()],
+            vec!["61".to_owned(); MAX_DELETE_KEYS + 1],
+        ] {
             let e = svc
                 .validate(&JobRequest::DeleteFromArchive { handle: 99, keys })
                 .unwrap_err();
             assert_eq!(e.code, ErrorCode::InvalidArgument);
         }
+    }
+
+    #[test]
+    fn a_delete_names_between_one_and_the_limit_of_entries() {
+        let fx = fixture();
+        let (_, done) = created(&fx);
+        let handle = done.commit.unwrap().archive.unwrap().handle;
+        let delete = |keys: Vec<PathKey>| {
+            fx.svc
+                .validate(&JobRequest::DeleteFromArchive { handle, keys })
+        };
+        for keys in [vec![], vec!["61".to_owned(); MAX_DELETE_KEYS + 1]] {
+            let e = delete(keys).unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+            assert!(e.message.contains("names 1 to"), "{}", e.message);
+        }
+        assert_eq!(
+            delete(vec!["zz".to_owned()]).unwrap_err().message,
+            "not a path key"
+        );
+        delete(vec![hex_key("loose.bin")]).unwrap();
+        delete(vec!["61".to_owned(); MAX_DELETE_KEYS]).unwrap();
     }
 
     #[test]
@@ -821,7 +860,11 @@ mod tests {
             }
         }
         let e = reg
-            .start(create_request(), Arc::new(Never), Box::new(|_| panic!("must not spawn")))
+            .start(
+                create_request(),
+                Arc::new(Never),
+                Box::new(|_| panic!("must not spawn")),
+            )
             .unwrap_err();
         assert_eq!(e.code, "INVALID_ARGUMENT");
     }
@@ -834,16 +877,26 @@ mod tests {
         let (dest, done) = created(&fx);
         let state = state_of(&dest);
         assert_eq!(file(&state, "docs/a.txt").unwrap(), b"alpha");
-        assert_eq!(file(&state, "docs/deep/b.txt").unwrap(), b"bravo bravo bravo");
+        assert_eq!(
+            file(&state, "docs/deep/b.txt").unwrap(),
+            b"bravo bravo bravo"
+        );
         assert_eq!(file(&state, "loose.bin").unwrap(), vec![7u8; 100]);
         assert!(matches!(state.get(&b"docs/deep"[..]), Some(Content::Dir)));
-        assert_eq!(state.len(), 5, "docs, docs/a.txt, docs/deep, docs/deep/b.txt, loose.bin");
+        assert_eq!(
+            state.len(),
+            5,
+            "docs, docs/a.txt, docs/deep, docs/deep/b.txt, loose.bin"
+        );
         assert_verifies(&dest);
 
         let c = done.commit.unwrap();
         assert_eq!(c.operation, CommitOperation::Create);
         assert_eq!(c.status, "LOCAL_COMMITTED");
-        assert_eq!((c.seq, c.files, c.directories, c.bytes), (0, 3, 2, 5 + 17 + 100));
+        assert_eq!(
+            (c.seq, c.files, c.directories, c.bytes),
+            (0, 3, 2, 5 + 17 + 100)
+        );
         assert!(c.skipped.is_empty());
         let a = c.archive.expect("the new archive is open for browsing");
         assert_eq!(a.file_name, "new.mochi");
@@ -892,7 +945,9 @@ mod tests {
         assert_eq!(CompressionPreset::Smaller.zstd_level(), Some(19));
         // Words from a small vocabulary in a pseudo-random order: the longer
         // matches and larger window of level 19 pay off, level 1's do not.
-        let words = ["archive", "snapshot", "commit", "chunk", "digest", "catalog", "frame", "parity"];
+        let words = [
+            "archive", "snapshot", "commit", "chunk", "digest", "catalog", "frame", "parity",
+        ];
         let mut x = 12345u32;
         let text: Vec<u8> = (0..200_000)
             .flat_map(|_| {
@@ -944,7 +999,9 @@ mod tests {
     fn a_missing_destination_folder_fails_without_writing() {
         let fx = fixture();
         stage_ok(&fx.svc, &[fx.root.join("loose.bin")]);
-        fx.svc.staging.set_destination(fx.out.join("no/such/dir/x.mochi"));
+        fx.svc
+            .staging
+            .set_destination(fx.out.join("no/such/dir/x.mochi"));
         assert!(run_plain(&fx.svc, &create_request()).is_err());
     }
 
@@ -989,7 +1046,10 @@ mod tests {
             "no archive and no temporary file"
         );
         assert_eq!(fx.svc.staging.view().items.len(), 2);
-        assert_eq!(fx.svc.staging.view().destination.as_deref(), Some("never.mochi"));
+        assert_eq!(
+            fx.svc.staging.view().destination.as_deref(),
+            Some("never.mochi")
+        );
     }
 
     #[test]
@@ -1001,14 +1061,26 @@ mod tests {
         stage_ok(&fx.svc, &[fx.root.join("loose.bin")]);
         let token = CancellationToken::new();
         token.cancel();
-        let e = run(&fx.svc, &JobRequest::AddToArchive { handle }, &NullProgress, &token)
-            .unwrap_err();
+        let e = run(
+            &fx.svc,
+            &JobRequest::AddToArchive { handle },
+            &NullProgress,
+            &token,
+        )
+        .unwrap_err();
         assert_eq!(e.code, ErrorCode::Cancelled);
-        assert_eq!(std::fs::read(&dest).unwrap(), before, "the head is unchanged");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            before,
+            "the head is unchanged"
+        );
         let key = hex_key("loose.bin");
         let e = run(
             &fx.svc,
-            &JobRequest::DeleteFromArchive { handle, keys: vec![key] },
+            &JobRequest::DeleteFromArchive {
+                handle,
+                keys: vec![key],
+            },
             &NullProgress,
             &token,
         )
@@ -1025,7 +1097,10 @@ mod tests {
         let before = std::fs::read(&dest).unwrap();
         stage_ok(
             &fx.svc,
-            &[put(&fx.root, "more/one.txt", b"1"), put(&fx.root, "more2/two.txt", b"2")],
+            &[
+                put(&fx.root, "more/one.txt", b"1"),
+                put(&fx.root, "more2/two.txt", b"2"),
+            ],
         );
         let token = CancellationToken::new();
         let sink = CancelAfterFirstFile(token.clone());
@@ -1059,7 +1134,11 @@ mod tests {
         let state = state_of(&dest);
         assert_eq!(file(&state, "loose.bin").unwrap(), b"changed");
         assert_eq!(file(&state, "fresh.txt").unwrap(), b"fresh");
-        assert_eq!(file(&state, "docs/a.txt").unwrap(), b"alpha", "untouched entries stay");
+        assert_eq!(
+            file(&state, "docs/a.txt").unwrap(),
+            b"alpha",
+            "untouched entries stay"
+        );
         assert_verifies(&dest);
 
         // Snapshot 0 still shows the first commit's namespace.
@@ -1151,11 +1230,23 @@ mod tests {
         assert_verifies(&dest);
 
         // The previous snapshot still has it, content included.
-        let page0 = fx.svc.archives.children(handle, 0, None, false, 0, 100).unwrap();
+        let page0 = fx
+            .svc
+            .archives
+            .children(handle, 0, None, false, 0, 100)
+            .unwrap();
         assert!(page0.entries.iter().any(|e| e.name.text == "loose.bin"));
-        let d = fx.svc.archives.details(handle, 0, &hex_key("loose.bin")).unwrap();
+        let d = fx
+            .svc
+            .archives
+            .details(handle, 0, &hex_key("loose.bin"))
+            .unwrap();
         assert_eq!(d.size, "100");
-        let page1 = fx.svc.archives.children(handle, 1, None, false, 0, 100).unwrap();
+        let page1 = fx
+            .svc
+            .archives
+            .children(handle, 1, None, false, 0, 100)
+            .unwrap();
         assert!(!page1.entries.iter().any(|e| e.name.text == "loose.bin"));
         // …and the bytes are still in the file: its size did not shrink.
         assert!(std::fs::metadata(&dest).unwrap().len() > 100);
@@ -1177,7 +1268,10 @@ mod tests {
         .unwrap();
         assert_eq!(done.commit.unwrap().removed, 4);
         let state = state_of(&dest);
-        assert_eq!(state.keys().map(|k| k.as_slice()).collect::<Vec<_>>(), [&b"loose.bin"[..]]);
+        assert_eq!(
+            state.keys().map(|k| k.as_slice()).collect::<Vec<_>>(),
+            [&b"loose.bin"[..]]
+        );
         assert_verifies(&dest);
     }
 
@@ -1242,8 +1336,10 @@ mod tests {
                 .any(|e| matches!(e, JobEvent::Progress { phase, .. } if phase == "import")),
             "the import reports progress"
         );
-        let JobEvent::Finished { outcome: JobOutcome::Completed { commit, .. }, .. } =
-            events.last().unwrap()
+        let JobEvent::Finished {
+            outcome: JobOutcome::Completed { commit, .. },
+            ..
+        } = events.last().unwrap()
         else {
             panic!("not completed: {:?}", events.last())
         };
@@ -1303,12 +1399,18 @@ mod tests {
         watch.set(sink.clone());
         let paths = vec![fx.root.join("docs"), fx.root.join("missing")];
         on_drag_drop(
-            &DragDropEvent::Enter { paths: paths.clone(), position: position() },
+            &DragDropEvent::Enter {
+                paths: paths.clone(),
+                position: position(),
+            },
             &fx.svc.staging,
             &watch,
         );
         on_drag_drop(
-            &DragDropEvent::Drop { paths, position: position() },
+            &DragDropEvent::Drop {
+                paths,
+                position: position(),
+            },
             &fx.svc.staging,
             &watch,
         );
@@ -1325,14 +1427,20 @@ mod tests {
         assert_eq!(fx.svc.staging.view().items.len(), 1);
         // A drop is a stage: a later create uses it.
         on_drag_drop(&DragDropEvent::Leave, &fx.svc.staging, &watch);
-        assert_eq!(sink.0.lock().unwrap().last(), Some(&DropEvent::Hover { active: false }));
+        assert_eq!(
+            sink.0.lock().unwrap().last(),
+            Some(&DropEvent::Hover { active: false })
+        );
     }
 
     #[test]
     fn a_drop_with_no_listener_still_stages_and_a_gone_listener_is_forgotten() {
         let fx = fixture();
         let watch = DropWatch::default();
-        let drop_of = |p: PathBuf| DragDropEvent::Drop { paths: vec![p], position: position() };
+        let drop_of = |p: PathBuf| DragDropEvent::Drop {
+            paths: vec![p],
+            position: position(),
+        };
         on_drag_drop(&drop_of(fx.root.join("docs")), &fx.svc.staging, &watch);
         assert_eq!(fx.svc.staging.view().items.len(), 1);
 
@@ -1342,7 +1450,11 @@ mod tests {
         let seen = gone.0.lock().unwrap().len();
         assert_eq!(seen, 1, "the first send failed, so the sink was dropped");
         on_drag_drop(&drop_of(fx.root.join("docs")), &fx.svc.staging, &watch);
-        assert_eq!(gone.0.lock().unwrap().len(), seen, "nothing more sent to it");
+        assert_eq!(
+            gone.0.lock().unwrap().len(),
+            seen,
+            "nothing more sent to it"
+        );
     }
 
     #[test]

@@ -203,16 +203,17 @@ fn run_job(
         cancel: token,
     };
     let result = match request {
-        JobRequest::SelfTest { steps, step_ms } => {
-            crate::self_test::run(*steps, *step_ms, &ctx).map(|summary| JobDone {
+        JobRequest::SelfTest { steps, step_ms } => crate::self_test::run(*steps, *step_ms, &ctx)
+            .map(|summary| JobDone {
                 summary,
                 commit: None,
-            })
-        }
-        write => registry
-            .services
-            .run(write, &ctx)
-            .unwrap_or_else(|| Err(MochiError::new(ErrorCode::NotImplemented, "this job kind is not routed"))),
+            }),
+        write => registry.services.run(write, &ctx).unwrap_or_else(|| {
+            Err(MochiError::new(
+                ErrorCode::NotImplemented,
+                "this job kind is not routed",
+            ))
+        }),
     };
     finisher.outcome = Some(match result {
         Ok(JobDone { summary, commit }) => JobOutcome::Completed { summary, commit },

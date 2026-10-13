@@ -78,15 +78,10 @@ pub enum JobOutcome {
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
     /// Ended with an error; `code` is a registered `mochi-core` error code.
-    Failed {
-        code: String,
-        message: String,
-    },
+    Failed { code: String, message: String },
     /// Ended without producing a result (an internal fault). Never a
     /// statement about any archive.
-    Aborted {
-        message: String,
-    },
+    Aborted { message: String },
 }
 
 /// An error returned by a command. `code` is a registered `mochi-core`
