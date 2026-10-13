@@ -21,6 +21,12 @@ fn main() {
         "open_snapshot",
         "list_children",
         "entry_details",
+        "watch_drops",
+        "staged_sources",
+        "stage_sources",
+        "unstage_source",
+        "clear_staged",
+        "choose_destination",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

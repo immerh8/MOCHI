@@ -12,6 +12,7 @@ end-user application.
 1. [`AGENTS.md`](AGENTS.md): working rules and invariants. Read before changing anything.
 2. [`docs/spec.md`](docs/spec.md): the specification (revision 2.0). Normative.
 3. [`docs/implementation-plan.md`](docs/implementation-plan.md): phases, scope, Definition of Done.
+4. [`docs/user/`](docs/user/README.md): the user guide (not a backup, encrypted archives, what the checks prove, TAR compatibility, recovery record).
 
 ## Layout
 

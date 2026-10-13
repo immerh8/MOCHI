@@ -19,6 +19,7 @@ import { Name } from "./Name";
 import { Tree } from "./Tree";
 import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
+import { Writer } from "../write/Writer";
 
 /** Row height of the file list, in pixels (must match `.vrow` in CSS). */
 export const ROW_HEIGHT = 28;
@@ -215,6 +216,25 @@ export function Browser() {
     }
   };
 
+  /** A commit was published: show the archive as it now stands, at its head. */
+  const adopt = useCallback(
+    async (archive: ArchiveSummary | null) => {
+      if (archive === null) return;
+      try {
+        const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
+        const snapshot = await openSnapshot(archive.handle, head);
+        if (open && open.archive.handle !== archive.handle) {
+          await closeArchive(open.archive.handle).catch(() => false);
+        }
+        setOpen({ archive, snapshot });
+        navigate([]);
+      } catch (e) {
+        setError(errorText("The commit was made, but the archive could not be shown", e));
+      }
+    },
+    [open, navigate],
+  );
+
   const doClose = async () => {
     if (!open) return;
     await closeArchive(open.archive.handle).catch(() => false);
@@ -254,6 +274,12 @@ export function Browser() {
           {error}
         </p>
       )}
+      <Writer
+        archive={open?.archive ?? null}
+        viewingHead={open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1)}
+        selected={details ? { key: details.key, name: details.path } : null}
+        onCommitted={(a) => void adopt(a)}
+      />
       {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
       {open && (
         <>
