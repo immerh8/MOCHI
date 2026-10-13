@@ -215,7 +215,7 @@ jobs:
           # C12 (D21): parity frames and reconstruction.
           - { target: parity_frame,      seeds: "../fixtures/golden/c12", args: "-max_len=4096" }
           # C8 step 7 (D23): the bounded salvage scan over whole archives.
-          - { target: salvage_scan,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11 ../fixtures/golden/c12", args: "-max_len=400000" }
+          - { target: salvage_scan,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11 ../fixtures/golden/c12 ../fixtures/fuzz-regressions/salvage_scan", args: "-max_len=400000" }
           # D8: the foreign-format listing paths and the helper protocol decoder.
           - { target: foreign_zip,       seeds: "../fixtures/foreign", args: "-max_len=100000" }
           - { target: foreign_tar,       seeds: "../fixtures/foreign", args: "-max_len=100000" }
