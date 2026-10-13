@@ -106,5 +106,38 @@ if [ -f "$conf" ]; then
   grep -qE '"csp"[[:space:]]*:[[:space:]]*"' "$conf" || report "no CSP in tauri.conf.json (AGENTS.md: strict CSP)" "$conf"
 fi
 
+# 11. Foreign archive formats (plan D8, AGENTS.md "Foreign archive formats").
+#     (a) The format library, the core, and the test kit never depend on the
+#     foreign-format crate, and no source in them names it.
+hits=$(grep -nE 'mochi-foreign|mochi_foreign' crates/mochi-format/Cargo.toml crates/mochi-core/Cargo.toml crates/mochi-testkit/Cargo.toml || true)
+hits="$hits$(grep -rnE --include='*.rs' 'mochi_foreign' crates/mochi-format/src crates/mochi-core/src 2>/dev/null || true)"
+[ -n "$hits" ] && report "mochi-core / mochi-format / mochi-testkit referencing mochi-foreign (plan D8 rule 9)" "$hits"
+#     (b) The foreign parsers (zip, tar, flate2, 7z, UnRAR) are dependencies of
+#     mochi-foreign only, so they cannot be linked into the app, the CLI, or
+#     the core. (The fuzz workspace uses mochi-foreign's exercisers, not the
+#     parsers directly.)
+hits=$(grep -nE '^\s*(zip|tar|flate2|sevenz-rust2?|unrar(_sys|-sys)?)\s*=' $(find crates apps fuzz -name Cargo.toml -not -path '*/node_modules/*' 2>/dev/null) 2>/dev/null \
+        | grep -v '^crates/mochi-foreign/Cargo.toml:' || true)
+[ -n "$hits" ] && report "foreign-format parser dependency outside crates/mochi-foreign (plan D8 rule 3)" "$hits"
+#     (c) Anything that reaches the helper through the client (the app, the
+#     CLI) names mochi-foreign with default-features = false, so the parsers
+#     (the "engine" feature) stay out of its process. Only the helper binary
+#     and the fuzz workspace use the engine.
+hits=$(grep -nE '^\s*mochi-foreign\b' $(find crates apps -name Cargo.toml -not -path '*/node_modules/*' 2>/dev/null) 2>/dev/null \
+        | grep -v '^crates/mochi-foreign/Cargo.toml:' | grep -v 'default-features *= *false' || true)
+[ -n "$hits" ] && report "mochi-foreign used without default-features = false (the parsers would be linked into that process)" "$hits"
+#     (d) The helper's fault hooks (test-faults) are enabled only by
+#     mochi-foreign's own dev-dependency, never in a shipped crate.
+hits=$(grep -rnE 'test-faults' --include=Cargo.toml crates apps fuzz 2>/dev/null \
+        | grep -vE '^crates/mochi-foreign/Cargo.toml:' || true)
+[ -n "$hits" ] && report "test-faults enabled outside mochi-foreign (helper fault hooks)" "$hits"
+hits=$(awk '/^\[/{sec=$0} sec=="[dependencies]" && /test-faults/' crates/mochi-foreign/Cargo.toml)
+[ -n "$hits" ] && report "test-faults in mochi-foreign's [dependencies]; it may appear only under [dev-dependencies]" "$hits"
+#     (e) Neither the helper nor the client writes files or calls a library's
+#     extract-to-disk function (plan D8 rule 4: only the C6 engine writes).
+hits=$(grep -rnE --include='*.rs' '\.extract\(|extract_unwrapped|unpack\(|unpack_in\(|File::create|OpenOptions|create_dir|fs::write|std::fs::(write|remove|rename|copy)' crates/mochi-foreign/src 2>/dev/null \
+        | grep -vE '^[^:]+:[0-9]+:\s*//' || true)
+[ -n "$hits" ] && report "file writing or library extract-to-disk in mochi-foreign (plan D8 rule 4)" "$hits"
+
 if [ "$fail" -eq 0 ]; then echo "invariants: ok"; fi
 exit "$fail"

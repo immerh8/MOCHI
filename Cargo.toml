@@ -5,6 +5,7 @@ members = [
     "crates/mochi-core",
     "crates/mochi-cli",
     "crates/mochi-testkit",
+    "crates/mochi-foreign",
     # Phase D0 (plan §7, decision O1): the Tauri v2 desktop app. Building it
     # on Linux needs webkit2gtk 4.1 (apps/mochi-desktop/README.md).
     "apps/mochi-desktop/src-tauri",
