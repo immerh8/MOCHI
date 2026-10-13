@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0) and the browsing commands (D1). open_archive shows the native open dialog from Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted.",
-  "windows": ["main"],
+  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0), the browsing commands (D1), and the staging commands (D2). The native dialogs (open, choose sources, save) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-start-job",
     "allow-cancel-job",
@@ -10,6 +12,12 @@
     "allow-close-archive",
     "allow-open-snapshot",
     "allow-list-children",
-    "allow-entry-details"
+    "allow-entry-details",
+    "allow-watch-drops",
+    "allow-staged-sources",
+    "allow-stage-sources",
+    "allow-unstage-source",
+    "allow-clear-staged",
+    "allow-choose-destination"
   ]
 }

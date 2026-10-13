@@ -18,6 +18,23 @@ pub enum JobRequest {
     /// milliseconds each, reporting progress and honouring cancellation
     /// (plan D0 exit). Limits: 1 to 1,000 steps, at most 1,000 ms each.
     SelfTest { steps: u32, step_ms: u32 },
+    /// D2: create a new archive at the destination the user chose
+    /// (`choose_destination`) from the sources they staged (`stage_sources`,
+    /// or dropped onto the window). The webview names no path.
+    CreateArchive {
+        preset: CompressionPreset,
+        /// "Readable with standard zstd + tar" (O4): fixed at creation.
+        tar_compatible: bool,
+    },
+    /// D2: add the staged sources to an open archive as one new commit.
+    AddToArchive { handle: ArchiveHandle },
+    /// D2: remove entries from an open archive's current snapshot as one
+    /// new commit. Their content stays in the archive's history.
+    DeleteFromArchive {
+        handle: ArchiveHandle,
+        /// Entries of the head snapshot, as the listing returned them.
+        keys: Vec<PathKey>,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -53,6 +70,10 @@ pub enum JobEvent {
 pub enum JobOutcome {
     Completed {
         summary: String,
+        /// Set by the jobs that publish a commit (D2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        commit: Option<Box<CommitReport>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -263,4 +284,135 @@ pub struct EntryDetails {
     pub content_hash: Option<String>,
     pub file_version_id: String,
     pub attributes: AttributesView,
+}
+
+// ---- D2: create and add -----------------------------------------------------
+//
+// The webview never names a path. The user picks sources in a native dialog
+// shown from Rust, or drops them on the window (Rust receives the window's
+// drop event); Rust keeps the paths and the webview sees only display names.
+
+/// How hard the compressor works (Zstandard level; spec §7 leaves the level to
+/// the writer, and readers cannot tell the difference). Not a format choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum CompressionPreset {
+    /// Level 1: quickest, largest.
+    Fast,
+    /// The writer's default level.
+    Balanced,
+    /// Level 19: slowest, smallest.
+    Smaller,
+}
+
+/// Which native dialog `stage_sources` shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum SourcePick {
+    Files,
+    Folder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum StagedKind {
+    File,
+    Folder,
+    /// A link, device, or other entry that is not stored (it is reported
+    /// when the commit is made).
+    Other,
+}
+
+/// One staged source, by the name it would have in the archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct StagedItem {
+    pub name: NameText,
+    pub kind: StagedKind,
+}
+
+/// What is staged to add: the sources the next create or add would store,
+/// and where a new archive would be written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct StagedView {
+    pub items: Vec<StagedItem>,
+    /// File name of the chosen destination for a new archive, if chosen.
+    pub destination: Option<String>,
+}
+
+/// What reaches the webview about drag and drop (Rust handles the window's
+/// event; the webview needs no permission to hear it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "event", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum DropEvent {
+    /// Something is being dragged over (or has left) the window.
+    Hover { active: bool },
+    /// Items were dropped. `staged` is the whole staged set after adding
+    /// them; `problems` explains each dropped item that was not staged.
+    Dropped {
+        staged: StagedView,
+        problems: Vec<IpcError>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum CommitOperation {
+    Create,
+    Add,
+    Delete,
+}
+
+/// A source entry a commit left out, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SkippedView {
+    pub path: NameText,
+    pub reason: String,
+}
+
+/// The commit a create, add, or delete job published. `status` is always
+/// `LOCAL_COMMITTED` (spec §5.3: nothing in 1.0 reports more).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CommitReport {
+    pub operation: CommitOperation,
+    pub status: String,
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub commit_id: String,
+    #[ts(type = "number")]
+    pub files: u64,
+    #[ts(type = "number")]
+    pub directories: u64,
+    /// Content bytes read from the sources.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// Entries removed from the snapshot (a delete).
+    #[ts(type = "number")]
+    pub removed: u64,
+    pub skipped: Vec<SkippedView>,
+    /// Set when the new file's directory entry is not confirmed durable
+    /// (the commit is reported degraded, never durable).
+    pub durability_note: Option<String>,
+    /// The archive as it now stands, reopened for browsing (same handle as
+    /// before for an add or delete; a new one for a create). `null` if it
+    /// could not be reopened; `reopen_error` says why.
+    pub archive: Option<ArchiveSummary>,
+    pub reopen_error: Option<IpcError>,
+}
+
+/// The staged set after `stage_sources`, and any source that could not be
+/// staged (the rest still were).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct StageOutcome {
+    pub staged: StagedView,
+    pub problems: Vec<IpcError>,
 }
