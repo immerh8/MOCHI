@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   closeArchive,
@@ -14,6 +14,7 @@ import type {
   EntryRow,
   SnapshotView,
 } from "../ipc/browse";
+import { watchLaunches } from "../ipc/launch";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { Name } from "./Name";
 import { Tree } from "./Tree";
@@ -149,6 +150,8 @@ export function Browser() {
   const [counted, setCounted] = useState<{ id: string; total: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [details, setDetails] = useState<EntryDetails | null>(null);
+  // Set when the shell asked to extract (D6): the Extractor then shows its plan.
+  const [autoExtract, setAutoExtract] = useState<{ token: number; handle: number } | null>(null);
 
   const handle = open?.archive.handle ?? null;
   const seq = open?.snapshot.seq ?? null;
@@ -236,6 +239,42 @@ export function Browser() {
     [open, navigate],
   );
 
+  // The shell opened an archive, or could not (D6). Rust has done the opening
+  // and chosen any extract folder; this only shows the result. The listener is
+  // registered once and reads the latest handlers through a ref.
+  type Launched = (archive: ArchiveSummary, extract: boolean) => Promise<void>;
+  const launchedRef = useRef<Launched | null>(null);
+  // The handle on screen, kept current between renders: two launches in quick
+  // succession must each close the archive the one before opened.
+  const shownRef = useRef<number | null>(null);
+  const showLaunched: Launched = async (archive, extract) => {
+    setError(null);
+    try {
+      const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
+      const snapshot = await openSnapshot(archive.handle, head);
+      const previous = shownRef.current;
+      shownRef.current = archive.handle;
+      if (previous !== null && previous !== archive.handle) {
+        await closeArchive(previous).catch(() => false);
+      }
+      setOpen({ archive, snapshot });
+      navigate([]);
+      if (extract) setAutoExtract((a) => ({ token: (a?.token ?? 0) + 1, handle: archive.handle }));
+    } catch (e) {
+      setError(errorText("Could not open the archive", e));
+    }
+  };
+  useEffect(() => {
+    launchedRef.current = showLaunched;
+    shownRef.current = open?.archive.handle ?? null;
+  });
+  useEffect(() => {
+    watchLaunches((event) => {
+      if (event.event === "problem") setError(event.message);
+      else void launchedRef.current?.(event.archive, event.extract);
+    }).catch(() => undefined);
+  }, []);
+
   const doClose = async () => {
     if (!open) return;
     await closeArchive(open.archive.handle).catch(() => false);
@@ -285,6 +324,7 @@ export function Browser() {
         archive={open?.archive ?? null}
         seq={open?.snapshot.seq ?? null}
         selected={details ? { key: details.key, name: details.path } : null}
+        autoPlan={autoExtract}
       />
       {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
       {open && (
