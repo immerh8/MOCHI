@@ -35,7 +35,6 @@ async function enterFolder(name) {
 
 describe("archive browser", () => {
   it("opens an archive and shows its history and hostile names as text", async () => {
-    const scriptsBefore = await countElements("script");
     await openNext();
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("4 commits"));
@@ -59,7 +58,15 @@ describe("archive browser", () => {
 
     expect(await countElements("img")).toBe(0);
     expect(await countElements("svg")).toBe(0);
-    expect(await countElements("script")).toBe(scriptsBefore);
+    // No script element came from a name. (Counting all scripts does not
+    // work: WebView2 under msedgedriver adds one of its own on Windows.)
+    expect(
+      await browser.execute(
+        () =>
+          Array.from(document.scripts).filter((s) => `${s.src} ${s.textContent}`.includes("alert(1)"))
+            .length,
+      ),
+    ).toBe(0);
     expect(await countElements("a[href]")).toBe(0);
 
     // Details of one entry.
