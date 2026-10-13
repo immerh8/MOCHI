@@ -368,3 +368,47 @@ jobs:
       - name: Doctests with error codes checked
         run: cargo +nightly test --doc -p mochi-format
 
+
+  r9-interop:
+    # Gate G14 (spec Annex B.2.6, Annex B.1 D7): the independent read-only
+    # verifier in interop/pyverify, written from the specification alone. It
+    # shares no code with the Rust crates. The job installs the hash-pinned
+    # dependencies, runs the verifier's own tests (R5 and R6 vectors, the
+    # per-phase golden verdicts, truncation at every byte), and, once the R8
+    # golden set exists, diffs the verifier's summary of every case against the
+    # reference summary, failing on any mismatch and printing the list.
+    name: r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: "3.10"
+          - os: ubuntu-24.04
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the pinned dependencies and the verifier
+        run: |
+          python -m venv "$RUNNER_TEMP/r9"
+          "$RUNNER_TEMP/r9/bin/pip" install --quiet --require-hashes -r interop/pyverify/requirements.txt
+          "$RUNNER_TEMP/r9/bin/pip" install --quiet --no-deps interop/pyverify
+          "$RUNNER_TEMP/r9/bin/python" -I -c "import sqlite3, sys; print(sys.version); print('sqlite', sqlite3.sqlite_version)"
+      - name: pytest
+        working-directory: interop/pyverify
+        run: '"$RUNNER_TEMP/r9/bin/python" -m pytest -q --durations=5'
+      - name: Summaries of the R8 golden set against the reference summaries
+        run: |
+          if [ -d fixtures/golden/r8 ]; then
+            status=0
+            "$RUNNER_TEMP/r9/bin/python" interop/pyverify/tools/compare_r8.py fixtures/golden/r8 > "$RUNNER_TEMP/r9-compare.txt" || status=$?
+            cat "$RUNNER_TEMP/r9-compare.txt"
+            { echo '### r9 interop (${{ matrix.os }}, Python ${{ matrix.python }})'; echo '```'; cat "$RUNNER_TEMP/r9-compare.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          else
+            echo "fixtures/golden/r8 does not exist yet: no summaries to compare"
+          fi
