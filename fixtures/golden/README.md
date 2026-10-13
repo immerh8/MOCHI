@@ -50,6 +50,160 @@ file the writer would otherwise refuse to overwrite):
   (a bare image forged into a draft-2 archive) and `mochi-core`'s
   `a_bare_image_is_unsupported_not_damage`.
 
+## R8: the whole-archive golden set (gate G13)
+
+`r8/` is ratification artifact R8 (plan W16, K21): 76 cases built on the frozen draft-2
+format, with a coverage test. Valid, corrupt, and interrupted archives for every 1.0
+profile and allowed combination (Core, TAR, Encrypted, Redundancy, TAR+Redundancy,
+Encrypted+Redundancy), plus copy, salvage, and legacy cases. 9.6 MiB in all; the budget
+is 12 MiB and a test enforces it. Tests: `crates/mochi-testkit/tests/r8_golden.rs`;
+recipes: `tests/r8_golden/`; summary producer: `mochi_testkit::interop`.
+
+Files:
+
+* `cases.json`: the index, one object per case: `name`, `profile`
+  (`core|tar|enc|red|tar+red|enc+red`), `class` (`valid|corrupt|interrupted|copy|salvage|legacy`),
+  `fault` (one sentence), `spec` (sections), `fault_matrix_row` (the spec 24.2 row, or null),
+  `passphrase` (the test passphrase the case is read with, or null), `expected_head` (the
+  commit ID a freshness case is told to expect, or null), `copies` (file names), `salvage`
+  (whether `repair plan` runs with the salvage scan), and `expect`:
+  `{verify_exit, verify_level, repair_outcome, repair_exit}`.
+* `<case>.mochi`, and `<case>.copyN.mochi` for copy cases (N from 1, in `--copy` order).
+* `<case>.summary.json`: the expected `mochi-interop-summary-v1` (plan W17), produced by
+  Rust and reviewed. The independent verifier (R9) must produce the same JSON.
+* `g1/`: the G1 audit vectors (below).
+
+**What `expect` is.** `verify_exit` and `verify_level` are `verify` at `restoration` with
+`--deep` (what `fsck` asks for), reading with the case's passphrase and, for a freshness case,
+the expected head. `repair_outcome` and `repair_exit` are the outcome of `repair plan`
+(with the case's copies, and `--salvage` where `salvage` is true): `complete`, `partial`,
+`nothing_recoverable`, or `error:CODE` with the exit that code gives (3 operational, 4
+unsupported, 1 violation).
+
+**Frozen when written.** Archives contain zstd and SQLite output, and the Encrypted writer
+draws its nonces, salts, and data key from the OS (it has no injection point for a fixed
+stream, and adding one for tests would change production code), so none can be compared with a
+fresh build. `write_r8_golden_files` (ignored) writes only *missing* files and refuses to
+overwrite one that differs; a case derived from another reads the other **from disk**. The
+ordinary tests rebuild nothing: they check, for every case, that this build's `verify` exit,
+repair outcome, and summary equal `cases.json` and the stored summary. Adding a case means
+adding its recipe and spec, deleting `cases.json` (deliberately), and running the writer.
+Regeneration of existing files happens only at a draft bump or the 1.0 flip, with an
+explained diff.
+
+**Coverage is a test, not prose** (`coverage_*` in `r8_golden.rs`). It fails if a profile lacks
+a valid, corrupt, or interrupted case; if a spec 24.2 row about archive bytes in 1.0 has no
+case (the rows with none are listed in the test with the reason: inventory and Preservation,
+restore on a clean machine, search indexes, and the concurrency rows); or if a violation-class
+error code appears in no case's summary (as the head's refusal or a finding). Three codes are
+exempt, each with its reason in the test: `CHECKPOINT_MISMATCH` (raised only while writing,
+`compact`, or `repair apply`, which re-read what they just wrote), `RETENTION_UNRESOLVED`
+(reported by `gc plan` and `repair`, not by `verify`), and `IDENTITY_CONFLICT` (a writer-side
+code: a reader that applies manifests meets the duplicate first as `RECORD_INVALID`, which
+`core-corrupt-reused-chunk-id` shows).
+
+Other tests: `truncation_at_every_byte_of_the_small_case_accepts_no_foreign_commit` cuts
+`core-valid-small` at every length and requires every head found to be one of the original's
+commits, at its own footer offset; `history_summaries_agree_with_the_script` and
+`hostile_names_are_kept_as_bytes` compare summaries with expectations written from the
+scripts, not from a reader.
+
+### R8 summaries (`mochi-interop-summary-v1`)
+
+The format is plan W17's. These are the rules the reference follows where W17 leaves room,
+so that an independent reader can match them exactly:
+
+* `head`: `{"status": "opened", "code": null}`, or `{"status": "refused", "code": "<R7 code>"}`
+  when the head cannot be opened (the code `open_head` fails with; a wrong passphrase is
+  `KEY_UNAVAILABLE`). **Addition:** an Encrypted archive read with *no* passphrase has
+  `{"status": "keyless", "code": null}`; its `commits` are listed (commit records are
+  plaintext) and `snapshots` is `null` (names and content are not readable). A refused head
+  has `archive_id` null, `commits` and `snapshots` empty.
+* `commits`: the verified chain, ascending, from the head down to commit 0, with each commit's
+  footer offset and whether it is a checkpoint. `snapshots`: **one entry per commit of that
+  chain whose catalog opens**. Expiry (retention) does not remove a snapshot: it only marks
+  it collectable, and a collected snapshot is not in the archive at all (GC writes a new
+  archive).
+* `entries` are sorted by path bytes. There is no `symlink` kind in 1.0 (R4 reserves it; a
+  manifest carrying it is refused), so `kind` is `file` or `dir` and `target` is always null.
+  `size` is the logical length (0 for a directory); `content_hash` is the plain-BLAKE3
+  file-content hash (null for a directory). `attributes` are the promised ones as recorded
+  (`posix_mode`, `uid`, `gid`, `mtime_ns` = seconds x 10^9 + nanoseconds, `windows` the bits
+  or null); a field not recorded, or a commit whose manifests cannot be replayed, gives null.
+* `findings`: the violation-class codes of R7 section 6 that `verify` reports (any severity
+  but information), plus the head's refusal code, one `{code, object}` per code. `object` is
+  the **stored-object hash of a damaged data object** (a chunk of the head's catalog whose
+  stored bytes fail their recorded length or hash, or that decode to the wrong content, or
+  fail their AEAD tag) for `STORED_INTEGRITY_FAILED` and `CONTENT_INTEGRITY_FAILED`; a code
+  with no such object appears once with `object` null. Sorted by code, then object.
+* `parity`: null without a recovery record; otherwise the number of commits scanned,
+  data shards found damaged, shards rebuilt, and groups beyond capacity. **The chain and
+  snapshots are read through the parity-healed view** (damage within capacity is rebuilt in
+  memory, as `verify` does); `findings` still report the raw bytes.
+* An interrupted publication's bytes after the head are not in the summary except as the
+  `FOOTER_INVALID` / `TAIL_UNRESOLVED` findings `verify` gives them.
+
+### The cases
+
+Valid (21): `core-valid-{small,history,hostile-names,retention,compacted,gc,self-containing,false-magic}`,
+`tar-valid-{history,hostile-names}`, `enc-valid-{history,hostile-names,rekeyed,reencrypted,keyless}`,
+`red-valid-{50pct,5pct,100pct,multigroup}`, `tar-red-valid-history`, `enc-red-valid-history`.
+`core-valid-false-magic` is a valid archive: a file's payload embeds a real footer frame and
+a frame header, and nothing in a payload is a frame. `enc-valid-keyless` is the Encrypted archive
+verified without its passphrase (exit 2, content fields null). `red-valid-multigroup` holds
+3 MiB of incompressible data in one commit: more than one parity group, and the largest file in
+the set. `core-valid-self-containing` stores a raw copy of another archive as a file.
+
+Corrupt (38), one defect each: flipped chunks (head-only, older-only; also in TAR and
+Encrypted), all catalog images destroyed, a middle delta manifest, the latest footer, the
+descriptor, a middle commit frame, an oversized frame size (referenced, and after the head),
+non-canonical CBOR in a hash-covered head commit, a dictionary dependency and a missing
+dictionary, a content-hash mismatch, a traversal path, an older valid archive substituted
+(`expected_head`), a truncated history, a snapshot manifest bound to another commit, an
+orphan put, short extents, an undefined version, a reused chunk ID, a catalog image with a
+zeroed page, a manifest that is not a frame and one cut short; TAR: an altered, re-hashed
+stream; Encrypted: wrong passphrase (exit 3), a chunk sealed under another key (AEAD tag),
+key envelopes out of order or duplicated, a data region that is not data; Redundancy:
+within capacity, beyond capacity, a damaged parity frame, a forged parity frame (also
+TAR+Redundancy within, Encrypted+Redundancy beyond).
+
+Interrupted (10), by the spec 12.2 order, cut with the simulated storage's halt and torn-write
+faults (`KeepAll`: what a fresh process finds after a kill): after the data objects, after the
+commit frame, a torn footer, a lost write (the second half of a referenced chunk reads back as
+zeros), after the parity frames (Redundancy), an Encrypted case, a TAR case, and a compaction
+output cut before its last footer.
+
+Copy (3, W11 tests 1 to 3), salvage (3, W12 tests 1, 2, and 4), legacy (1, the draft-1
+reject).
+
+### The G1 audit (`r8/g1/`, spec B.2.6 G1; R2 decision 4)
+
+R3 section 7.2 listed 22 positions and 10 rules without a golden vector. The audit adds 48
+vectors, each an edit of a valid golden record: `g1/vectors.txt` lists the verdict of each
+(`valid`, or `rejects CODE (schema|semantic)`). `the_g1_audit_vectors_match_their_files_and_verdicts`
+requires, for every vector, that the file equals its builder, that the production decoder gives
+exactly that verdict, and that the CDDL schema rejects it when it is `(schema)` and accepts it
+when it is `valid` or `(semantic)`. Covered: descriptor (a feature that is not an unsigned
+integer, a percentage of 0 and 101, an unknown suite, Encrypted with TAR, and two valid
+variants); commit schema 1 (short archive ID, short parent ID, nanoseconds, object references,
+schema 1 listing feature 1, a valid time); commit schema 2 (a valid head, no or too many
+envelopes, a short data region, no feature); manifest schema 1 (archive ID, chunk encoding,
+protection, hash, directory with a hash or extents, a hole with a chunk offset, nanoseconds,
+operation kind, entry shape, unsorted chunks, entries, and dependencies, the seconds range,
+and a valid dependency); schema 2 (a valid `release`); schema 3 (a valid re-encryption
+delta(0) from the Encrypted archive's plaintext, a short key-operation ID, 33 operations, two
+provenance reasons); key envelope (nonce, wrapped key, salt, envelope ID, key ID sizes; suite,
+KDF, features). The rules that need an archive rather than a record are R8 cases:
+`enc-corrupt-envelopes-unordered`, `enc-corrupt-envelope-duplicate`,
+`enc-corrupt-data-region-kind` (commit schema 2 keys 11 and 12), `core-corrupt-short-extents`
+(extents that do not cover the length are refused when the manifest is *applied* to a
+catalog, not when it is decoded: the audit found that `Manifest::decode` accepts them, while
+R3 section 7.1 names `manifest.rs` as well as `catalog/extent.rs` as the place; no byte
+changes, and the rule is held), and the key-operation replay rules, which
+`c11_forged.rs` and `c11_rekey.rs` hold. Not archive bytes, so out of R8: the tail-quarantine
+sidecar (a tool file, R3 Appendix A; `t24_quarantine.rs`). With the audit complete, spec 8.3's
+"evidence pending" marker is removed.
+
 ## B.2 vectors
 
 `b2/`: the Annex B.2 wire batch (drafts, R1/R2).

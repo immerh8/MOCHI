@@ -202,6 +202,34 @@ pub fn put_with_dependency(
     name: &str,
     dep: DictionaryDependency,
 ) -> (Vec<u8>, mochi_core::catalog::namespace::FileVersionId) {
+    put_forged(bytes, name, dep, Fault::None)
+}
+
+/// What else [`put_forged`] gets wrong (R8 corrupt cases).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fault {
+    None,
+    /// The chunk's recorded content hash is not its content's: the stored
+    /// bytes verify, decoding does not.
+    ContentHash,
+    /// The put's path is written as this raw stored form (for example a
+    /// traversal), after encoding.
+    RawPath(&'static [u8]),
+    /// The version claims ten more bytes than its extents cover.
+    ExtentShort,
+    /// The put names a version the manifest never defines.
+    UndefinedVersion,
+    /// The chunk reuses this object ID with different content.
+    ReuseChunkId([u8; 32]),
+}
+
+/// [`put_with_dependency`] with one more fault.
+pub fn put_forged(
+    bytes: Vec<u8>,
+    name: &str,
+    dep: DictionaryDependency,
+    fault: Fault,
+) -> (Vec<u8>, mochi_core::catalog::namespace::FileVersionId) {
     use mochi_core::catalog::extent::{Extent, ExtentSource};
     use mochi_core::catalog::namespace::{EntryKind, FileVersionId, NamespaceOp};
     use mochi_core::catalog::FileVersion;
@@ -245,6 +273,14 @@ pub fn put_with_dependency(
             .dependencies
             .push(Dependency::Dictionary(ObjectId::from_bytes([9; 32]))),
     }
+    if let Fault::ReuseChunkId(id) = fault {
+        obj.record.id = mochi_core::object::ObjectId::from_bytes(id);
+    }
+    if fault == Fault::ContentHash {
+        let mut h = *obj.record.content_hash.as_bytes();
+        h[0] ^= 1;
+        obj.record.content_hash = mochi_format::digest::ChunkContentHash::from_bytes(h);
+    }
     let at = f.append_object(&obj.stored).offset;
     let id = FileVersionId::from_bytes([0xD7; 32]);
     m.chunks.push(ChunkEntry {
@@ -255,7 +291,7 @@ pub fn put_with_dependency(
         version: FileVersion {
             id,
             kind: EntryKind::File,
-            logical_len: content.len() as u64,
+            logical_len: content.len() as u64 + if fault == Fault::ExtentShort { 10 } else { 0 },
             content_hash: Some(file_content_hash(DecodedSlice::from_logical(&content))),
         },
         extents: vec![Extent {
@@ -273,8 +309,31 @@ pub fn put_with_dependency(
         path: crate::archive::path(name),
         version: id,
     });
+    if fault == Fault::UndefinedVersion {
+        m.file_versions.clear();
+    }
     m.canonicalize();
-    let r = f.append_manifest(&m);
+    let r = match fault {
+        Fault::RawPath(raw) => f.append_manifest_edited(&m, |v| {
+            if let Value::Array(ops) = field(v, 7) {
+                if let Value::Array(op) = &mut ops[0] {
+                    op[1] = Value::Bytes(raw.to_vec());
+                }
+            }
+        }),
+        _ => f.append_manifest(&m),
+    };
     f.append_delta(&head, rule_base(&head), r, txid(0x31));
     (f.bytes, id)
+}
+
+/// Forge one delta commit after the head of `bytes` whose "delta manifest" is
+/// the raw bytes `raw`: the commit's reference hashes them correctly, but
+/// they are not what the commit says they are (R8 corrupt cases).
+pub fn delta_with_raw_manifest(bytes: Vec<u8>, raw: Vec<u8>) -> Vec<u8> {
+    let mut f = Forge::new(bytes);
+    let head = f.history().pop().unwrap();
+    let r = f.append_object(&StoredObject::from_loaded(raw));
+    f.append_delta(&head, rule_base(&head), r, txid(0x32));
+    f.bytes
 }

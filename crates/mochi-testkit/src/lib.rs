@@ -13,6 +13,7 @@ pub mod forge;
 pub mod fuzz;
 pub mod golden;
 pub mod history;
+pub mod interop;
 pub mod replay;
 mod sim;
 mod sim_dir;

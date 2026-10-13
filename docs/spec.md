@@ -365,7 +365,7 @@ Each MOCHI control-record type MUST have a ratified envelope defining:
 
 Skippable-frame payloads are limited by their 32-bit length field. Larger logical records MUST be split using a specified representation or rejected.
 
-**[Amendment, Annex B.2 D11: decided; implementation and evidence pending (B.2.6)]** An envelope MAY be realized in either of two encodings:
+**[Amendment, Annex B.2 D11: decided; implemented; evidence: the G1 audit is complete in both encodings (R8, B.2.6 G13)]** An envelope MAY be realized in either of two encodings:
 - **Deterministic-CBOR records** (Annex B.1 D2): the envelope is a set of required keys in the record body.
 - **Other payloads:** a binary envelope header precedes the payload in the same frame.
 
@@ -1395,7 +1395,7 @@ Before claiming preservation readiness, demonstrate:
 
 Until these gates pass, implementations MUST describe support as experimental or draft-compatible.
 
-**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). R7 (G15), the golden set R8 (G13), and the independent results R9 (G14) are pending, so the description above still applies.
+**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). R7 (G15) and the independent results R9 (G14) are pending, so the description above still applies.
 
 ## 29. Summary of Changes from v1.2
 
@@ -1476,7 +1476,7 @@ The unified v1.2 draft contained detailed extension sections (its §11–§20). 
 
 ## Annex B. Open Decisions for MOCHI 1.0 **[1.0 integration]**
 
-Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10–D16 and D24 stay in B.2: D10, D11, D12, D14, and D15 await the G1 audit (R8), D13 awaits G6, D16 is out of 1.0, and D24 is half implemented (B.2.14).
+Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10–D16 and D24 stay in B.2: D10, D11, D12, D14, and D15 wait only for the owner's review (their G1 audit evidence, R8, is complete as of 2026-10-13), D13 awaits G6, D16 is out of 1.0, and D24 is half implemented (B.2.14).
 
 | ID | Decision | Options | Blocks |
 |---|---|---|---|
@@ -1885,7 +1885,7 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - The drift test and R3's mechanical CDDL check pass.
   - R4 `user_version` is 1, and the draft identifier is 2 (D24). Whole-archive fixtures are regenerated deliberately, with the diff explained, and one draft-1 archive is kept as a reject fixture.
   - A cold reading of each artifact, by a reader given only this specification and that artifact, is recorded with every ambiguity fixed or decided.
-- **G13 Golden set (R8).** Pending.
+- **G13 Golden set (R8).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: `fixtures/golden/r8/` holds 76 cases and 48 G1 audit vectors (`r8/g1/`), checked by `crates/mochi-testkit/tests/r8_golden.rs`.
   - `fixtures/golden/r8/` covers every 1.0 profile and allowed combination with valid, corrupt, and interrupted archives, plus copy and salvage cases.
   - Coverage is checked by a test: every §24.2 row about archive bytes, and every violation-class error code reachable from archive bytes, has a case. Exemptions are named in the test.
   - The B.2.6 G1 audit is complete in both encodings.

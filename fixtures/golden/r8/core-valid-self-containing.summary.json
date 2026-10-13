@@ -1,0 +1,59 @@
+{
+  "archive_id": "204c9bcea8e916b9d9db30b7769f3809b1788c67372233bb9f47a7858d111da6",
+  "case": "core-valid-self-containing",
+  "commits": [
+    {
+      "checkpoint": true,
+      "commit_id": "1b8641ba385378c09c3b1de0b27496a50aa5e1d3de997bbc38c34e17f6ea193a",
+      "footer_offset": 50052,
+      "seq": 0
+    }
+  ],
+  "findings": [],
+  "format": "mochi-interop-summary-v1",
+  "head": {
+    "code": null,
+    "status": "opened"
+  },
+  "parity": null,
+  "profile": {
+    "encrypted": false,
+    "recovery_percent": null,
+    "tar_compatible": false
+  },
+  "snapshots": [
+    {
+      "entries": [
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000000000000000,
+            "posix_mode": 493,
+            "uid": 1493,
+            "windows": null
+          },
+          "content_hash": null,
+          "kind": "dir",
+          "path": "73656c66",
+          "size": 0,
+          "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000001000000007,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "280ae090321555218ba2637e04ab78af1da14a4dd60ccce3a11c5e9b3e89a463",
+          "kind": "file",
+          "path": "73656c662f636f70792e6d6f636869",
+          "size": 47176,
+          "target": null
+        }
+      ],
+      "seq": 0
+    }
+  ]
+}
