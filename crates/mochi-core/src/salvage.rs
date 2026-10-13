@@ -584,6 +584,9 @@ pub(crate) struct Prepared {
     pub descriptor_restored: bool,
     /// Data frames of the source: `(offset, length)`.
     pub data_frames: Vec<(u64, u64)>,
+    /// Every confirmed commit, uncapped: `(commit frame offset, commit ID)`.
+    /// A chain opened from a root may hold only these (D23 items 5, 11(c)).
+    pub confirmed: BTreeSet<(u64, [u8; 32])>,
 }
 
 fn push_capped<T>(list: &mut Vec<T>, item: T, truncated: &mut bool) {
@@ -980,12 +983,17 @@ pub(crate) fn prepare(
         profile_inference,
         lists_truncated: trunc,
     };
+    let confirmed = (0..n)
+        .filter(|i| confirmed[*i].is_some())
+        .map(|i| (sc.nodes[i].offset, sc.nodes[i].id))
+        .collect();
     Ok(Prepared {
         report,
         roots,
         footers_regenerated: regenerated.len(),
         descriptor_restored,
         data_frames,
+        confirmed,
     })
 }
 

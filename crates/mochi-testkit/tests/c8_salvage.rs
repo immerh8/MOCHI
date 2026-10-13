@@ -1421,3 +1421,105 @@ fn salvage_18_a_copy_does_not_compete_with_the_real_parent() {
     r.unwrap();
     assert_repairs(&pristine, &dir.file(OUT).unwrap(), &all(6));
 }
+
+/// **A walk back from a confirmed commit stays inside what the scan
+/// confirmed** (D23 items 5, 11(c); found by the `salvage_scan` fuzz target,
+/// CI run 38452009022). In a Redundancy archive whose head footer is broken,
+/// the last parity frame before commit 0's footer loses its magic and, four
+/// bytes on, a reserved frame begins that walks validly and ends where that
+/// footer ends. Commit 0's footer bytes are intact, but they lie inside a
+/// frame that walked validly, so commit 1's link does not name commit 0 and
+/// commit 0 is rejected. Commit 1 is confirmed by its own footer and its
+/// catalog still supplies snapshot 0, as a catalog does below a chain break:
+/// without a commit record. Before the fix, the survey re-walked the parent
+/// links by footer alone and took commit 0's record (and its manifests) from
+/// the commit the scan had rejected.
+#[test]
+fn salvage_19_a_salvaged_chain_never_walks_past_what_the_scan_confirmed() {
+    use mochi_format::frame::walk_frame;
+    use mochi_format::registry::{RESERVED_NO_CORE_INTERPRETATION, SKIPPABLE_HEADER_LEN};
+    let pristine = build_profile(
+        Profile {
+            redundancy: Some(50),
+            ..Profile::default()
+        },
+        2000,
+        512,
+    );
+    let h = history(&pristine);
+    let limits = opts().limits;
+    // The last frame between commit 0's frame and its footer: a parity frame.
+    let r = mochi_core::storage::StorageReader::new(&pristine).unwrap();
+    let mut at = h[0].commit_offset;
+    let mut last = None;
+    while at < h[0].footer_offset {
+        let span = walk_frame(&r, at, &limits).unwrap();
+        last = Some(span);
+        at = span.offset + span.len;
+    }
+    let last = last.unwrap();
+    assert_eq!(
+        last.kind,
+        mochi_format::registry::FrameKind::ParityObject,
+        "commit 0 carries parity frames"
+    );
+    let cover_end = h[0].footer_offset + FOOTER_FRAME_LEN;
+    let cover = last.offset + 4;
+    let payload = cover_end - cover - SKIPPABLE_HEADER_LEN as u64;
+    let bad = SimStorage::from_bytes({
+        let mut b = break_footers(&pristine, &[2]).contents();
+        let x = last.offset as usize;
+        b[x..x + 4].fill(0);
+        b[x + 4..x + 8].copy_from_slice(&RESERVED_NO_CORE_INTERPRETATION.to_le_bytes());
+        b[x + 8..x + 12].copy_from_slice(&(payload as u32).to_le_bytes());
+        b
+    });
+
+    let p = plan_s(&bad);
+    let sv = p.salvage.as_ref().unwrap();
+    let id = |i: usize| hex(h[i].commit_id.as_bytes());
+    assert!(p.head.is_none(), "{p:#?}");
+    assert!(
+        sv.confirmed
+            .iter()
+            .any(|c| c.seq == 1 && c.commit_id == id(1)),
+        "{sv:#?}"
+    );
+    assert!(
+        !sv.confirmed.iter().any(|c| c.seq == 0),
+        "commit 0's footer lies inside a frame that walked validly: {sv:#?}"
+    );
+    assert!(sv.rejected.iter().any(|c| c.seq == 0), "{sv:#?}");
+    assert!(sv.unconfirmed.iter().any(|c| c.seq == 2), "{sv:#?}");
+    assert_eq!(recovered(&p), all(2), "{p:#?}");
+    assert_eq!(
+        commit_ids(&p),
+        [(0, None), (1, Some(id(1)))],
+        "snapshot 0 comes from commit 1's catalog, without commit 0's record"
+    );
+    assert!(p.snapshots.iter().all(|s| s.trust == Trust::Salvage));
+    assert_ne!(p.outcome, Outcome::Complete);
+    mochi_testkit::fuzz::exercise_salvage_scan(&bad.contents());
+
+    let (dir, r) = run(&bad, &salvage(), &p, true);
+    let report = r.unwrap();
+    let out = dir.file(OUT).unwrap();
+    assert_eq!(opened_all(&out).len(), 2, "{report:#?}");
+}
+
+/// The input the `salvage_scan` fuzz target found in CI (run 38452009022,
+/// `crash-599502c9…`), kept whole: no nightly toolchain was at hand to
+/// minimize it. See `salvage_19` for the same case built by hand.
+#[test]
+fn salvage_fuzz_regression_inputs() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/fuzz-regressions/salvage_scan");
+    let mut n = 0;
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        if e.path().extension().is_none() {
+            mochi_testkit::fuzz::exercise_salvage_scan(&std::fs::read(e.path()).unwrap());
+            n += 1;
+        }
+    }
+    assert!(n >= 1);
+}
