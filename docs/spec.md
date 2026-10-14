@@ -1063,39 +1063,71 @@ Reports SHOULD be stored outside the archive being checked.
 
 ### 20.6 Example report
 
-The following is illustrative, not the final JSON schema:
+The following is a real report of schema version 1, abridged only in its two wall-clock times, which are replaced by fixed values: `mochi verify --json` of the golden archive `fixtures/golden/r8/core-corrupt-chunk-older.mochi` (a data object of an older commit is damaged), in the field order of the report type. `crates/mochi-cli/tests/r7_json_schemas.rs` regenerates it and compares, so it cannot drift from the code. Its JSON Schema is `docs/schemas/json/report-v1.schema.json`, the field meanings are in `docs/report-schema-v1.md`, and the report schema and the error codes are frozen as ratification artifact R7 (Annex B.2.6, gate G15).
 
 ```json
 {
   "schema_version": 1,
-  "archive_id": "example-archive",
-  "checked_commit": "example-commit",
-  "overall_status": "DEGRADED",
-  "dimensions": {
-    "durability": "DEGRADED",
-    "integrity": "PASS",
-    "recoverability": "OVERDUE",
-    "searchability": "PASS",
-    "freshness": "PASS"
+  "archive_id": "031d11be423d1e3fcbbf47098791541cbdc98abe3dc6a77726d38b31d43ff9e1",
+  "checked_commit": "c2de8b0bd51c7715d4771dacdda7aaf6232b665337f2bc050b50857c0ab98b55",
+  "expected_head": null,
+  "freshness_anchor": "none",
+  "tool": {
+    "name": "mochi-core",
+    "version": "0.1.0",
+    "spec_revision": "2.0",
+    "wire_generation": 2,
+    "format_status": "experimental / draft-compatible"
   },
+  "started_at": "2026-10-14T09:00:00.000000000Z",
+  "completed_at": "2026-10-14T09:00:00.250000000Z",
+  "level": "restoration",
+  "scope": "full retained history: head, every commit record and footer, control objects; every data object; every retained file version reassembled. Durability is not observable from the archive's bytes.",
   "coverage": {
-    "expected_objects": 10000,
-    "checked_objects": 10000,
-    "stored_bytes_complete": true,
-    "full_restore_complete": false
+    "expected_objects": 21,
+    "checked_objects": 20,
+    "expected_bytes": 1278,
+    "checked_bytes": 1201,
+    "evidence_age_seconds": null
   },
+  "skipped": [],
   "findings": [
     {
-      "code": "REPLICA_BELOW_POLICY",
+      "code": "STORED_INTEGRITY_FAILED",
       "severity": "error",
-      "expected": 3,
-      "observed": 2
+      "message": "object 576027a96846deb31a49a3b73e8260e099a5382e0d58b224ffc446cf20b951de at offset 56: object 576027a96846deb31a49a3b73e8260e099a5382e0d58b224ffc446cf20b951de: stored-object hash mismatch"
     },
     {
-      "code": "RESTORE_EVIDENCE_EXPIRED",
-      "severity": "warning"
+      "code": "STORED_INTEGRITY_FAILED",
+      "severity": "error",
+      "message": "restoration check: object 576027a96846deb31a49a3b73e8260e099a5382e0d58b224ffc446cf20b951de: stored-object hash mismatch"
     }
-  ]
+  ],
+  "repair_actions": [],
+  "dimensions": {
+    "durability": "UNKNOWN",
+    "integrity": "FAIL",
+    "recoverability": "FAIL",
+    "searchability": "UNSUPPORTED",
+    "freshness": "UNKNOWN",
+    "retention_compliance": "UNSUPPORTED",
+    "key_availability": "PASS"
+  },
+  "overall_status": "FAIL",
+  "policy": {
+    "required": [
+      "integrity",
+      "recoverability"
+    ],
+    "freshness": {
+      "expected_head_supplied": false,
+      "archive_in_local_history": false,
+      "requested": false
+    }
+  },
+  "policy_result": "FAIL",
+  "operational_error": false,
+  "exit_code": 1
 }
 ```
 
@@ -1892,7 +1924,7 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
 - **G14 Interoperability (R9).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: CI run 38364569151, job `r9-interop`, 76 of 76 R8 cases equal; results and every disagreement in `docs/ratification/R9-interop-results.md`. No byte changed.
   - The independent verifier (B.1 D7) produces, for every R8 case, an interop summary equal to the reference implementation's, in CI.
   - Every disagreement is resolved at its source and recorded in `docs/ratification/R9-interop-results.md`.
-- **G15 Report freeze (R7).** Pending, at Beta.
+- **G15 Report freeze (R7).** **Met 2026-10-14** [delegated; owner review pending at the desktop checkpoint, plan K11]: R7 ends with its freeze review (§9 there; two owner questions recorded as options, neither changing a schema, a code, or an exit code); `docs/schemas/json/` holds a JSON Schema (2020-12) for every JSON the CLI writes, eight of them frozen; `crates/mochi-cli/tests/r7_json_schemas.rs` validates real outputs over all 76 R8 cases and temporary archives, kills 4,260 of 4,346 mutated outputs (the 86 survivors listed with reasons), and regenerates Section 20.6's example. No error code was renamed or changed meaning.
   - R7 is frozen, with a JSON Schema for every machine-readable output, and real outputs are validated against them in tests.
 
 #### B.2.7 Writer lock (D17; decided by the owner 2026-10-06, plan Q54)

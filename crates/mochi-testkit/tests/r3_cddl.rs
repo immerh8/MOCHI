@@ -421,14 +421,12 @@ fn every_schema_file_is_complete_and_standalone() {
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+    // CDDL files only: R7's JSON Schemas live in `docs/schemas/json/`.
     let on_disk: BTreeSet<String> = std::fs::read_dir(root().join("docs/schemas"))
         .unwrap()
-        .map(|e| {
-            e.unwrap()
-                .file_name()
-                .to_string_lossy()
-                .trim_end_matches(".cddl")
-                .to_owned()
+        .filter_map(|e| {
+            let name = e.unwrap().file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".cddl").map(str::to_owned)
         })
         .collect();
     let listed: BTreeSet<String> = SCHEMAS.iter().map(|s| (*s).to_owned()).collect();

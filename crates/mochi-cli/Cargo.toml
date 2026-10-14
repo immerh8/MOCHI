@@ -27,6 +27,10 @@ zeroize.workspace = true
 mochi-testkit.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
+# R7 (gate G15): validates the CLI's JSON outputs against docs/schemas/json/.
+# MIT; test-only, never a dependency of the shipped binary. No default
+# features: no HTTP or file retrieval (the test registers every schema itself).
+jsonschema = { version = "0.58", default-features = false }
 
 [lints]
 workspace = true
