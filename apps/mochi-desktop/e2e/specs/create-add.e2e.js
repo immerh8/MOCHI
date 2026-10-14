@@ -57,11 +57,11 @@ describe("create and add", () => {
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await expect($('[data-testid="staged-item"]')).toHaveText(expect.stringContaining("photos"));
 
-    // The options exist today; encryption and recovery are not offered yet.
+    // The options: neither encryption nor a recovery record unless asked (D5).
     await expect($('[data-testid="preset-balanced"]')).toBeSelected();
     await expect($('[data-testid="tar-compatible"]')).not.toBeSelected();
-    await expect($('[data-testid="encryption-unavailable"]')).toBeDisabled();
-    await expect($('[data-testid="recovery-unavailable"]')).toBeDisabled();
+    await expect($('[data-testid="encrypt"]')).not.toBeSelected();
+    await expect($('[data-testid="recovery-none"]')).toBeSelected();
 
     await $('[data-testid="create-confirm"]').click();
     await waitForStatus("Committed commit 0");
