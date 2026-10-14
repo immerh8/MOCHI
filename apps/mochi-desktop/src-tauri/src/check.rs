@@ -894,7 +894,10 @@ fn lost_view(l: &LostSnapshot) -> LostSnapshotView {
 /// The stored path from its exact hex, escaped; the lossy `path` only if the
 /// hex is malformed (it never is from core).
 fn omitted_view(o: &OmittedEntry) -> OmittedView {
-    let bytes: Option<Vec<u8>> = (o.path_hex.len() % 2 == 0)
+    let bytes: Option<Vec<u8>> = o
+        .path_hex
+        .len()
+        .is_multiple_of(2)
         .then(|| {
             (0..o.path_hex.len())
                 .step_by(2)
