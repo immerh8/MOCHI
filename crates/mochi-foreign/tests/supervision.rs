@@ -140,6 +140,25 @@ mod fake_helpers {
         p
     }
 
+    /// Runs `op`, starting it again while the fresh script is "executable file
+    /// busy". On Linux, another test thread that forks while `script` still
+    /// holds its write descriptor carries that descriptor until it execs, and
+    /// exec of the script fails with ETXTBSY meanwhile (rust-lang/rust#114554).
+    /// The window is a few microseconds; nothing else is retried.
+    fn unless_busy<T>(
+        mut op: impl FnMut() -> Result<T, mochi_foreign::ForeignError>,
+    ) -> Result<T, mochi_foreign::ForeignError> {
+        for _ in 0..50 {
+            match op() {
+                Err(e) if e.code == ErrorCode::HelperSpawnFailed && e.message.contains("busy") => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                r => return r,
+            }
+        }
+        op()
+    }
+
     #[test]
     fn a_helper_speaking_another_protocol_version_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -148,9 +167,8 @@ mod fake_helpers {
             &dir,
             r"printf '\007\000\000\000\200\143\000\000\000\000\000'; sleep 1",
         );
-        let e = ForeignClient::new(h)
-            .list(&fixture("basic.tar"), None)
-            .unwrap_err();
+        let e =
+            unless_busy(|| ForeignClient::new(&h).list(&fixture("basic.tar"), None)).unwrap_err();
         assert_eq!(e.code, ErrorCode::HelperProtocol);
         assert!(e.message.contains("protocol 99"), "{}", e.message);
     }
@@ -161,8 +179,7 @@ mod fake_helpers {
         let out = dir.path().join("argv.txt");
         let h = script(&dir, &format!("echo \"$#:$*\" > {}\nexit 3", out.display()));
         let pw = Password::new(b"hunter2-very-secret".to_vec());
-        let e = ForeignClient::new(h)
-            .list(&fixture("zipcrypto.zip"), Some(&pw))
+        let e = unless_busy(|| ForeignClient::new(&h).list(&fixture("zipcrypto.zip"), Some(&pw)))
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::HelperCrashed);
         let argv = std::fs::read_to_string(out).unwrap();
