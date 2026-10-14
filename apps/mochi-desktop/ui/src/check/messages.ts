@@ -5,6 +5,7 @@
 // its report establishes; nothing here calls an archive "repaired", "safe",
 // "backed up", or "preserved", or says it was "recovered completely".
 import { formatSize } from "../browser/format";
+import { t, tn } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type {
   CheckLevel,
@@ -29,14 +30,24 @@ export const BANNED = [
 
 export const STATUSES: StatusView[] = ["PASS", "FAIL", "DEGRADED", "UNKNOWN", "OVERDUE", "UNSUPPORTED"];
 
+/** A status value as the report spells it (§20.4). */
+export function statusLabel(s: StatusView): string {
+  return t(`status.${s}`);
+}
+
+/** The glyph that goes with a status, so colour is never the only signal. */
+export function statusMark(s: StatusView): string {
+  return t(`status.mark.${s}`);
+}
+
 /** Spec §20.4, in words. */
 export const STATUS_MEANING: Record<StatusView, string> = {
-  PASS: "required checks completed successfully within policy",
-  FAIL: "a required check found a violation",
-  DEGRADED: "some capability remains, but a required protection is reduced",
-  UNKNOWN: "evidence is insufficient or unavailable",
-  OVERDUE: "required evidence is older than policy permits",
-  UNSUPPORTED: "this build cannot perform the required interpretation or check",
+  PASS: t("status.meaning.PASS"),
+  FAIL: t("status.meaning.FAIL"),
+  DEGRADED: t("status.meaning.DEGRADED"),
+  UNKNOWN: t("status.meaning.UNKNOWN"),
+  OVERDUE: t("status.meaning.OVERDUE"),
+  UNSUPPORTED: t("status.meaning.UNSUPPORTED"),
 };
 
 /**
@@ -58,87 +69,67 @@ export function statusClass(s: StatusView): string {
   }
 }
 
-const DIMENSIONS: Record<string, string> = {
-  durability: "Durability",
-  integrity: "Integrity",
-  recoverability: "Recoverability",
-  searchability: "Searchability",
-  freshness: "Freshness",
-  retention_compliance: "Retention compliance",
-  key_availability: "Key availability",
-};
-
 /** A dimension's name for display; an unknown one as the report spells it. */
 export function dimensionLabel(name: string): string {
-  return DIMENSIONS[name] ?? name;
+  switch (name) {
+    case "durability":
+    case "integrity":
+    case "recoverability":
+    case "searchability":
+    case "freshness":
+    case "retention_compliance":
+    case "key_availability":
+      return t(`dimension.${name}`);
+    default:
+      return name;
+  }
 }
 
 export const LEVELS: { level: CheckLevel; label: string; detail: string }[] = [
-  {
-    level: "restoration",
-    label: "Restoration (default)",
-    detail: "every data object read, decoded, and every retained file version reassembled in memory",
-  },
-  {
-    level: "content_integrity",
-    label: "Content integrity",
-    detail: "every data object read and decoded",
-  },
-  {
-    level: "stored_integrity",
-    label: "Stored integrity",
-    detail: "every data object's stored bytes hashed",
-  },
-  {
-    level: "referential",
-    label: "Referential",
-    detail: "references and frame boundaries only; integrity stays UNKNOWN",
-  },
-  {
-    level: "structural",
-    label: "Structural",
-    detail: "control objects only; integrity stays UNKNOWN",
-  },
+  { level: "restoration", label: t("level.restoration"), detail: t("level.restorationDetail") },
+  { level: "content_integrity", label: t("level.content_integrity"), detail: t("level.content_integrityDetail") },
+  { level: "stored_integrity", label: t("level.stored_integrity"), detail: t("level.stored_integrityDetail") },
+  { level: "referential", label: t("level.referential"), detail: t("level.referentialDetail") },
+  { level: "structural", label: t("level.structural"), detail: t("level.structuralDetail") },
 ];
 
 /** Shown with every test: what "Test archive" is. */
-export const TEST_NOTE =
-  "Testing reads the archive and changes nothing in it. The result below is the report the core library produced, shown per dimension.";
+export const TEST_NOTE = t("check.testNote");
 
 /** Explains UNKNOWN freshness the first time it appears (spec §5.7, D8). */
-export const FRESHNESS_NOTE =
-  "Freshness is UNKNOWN: this app keeps no record yet of the head it saw earlier for this archive, so it cannot tell whether this file is the latest copy or an older one. Internal checks cannot show that. This is expected on first sight; it is not a failure, and it is never shown as a pass.";
+export const FRESHNESS_NOTE = t("check.freshnessNote");
 
 /** Shown when an Encrypted archive was checked without its key. */
-export const KEYLESS_NOTE =
-  "This archive is encrypted and was checked without its passphrase: stored bytes, commit records, and key envelopes only. Names, content, and recoverability were not checked, and a check without the key is never PASS overall. Enter the passphrase above and test again for the full check.";
+export const KEYLESS_NOTE = t("check.keylessNote");
 
 /** Shown with every health summary (plan D4 "Gap"). */
-export const HEALTH_NOTE =
-  "Health runs no check: it summarises the evidence recorded about this archive and judges it at the archive's current head. This app records only the tests run in this window since it started, and does not save them; evidence recorded by the mochi command-line tool is not read yet.";
+export const HEALTH_NOTE = t("check.healthNote");
 
 /** Shown with every repair plan. */
-export const PLAN_NOTE =
-  "Planning read the archive and changed nothing. Applying writes a new file you choose; the archive itself is never written.";
+export const PLAN_NOTE = t("check.planNote");
 
 /** Shown with the approval. */
-export const APPROVAL_NOTE =
-  "Applying writes exactly this plan into a new file. The core library surveys the archive again first and refuses to write anything if the archive or the copies changed. The new file is verified before it is published.";
+export const APPROVAL_NOTE = t("check.approvalNote");
 
 /** The overall line of a report: never hides a failing dimension. */
 export function overallLine(r: ReportView): string {
   const failing = r.dimensions.filter((d) => d.status === "FAIL").map((d) => dimensionLabel(d.dimension));
-  const base = `Overall ${r.overall_status} (exit code ${r.exit_code}); policy result ${r.policy_result}.`;
-  return failing.length === 0 ? base : `${base} Failing: ${failing.join(", ")}.`;
+  const base = t("check.overall", { status: r.overall_status, exit: r.exit_code, policy: r.policy_result });
+  return failing.length === 0
+    ? base
+    : t("check.overallFailing", { base, failing: failing.join(t("check.failingSeparator")) });
 }
 
 /** What was checked, in one line. */
 export function headline(r: ReportView): string {
-  const what =
-    r.kind === "health"
-      ? `Health of ${r.file_name}`
-      : `Test of ${r.file_name}, level ${r.level}${r.deep ? ", deep (fsck)" : ""}`;
-  return `${what}: ${r.overall_status}.`;
+  return r.kind === "health"
+    ? t("check.headlineHealth", { file: r.file_name, status: r.overall_status })
+    : t("check.headlineTest", {
+        file: r.file_name,
+        level: r.level,
+        deep: r.deep ? t("check.deepSuffix") : "",
+        status: r.overall_status,
+      });
 }
 
 export function coverageLine(r: ReportView): string | null {
@@ -146,28 +137,30 @@ export function coverageLine(r: ReportView): string | null {
   if (c.expected_objects === null || c.checked_objects === null) return null;
   const bytes =
     c.checked_bytes !== null && c.expected_bytes !== null
-      ? ` (${formatSize(c.checked_bytes)} of ${formatSize(c.expected_bytes)} stored)`
+      ? t("check.coverageBytes", { checked: formatSize(c.checked_bytes), expected: formatSize(c.expected_bytes) })
       : "";
-  return `Data objects checked: ${c.checked_objects} of ${c.expected_objects}${bytes}.`;
+  return t("check.coverage", { checked: c.checked_objects, expected: c.expected_objects, bytes });
 }
 
 export const OUTCOME_LABEL: Record<RepairOutcomeView, string> = {
-  complete: "COMPLETE",
-  partial: "PARTIAL",
-  nothing_recoverable: "NOTHING RECOVERABLE",
+  complete: t("check.outcome.complete"),
+  partial: t("check.outcome.partial"),
+  nothing_recoverable: t("check.outcome.nothing_recoverable"),
 };
 
 /** The plan's verdict, in one line. Partial salvage is labelled as such. */
 export function planLine(p: RepairPlanView): string {
   switch (p.outcome) {
     case "complete":
-      return "Plan: COMPLETE. Every snapshot in the archive's history and every entry would be written to the new file, with its retention.";
-    case "partial":
+      return t("check.planComplete");
+    case "partial": {
+      const lost = lostSummary(p.lost.length, p.omitted_total);
       return p.salvage_used
-        ? `Plan: PARTIAL SALVAGE. Some snapshots rest on the bounded salvage scan, so the result is partial whatever it contains; ${lostSummary(p.lost.length, p.omitted_total)}.`
-        : `Plan: PARTIAL. ${capitalize(lostSummary(p.lost.length, p.omitted_total))}.`;
+        ? t("check.planPartialSalvage", { lost })
+        : t("check.planPartial", { lost: capitalize(lost) });
+    }
     case "nothing_recoverable":
-      return "Plan: NOTHING RECOVERABLE. There is nothing to write; nothing was changed.";
+      return t("check.planNothing");
   }
 }
 
@@ -176,36 +169,45 @@ function capitalize(s: string): string {
 }
 
 function lostSummary(lost: number, omitted: string): string {
-  const parts = [
-    `${lost} snapshot${lost === 1 ? "" : "s"} would not be written`,
-    `${omitted} entr${omitted === "1" ? "y" : "ies"} would be left out`,
-  ];
-  return parts.join(" and ");
+  return t("check.lostJoin", {
+    snapshots: tn(lost, "check.lostSnapshotOne", "check.lostSnapshotMany", { n: lost }),
+    entries: tn(omitted === "1" ? 1 : 2, "check.lostEntryOne", "check.lostEntryMany", { n: omitted }),
+  });
 }
 
 /** What a written repair is, in one line, from its report only. */
 export function resultLine(r: RepairResultView): string {
-  const wrote = `Wrote the new archive ${r.file_name} (${formatSize(r.new_len)}, ${r.commits.length} commit${r.commits.length === 1 ? "" : "s"}).`;
+  const wrote = t("check.resultWrote", {
+    file: r.file_name,
+    size: formatSize(r.new_len),
+    commits: tn(r.commits.length, "check.commitOne", "check.commitMany", { n: r.commits.length }),
+  });
+  const entries = t(r.omitted_total === "1" ? "check.entryOne" : "check.entryMany");
   switch (r.outcome) {
     case "complete":
-      return `${wrote} Outcome COMPLETE: the plan left nothing out.`;
+      return t("check.resultComplete", { wrote });
     case "partial":
       return r.salvage_used
-        ? `${wrote} Outcome PARTIAL SALVAGE: ${r.lost.length} snapshot(s) not written, ${r.omitted_total} entr${r.omitted_total === "1" ? "y" : "ies"} left out, and some snapshots rest on the salvage scan.`
-        : `${wrote} Outcome PARTIAL: ${r.lost.length} snapshot(s) not written, ${r.omitted_total} entr${r.omitted_total === "1" ? "y" : "ies"} left out.`;
+        ? t("check.resultPartialSalvage", { wrote, lost: r.lost.length, omitted: r.omitted_total, entries })
+        : t("check.resultPartial", { wrote, lost: r.lost.length, omitted: r.omitted_total, entries });
     case "nothing_recoverable":
-      return `${wrote} Outcome: nothing recoverable.`;
+      return t("check.resultNothing", { wrote });
   }
 }
 
 /** The re-verification, in one line (spec §22.2). */
 export function reverificationLine(r: RepairResultView): string {
   const v = r.reverification;
-  return `Re-verified before it was published (level ${v.level}): overall ${v.overall_status}, policy result ${v.policy_result}, exit code ${v.exit_code}, ${v.findings} finding(s).`;
+  return t("check.reverification", {
+    level: v.level,
+    status: v.overall_status,
+    policy: v.policy_result,
+    exit: v.exit_code,
+    findings: v.findings,
+  });
 }
 
-export const SOURCE_KEPT_NOTE =
-  "The archive you chose was only read; it is unchanged and kept. The new archive has a new archive ID.";
+export const SOURCE_KEPT_NOTE = t("check.sourceKept");
 
 /** A job that ended without a result, in words. */
 export function failedLine(what: string, outcome: JobOutcome): string | null {
@@ -213,26 +215,26 @@ export function failedLine(what: string, outcome: JobOutcome): string | null {
     case "completed":
       return null;
     case "cancelled":
-      return `${what} cancelled before it finished. Nothing was written.`;
+      return t("check.jobCancelled", { what });
     case "failed":
-      return `${what} failed (${outcome.code}): ${outcome.message}`;
+      return t("check.jobFailed", { what, code: outcome.code, message: outcome.message });
     case "aborted":
-      return `${what} stopped unexpectedly: ${outcome.message}`;
+      return t("check.jobStopped", { what, message: outcome.message });
   }
 }
 
 /** How a running test or repair reads. */
 export function progressText(phase: string, completed: number, total: number | null): string {
-  const n = total === null ? `${completed}` : `${completed} of ${total}`;
+  const n = total === null ? `${completed}` : t("check.progressOf", { completed, total });
   const names: Record<string, string> = {
-    "repair-survey": "Surveying commits",
-    "repair-check": "Reading file versions",
-    "repair-salvage": "Salvage scan",
-    "repair-copy": "Writing snapshots",
-    "repair-verify": "Re-verifying the new archive",
+    "repair-survey": t("check.progressSurvey"),
+    "repair-check": t("check.progressCheck"),
+    "repair-salvage": t("check.progressSalvage"),
+    "repair-copy": t("check.progressCopy"),
+    "repair-verify": t("check.progressVerify"),
   };
-  const label = names[phase] ?? (phase.startsWith("verify") ? `Checking (${phase})` : phase);
-  return `${label}: ${n}`;
+  const label = names[phase] ?? (phase.startsWith("verify") ? t("check.progressChecking", { phase }) : phase);
+  return t("check.progressLine", { label, n });
 }
 
 /**

@@ -40,10 +40,10 @@ export function PassphraseForm(props: PassphraseFormProps) {
 
   // The fields are disabled while the passphrase is with Rust, which drops
   // keyboard focus; give it back to the first field when the answer is in.
-  const wasBusy = useRef(false);
+  const wasBusyRef = useRef(false);
   useEffect(() => {
-    if (wasBusy.current && !busy) firstRef.current?.focus();
-    wasBusy.current = busy;
+    if (wasBusyRef.current && !busy) firstRef.current?.focus();
+    wasBusyRef.current = busy;
   }, [busy]);
 
   const clear = () => {

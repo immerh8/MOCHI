@@ -49,6 +49,18 @@ export function tn<O extends MessageKey, M extends MessageKey>(
   return (t as (key: MessageKey, ...a: unknown[]) => string)(n === 1 ? one : many, ...args);
 }
 
+/** Keys whose only placeholder is `{n}`: a count, formatted with grouping. */
+export type CountKey = {
+  [K in MessageKey]: [ParamsOf<K>] extends ["n"] ? K : never;
+}[MessageKey];
+
+/** "1 file" / "2 files": the count is formatted with thousands separators. */
+export function tc(n: number, one: CountKey, many: CountKey): string {
+  return (t as (key: MessageKey, ...a: unknown[]) => string)(n === 1 ? one : many, {
+    n: n.toLocaleString("en-US"),
+  });
+}
+
 /** Every template in the shipped catalogue, for tests over the whole wording. */
 export function allMessages(): readonly string[] {
   return Object.values(en);

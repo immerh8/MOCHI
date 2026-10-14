@@ -3,28 +3,29 @@
 // foreign "test" names the checks that ran, recoverability, freshness and
 // retention are UNSUPPORTED, and an extraction is never a verification.
 import { formatSize } from "../browser/format";
+import { t, tc } from "../i18n";
 import type { ExtractReport } from "../ipc/extract";
 import type { ForeignArchiveSummary, ForeignTestReport } from "../ipc/foreign";
 import type { JobOutcome } from "../ipc/jobs";
 
 /** Shown next to every opened foreign archive. */
-export const FOREIGN_NOTE =
-  "This is not a MOCHI archive. It is open read-only, and MOCHI's own checks do not apply to it.";
+export const FOREIGN_NOTE = t("foreign.note");
 
 /** The only thing "Read and check" claims. */
-export const TEST_NOTE =
-  "Reads every entry and runs the checks this format has. It does not verify the archive the way MOCHI verifies its own, and a result here says nothing about recoverability, freshness, or retention.";
+export const TEST_NOTE = t("foreign.testNote");
 
 /** The rule every extraction follows (plan D8 rule 4). */
-export const EXTRACT_NOTE =
-  "Nothing is overwritten and no name is changed. Links, devices, absolute paths, and names containing .. are never created. Each file is kept only if the format's own check, where it has one, passed.";
+export const EXTRACT_NOTE = t("foreign.extractNote");
 
-export const WEAK_NOTE =
-  "Some entries use ZipCrypto, a weak form of encryption that known-plaintext attacks break.";
+export const WEAK_NOTE = t("foreign.weakNote");
 
 /** The three health dimensions MOCHI archives have and foreign ones do not. */
 export function dimensionsLine(d: ForeignArchiveSummary["dimensions"]): string {
-  return `Recoverability: ${d.recoverability} · Freshness: ${d.freshness} · Retention: ${d.retention}`;
+  return t("foreign.dimensions", {
+    recoverability: d.recoverability,
+    freshness: d.freshness,
+    retention: d.retention,
+  });
 }
 
 /** Password errors the open flow handles by asking. */
@@ -34,14 +35,14 @@ export function needsPassword(code: string): "ask" | "wrong" | null {
   return null;
 }
 
-function plural(n: number, one: string, many: string): string {
-  return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-}
-
 /** One line for the test result, in the format's own words. */
 export function testHeadline(r: ForeignTestReport): string {
-  const p = r.problems_total;
-  return `Read ${plural(r.entries, "entry", "entries")} of the ${r.format} archive: ${plural(p, "problem", "problems")}.${r.complete ? "" : " The run stopped early, so this covers only part of the archive."}`;
+  return t("foreign.testHeadline", {
+    entries: tc(r.entries, "count.entryOne", "count.entryMany"),
+    format: r.format,
+    problems: tc(r.problems_total, "count.problemOne", "count.problemMany"),
+    early: r.complete ? "" : t("foreign.testEarly"),
+  });
 }
 
 /** How a finished job reads (extract or test). */
@@ -50,34 +51,37 @@ export function describeOutcome(outcome: JobOutcome): { headline: string; notes:
     case "completed": {
       if (outcome.foreign_test) return { headline: testHeadline(outcome.foreign_test), notes: [TEST_NOTE] };
       const r = outcome.extract;
-      if (!r) return { headline: `Completed: ${outcome.summary}.`, notes: [] };
+      if (!r) return { headline: t("common.completed", { summary: outcome.summary }), notes: [] };
       return { headline: extractedLine(r), notes: [outcome.summary] };
     }
     case "cancelled":
-      return {
-        headline: "Cancelled. The operation stopped before it finished.",
-        notes: [
-          "Files extracted before you cancelled stay in the folder, each one complete. The file being written was discarded.",
-        ],
-      };
+      return { headline: t("foreign.cancelled"), notes: [t("foreign.cancelledNote")] };
     case "failed":
       return {
-        headline: `Failed (${outcome.code}): ${outcome.message}`,
-        notes: ["Nothing was written unless the message says otherwise."],
+        headline: t("common.failed", { code: outcome.code, message: outcome.message }),
+        notes: [t("foreign.failedNote")],
       };
     case "aborted":
-      return { headline: `Stopped unexpectedly: ${outcome.message}`, notes: [] };
+      return { headline: t("common.stoppedUnexpectedly", { message: outcome.message }), notes: [] };
   }
 }
 
 function extractedLine(r: ExtractReport): string {
-  const what = `${plural(r.files, "file", "files")} (${formatSize(String(r.bytes))}) and ${plural(r.directories, "folder", "folders")}`;
-  return r.not_extracted_total === 0
-    ? `Extracted ${what} to ${r.destination}.`
-    : `Extracted ${what} to ${r.destination}. ${plural(r.not_extracted_total, "entry was", "entries were")} not extracted.`;
+  const what = t("foreign.what", {
+    files: tc(r.files, "count.fileOne", "count.fileMany"),
+    size: formatSize(String(r.bytes)),
+    folders: tc(r.directories, "count.folderOne", "count.folderMany"),
+  });
+  const line = t("foreign.extracted", { what, dest: r.destination });
+  if (r.not_extracted_total === 0) return line;
+  const n = r.not_extracted_total.toLocaleString("en-US");
+  return `${line} ${t(r.not_extracted_total === 1 ? "foreign.notExtractedOne" : "foreign.notExtractedMany", { n })}`;
 }
 
 export function progressText(phase: string, completed: number, total: number | null): string {
-  const what = phase === "foreign_test" ? "Reading" : "Extracting";
-  return total === null ? `${what}: ${completed} entries` : `${what}: ${completed} of ${total} entries`;
+  const reading = phase === "foreign_test";
+  if (total === null) {
+    return t(reading ? "foreign.progressReadingNoTotal" : "foreign.progressExtractingNoTotal", { completed });
+  }
+  return t(reading ? "foreign.progressReading" : "foreign.progressExtracting", { completed, total });
 }
