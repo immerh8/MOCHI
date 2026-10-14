@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "command",
     "source",
     "output",
@@ -31,6 +32,9 @@
     "source_kept"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-repair-apply-v1"
+    },
     "command": {
       "const": "repair apply"
     },

@@ -311,8 +311,9 @@ local panic log** (`src-tauri/src/crashlog.rs`, screen: *Settings → Crash repo
 | What the user can do | Show the text, save a copy through a save dialog, delete it. Deleting keeps the switches. |
 | Not caught | Faults outside a Rust panic: the system web view, out-of-memory, the OS ending the app. |
 
-Real reporting needs an **owner decision** (plan D7 status lists the options). Until then
-the way to report a crash is: turn the log on, reproduce it, save a copy, read it, and
+**Decided [owner, 2026-10-14]: crash reporting stays local-only (option A) for 1.0 and beyond unless
+revisited.** MOCHI is an archiver, and other programs can collect the exported log, so the
+app has no reporting endpoint and sends nothing. The way to report a crash is: turn the log on, reproduce it, save a copy, read it, and
 attach it to an issue.
 
 ## Rules that apply from the first commit (AGENTS.md, spec §23.3)

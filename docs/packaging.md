@@ -122,8 +122,14 @@ key pair is the owner's; the update endpoint is GitHub Releases of `immerh8/MOCH
 |---|---|
 | Windows Authenticode certificate | **Not used for 1.0.** The NSIS setup and the app are unsigned. |
 | `.deb` / APT repository signing | Not done (a loose `.deb` download needs none). |
-| Updater key pair (minisign, key ID `79A2DBFA840725F5`) | **Supplied by the owner.** The public key is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. The private key and its password are the Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; they are not in the repository and must never be (`ci/check-invariants.sh` looks for key material). |
+| Updater key pair (minisign, key ID `79A2DBFA840725F5`) | **Supplied by the owner.** The public key is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. The private key and its **password** are the Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; they are not in the repository and must never be (`ci/check-invariants.sh` looks for key material). |
 | Update endpoint | `https://github.com/immerh8/MOCHI/releases/latest/download/latest.json`, fixed in `tauri.conf.json`. |
+
+If Authenticode is ever revisited: since the CA/B Forum baseline requirements of 2023 a
+code-signing private key must live in a hardware module or a cloud HSM, so it cannot be
+exported as a PFX into CI secrets; the choice would be a cloud signing service (such as
+Azure Trusted Signing or SignPath) or an OV/EV certificate in the CA's key store, with the
+service's credentials (not a key file) as CI secrets. Not needed for 1.0.
 
 **Running an unsigned installer (Windows).** SmartScreen shows "Windows protected your PC"
 with the publisher "unknown". Choose **More info**, then **Run anyway**. That is the
@@ -170,7 +176,11 @@ It never publishes and never pushes a tag.
 
 1. **Once:** in the repository settings add the Actions secrets
    `TAURI_SIGNING_PRIVATE_KEY` (the contents of the private key file) and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Without them the workflow stops in `preflight`
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. **The key must have a password:** GitHub Actions
+   secrets cannot be empty, and the workflow requires both. A key made without a password
+   must be regenerated (`cargo tauri signer generate -w mochi-updater.key`, entering a
+   password when asked), and then the public key in `tauri.conf.json` replaced and a new
+   release made, because apps already installed trust only the old public key. Without the secrets the workflow stops in `preflight`
    with an error naming the missing secret, and builds nothing.
 2. Set the version in `src-tauri/tauri.conf.json` and `[workspace.package]` in
    `Cargo.toml` (they must match) and merge it. Optionally write plain-text release notes
@@ -247,14 +257,15 @@ visible), 200 % display scaling and a 1280x720 window (no horizontal scrolling o
 page), and the crash-report switches read correctly (the message option's warning is
 read with it). Record the result in the release notes.
 
-## Open question
+## Decided: MPL-2.0
 
-- **MPL-2.0** is in `about.toml`'s accepted list because Tauri's dependency tree
-  contains an MPL-2.0 crate (`dtoa-short`; file-level copyleft; shipped unmodified in binary form).
-  O23 says "MIT/Apache-compatible" and does not name it. Options: (a) keep it, as now,
-  and ship the MPL text and source links in the license list (done by the generator);
-  (b) remove it from `accepted` and fail the build, which blocks Tauri itself.
-  Recommended: (a); owner to confirm.
+- **MPL-2.0 stays accepted** in `about.toml` [owner, 2026-10-14]. Tauri's dependency tree
+  contains an MPL-2.0 crate (`dtoa-short`; file-level copyleft; shipped unmodified in
+  binary form). O23 says "MIT/Apache-compatible" and does not name it; the owner chose
+  to keep it (rather than remove it from `accepted`, which would fail the build and
+  block Tauri itself). The MPL text and source links ship in the license list, which
+  the generator writes. The crate must stay unmodified; a patched copy would need its
+  modified files published under the MPL.
 
 ## Not done
 

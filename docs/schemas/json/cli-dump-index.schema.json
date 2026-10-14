@@ -6,11 +6,15 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "archive_id",
     "commit",
     "tables"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-dump-index-v1"
+    },
     "archive_id": {
       "$ref": "common.schema.json#/$defs/hex32"
     },

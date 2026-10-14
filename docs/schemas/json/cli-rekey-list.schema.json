@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "command",
     "action",
     "archive",
@@ -14,6 +15,9 @@
     "exit_code"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-rekey-list-v1"
+    },
     "command": {
       "const": "rekey"
     },

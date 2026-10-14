@@ -8,6 +8,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "schema",
         "command",
         "archive",
         "status",
@@ -24,6 +25,9 @@
         "exit_code"
       ],
       "properties": {
+        "schema": {
+          "const": "mochi-cli-commit-v1"
+        },
         "command": {
           "enum": [
             "create",
@@ -198,6 +202,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "schema",
         "command",
         "archive",
         "committed",
@@ -205,6 +210,9 @@
         "exit_code"
       ],
       "properties": {
+        "schema": {
+          "const": "mochi-cli-commit-v1"
+        },
         "command": {
           "const": "append"
         },
