@@ -116,6 +116,9 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::ExtractArchive { .. }
         | JobRequest::TestForeign { .. }
         | JobRequest::ExtractForeign { .. } => services.validate(request)?,
+        JobRequest::TestArchive { .. }
+        | JobRequest::PlanRepair { .. }
+        | JobRequest::ApplyRepair { .. } => services.validate(request)?,
         JobRequest::SelfTest { steps, step_ms } => {
             if !(1..=crate::self_test::MAX_STEPS).contains(steps)
                 || *step_ms > crate::self_test::MAX_STEP_MS
@@ -212,6 +215,7 @@ fn run_job(
                 commit: None,
                 extract: None,
                 foreign_test: None,
+                check: None,
             }),
         write => registry.services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
@@ -226,11 +230,13 @@ fn run_job(
             commit,
             extract,
             foreign_test,
+            check,
         }) => JobOutcome::Completed {
             summary,
             commit,
             extract,
             foreign_test,
+            check,
         },
         Err(e) if e.code == ErrorCode::Cancelled => JobOutcome::Cancelled,
         Err(e) => JobOutcome::Failed {

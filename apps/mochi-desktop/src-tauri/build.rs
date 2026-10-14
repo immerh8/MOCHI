@@ -32,6 +32,10 @@ fn main() {
         "close_foreign_archive",
         "foreign_children",
         "plan_extract_foreign",
+        "choose_check_subject",
+        "health_report",
+        "export_report",
+        "repair_setup",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

@@ -156,6 +156,8 @@ jobs:
         # The app starts mochi-foreign-helper from its own directory; the
         # foreign-archive spec needs it there.
         run: cargo build --locked -p mochi-foreign
+      - name: Build the command-line tool (the D4 spec's oracle)
+        run: cargo build --locked -p mochi-cli
       - name: Write the archives the D1 browse spec opens
         shell: bash
         run: cargo run --locked --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures

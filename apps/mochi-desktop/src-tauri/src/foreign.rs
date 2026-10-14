@@ -508,6 +508,7 @@ impl Foreign {
             commit: None,
             extract: None,
             foreign_test: Some(Box::new(view)),
+            check: None,
         })
     }
 
@@ -618,6 +619,7 @@ impl Foreign {
             commit: None,
             extract: Some(Box::new(view)),
             foreign_test: None,
+            check: None,
         })
     }
 }

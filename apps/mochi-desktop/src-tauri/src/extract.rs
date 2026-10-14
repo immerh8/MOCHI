@@ -222,7 +222,7 @@ fn plan_view(folder: &Path, pre: &Preflight, entries: u64) -> ExtractPlan {
 /// that a spec can cancel one deterministically. Shipped builds never read
 /// the variable.
 #[cfg(feature = "e2e")]
-struct Paced<'a>(&'a dyn mochi_core::job::ProgressSink);
+pub(crate) struct Paced<'a>(pub(crate) &'a dyn mochi_core::job::ProgressSink);
 
 #[cfg(feature = "e2e")]
 impl mochi_core::job::ProgressSink for Paced<'_> {
@@ -290,6 +290,7 @@ pub fn run(
         commit: None,
         extract: Some(Box::new(view)),
         foreign_test: None,
+        check: None,
     })
 }
 
@@ -859,6 +860,7 @@ mod tests {
             staging: Arc::default(),
             destination: Arc::clone(&f.destination),
             foreign: Arc::default(),
+            checks: Arc::default(),
         }))
     }
 
