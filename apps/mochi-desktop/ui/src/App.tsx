@@ -59,9 +59,11 @@ const SECTIONS: { id: string; name: () => string }[] = [
 
 /**
  * One tab stop per section so that a keyboard user can reach the part of this
- * long page they want without tabbing through everything above it. A link
- * moves focus to the section's heading (a programmatic focus target), which
- * also tells a screen reader where it landed.
+ * long page they want without tabbing through everything above it. Each moves
+ * focus to the section's heading (a programmatic focus target), which also
+ * tells a screen reader where it landed. They are buttons, not anchors: the
+ * window has no `href` at all (the browse E2E spec asserts it), so a name that
+ * came from an archive can never end up in one.
  */
 function SectionNav() {
   return (
@@ -70,17 +72,18 @@ function SectionNav() {
       <ul>
         {SECTIONS.map((s) => (
           <li key={s.id}>
-            <a
-              href={`#${s.id}`}
-              onClick={(e) => {
-                e.preventDefault();
+            <button
+              type="button"
+              className="link"
+              data-target={s.id}
+              onClick={() => {
                 const heading = document.getElementById(s.id);
                 heading?.focus();
                 heading?.scrollIntoView?.({ block: "start" });
               }}
             >
               {s.name()}
-            </a>
+            </button>
           </li>
         ))}
       </ul>

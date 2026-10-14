@@ -253,22 +253,23 @@ test("a wrong passphrase leaves focus in the passphrase field with the error att
   await waitFor(() => expect(screen.queryByTestId("unlock-panel")).toBeNull());
 });
 
-test("the section links move focus to a heading, so a keyboard user can skip ahead", async () => {
+test("the section buttons move focus to a heading, so a keyboard user can skip ahead", async () => {
   backend();
   const user = userEvent.setup();
   render(<App />);
   const nav = screen.getByRole("navigation", { name: "Sections" });
-  const link = nav.querySelector<HTMLAnchorElement>('a[href="#check-heading"]');
+  const link = nav.querySelector<HTMLButtonElement>('button[data-target="check-heading"]');
   expect(link).not.toBeNull();
   link?.focus();
   await user.keyboard("{Enter}");
   expect(focused()).toBe(document.getElementById("check-heading"));
   expect(focused()).toHaveTextContent("Test, health, and repair");
-  // Every section is reachable, and every link has a target.
-  for (const a of nav.querySelectorAll("a")) {
-    const id = a.getAttribute("href")?.slice(1) ?? "";
-    expect(document.getElementById(id), `target of ${a.textContent}`).not.toBeNull();
+  // Every section is reachable, and every button has a target. No anchors at all.
+  for (const b of nav.querySelectorAll("button")) {
+    const id = b.getAttribute("data-target") ?? "";
+    expect(document.getElementById(id), `target of ${b.textContent}`).not.toBeNull();
   }
+  expect(document.querySelectorAll("a[href]")).toHaveLength(0);
 });
 
 test("results and progress have live regions that exist before they are used", async () => {
@@ -382,7 +383,7 @@ test("…but focus the user moved elsewhere in the meantime is left alone", asyn
   await user.keyboard("{Enter}");
   finish({ event: "started", job_id: 1 });
   loseFocus();
-  const link = screen.getByRole("navigation", { name: "Sections" }).querySelector("a");
+  const link = screen.getByRole("navigation", { name: "Sections" }).querySelector("button");
   link?.focus();
   const spy = spyOnFocus();
   try {

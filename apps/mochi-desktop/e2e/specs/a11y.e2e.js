@@ -28,19 +28,19 @@ async function tabTo(testid, { back = false, max = 160 } = {}) {
 }
 
 describe("keyboard-only use", () => {
-  it("starts at the top of the page and the first stops are the section links", async () => {
+  it("starts at the top of the page and the first stops are the section buttons", async () => {
     await $('[data-testid="browse-empty"]').waitForExist();
     await browser.keys(["Tab"]);
     const first = await active();
-    expect(first.tag).toBe("A");
+    expect(first.tag).toBe("BUTTON");
     expect(first.text).toBe("Archive");
     // The focus ring is drawn (the stylesheet never turns the outline off).
     expect(first.outlineStyle).not.toBe("none");
     expect(first.outlineWidth).toBe("3px");
   });
 
-  it("a section link moves focus to that section's heading", async () => {
-    // Walk the links with Tab until the one for the test and repair section.
+  it("a section button moves focus to that section's heading", async () => {
+    // Walk the buttons with Tab until the one for the test and repair section.
     for (let i = 0; i < 12; i++) {
       const here = await active();
       if (here.text === "Test, health, and repair") break;

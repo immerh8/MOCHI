@@ -227,7 +227,8 @@ What is built, and how each part is checked:
 
 - **Keyboard.** Every control is a native button, link, input, select, or summary, so it
   is in the tab order in reading order; nothing sets a positive `tabindex`. The page opens
-  with a *Sections* list of links that move focus to a section's heading. Long lists (the
+  with a *Sections* list of buttons that move focus to a section's heading (buttons, not
+  anchors: the window has no `href` at all, which the browse E2E spec asserts). Long lists (the
   folder contents, a foreign archive's entries) are **one tab stop** with roving focus:
   Up/Down, Page Up/Down, Home, and End move between rows (rows outside the window are
   scrolled in first), Space selects, Enter opens a folder and puts focus in the new
@@ -258,7 +259,7 @@ What is built, and how each part is checked:
   proves it can fail. Add `expectAccessible()` mid-flow when a test passes through a
   state worth checking.
 - **E2E.** `e2e/specs/a11y.e2e.js` drives the real app by key only (Tab, arrows, Space,
-  Enter): section links, opening an archive, the roving list, panel focus in and out,
+  Enter): section buttons, opening an archive, the roving list, panel focus in and out,
   a keyboard-started test with its result, and a full tab cycle with no trap.
 
 Not checked by a machine, so on the release checklist (`docs/packaging.md`): a pass with
