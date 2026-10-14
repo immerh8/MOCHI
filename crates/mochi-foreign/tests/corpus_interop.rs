@@ -203,7 +203,10 @@ fn the_corpus_extracts_bit_identically_to_an_independent_implementation() {
 /// SHA-256 of a file, with the platform's own tool (the test needs no hash
 /// crate): `sha256sum` where it exists, else `certutil` (Windows).
 fn sha256(path: &Path) -> String {
-    if let Ok(o) = Command::new("sha256sum").arg(path).output() {
+    // Read from stdin: coreutils on Windows prefixes a line with `\` when the
+    // file name contains a backslash, and no name is printed for stdin.
+    let stdin = std::fs::File::open(path).unwrap();
+    if let Ok(o) = Command::new("sha256sum").stdin(stdin).output() {
         if o.status.success() {
             return String::from_utf8_lossy(&o.stdout)
                 .split_whitespace()
