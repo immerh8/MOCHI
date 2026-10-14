@@ -317,6 +317,8 @@ pub struct Services {
     pub staging: Arc<Staging>,
     /// The folder the user chose to extract into (D3).
     pub destination: Arc<crate::extract::Destination>,
+    /// Foreign archives (D8).
+    pub foreign: Arc<crate::foreign::Foreign>,
 }
 
 /// What a finished job reports.
@@ -326,6 +328,8 @@ pub struct JobDone {
     pub commit: Option<Box<CommitReport>>,
     /// Set by the extract job (D3).
     pub extract: Option<Box<crate::ipc::ExtractReport>>,
+    /// Set by the foreign-archive test job (D8).
+    pub foreign_test: Option<Box<crate::ipc::ForeignTestReport>>,
 }
 
 impl Services {
@@ -333,6 +337,9 @@ impl Services {
     pub fn validate(&self, request: &JobRequest) -> Result<()> {
         match request {
             JobRequest::SelfTest { .. } => Ok(()),
+            JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
+                self.foreign.validate(&self.destination, request)
+            }
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::validate(&self.archives, &self.destination, request)
             }
@@ -370,6 +377,9 @@ impl Services {
     pub fn run(&self, request: &JobRequest, ctx: &JobContext<'_>) -> Option<Result<JobDone>> {
         Some(match request {
             JobRequest::SelfTest { .. } => return None,
+            JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
+                self.foreign.run(&self.destination, request, ctx)
+            }
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::run(&self.archives, &self.destination, request, ctx)
             }
@@ -592,6 +602,7 @@ fn done(
         ),
         commit: Some(Box::new(commit)),
         extract: None,
+        foreign_test: None,
     }
 }
 

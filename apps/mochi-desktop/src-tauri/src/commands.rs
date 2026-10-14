@@ -9,8 +9,10 @@ use tauri::{AppHandle, State};
 
 use crate::browse::Archives;
 use crate::extract::Destination;
+use crate::foreign::Foreign;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan, IpcError,
+    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan,
+    ForeignArchiveSummary, ForeignChildrenPage, ForeignExtractPlan, IpcError,
     JobEvent, JobId, JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
 };
 use crate::jobs::{EventSink, JobRegistry};
@@ -230,6 +232,90 @@ pub async fn plan_extract(
             None
         };
         crate::extract::plan(&archives, &destination, picked, handle, seq, &keys).map(Some)
+    })
+    .await
+}
+
+/// Open a ZIP, 7z, RAR, tar or tar.gz archive read-only (D8). Rust shows the
+/// native dialog, so the webview names no path. `retry` re-uses the file whose
+/// password was asked for last (kept in Rust) instead of showing the dialog
+/// again; `password` is used for this call and kept in the open session only.
+/// `null` if the user cancelled the dialog. A password is never an argument to
+/// the helper and never logged.
+#[tauri::command]
+pub async fn open_foreign_archive(
+    app: AppHandle,
+    retry: bool,
+    password: Option<String>,
+    foreign: State<'_, Arc<Foreign>>,
+) -> Result<Option<ForeignArchiveSummary>, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = if retry {
+            foreign.pending().ok_or_else(|| IpcError {
+                code: mochi_core::ErrorCode::InvalidArgument.as_str().to_owned(),
+                message: "there is no archive waiting for a password".to_owned(),
+            })?
+        } else {
+            match crate::picker::pick_foreign_archive(&app) {
+                Some(p) => p,
+                None => return Ok(None),
+            }
+        };
+        foreign
+            .open(&path, password.map(String::into_bytes))
+            .map(Some)
+    })
+    .await
+    .map_err(|_| IpcError {
+        code: mochi_core::ErrorCode::Cancelled.as_str().to_owned(),
+        message: "the operation stopped before it finished".to_owned(),
+    })?
+}
+
+/// Close a foreign archive (and forget its password). `false` if not open.
+#[tauri::command]
+pub fn close_foreign_archive(handle: ArchiveHandle, foreign: State<'_, Arc<Foreign>>) -> bool {
+    foreign.close(handle)
+}
+
+/// One page of a foreign archive's directory (`dir` null for the root).
+#[tauri::command]
+pub async fn foreign_children(
+    handle: ArchiveHandle,
+    dir: Option<PathKey>,
+    offset: u32,
+    limit: u32,
+    foreign: State<'_, Arc<Foreign>>,
+) -> Result<ForeignChildrenPage, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    blocking(move || foreign.children(handle, dir.as_deref(), offset, limit)).await
+}
+
+/// Plan extracting `keys` of a foreign archive: optionally show the native
+/// folder dialog (in Rust), then say what would collide or be skipped, before
+/// anything is written. `null` if the user cancelled the dialog.
+#[tauri::command]
+pub async fn plan_extract_foreign(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    keys: Vec<PathKey>,
+    pick: bool,
+    foreign: State<'_, Arc<Foreign>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<Option<ForeignExtractPlan>, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let picked = if pick {
+            match crate::picker::pick_extract_folder(&app) {
+                Some(folder) => Some(folder),
+                None => return Ok(None),
+            }
+        } else {
+            None
+        };
+        foreign.plan(&destination, picked, handle, &keys).map(Some)
     })
     .await
 }

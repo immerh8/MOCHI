@@ -141,11 +141,13 @@ pub trait ReadManySink {
     fn finish(&mut self, info: &EntryInfo, outcome: &EntryOutcome) -> io::Result<()>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ForeignClient {
     helper: PathBuf,
     run: RunLimits,
     limits: Limits,
+    /// Set by the caller to stop the operation: the helper is killed.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 /// How the exchange with the helper ended, before it is mapped to an error.
@@ -220,14 +222,32 @@ fn describe_exit(status: Option<ExitStatus>, memory_limited: bool) -> String {
     }
 }
 
+impl std::fmt::Debug for ForeignClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ForeignClient")
+            .field("helper", &self.helper)
+            .field("run", &self.run)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ForeignClient {
     pub fn new(helper: impl Into<PathBuf>) -> Self {
         ForeignClient {
             helper: helper.into(),
             run: RunLimits::default(),
             limits: Limits::default(),
+            cancel: None,
         }
     }
+
+    /// Stop the helper (and fail with `CANCELLED`) soon after `flag` is set.
+    pub fn with_cancel(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
+
 
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
@@ -264,8 +284,24 @@ impl ForeignClient {
         archive: &Path,
         password: Option<&Password>,
     ) -> Result<TestReport, ForeignError> {
+        self.test_with_progress(archive, password, &mut |_| {})
+    }
+
+    /// [`test`](Self::test), telling `progress` how many entries have
+    /// finished so far (called on this thread, once per entry).
+    pub fn test_with_progress(
+        &self,
+        archive: &Path,
+        password: Option<&Password>,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<TestReport, ForeignError> {
         let mut c = Collector::new(Op::Test, self.limits);
+        let mut finished = 0u64;
         self.exchange(archive, Op::Test, 0, Vec::new(), password, &mut |m| {
+            if matches!(m, Message::Result { .. }) {
+                finished += 1;
+                progress(finished);
+            }
             c.push(m)
         })?;
         c.into_test()
@@ -422,19 +458,35 @@ impl ForeignClient {
         };
         let child = Arc::new(Mutex::new(child));
         let timed_out = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
         let (done_tx, done_rx) = mpsc::channel::<()>();
         let watchdog = {
             let child = Arc::clone(&child);
             let timed_out = Arc::clone(&timed_out);
+            let cancelled = Arc::clone(&cancelled);
+            let cancel = self.cancel.clone();
             let wall = self.run.wall_time;
             thread::spawn(move || {
-                if let Err(RecvTimeoutError::Timeout) = done_rx.recv_timeout(wall) {
-                    timed_out.store(true, Ordering::SeqCst);
-                    let _ = lock(&child).kill();
+                let start = std::time::Instant::now();
+                loop {
+                    let slice = Duration::from_millis(25);
+                    match done_rx.recv_timeout(slice) {
+                        Err(RecvTimeoutError::Timeout) => {}
+                        _ => return,
+                    }
+                    if cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                        cancelled.store(true, Ordering::SeqCst);
+                        let _ = lock(&child).kill();
+                        return;
+                    }
+                    if start.elapsed() >= wall {
+                        timed_out.store(true, Ordering::SeqCst);
+                        let _ = lock(&child).kill();
+                        return;
+                    }
                 }
             })
         };
-
         let end = self.drive(stdin, BufReader::new(stdout), &req, on_msg);
 
         let result = match end {
@@ -488,6 +540,12 @@ impl ForeignClient {
         };
         let _ = done_tx.send(());
         let _ = watchdog.join();
+        if cancelled.load(Ordering::SeqCst) {
+            return Err(ForeignError::new(
+                ErrorCode::Cancelled,
+                "the operation was cancelled and the helper was stopped",
+            ));
+        }
         result
     }
 

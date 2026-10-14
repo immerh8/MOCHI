@@ -289,6 +289,7 @@ pub fn run(
         summary,
         commit: None,
         extract: Some(Box::new(view)),
+        foreign_test: None,
     })
 }
 
@@ -857,6 +858,7 @@ mod tests {
             archives: Arc::clone(&f.archives),
             staging: Arc::default(),
             destination: Arc::clone(&f.destination),
+            foreign: Arc::default(),
         }))
     }
 

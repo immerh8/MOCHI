@@ -481,12 +481,18 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
                     })
                 })
                 .or_else(|| {
-                    prepared.refusals.first().map(|r| {
-                        (
-                            String::from_utf8_lossy(&r.name).into_owned(),
-                            r.reason.code(),
-                        )
-                    })
+                    // Links and special files are skipped by design in every
+                    // restore; only a refused *name* is an exception here.
+                    prepared
+                        .refusals
+                        .iter()
+                        .find(|r| r.reason.code() == ErrorCode::NameUnsupported)
+                        .map(|r| {
+                            (
+                                String::from_utf8_lossy(&r.name).into_owned(),
+                                r.reason.code(),
+                            )
+                        })
                 });
             if let Some((name, code)) = first {
                 return Err(MochiError::new(

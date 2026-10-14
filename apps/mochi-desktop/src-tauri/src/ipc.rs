@@ -47,6 +47,20 @@ pub enum JobRequest {
         keys: Vec<PathKey>,
         on_conflict: ConflictChoice,
     },
+    /// D8: read every entry of an open foreign archive (ZIP, 7z, RAR, tar,
+    /// tar.gz) through the format's own checks and report which checks ran.
+    /// Read-only; it is not a MOCHI verification.
+    TestForeign { handle: ArchiveHandle },
+    /// D8: extract entries of an open foreign archive into the folder the
+    /// user chose (`plan_extract_foreign` remembers the choice). Every byte is
+    /// written by the C6 restore rules (`mochi_core::restore_foreign`).
+    ExtractForeign {
+        handle: ArchiveHandle,
+        /// Entries (and what is under them) as the listing returned them;
+        /// empty extracts everything.
+        keys: Vec<PathKey>,
+        on_conflict: ConflictChoice,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -90,6 +104,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         extract: Option<Box<ExtractReport>>,
+        /// Set by the foreign-archive test job (D8).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        foreign_test: Option<Box<ForeignTestReport>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -531,4 +549,136 @@ pub struct ExtractReport {
     /// Set when the folder's directory entries are not confirmed durable.
     pub durability_note: Option<String>,
     pub case_insensitive: bool,
+}
+
+// ---- D8: foreign archives ----------------------------------------------------
+//
+// ZIP, 7z, RAR, tar and tar.gz open read-only. Nothing here uses MOCHI's
+// verification wording or health dimensions (plan D8 rule 6): a foreign
+// "test" reports the checks that ran, recoverability/freshness/retention are
+// fixed at UNSUPPORTED. Names cross as `NameText`, as in D1.
+
+/// The MOCHI health dimensions a foreign format cannot have.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignDimensionsView {
+    pub recoverability: String,
+    pub freshness: String,
+    pub retention: String,
+}
+
+/// A foreign archive opened for browsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignArchiveSummary {
+    pub handle: ArchiveHandle,
+    /// The file's name on this computer (chosen by the user).
+    pub file_name: String,
+    /// `ZIP`, `7z`, `RAR`, `tar`, or `tar.gz`.
+    pub format: String,
+    #[ts(type = "number")]
+    pub entries: u64,
+    /// `false` when the listing stopped early; `stop_reason` says why. A
+    /// partial listing is labelled partial, never presented as the whole.
+    pub complete: bool,
+    pub stop_reason: Option<NameText>,
+    /// Limit breaches met while listing, one sentence each.
+    pub notes: Vec<String>,
+    /// What this format checks per entry, in words ("CRC32 per entry").
+    pub checks: String,
+    /// The password the user gave opened the archive (names encrypted).
+    pub opened_with_password: bool,
+    /// Some entries use ZipCrypto, which is weak.
+    pub weak_encryption: bool,
+    pub dimensions: ForeignDimensionsView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ForeignKindView {
+    File,
+    Directory,
+    /// A symbolic or hard link: listed, never extracted.
+    Link,
+    /// A device, pipe, or other special entry: listed, never extracted.
+    Special,
+}
+
+/// One row of a foreign archive's listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignRow {
+    /// Selects or descends; `null` for an entry whose name was refused (it is
+    /// shown, but cannot be selected).
+    pub key: Option<PathKey>,
+    pub name: NameText,
+    pub kind: ForeignKindView,
+    /// Declared size in bytes, decimal (a claim, not a measurement).
+    pub size: Option<String>,
+    pub child_dirs: u32,
+    pub child_files: u32,
+    /// `AES-256`, `weak encryption (ZipCrypto)`, ...
+    pub encryption: Option<String>,
+    /// Why this entry will not be extracted, when it will not be.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignChildrenPage {
+    pub total: u32,
+    pub offset: u32,
+    pub entries: Vec<ForeignRow>,
+}
+
+/// What `plan_extract_foreign` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignExtractPlan {
+    pub plan: ExtractPlan,
+    /// Links and special entries in the selection: always skipped.
+    pub skipped_kinds: u32,
+}
+
+/// How many entries ended in one way, by the words the format's check used.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CheckCount {
+    /// "CRC32 matched", "read without error; this format has no per-entry
+    /// check", "password required", ...
+    pub what: String,
+    #[ts(type = "number")]
+    pub count: u64,
+}
+
+/// An entry whose read did not end cleanly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignProblem {
+    pub path: NameText,
+    pub what: NameText,
+}
+
+/// What a foreign test job found. It names the checks that ran; it is not a
+/// verification and says nothing about recoverability, freshness, or
+/// retention (spec §23.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignTestReport {
+    pub format: String,
+    #[ts(type = "number")]
+    pub entries: u64,
+    pub checks: Vec<CheckCount>,
+    /// The first entries that did not end cleanly (at most 1,000).
+    pub problems: Vec<ForeignProblem>,
+    #[ts(type = "number")]
+    pub problems_total: u64,
+    /// The whole-stream check, where the format has one.
+    pub stream_check: String,
+    pub complete: bool,
+    pub stop_reason: Option<NameText>,
+    #[ts(type = "number")]
+    pub bytes_read: u64,
+    pub dimensions: ForeignDimensionsView,
 }

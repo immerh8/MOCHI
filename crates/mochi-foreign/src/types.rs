@@ -428,6 +428,8 @@ pub enum ErrorCode {
     HelperProtocol,
     /// The caller's byte sink failed while receiving a streamed entry.
     SinkFailed,
+    /// The caller cancelled; the helper was stopped. Parent-side only.
+    Cancelled,
 }
 
 impl ErrorCode {
@@ -451,6 +453,7 @@ impl ErrorCode {
             ErrorCode::HelperOutputLimit => "HELPER_OUTPUT_LIMIT",
             ErrorCode::HelperProtocol => "HELPER_PROTOCOL",
             ErrorCode::SinkFailed => "SINK_FAILED",
+            ErrorCode::Cancelled => "CANCELLED",
         }
     }
 
@@ -481,6 +484,7 @@ impl ErrorCode {
             ErrorCode::HelperOutputLimit => 13,
             ErrorCode::HelperProtocol => 14,
             ErrorCode::SinkFailed => 15,
+            ErrorCode::Cancelled => 19,
             ErrorCode::PasswordRequired => 16,
             ErrorCode::WrongPassword => 17,
             ErrorCode::MissingVolume => 18,
