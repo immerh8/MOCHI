@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
+import { Live } from "../a11y/Live";
+import { Panel } from "../a11y/Panel";
+import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
+import { t } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -27,10 +32,10 @@ import { DELETE_NOTE, outcomeLines, progressText, TAR_NOTES } from "./messages";
 import type { Operation } from "./messages";
 
 /** The compression presets, in the order shown. */
-export const PRESETS: { id: CompressionPreset; label: string; hint: string }[] = [
-  { id: "fast", label: "Fast", hint: "quickest, larger archive" },
-  { id: "balanced", label: "Balanced", hint: "the default" },
-  { id: "smaller", label: "Smaller", hint: "slowest, smallest archive" },
+export const PRESETS: { id: CompressionPreset; label: () => string; hint: () => string }[] = [
+  { id: "fast", label: () => t("write.presetFast"), hint: () => t("write.presetFastHint") },
+  { id: "balanced", label: () => t("write.presetBalanced"), hint: () => t("write.presetBalancedHint") },
+  { id: "smaller", label: () => t("write.presetSmaller"), hint: () => t("write.presetSmallerHint") },
 ];
 
 /** The entry the list has selected, for the remove flow. */
@@ -69,7 +74,7 @@ type JobView =
 const EMPTY: StagedView = { items: [], destination: null };
 
 function kindLabel(kind: "file" | "folder" | "other"): string {
-  return kind === "folder" ? "Folder" : kind === "file" ? "File" : "Not stored (not a file or folder)";
+  return t(kind === "folder" ? "write.kindFolder" : kind === "file" ? "write.kindFile" : "write.kindOther");
 }
 
 /**
@@ -119,10 +124,11 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
       setProblems(event.problems);
       if (latestRef.current.busy) return;
       setMode((m) => (m === "create" || m === "add" ? m : latestRef.current.archive ? "add" : "create"));
-    }).catch((e: unknown) => setError(errorText("Drag and drop is not available", e)));
+    }).catch((e: unknown) => setError(errorText(t("write.dropUnavailable"), e)));
   }, []);
 
   const busy = job.state === "starting" || job.state === "running";
+  const rememberFocus = useJobFocus(busy);
 
   const onEvent = useCallback((event: JobEvent) => {
     setJob((prev) => {
@@ -163,12 +169,13 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   }, []);
 
   const run = (op: Operation, request: JobRequest) => {
+    rememberFocus();
     operationRef.current = op;
     setError(null);
     setJob({ state: "starting" });
     startJob(request, onEvent).catch((e: unknown) => {
       setJob({ state: "idle" });
-      setError(errorText("Could not start", e));
+      setError(errorText(t("write.startFailed"), e));
     });
   };
 
@@ -179,12 +186,12 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
         setStaged(out.staged);
         setProblems(out.problems);
       },
-      (e: unknown) => setError(errorText("Could not add the selection", e)),
+      (e: unknown) => setError(errorText(t("write.addSelectionFailed"), e)),
     );
   };
 
   const unstage = (index: number) => {
-    unstageSource(index).then(setStaged, (e: unknown) => setError(errorText("Could not remove", e)));
+    unstageSource(index).then(setStaged, (e: unknown) => setError(errorText(t("write.removeFailed"), e)));
   };
 
   const open = (to: Mode) => {
@@ -211,16 +218,17 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   };
 
   const create = () => {
+    rememberFocus();
     setError(null);
     let passphrase: string | undefined;
     if (encrypt) {
       const first = passRef.current?.value ?? "";
       if (first === "") {
-        setError("Enter a passphrase for the encrypted archive.");
+        setError(t("write.enterPassphrase"));
         return;
       }
       if (first !== (againRef.current?.value ?? "")) {
-        setError("The two passphrases differ. Nothing was created.");
+        setError(t("write.passphrasesDiffer"));
         return;
       }
       passphrase = first;
@@ -240,7 +248,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
         if (passRef.current) passRef.current.value = "";
         if (againRef.current) againRef.current.value = "";
       },
-      (e: unknown) => setError(errorText("Could not choose a location", e)),
+      (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)),
     );
   };
 
@@ -258,20 +266,20 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
     <>
       <div className="actions">
         <button type="button" data-testid="stage-files" onClick={() => stage("files")} disabled={busy}>
-          Add files…
+          {t("write.addFiles")}
         </button>
         <button type="button" data-testid="stage-folder" onClick={() => stage("folder")} disabled={busy}>
-          Add folder…
+          {t("write.addFolder")}
         </button>
         <button type="button" data-testid="stage-clear" onClick={discard} disabled={busy || staged.items.length === 0}>
-          Clear
+          {t("write.clear")}
         </button>
       </div>
-      <p className="note">You can also drop files and folders anywhere on this window.</p>
+      <p className="note">{t("write.dropHint")}</p>
       {staged.items.length === 0 ? (
-        <p data-testid="staged-empty">Nothing chosen yet.</p>
+        <p data-testid="staged-empty">{t("write.nothingChosen")}</p>
       ) : (
-        <ul className="staged" data-testid="staged-list" aria-label="Chosen items">
+        <ul className="staged" data-testid="staged-list" aria-label={t("write.chosenItems")}>
           {staged.items.map((item, i) => (
             <li key={item.name.text} data-testid="staged-item">
               <span className="kind-label">{kindLabel(item.kind)}</span> <Name name={item.name} />
@@ -279,10 +287,11 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                 type="button"
                 className="link"
                 data-testid="unstage"
+                aria-label={t("write.unstageItem", { name: item.name.text })}
                 onClick={() => unstage(i)}
                 disabled={busy}
               >
-                Remove from list
+                {t("write.unstage")}
               </button>
             </li>
           ))}
@@ -292,7 +301,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
         <ul role="alert" className="error" data-testid="write-problems">
           {problems.map((p) => (
             <li key={`${p.code}:${p.message}`}>
-              Not added ({p.code}): {p.message}
+              {t("write.notAdded", { code: p.code, message: p.message })}
             </li>
           ))}
         </ul>
@@ -302,24 +311,26 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
 
   return (
     <section aria-labelledby="write-heading" className="writer" data-testid="writer">
-      <h2 id="write-heading">Create and add</h2>
+      <h2 id="write-heading" tabIndex={-1}>
+        {t("write.heading")}
+      </h2>
       {dragging && (
         <p className="drop-overlay" data-testid="drop-overlay" role="note">
-          Drop files and folders to choose them.
+          {t("write.dropOverlay")}
         </p>
       )}
       <div className="actions">
         <button type="button" data-testid="new-archive" onClick={() => open("create")} disabled={busy}>
-          New archive…
+          {t("write.new")}
         </button>
         <button
           type="button"
           data-testid="add-to-archive"
           onClick={() => open("add")}
           disabled={busy || !canAdd}
-          title={canAdd ? undefined : "Open an archive first"}
+          title={canAdd ? undefined : t("write.openFirst")}
         >
-          Add to archive…
+          {t("write.add")}
         </button>
         <button
           type="button"
@@ -328,15 +339,15 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
           disabled={busy || !canRemove}
           title={
             !archive
-              ? "Open an archive first"
+              ? t("write.openFirst")
               : !viewingHead
-                ? "Only the latest commit can be changed"
+                ? t("write.onlyLatest")
                 : selected
                   ? undefined
-                  : "Select an entry first"
+                  : t("write.selectFirst")
           }
         >
-          Remove from snapshot…
+          {t("write.remove")}
         </button>
       </div>
       {error && (
@@ -346,11 +357,15 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
       )}
 
       {mode === "create" && (
-        <div className="panel" data-testid="write-panel" role="group" aria-label="New archive">
-          <h3>New archive</h3>
+        <Panel
+          label={t("write.panelNew")}
+          heading={t("write.panelNew")}
+          testId="write-panel"
+          fallbackId="write-heading"
+        >
           {stagedList}
           <fieldset disabled={busy}>
-            <legend>Compression</legend>
+            <legend>{t("write.compression")}</legend>
             {PRESETS.map((p) => (
               <label key={p.id}>
                 <input
@@ -360,12 +375,12 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                   checked={preset === p.id}
                   onChange={() => setPreset(p.id)}
                 />{" "}
-                {p.label} <span className="meta">({p.hint})</span>
+                {p.label()} <span className="meta">({p.hint()})</span>
               </label>
             ))}
           </fieldset>
           <fieldset disabled={busy}>
-            <legend>Compatibility</legend>
+            <legend>{t("write.compatibility")}</legend>
             <label>
               <input
                 type="checkbox"
@@ -374,7 +389,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                 disabled={encrypt}
                 onChange={(e) => setTar(e.target.checked)}
               />{" "}
-              Readable with standard zstd + tar
+              {t("write.tarCompatible")}
             </label>
             <ul className="note" data-testid="tar-notes">
               {TAR_NOTES.map((n) => (
@@ -383,7 +398,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
             </ul>
           </fieldset>
           <fieldset disabled={busy}>
-            <legend>Encryption</legend>
+            <legend>{t("write.encryption")}</legend>
             <label>
               <input
                 type="checkbox"
@@ -395,13 +410,13 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                   if (e.target.checked) setTar(false);
                 }}
               />{" "}
-              Encrypt with a passphrase
+              {t("write.encrypt")}
             </label>
             {tar && <p className="note">{NO_GENERIC_TOOLS}</p>}
             {encrypt && (
               <div data-testid="encrypt-panel">
                 <label>
-                  Passphrase{" "}
+                  {t("write.passphrase")}{" "}
                   <input
                     ref={passRef}
                     type="password"
@@ -411,7 +426,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                   />
                 </label>
                 <label>
-                  Repeat it{" "}
+                  {t("write.repeat")}{" "}
                   <input
                     ref={againRef}
                     type="password"
@@ -422,18 +437,18 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                 </label>
                 <EncryptionNotes creating />
                 <p className="note">{HIDDEN_WITH_KEY}</p>
-                <p className="note">Visible to anyone who has the file, without the passphrase:</p>
+                <p className="note">{t("write.visibleIntro")}</p>
                 <ul className="note" data-testid="visible-without-key">
                   {VISIBLE_WITHOUT_KEY.map((v) => (
                     <li key={v}>{v}</li>
                   ))}
                 </ul>
-                <p className="note">The choice is fixed when the archive is created.</p>
+                <p className="note">{t("write.fixedAtCreation")}</p>
               </div>
             )}
           </fieldset>
           <fieldset disabled={busy}>
-            <legend>Recovery record</legend>
+            <legend>{t("write.recoveryRecord")}</legend>
             <label>
               <input
                 type="radio"
@@ -442,7 +457,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                 checked={recovery === null}
                 onChange={() => setRecovery(null)}
               />{" "}
-              None
+              {t("write.recoveryNone")}
             </label>
             {RECOVERY_CHOICES.map((p) => (
               <label key={p}>
@@ -469,26 +484,25 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
               onClick={create}
               disabled={busy || staged.items.length === 0}
             >
-              Choose location and create…
+              {t("write.createConfirm")}
             </button>
             <button type="button" data-testid="write-close" onClick={close} disabled={busy}>
-              Close
+              {t("write.close")}
             </button>
           </div>
-        </div>
+        </Panel>
       )}
 
       {mode === "add" && archive && (
-        <div className="panel" data-testid="write-panel" role="group" aria-label="Add to archive">
-          <h3>
-            Add to <Name name={{ text: archive.file_name, verbatim: true }} />
-          </h3>
+        <Panel
+          label={t("write.panelAdd")}
+          heading={t("write.addTo", { name: archive.file_name })}
+          testId="write-panel"
+          fallbackId="write-heading"
+        >
           <p className="note">
-            This makes one new commit. An item with the same name as one in the latest snapshot
-            replaces it there; the earlier version stays in the history.
-            {archive.profile.tar_compatible
-              ? " This archive is TAR-compatible, as chosen when it was created."
-              : ""}
+            {t("write.addNote")}
+            {archive.profile.tar_compatible ? t("write.addNoteTar") : ""}
           </p>
           {stagedList}
           <div className="actions">
@@ -498,21 +512,23 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
               onClick={() => run("add", { kind: "add_to_archive", handle: archive.handle })}
               disabled={busy || staged.items.length === 0}
             >
-              Add to archive
+              {t("write.addConfirm")}
             </button>
             <button type="button" data-testid="write-close" onClick={close} disabled={busy}>
-              Close
+              {t("write.close")}
             </button>
           </div>
-        </div>
+        </Panel>
       )}
 
       {mode === "remove" && archive && selected && (
-        <div className="panel" data-testid="write-panel" role="group" aria-label="Remove from snapshot">
-          <h3>Remove from the current snapshot</h3>
-          <p>
-            Remove <Name name={selected.name} /> from the current snapshot?
-          </p>
+        <Panel
+          label={t("write.panelRemove")}
+          heading={t("write.removeHeading")}
+          testId="write-panel"
+          fallbackId="write-heading"
+        >
+          <p>{t("write.removeQuestion", { name: selected.name.text })}</p>
           <p className="note" data-testid="delete-note">
             {DELETE_NOTE}
           </p>
@@ -525,44 +541,44 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
               }
               disabled={busy}
             >
-              Remove from snapshot
+              {t("write.removeConfirm")}
             </button>
             <button type="button" data-testid="delete-keep" onClick={close} disabled={busy}>
-              Keep it
+              {t("write.keep")}
             </button>
           </div>
-        </div>
+        </Panel>
       )}
 
       {(job.state === "starting" || job.state === "running") && (
         <div className="progress" data-testid="write-running">
           {job.state === "running" && (
             <>
-              <progress value={job.total === null ? undefined : job.completed} max={job.total ?? undefined} />
-              <span data-testid="write-progress">
-                {job.phase ? progressText(job.phase, job.completed, job.total) : "Starting…"}
-                {job.cancelRequested ? " (cancelling…)" : ""}
-              </span>
+              <ProgressMeter
+                completed={job.completed}
+                total={job.total}
+                text={
+                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+                  (job.cancelRequested ? t("common.cancelling") : "")
+                }
+                textTestId="write-progress"
+              />
             </>
           )}
-          {job.state === "starting" && <span>Starting…</span>}
+          {job.state === "starting" && <span>{t("common.starting")}</span>}
           <button
             type="button"
             data-testid="write-cancel"
             onClick={cancel}
             disabled={job.state !== "running" || job.cancelRequested}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
         </div>
       )}
-      {job.state === "done" && (
-        <div role="status" data-testid="write-status" data-committed={job.committed}>
-          {job.lines.map((l) => (
-            <p key={l}>{l}</p>
-          ))}
-        </div>
-      )}
+      <Live data-testid="write-status" data-committed={job.state === "done" ? job.committed : undefined}>
+        {job.state === "done" && job.lines.map((l) => <p key={l}>{l}</p>)}
+      </Live>
     </section>
   );
 }

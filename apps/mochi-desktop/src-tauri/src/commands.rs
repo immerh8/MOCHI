@@ -9,14 +9,15 @@ use tauri::{AppHandle, State};
 
 use crate::browse::Archives;
 use crate::check::{Checks, SubjectPick};
+use crate::crashlog::{CrashLog, Settings, MAX_READ_BYTES};
 use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, EnvelopeList,
-    ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage, ForeignExtractPlan, HealthView,
-    IpcError, JobEvent, JobId, JobRequest, OpenOutcome, PathKey, PendingId, RepairSetupAction,
-    RepairSetupView, ReportId, Secret, SnapshotView, SourcePick, StageOutcome, StagedView,
-    SubjectId, SubjectSource, SubjectView,
+    ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView, DropEvent,
+    EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
+    ForeignExtractPlan, HealthView, IpcError, JobEvent, JobId, JobRequest, OpenOutcome, PathKey,
+    PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret, SnapshotView, SourcePick,
+    StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
@@ -462,6 +463,94 @@ pub async fn plan_extract_foreign(
             None
         };
         foreign.plan(&destination, picked, handle, &keys).map(Some)
+    })
+    .await
+}
+
+// ---- D7: the opt-in crash log -------------------------------------------------
+
+fn crash_view(log: &CrashLog) -> CrashSettingsView {
+    let settings = log.settings();
+    let status = log.status();
+    CrashSettingsView {
+        enabled: settings.enabled,
+        include_details: settings.include_details,
+        entries: status.entries,
+        bytes: status.bytes,
+    }
+}
+
+/// The crash-log switches and what the log holds (D7). Both switches start off.
+#[tauri::command]
+pub async fn get_crash_settings(
+    log: State<'_, Arc<CrashLog>>,
+) -> Result<CrashSettingsView, IpcError> {
+    let log = Arc::clone(&log);
+    blocking(move || Ok(crash_view(&log))).await
+}
+
+/// Change the crash-log switches (D7). Nothing is sent anywhere either way.
+#[tauri::command]
+pub async fn set_crash_settings(
+    enabled: bool,
+    include_details: bool,
+    log: State<'_, Arc<CrashLog>>,
+) -> Result<CrashSettingsView, IpcError> {
+    let log = Arc::clone(&log);
+    blocking(move || {
+        log.set(Settings {
+            enabled,
+            include_details,
+        })?;
+        Ok(crash_view(&log))
+    })
+    .await
+}
+
+/// The newest part of the local crash log, to read in the window (D7).
+#[tauri::command]
+pub async fn read_crash_log(log: State<'_, Arc<CrashLog>>) -> Result<CrashLogView, IpcError> {
+    let log = Arc::clone(&log);
+    blocking(move || {
+        let (text, truncated) = log.read(MAX_READ_BYTES);
+        Ok(CrashLogView {
+            text,
+            truncated,
+            entries: log.status().entries,
+        })
+    })
+    .await
+}
+
+/// Save a copy of the crash log to a new file the user picks (D7). Returns
+/// the file's name, or `null` if the user cancelled the dialog.
+#[tauri::command]
+pub async fn export_crash_log(
+    app: AppHandle,
+    log: State<'_, Arc<CrashLog>>,
+) -> Result<Option<String>, IpcError> {
+    let log = Arc::clone(&log);
+    blocking(move || {
+        let Some(path) = crate::picker::pick_crash_log_destination(&app) else {
+            return Ok(None);
+        };
+        crate::check::write_new_file(&path, &log.export_bytes())?;
+        Ok(Some(
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ))
+    })
+    .await
+}
+
+/// Delete the local crash log (D7). The switches stay as they are.
+#[tauri::command]
+pub async fn clear_crash_log(log: State<'_, Arc<CrashLog>>) -> Result<CrashSettingsView, IpcError> {
+    let log = Arc::clone(&log);
+    blocking(move || {
+        log.clear()?;
+        Ok(crash_view(&log))
     })
     .await
 }

@@ -3,100 +3,98 @@
 // profile"). Nothing here may say an archive is "safe", "secure", "backed
 // up", or "preserved", or that a passphrase was "revoked": removing one is
 // not revocation, and a recovery record is a repair aid, not a second copy.
+import { t, tn } from "../i18n";
 import type { RekeyReport, SearchCoverageView } from "../ipc/crypt";
 
+// These are fixed for the one shipped locale; a second locale would turn them
+// into functions (the screens only import the names).
+
 /** Shown whenever a passphrase is being chosen. */
-export const LOST_PASSPHRASE =
-  "If you lose every passphrase for this archive, its contents are lost. There is no recovery: nothing in the file, in MOCHI, or in a repair can supply a passphrase. Keep the passphrase somewhere independent of the archive and of its copies.";
+export const LOST_PASSPHRASE = t("crypt.lostPassphrase");
 
 /** Shown whenever encryption is chosen: deduplication is always on. */
-export const DEDUP_LEAK =
-  "Identical content is stored once, also in an encrypted archive. Anyone who can compare the file before and after a change can learn whether the added content was already in it.";
+export const DEDUP_LEAK = t("crypt.dedupLeak");
 
-export const HIDDEN_WITH_KEY =
-  "Sealed: file names, attributes, file sizes, folder structure, and content.";
+export const HIDDEN_WITH_KEY = t("crypt.hiddenWithKey");
 
 /** What stays visible to anyone holding the file (docs/c11-encrypted.md). */
 export const VISIBLE_WITHOUT_KEY = [
-  "The archive ID, the number of commits, and their parent links.",
-  "The number, kind, and sizes of stored objects, and whether a commit added data.",
-  "The key envelopes: their IDs and how costly it is to guess each passphrase.",
-  "Compressed sizes (content is compressed, then encrypted).",
+  t("crypt.visible1"),
+  t("crypt.visible2"),
+  t("crypt.visible3"),
+  t("crypt.visible4"),
 ];
 
-export const NOT_SIGNED =
-  "The commit history is not signed. Someone who can rewrite the whole file can roll it back or withhold commits.";
+export const NOT_SIGNED = t("crypt.notSigned");
 
-export const NO_GENERIC_TOOLS =
-  "Standard zstd and tar tools cannot unpack an encrypted archive, so it cannot also be TAR-compatible.";
+export const NO_GENERIC_TOOLS = t("crypt.noGenericTools");
 
 /** The wrong-passphrase answer: an operational error, not a finding. */
-export const WRONG_PASSPHRASE = "The passphrase did not open this archive.";
-export const WRONG_PASSPHRASE_NOTE =
-  "This says nothing about the condition of the archive. Check the passphrase and try again.";
+export const WRONG_PASSPHRASE = t("crypt.wrongPassphrase");
+export const WRONG_PASSPHRASE_NOTE = t("crypt.wrongPassphraseNote");
 
-export const REMOVE_NOT_REVOCATION =
-  "Removing a passphrase is not revocation. Anyone who knew it and kept a copy of the file can still open that copy, and the removed key envelope stays in this file's history. Only re-encrypting to a new file gives a new data key, and that does not recall copies already made.";
+export const REMOVE_NOT_REVOCATION = t("crypt.removeNotRevocation");
 
-export const REENCRYPT_NOTE =
-  "Re-encrypting writes a new file under a new data key and the new passphrase. The original file is not changed and still opens with its old passphrases; retire it yourself if you want it gone. Copies already made are not recalled.";
+export const REENCRYPT_NOTE = t("crypt.reencryptNote");
 
-export const REKEY_NEEDS_UNLOCK =
-  "Open the archive with its passphrase first: changing passphrases needs the key.";
+export const REKEY_NEEDS_UNLOCK = t("crypt.rekeyNeedsUnlock");
 
 /** Recovery-record choices (percent of each commit's bytes). */
 export const RECOVERY_CHOICES = [5, 10, 20, 50] as const;
 
 export const RECOVERY_NOTES = [
-  "A recovery record is extra data that can rebuild bounded damage to this same file. It is not a second copy, and an archive that has one is not protected against losing the file.",
-  "Within each group of stored data it can rebuild damaged blocks up to about the chosen percentage. Damage beyond that is reported and left as it is; nothing more is promised.",
-  "It does not cover the newest commit's footer or the recovery data itself.",
-  "The file grows by about the percentage you choose, and by more for small commits.",
-  "It is fixed when the archive is created. Keep an independent copy as well.",
+  t("crypt.recovery1"),
+  t("crypt.recovery2"),
+  t("crypt.recovery3"),
+  t("crypt.recovery4"),
+  t("crypt.recovery5"),
 ];
 
 export function recoveryLabel(percent: number): string {
-  return `${percent}% extra data`;
+  return t("crypt.recoveryLabel", { percent });
 }
 
 /** The result of a rekey job as lines; the first is the headline. */
 export function rekeyLines(r: RekeyReport): string[] {
   const lines: string[] = [];
+  const committed = {
+    seq: r.seq ?? t("crypt.rekeyUnknownSeq"),
+    status: r.status ?? t("crypt.rekeyDefaultStatus"),
+    file: r.file_name,
+  };
   switch (r.action) {
     case "added":
-      lines.push(
-        `Committed commit ${r.seq ?? "?"} (${r.status ?? "LOCAL_COMMITTED"}): a passphrase was added to ${r.file_name}. The data key and the data are unchanged.`,
-      );
+      lines.push(t("crypt.rekeyAdded", committed));
       break;
     case "removed":
-      lines.push(
-        `Committed commit ${r.seq ?? "?"} (${r.status ?? "LOCAL_COMMITTED"}): a passphrase was removed from ${r.file_name}'s current key set. The data key and the data are unchanged.`,
-        REMOVE_NOT_REVOCATION,
-      );
+      lines.push(t("crypt.rekeyRemoved", committed), REMOVE_NOT_REVOCATION);
       break;
     case "reencrypted":
       lines.push(
-        `Wrote ${r.file_name}: ${r.snapshots} snapshot${r.snapshots === 1 ? "" : "s"} under a new data key and the new passphrase.`,
+        tn(r.snapshots, "crypt.rekeyReencryptedOne", "crypt.rekeyReencryptedMany", {
+          file: r.file_name,
+          n: r.snapshots,
+        }),
         REENCRYPT_NOTE,
       );
       break;
   }
   if (r.durability_note) {
-    lines.push(
-      `Degraded: the directory entry is not confirmed durable (${r.durability_note}).`,
-    );
+    lines.push(t("crypt.rekeyDegraded", { note: r.durability_note }));
   }
   if (r.reopen_error) {
     lines.push(
-      `The archive could not be opened again with the key held (${r.reopen_error.code}): ${r.reopen_error.message} Open it again with a passphrase that is still in its key set.`,
+      t("crypt.rekeyReopenError", { code: r.reopen_error.code, message: r.reopen_error.message }),
     );
   }
   return lines;
 }
 
 function rangeText(ranges: { from: number; to: number }[]): string {
-  if (ranges.length === 0) return "none";
-  return ranges.map((r) => (r.from === r.to ? `${r.from}` : `${r.from}–${r.to}`)).join(", ");
+  if (ranges.length === 0) return t("crypt.rangeNone");
+  return ranges
+    .map((r) => (r.from === r.to ? `${r.from}` : `${r.from}–${r.to}`))
+    .join(t("crypt.rangeSeparator"));
 }
 
 /**
@@ -105,28 +103,25 @@ function rangeText(ranges: { from: number; to: number }[]): string {
  */
 export function coverageLines(c: SearchCoverageView): string[] {
   const lines = [
-    `Searched ${c.searched_count} of ${c.requested_count} requested snapshot${c.requested_count === 1 ? "" : "s"} (commits ${rangeText(c.searched)}); ${c.entries_examined.toLocaleString("en-US")} entries examined.`,
+    tn(c.requested_count, "crypt.coverageSearchedOne", "crypt.coverageSearchedMany", {
+      searched: c.searched_count,
+      requested: c.requested_count,
+      ranges: rangeText(c.searched),
+      examined: c.entries_examined.toLocaleString("en-US"),
+    }),
   ];
-  if (c.complete) {
-    lines.push("Coverage is complete for the snapshots requested: no matches means no matching names there.");
-  } else {
-    lines.push(
-      "Coverage is PARTIAL. Some requested snapshots were not searched, so finding nothing is not proof that nothing matches.",
-    );
-  }
+  lines.push(t(c.complete ? "crypt.coverageComplete" : "crypt.coveragePartial"));
   for (const u of c.unavailable) {
-    lines.push(`Not searched: commit ${u.seq} (${u.code}): ${u.message.text}`);
+    lines.push(t("crypt.coverageUnavailable", { seq: u.seq, code: u.code, message: u.message.text }));
   }
   if (c.opened_separately.length > 0) {
-    lines.push(
-      `Commits ${rangeText(c.opened_separately)} were opened one by one because the head's catalog was rebuilt from a snapshot manifest.`,
-    );
+    lines.push(t("crypt.coverageOpenedSeparately", { ranges: rangeText(c.opened_separately) }));
   }
   if (c.catalog_from_manifest) {
-    lines.push("The catalog image at the head was damaged; a snapshot manifest stood in for it.");
+    lines.push(t("crypt.coverageFromManifest"));
   }
   if (c.content_not_searched) {
-    lines.push("File contents were not searched, only names. Full-text search is not built.");
+    lines.push(t("crypt.coverageContentNotSearched"));
   }
   return lines;
 }

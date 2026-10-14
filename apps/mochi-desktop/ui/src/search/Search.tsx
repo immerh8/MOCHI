@@ -1,6 +1,9 @@
 import { useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
+import { Live } from "../a11y/Live";
 import { errorText, shortSize } from "../browser/format";
+import { t, tn } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary } from "../ipc/browse";
 import { coverageLines } from "../crypt/messages";
@@ -17,10 +20,10 @@ type View =
   | { state: "done"; result: SearchResultView }
   | { state: "failed"; lines: string[] };
 
-const SCOPES: { id: ScopeId; label: string }[] = [
-  { id: "head", label: "Latest snapshot only" },
-  { id: "retained", label: "Every retained snapshot" },
-  { id: "all", label: "Every snapshot, including expired ones" },
+const SCOPES: { id: ScopeId; label: () => string }[] = [
+  { id: "head", label: () => t("search.scopeHead") },
+  { id: "retained", label: () => t("search.scopeRetained") },
+  { id: "all", label: () => t("search.scopeAll") },
 ];
 
 function scopeOf(id: ScopeId): SearchScopeChoice {
@@ -41,9 +44,11 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
   const [view, setView] = useState<View>({ state: "idle" });
 
   const running = view.state === "running";
+  const rememberFocus = useJobFocus(running);
 
   const go = () => {
     if (!archive) return;
+    rememberFocus();
     setView({ state: "running", jobId: null, completed: 0, total: null });
     const onEvent = (e: JobEvent) => {
       if (e.event === "started") {
@@ -57,21 +62,23 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
         if (o.status === "completed" && o.search) {
           setView({ state: "done", result: o.search });
         } else if (o.status === "cancelled") {
-          setView({ state: "failed", lines: ["Cancelled. The search stopped before it finished."] });
+          setView({ state: "failed", lines: [t("search.cancelled")] });
         } else if (o.status === "failed") {
           setView({
             state: "failed",
             lines: [
-              `The search did not run (${o.code}): ${o.message}`,
-              ...(o.code === "RETENTION_UNRESOLVED"
-                ? ["Retention could not be rebuilt, so the retained snapshots cannot be listed. Search every snapshot instead."]
-                : []),
+              t("search.didNotRun", { code: o.code, message: o.message }),
+              ...(o.code === "RETENTION_UNRESOLVED" ? [t("search.retentionUnresolved")] : []),
             ],
           });
         } else {
           setView({
             state: "failed",
-            lines: [o.status === "aborted" ? `Stopped unexpectedly: ${o.message}` : "The search did not finish."],
+            lines: [
+              o.status === "aborted"
+                ? t("common.stoppedUnexpectedly", { message: o.message })
+                : t("search.didNotFinish"),
+            ],
           });
         }
       }
@@ -87,7 +94,7 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
       },
       onEvent,
     ).catch((err: unknown) =>
-      setView({ state: "failed", lines: [errorText("Could not start the search", err)] }),
+      setView({ state: "failed", lines: [errorText(t("search.startFailed"), err)] }),
     );
   };
 
@@ -97,7 +104,9 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
 
   return (
     <section aria-labelledby="search-heading" className="search" data-testid="search">
-      <h2 id="search-heading">Search names</h2>
+      <h2 id="search-heading" tabIndex={-1}>
+        {t("search.heading")}
+      </h2>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -105,7 +114,7 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
         }}
       >
         <label>
-          Part of a path{" "}
+          {t("search.query")}{" "}
           <input
             type="search"
             value={query}
@@ -121,42 +130,41 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
             onChange={(e) => setIgnoreCase(e.target.checked)}
             data-testid="search-ignore-case"
           />{" "}
-          Ignore case (ASCII letters only)
+          {t("search.ignoreCase")}
         </label>
         <label>
-          Snapshots{" "}
+          {t("search.snapshots")}{" "}
           <select value={scope} onChange={(e) => setScope(e.target.value as ScopeId)} data-testid="search-scope">
             {SCOPES.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.label}
+                {s.label()}
               </option>
             ))}
           </select>
         </label>
         <label>
-          Kind{" "}
+          {t("search.kind")}{" "}
           <select value={kind} onChange={(e) => setKind(e.target.value as KindId)} data-testid="search-kind">
-            <option value="any">Files and folders</option>
-            <option value="file">Files</option>
-            <option value="directory">Folders</option>
+            <option value="any">{t("search.kindAny")}</option>
+            <option value="file">{t("search.kindFile")}</option>
+            <option value="directory">{t("search.kindDirectory")}</option>
           </select>
         </label>
         <div className="actions">
           <button type="submit" data-testid="search-go" disabled={!archive || running}>
-            Search
+            {t("search.go")}
           </button>
           <button type="button" data-testid="search-cancel" onClick={cancel} disabled={!running}>
-            Cancel
+            {t("common.cancel")}
           </button>
         </div>
       </form>
-      <p className="note">
-        Searches the names of entries in the archive. File contents are not searched.
-      </p>
+      <p className="note">{t("search.note")}</p>
       {view.state === "running" && (
         <p data-testid="search-running">
-          Searching… {view.completed}
-          {view.total !== null ? ` of ${view.total}` : ""} snapshots
+          {view.total !== null
+            ? t("search.runningOf", { completed: view.completed, total: view.total })
+            : t("search.running", { completed: view.completed })}
         </p>
       )}
       {view.state === "failed" && (
@@ -166,34 +174,45 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
           ))}
         </div>
       )}
-      {view.state === "done" && (
-        <div data-testid="search-result">
-          <div
-            role="status"
-            data-testid="search-coverage"
-            data-complete={view.result.coverage.complete}
-            className={view.result.coverage.complete ? "coverage" : "coverage partial"}
-          >
+      <Live
+        data-testid="search-coverage"
+        data-complete={view.state === "done" ? view.result.coverage.complete : undefined}
+        className={view.state === "done" && !view.result.coverage.complete ? "coverage partial" : "coverage"}
+      >
+        {view.state === "done" && (
+          <>
             <p>
-              <strong>{view.result.coverage.complete ? "Coverage complete" : "Coverage PARTIAL"}</strong>
+              <strong>
+                {view.result.coverage.complete ? t("search.coverageComplete") : t("search.coveragePartial")}
+              </strong>
             </p>
             {coverageLines(view.result.coverage).map((l) => (
               <p key={l}>{l}</p>
             ))}
-          </div>
+          </>
+        )}
+      </Live>
+      {view.state === "done" && (
+        <div data-testid="search-result">
           <p data-testid="search-count">
-            {view.result.total_hits.toLocaleString("en-US")}{" "}
-            {view.result.total_hits === 1 ? "match" : "matches"}
-            {view.result.total_hits > view.result.hits.length
-              ? `; the first ${view.result.hits.length.toLocaleString("en-US")} are shown`
-              : ""}
-            .
+            {t("search.count", {
+              total: view.result.total_hits.toLocaleString("en-US"),
+              noun: tn(view.result.total_hits, "search.matchOne", "search.matchMany"),
+              shown:
+                view.result.total_hits > view.result.hits.length
+                  ? t("search.countShown", { n: view.result.hits.length.toLocaleString("en-US") })
+                  : "",
+            })}
           </p>
-          <ul aria-label="Matches" data-testid="search-hits">
+          <ul aria-label={t("search.matches")} data-testid="search-hits">
             {view.result.hits.map((h) => (
               <li key={`${h.seq}:${h.path.text}`} data-testid="search-hit">
-                commit {h.seq} · {h.kind === "directory" ? "folder" : "file"} · <Name name={h.path} />
-                {h.kind === "file" ? ` · ${shortSize(h.size)}` : ""}
+                {t("search.hit", {
+                  seq: h.seq,
+                  kind: t(h.kind === "directory" ? "search.hitFolder" : "search.hitFile"),
+                })}
+                <Name name={h.path} />
+                {h.kind === "file" ? t("search.hitSize", { size: shortSize(h.size) }) : ""}
               </li>
             ))}
           </ul>

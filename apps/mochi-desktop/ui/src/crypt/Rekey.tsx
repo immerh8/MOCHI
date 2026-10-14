@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
+import { Live } from "../a11y/Live";
+import { Panel } from "../a11y/Panel";
 import { errorText } from "../browser/format";
+import { t } from "../i18n";
 import type { ArchiveSummary } from "../ipc/browse";
 import { listEnvelopes } from "../ipc/crypt";
 import type { EnvelopeView } from "../ipc/crypt";
@@ -26,13 +30,13 @@ type Run = { state: "idle" } | { state: "running"; jobId: number | null } | { st
 function outcomeLines(o: JobOutcome): string[] {
   switch (o.status) {
     case "completed":
-      return o.rekey ? rekeyLines(o.rekey) : [`Completed: ${o.summary}.`];
+      return o.rekey ? rekeyLines(o.rekey) : [t("common.completed", { summary: o.summary })];
     case "cancelled":
-      return ["Cancelled. Nothing was changed."];
+      return [t("rekey.cancelled")];
     case "failed":
-      return [`Failed (${o.code}): ${o.message}`, "Nothing was changed."];
+      return [t("common.failed", { code: o.code, message: o.message }), t("rekey.failedNothing")];
     case "aborted":
-      return [`Stopped unexpectedly: ${o.message}`, "Open the archive again to see what it holds."];
+      return [t("common.stoppedUnexpectedly", { message: o.message }), t("rekey.abortedHint")];
   }
 }
 
@@ -65,7 +69,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
         if (live) setEnvelopes(l.envelopes);
       },
       (e: unknown) => {
-        if (live) setError(errorText("Could not list the key envelopes", e));
+        if (live) setError(errorText(t("rekey.listFailed"), e));
       },
     );
     return () => {
@@ -74,9 +78,11 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
   }, [handle, encrypted, commits]);
 
   const busy = run.state === "running";
+  const rememberFocus = useJobFocus(busy);
 
   const start = (request: JobRequest) =>
     new Promise<void>((resolve) => {
+      rememberFocus();
       setError(null);
       setRun({ state: "running", jobId: null });
       const onEvent = (event: JobEvent) => {
@@ -94,7 +100,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
       };
       startJob(request, onEvent).catch((e: unknown) => {
         setRun({ state: "idle" });
-        setError(errorText("Could not start", e));
+        setError(errorText(t("rekey.startFailed"), e));
         resolve();
       });
     });
@@ -107,7 +113,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
         setDestination(view.destination);
         setMode("reencrypt");
       },
-      (e: unknown) => setError(errorText("Could not choose a location", e)),
+      (e: unknown) => setError(errorText(t("rekey.chooseFailed"), e)),
     );
   };
 
@@ -117,77 +123,83 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
 
   return (
     <section aria-labelledby="rekey-heading" className="rekey" data-testid="rekey">
-      <h2 id="rekey-heading">Passphrases</h2>
+      <h2 id="rekey-heading" tabIndex={-1}>
+        {t("rekey.heading")}
+      </h2>
       {!encrypted ? (
         <p className="note" data-testid="rekey-unavailable">
-          {archive
-            ? "This archive is not encrypted, so it has no passphrases to change."
-            : "Open an encrypted archive to change its passphrases."}
+          {archive ? t("rekey.notEncrypted") : t("rekey.openEncrypted")}
         </p>
       ) : (
         <>
-          <ul aria-label="Key envelopes" data-testid="envelopes">
+          <ul aria-label={t("rekey.envelopes")} data-testid="envelopes">
             {(encrypted ? (envelopes ?? []) : []).map((e) => (
               <li key={e.envelope_id} data-testid="envelope">
-                <span className="hash">{e.envelope_id}</span> · written by commit {e.written_by_commit} ·{" "}
-                {e.kdf}
-                {e.opened_with ? " · opened this archive in this session" : ""}
+                <span className="hash">{e.envelope_id}</span>
+                {t("rekey.envelopeLine", { commit: e.written_by_commit, kdf: e.kdf })}
+                {e.opened_with ? t("rekey.envelopeOpened") : ""}
               </li>
             ))}
           </ul>
           <div className="actions">
             <button type="button" data-testid="rekey-add" disabled={busy} onClick={() => setMode("add")}>
-              Add a passphrase…
+              {t("rekey.add")}
             </button>
             <button
               type="button"
               data-testid="rekey-remove"
               disabled={busy || (envelopes?.length ?? 0) < 2}
-              title={(envelopes?.length ?? 0) < 2 ? "The last passphrase cannot be removed" : undefined}
+              title={(envelopes?.length ?? 0) < 2 ? t("rekey.removeLast") : undefined}
               onClick={() => setMode("remove")}
             >
-              Remove a passphrase…
+              {t("rekey.remove")}
             </button>
             <button type="button" data-testid="rekey-reencrypt" disabled={busy} onClick={chooseFile}>
-              Re-encrypt to a new file…
+              {t("rekey.reencrypt")}
             </button>
           </div>
 
           {mode === "add" && archive && (
-            <div className="panel" role="group" aria-label="Add a passphrase" data-testid="rekey-panel">
-              <h3>Add a passphrase</h3>
+            <Panel
+              label={t("rekey.addGroup")}
+              heading={t("rekey.addGroup")}
+              testId="rekey-panel"
+              fallbackId="rekey-heading"
+            >
               <PassphraseForm
                 testId="rekey-add-form"
-                label="New passphrase"
+                label={t("rekey.newPassphrase")}
                 confirm
-                submitLabel="Add passphrase"
+                submitLabel={t("rekey.addSubmit")}
                 onSubmit={(p) => start({ kind: "add_passphrase", handle: archive.handle, passphrase: p })}
                 onCancel={() => setMode("closed")}
               >
                 <EncryptionNotes creating={false} />
               </PassphraseForm>
-            </div>
+            </Panel>
           )}
 
           {mode === "remove" && archive && envelopes && (
-            <div className="panel" role="group" aria-label="Remove a passphrase" data-testid="rekey-panel">
-              <h3>Remove a passphrase</h3>
+            <Panel
+              label={t("rekey.removeGroup")}
+              heading={t("rekey.removeGroup")}
+              testId="rekey-panel"
+              fallbackId="rekey-heading"
+            >
               <p className="warning" data-testid="not-revocation">
                 {REMOVE_NOT_REVOCATION}
               </p>
-              <p className="note">
-                Choose the key envelope to remove. If you do not know which one a passphrase
-                belongs to, the one marked as opening this archive is the one you typed.
-              </p>
+              <p className="note">{t("rekey.removeIntro")}</p>
               <ul>
                 {envelopes.map((e) => (
                   <li key={e.envelope_id}>
                     <span className="hash">{e.envelope_id}</span>
-                    {e.opened_with ? " (opened this archive)" : ""}{" "}
+                    {e.opened_with ? t("rekey.openedThis") : ""}{" "}
                     <button
                       type="button"
                       data-testid="remove-envelope"
                       disabled={busy}
+                      aria-label={t("rekey.removeThisEnvelope", { id: e.envelope_id })}
                       onClick={() =>
                         void start({
                           kind: "remove_passphrase",
@@ -196,35 +208,39 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
                         })
                       }
                     >
-                      Remove this passphrase
+                      {t("rekey.removeThis")}
                     </button>
                   </li>
                 ))}
               </ul>
               <button type="button" onClick={() => setMode("closed")} disabled={busy}>
-                Close
+                {t("common.close")}
               </button>
-            </div>
+            </Panel>
           )}
 
           {mode === "reencrypt" && archive && (
-            <div className="panel" role="group" aria-label="Re-encrypt" data-testid="rekey-panel">
-              <h3>Re-encrypt to a new file</h3>
+            <Panel
+              label={t("rekey.reencryptGroup")}
+              heading={t("rekey.reencryptHeading")}
+              testId="rekey-panel"
+              fallbackId="rekey-heading"
+            >
               <p className="note" data-testid="reencrypt-note">
                 {REENCRYPT_NOTE}
               </p>
-              {destination && <p>New file: {destination}</p>}
+              {destination && <p>{t("rekey.newFile", { path: destination })}</p>}
               <PassphraseForm
                 testId="reencrypt-form"
-                label="Passphrase for the new file"
+                label={t("rekey.newFilePassphrase")}
                 confirm
-                submitLabel="Write the new file"
+                submitLabel={t("rekey.reencryptSubmit")}
                 onSubmit={(p) => start({ kind: "reencrypt", handle: archive.handle, passphrase: p })}
                 onCancel={() => setMode("closed")}
               >
                 <EncryptionNotes creating={false} />
               </PassphraseForm>
-            </div>
+            </Panel>
           )}
         </>
       )}
@@ -235,19 +251,15 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
       )}
       {run.state === "running" && (
         <p data-testid="rekey-running">
-          Working…{" "}
+          {t("rekey.working")}{" "}
           <button type="button" data-testid="rekey-cancel" onClick={cancel} disabled={run.jobId === null}>
-            Cancel
+            {t("common.cancel")}
           </button>
         </p>
       )}
-      {run.state === "done" && (
-        <div role="status" data-testid="rekey-status">
-          {run.lines.map((l) => (
-            <p key={l}>{l}</p>
-          ))}
-        </div>
-      )}
+      <Live data-testid="rekey-status">
+        {run.state === "done" && run.lines.map((l) => <p key={l}>{l}</p>)}
+      </Live>
     </section>
   );
 }

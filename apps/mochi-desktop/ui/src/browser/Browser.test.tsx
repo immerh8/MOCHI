@@ -208,7 +208,7 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   expect(treeCalls).toHaveLength(1);
   const subItem = within(tree).getByText("sub").closest("li");
   if (!subItem) throw new Error("no tree item");
-  await user.click(within(subItem).getByRole("button", { name: "Expand" }));
+  await user.click(within(subItem).getByRole("button", { name: "Expand sub" }));
   await within(tree).findByText("deeper");
   await user.click(within(tree).getByText("sub"));
   await screen.findByText(/2 entries in this folder/);
