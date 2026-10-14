@@ -34,15 +34,29 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["mochi"],
+        "name": "MOCHI.Archive",
+        "description": "MOCHI archive",
+        "mimeType": "application/x-mochi",
+        "role": "Editor"
+      }
+    ],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "../../../packaging/nsis/hooks.nsh"
       }
     },
     "linux": {
       "deb": {
-        "section": "utils"
+        "section": "utils",
+        "desktopTemplate": "../../../packaging/linux/mochi.desktop",
+        "files": {
+          "/usr/share/mime/packages/mochi.xml": "../../../packaging/linux/mochi-mime.xml"
+        }
       }
     }
   }

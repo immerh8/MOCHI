@@ -27,6 +27,9 @@ const exe = process.platform === "win32" ? "mochi-desktop.exe" : "mochi-desktop"
 const application =
   process.env.MOCHI_DESKTOP_BINARY ?? path.resolve(here, "../../../target/debug", exe);
 
+// The D6 launch spec starts the same binary again (a second instance).
+process.env.MOCHI_DESKTOP_BINARY = application;
+
 const driverArgs = [];
 if (process.env.MOCHI_NATIVE_DRIVER) {
   driverArgs.push("--native-driver", process.env.MOCHI_NATIVE_DRIVER);
