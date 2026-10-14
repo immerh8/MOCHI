@@ -6,11 +6,11 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::engine::{self, EngineError, Origin, Out};
-use crate::volumes::{self, SplitName};
 use crate::protocol::{
     kind, path_from_bytes, read_frame, FrameError, Message, Request, PROTOCOL_VERSION,
 };
 use crate::types::*;
+use crate::volumes::{self, SplitName};
 
 /// Exit codes the parent can see (it reports them in `HELPER_CRASHED`).
 pub const EXIT_OK: i32 = 0;

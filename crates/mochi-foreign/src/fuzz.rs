@@ -10,9 +10,9 @@ use std::path::Path;
 use crate::detect::detect;
 use crate::engine::{self, EngineError, Out};
 use crate::protocol::{read_frame, Message, Request, DATA_CHUNK};
-use crate::{rarfmt, sevenfmt, tarfmt};
 use crate::types::*;
 use crate::zipfmt;
+use crate::{rarfmt, sevenfmt, tarfmt};
 
 pub fn fuzz_limits() -> Limits {
     Limits {
@@ -140,7 +140,9 @@ pub fn exercise_rar_file(path: &Path) {
 /// Detection plus dispatch, as the helper runs it.
 pub fn exercise_detect(data: &[u8]) {
     let _ = detect(&mut Cursor::new(data));
-    run_ops(data, |req, out| engine::run(Cursor::new(data), &engine::Origin::MEMORY, req, out));
+    run_ops(data, |req, out| {
+        engine::run(Cursor::new(data), &engine::Origin::MEMORY, req, out)
+    });
 }
 
 /// The parent's decoder for a stream from a (possibly hostile) helper, and the

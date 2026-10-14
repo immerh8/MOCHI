@@ -251,7 +251,9 @@ impl ForeignClient {
         password: Option<&Password>,
     ) -> Result<ListReport, ForeignError> {
         let mut c = Collector::new(Op::List, self.limits);
-        self.exchange(archive, Op::List, 0, Vec::new(), password, &mut |m| c.push(m))?;
+        self.exchange(archive, Op::List, 0, Vec::new(), password, &mut |m| {
+            c.push(m)
+        })?;
         c.into_list()
     }
 
@@ -263,7 +265,9 @@ impl ForeignClient {
         password: Option<&Password>,
     ) -> Result<TestReport, ForeignError> {
         let mut c = Collector::new(Op::Test, self.limits);
-        self.exchange(archive, Op::Test, 0, Vec::new(), password, &mut |m| c.push(m))?;
+        self.exchange(archive, Op::Test, 0, Vec::new(), password, &mut |m| {
+            c.push(m)
+        })?;
         c.into_test()
     }
 

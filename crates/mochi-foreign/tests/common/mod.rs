@@ -94,7 +94,11 @@ impl ReadManySink for Collect {
         Ok(())
     }
     fn data(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.cur.as_mut().expect("data outside an entry").1.extend_from_slice(bytes);
+        self.cur
+            .as_mut()
+            .expect("data outside an entry")
+            .1
+            .extend_from_slice(bytes);
         Ok(())
     }
     fn finish(&mut self, info: &EntryInfo, outcome: &EntryOutcome) -> std::io::Result<()> {
@@ -134,5 +138,7 @@ pub fn crc() -> EntryOutcome {
 }
 
 pub fn got(all: &[Got], index: u64) -> &Got {
-    all.iter().find(|g| g.info.index == index).expect("entry delivered")
+    all.iter()
+        .find(|g| g.info.index == index)
+        .expect("entry delivered")
 }

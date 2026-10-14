@@ -45,10 +45,7 @@ fn rar5_reports_which_hash_it_checked() {
     // This writer recorded CRC32; a BLAKE2sp entry would say "BLAKE2sp matched"
     // (no fixture: it needs a RAR writer).
     assert_eq!(c.test(&p, None).unwrap().entries[0].outcome, crc());
-    assert_eq!(
-        CheckSet::of(&[CheckKind::Blake2sp]).describe(),
-        "BLAKE2sp"
-    );
+    assert_eq!(CheckSet::of(&[CheckKind::Blake2sp]).describe(), "BLAKE2sp");
     assert_eq!(
         EntryOutcome::Matched(CheckSet::of(&[CheckKind::Blake2sp])).describe(),
         "BLAKE2sp matched"
@@ -75,7 +72,10 @@ fn rar4_data_encryption_fails_closed() {
     let wrong = pw("not-unrar");
     let (_, g) = read_many(&c, &p, &[0], Some(&wrong)).unwrap();
     assert!(!g[0].outcome.is_clean(), "{:?}", g[0].outcome);
-    assert!(g[0].bytes.is_empty(), "no partial output for a wrong password");
+    assert!(
+        g[0].bytes.is_empty(),
+        "no partial output for a wrong password"
+    );
     assert!(g[0].outcome.describe().contains("wrong password"));
     let ok = pw("unrar");
     let (_, g) = read_many(&c, &p, &[0], Some(&ok)).unwrap();
@@ -87,8 +87,14 @@ fn rar4_data_encryption_fails_closed() {
 fn rar5_encrypted_names_ask_for_the_password_before_listing() {
     let c = client();
     let p = rar("comment-hpw-password.rar");
-    assert_eq!(c.list(&p, None).unwrap_err().code, ErrorCode::PasswordRequired);
-    assert_eq!(c.test(&p, None).unwrap_err().code, ErrorCode::PasswordRequired);
+    assert_eq!(
+        c.list(&p, None).unwrap_err().code,
+        ErrorCode::PasswordRequired
+    );
+    assert_eq!(
+        c.test(&p, None).unwrap_err().code,
+        ErrorCode::PasswordRequired
+    );
     assert_eq!(
         c.list(&p, Some(&pw("wrong"))).unwrap_err().code,
         ErrorCode::WrongPassword
@@ -105,7 +111,11 @@ fn a_multi_volume_set_with_a_missing_volume_is_incomplete_not_clean() {
     let p = rar("archive.part1.rar");
     let l = c.list(&p, None).unwrap();
     assert!(!l.complete);
-    assert!(l.stop_reason.as_deref().unwrap().contains("archive.part2.rar"));
+    assert!(l
+        .stop_reason
+        .as_deref()
+        .unwrap()
+        .contains("archive.part2.rar"));
     let t = c.test(&p, None).unwrap();
     assert!(!t.complete);
     let last = t.entries.last().unwrap();
@@ -136,7 +146,10 @@ fn corruption_is_reported_as_what_it_is() {
     for name in ["crc_corrupt.rar", "rar5_corrupt.rar"] {
         let t = c.test(&rar(name), None).unwrap();
         match &t.entries[0].outcome {
-            EntryOutcome::Mismatch { failed, wrong_password_possible: false } => {
+            EntryOutcome::Mismatch {
+                failed,
+                wrong_password_possible: false,
+            } => {
                 assert!(failed.contains(CheckKind::Crc32))
             }
             EntryOutcome::ReadError(_) => {}
@@ -164,7 +177,10 @@ fn corruption_is_reported_as_what_it_is() {
 #[test]
 fn not_rar_and_unsupported_rar_variants_are_typed() {
     let c = client();
-    assert_eq!(c.list(&fixture("fake.rar"), None).unwrap_err().code, ErrorCode::MalformedArchive);
+    assert_eq!(
+        c.list(&fixture("fake.rar"), None).unwrap_err().code,
+        ErrorCode::MalformedArchive
+    );
     // Variants that still open: recovery record and locked flag read normally.
     for name in ["recovery-record.rar", "locked.rar"] {
         assert_eq!(c.test(&rar(name), None).unwrap().problems(), 0, "{name}");

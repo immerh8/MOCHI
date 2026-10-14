@@ -34,9 +34,9 @@
 //! verifier and shows up as a failed CRC32; RAR 5 stores a password check).
 
 use std::cell::Cell;
-use std::ffi::{c_int, c_uint, c_void};
 #[cfg(unix)]
 use std::ffi::CString;
+use std::ffi::{c_int, c_uint, c_void};
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -287,7 +287,12 @@ fn path_of_wide(w: &[sys::WCHAR]) -> std::path::PathBuf {
     }
 }
 
-extern "C" fn callback(msg: sys::UINT, user: sys::LPARAM, p1: sys::LPARAM, p2: sys::LPARAM) -> c_int {
+extern "C" fn callback(
+    msg: sys::UINT,
+    user: sys::LPARAM,
+    p1: sys::LPARAM,
+    p2: sys::LPARAM,
+) -> c_int {
     if user == 0 {
         return 0;
     }
@@ -503,9 +508,8 @@ impl Rar {
         self.cb.data = (&mut dynf as *mut &mut dyn FnMut(&[u8]) -> bool).cast::<c_void>();
         self.cb.stopped_by_sink = false;
         // SAFETY: the handle is open; null destinations mean "do not write".
-        let code = unsafe {
-            sys::RARProcessFile(self.handle, op, std::ptr::null(), std::ptr::null())
-        };
+        let code =
+            unsafe { sys::RARProcessFile(self.handle, op, std::ptr::null(), std::ptr::null()) };
         self.cb.data = std::ptr::null_mut();
         code
     }
@@ -662,7 +666,12 @@ fn password_text(req: &Request) -> Result<Option<String>, EngineError> {
         None => Ok(None),
         Some(p) => String::from_utf8(p.as_bytes().to_vec())
             .map(Some)
-            .map_err(|_| archive_err(ErrorCode::BadRequest, "a RAR password must be valid UTF-8 text")),
+            .map_err(|_| {
+                archive_err(
+                    ErrorCode::BadRequest,
+                    "a RAR password must be valid UTF-8 text",
+                )
+            }),
     }
 }
 
@@ -678,7 +687,9 @@ fn open_error(f: &OpenFailure, had_password: bool) -> EngineError {
         ),
         // RAR 4 header encryption has no password check: a wrong password
         // yields headers that fail their own checks.
-        sys::ERAR_BAD_ARCHIVE | sys::ERAR_BAD_DATA | sys::ERAR_UNKNOWN_FORMAT if had_password && f.password_asked => {
+        sys::ERAR_BAD_ARCHIVE | sys::ERAR_BAD_DATA | sys::ERAR_UNKNOWN_FORMAT
+            if had_password && f.password_asked =>
+        {
             archive_err(
                 ErrorCode::WrongPassword,
                 "the archive's headers did not check out: a wrong password, or damaged headers",
@@ -704,7 +715,10 @@ fn open_error(f: &OpenFailure, had_password: bool) -> EngineError {
             "this RAR format version is not supported",
         ),
         sys::ERAR_EOPEN => archive_err(ErrorCode::OpenFailed, "cannot open the archive"),
-        sys::ERAR_NO_MEMORY => archive_err(ErrorCode::MalformedArchive, "out of memory while opening the archive"),
+        sys::ERAR_NO_MEMORY => archive_err(
+            ErrorCode::MalformedArchive,
+            "out of memory while opening the archive",
+        ),
         other => archive_err(
             ErrorCode::MalformedArchive,
             format!("the RAR reader failed to open the archive (code {other})"),
@@ -798,7 +812,13 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         let (info, long) = header.info(index, &l);
         let want = req.wants(index);
         if let (Some(observed), true) = (long, want) {
-            emit_breach(out, BreachKind::NameLength, Some(index), u64::from(l.max_name_len), observed)?;
+            emit_breach(
+                out,
+                BreachKind::NameLength,
+                Some(index),
+                u64::from(l.max_name_len),
+                observed,
+            )?;
         }
         tally.entries += 1;
 
@@ -817,7 +837,9 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         if !want {
             // Not asked for. A solid archive still decodes it to keep its
             // dictionary in step, and that work counts against the limits.
-            let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| meter.add(chunk.len()).is_none());
+            let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| {
+                meter.add(chunk.len()).is_none()
+            });
             index += 1;
             if code != sys::ERAR_SUCCESS && code != sys::ERAR_BAD_DATA {
                 tally.complete = false;
@@ -851,7 +873,13 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
                 MAX_DICT_KB >> 10
             )))
         } else if declared > l.max_entry_size {
-            emit_breach(out, BreachKind::EntrySize, Some(index), l.max_entry_size, declared)?;
+            emit_breach(
+                out,
+                BreachKind::EntrySize,
+                Some(index),
+                l.max_entry_size,
+                declared,
+            )?;
             Some(EntryOutcome::Breach(BreachKind::EntrySize))
         } else if req.op.is_read() && encrypted && declared > MAX_HELD_ENTRY {
             Some(EntryOutcome::Unsupported(format!(
@@ -862,7 +890,9 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         };
 
         let outcome = if let Some(o) = pre {
-            let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| meter.add(chunk.len()).is_none());
+            let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| {
+                meter.add(chunk.len()).is_none()
+            });
             if code != sys::ERAR_SUCCESS && code != sys::ERAR_BAD_DATA {
                 stop_all = true;
                 tally.stop_reason = Some(stop_text(code, rar.cb.missing_volume.as_deref()));
@@ -950,9 +980,9 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
                     },
                     sys::ERAR_BAD_PASSWORD => EntryOutcome::WrongPassword,
                     sys::ERAR_MISSING_PASSWORD => EntryOutcome::PasswordRequired,
-                    sys::ERAR_NO_MEMORY => {
-                        EntryOutcome::ReadError("out of memory while decoding the entry".to_string())
-                    }
+                    sys::ERAR_NO_MEMORY => EntryOutcome::ReadError(
+                        "out of memory while decoding the entry".to_string(),
+                    ),
                     other => {
                         stop_all = true;
                         let why = stop_text(other, rar.cb.missing_volume.as_deref());
@@ -968,7 +998,8 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         if stop_all {
             tally.complete = false;
             tally.stop_reason.get_or_insert_with(|| {
-                "the operation stopped (limit or damage); remaining entries were not run".to_string()
+                "the operation stopped (limit or damage); remaining entries were not run"
+                    .to_string()
             });
             break;
         }
@@ -1007,7 +1038,8 @@ impl Meter {
     /// What the decoded bytes are compared with for the ratio limit: the
     /// archive file, or every volume UnRAR has opened for a multi-volume set.
     fn denominator(&self) -> u64 {
-        self.own_len.max(self.volumes.get().saturating_add(self.own_len))
+        self.own_len
+            .max(self.volumes.get().saturating_add(self.own_len))
     }
 
     fn trip(&mut self, k: BreachKind) {

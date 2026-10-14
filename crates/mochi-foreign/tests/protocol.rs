@@ -278,10 +278,21 @@ fn read_many_request_round_trips_sorted_and_unique() {
     };
     let back = Request::decode(&r.encode()).unwrap();
     assert_eq!(back.op, Op::ReadMany);
-    assert_eq!(back.read_indices, vec![2, 5, 9], "sorted and deduplicated on decode");
+    assert_eq!(
+        back.read_indices,
+        vec![2, 5, 9],
+        "sorted and deduplicated on decode"
+    );
     assert!(back.wants(5) && back.wants(9) && !back.wants(3));
     assert_eq!(back.wanted_count(), Some(3));
-    assert_eq!(Request { op: Op::List, ..back.clone() }.wanted_count(), None);
+    assert_eq!(
+        Request {
+            op: Op::List,
+            ..back.clone()
+        }
+        .wanted_count(),
+        None
+    );
     // A count that promises more indices than the body holds is refused
     // before anything is allocated.
     let mut enc = r.encode();
@@ -304,12 +315,19 @@ fn seven_z_and_rar_formats_and_their_error_codes_cross_the_wire() {
         ErrorCode::WrongPassword,
         ErrorCode::MissingVolume,
     ] {
-        let m = Message::Error { code, message: "x".into() };
+        let m = Message::Error {
+            code,
+            message: "x".into(),
+        };
         let (k, body) = m.encode();
         assert_eq!(Message::decode(k, &body).unwrap(), m);
     }
     // A parent-side code is never accepted from the helper.
-    let (k, mut body) = Message::Error { code: ErrorCode::BadRequest, message: String::new() }.encode();
+    let (k, mut body) = Message::Error {
+        code: ErrorCode::BadRequest,
+        message: String::new(),
+    }
+    .encode();
     body[0] = ErrorCode::HelperCrashed.code();
     assert!(Message::decode(k, &body).is_err());
     // BLAKE2sp is a check kind the decoder accepts.

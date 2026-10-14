@@ -37,10 +37,17 @@ fn basic_archive_lists_tests_and_reads_with_crc32() {
     assert_eq!(l.entries[b as usize].size, Some(600));
     assert_eq!(l.entries[a as usize].encryption, Encryption::None);
     assert!(l.entries[a as usize].method.contains("LZMA2"));
-    assert!(l.entries[a as usize].unix_mode.is_some(), "7-Zip stores the Unix mode");
+    assert!(
+        l.entries[a as usize].unix_mode.is_some(),
+        "7-Zip stores the Unix mode"
+    );
     assert!(l.entries[a as usize].mtime_unix == Some(1_577_836_800));
     assert_eq!(l.stream_check, StreamCheck::NotApplicable);
-    for d in [l.dimensions.recoverability, l.dimensions.freshness, l.dimensions.retention] {
+    for d in [
+        l.dimensions.recoverability,
+        l.dimensions.freshness,
+        l.dimensions.retention,
+    ] {
         assert_eq!(d, "UNSUPPORTED");
     }
 
@@ -111,7 +118,10 @@ fn data_encryption_labels_requires_a_password_and_fails_closed() {
     assert_eq!(l.entries[b as usize].encryption.label(), "AES-256");
 
     let t = c.test(&p, None).unwrap();
-    assert_eq!(t.entries[b as usize].outcome, EntryOutcome::PasswordRequired);
+    assert_eq!(
+        t.entries[b as usize].outcome,
+        EntryOutcome::PasswordRequired
+    );
     let (_, none) = read_many(&c, &p, &[b], None).unwrap();
     assert_eq!(none[0].outcome, EntryOutcome::PasswordRequired);
     assert!(none[0].bytes.is_empty());
@@ -119,11 +129,18 @@ fn data_encryption_labels_requires_a_password_and_fails_closed() {
     // Wrong password: nothing is delivered, nothing is called a match.
     let wrong = pw("not-the-password");
     let t = c.test(&p, Some(&wrong)).unwrap();
-    assert!(t.entries.iter().all(|e| !matches!(e.outcome, EntryOutcome::Matched(_))));
+    assert!(t
+        .entries
+        .iter()
+        .all(|e| !matches!(e.outcome, EntryOutcome::Matched(_))));
     let all: Vec<u64> = (0..l.entries.len() as u64).collect();
     let (r, gots) = read_many(&c, &p, &all, Some(&wrong)).unwrap();
     for g in &gots {
-        assert!(!matches!(g.outcome, EntryOutcome::Matched(_)), "{:?}", g.outcome);
+        assert!(
+            !matches!(g.outcome, EntryOutcome::Matched(_)),
+            "{:?}",
+            g.outcome
+        );
         if l.entries[g.info.index as usize].encryption != Encryption::None {
             assert!(g.bytes.is_empty(), "no partial output for a wrong password");
         }
@@ -142,21 +159,33 @@ fn data_encryption_labels_requires_a_password_and_fails_closed() {
 fn encrypted_names_ask_for_the_password_before_listing() {
     let c = client();
     let p = sz("enc_names.7z");
-    assert_eq!(c.list(&p, None).unwrap_err().code, ErrorCode::PasswordRequired);
-    assert_eq!(c.test(&p, None).unwrap_err().code, ErrorCode::PasswordRequired);
+    assert_eq!(
+        c.list(&p, None).unwrap_err().code,
+        ErrorCode::PasswordRequired
+    );
+    assert_eq!(
+        c.test(&p, None).unwrap_err().code,
+        ErrorCode::PasswordRequired
+    );
     assert_eq!(
         read_many(&c, &p, &[0], None).err().unwrap().code,
         ErrorCode::PasswordRequired
     );
     let wrong = pw("nope");
-    assert_eq!(c.list(&p, Some(&wrong)).unwrap_err().code, ErrorCode::WrongPassword);
+    assert_eq!(
+        c.list(&p, Some(&wrong)).unwrap_err().code,
+        ErrorCode::WrongPassword
+    );
     let ok = pw("SECRET");
     let l = c.list(&p, Some(&ok)).unwrap();
     assert!(index_of(&l, "a.txt") < l.entries.len() as u64);
     assert_eq!(c.test(&p, Some(&ok)).unwrap().problems(), 0);
     // A password that is not text cannot be a 7z password.
     let bad = Password::new(vec![0xff, 0xfe]);
-    assert_eq!(c.list(&p, Some(&bad)).unwrap_err().code, ErrorCode::BadRequest);
+    assert_eq!(
+        c.list(&p, Some(&bad)).unwrap_err().code,
+        ErrorCode::BadRequest
+    );
 }
 
 #[test]
@@ -183,11 +212,15 @@ fn a_split_set_with_a_missing_volume_says_so() {
     let c = client();
     // .001 and .003 only: the gap ends the set after one volume.
     for dir in ["gap", "short"] {
-        let e = c.list(&sz(&format!("{dir}/split.7z.001")), None).unwrap_err();
+        let e = c
+            .list(&sz(&format!("{dir}/split.7z.001")), None)
+            .unwrap_err();
         assert_eq!(e.code, ErrorCode::MissingVolume, "{dir}: {e}");
         assert!(e.message.contains("volume"), "{}", e.message);
         assert_eq!(
-            c.test(&sz(&format!("{dir}/split.7z.001")), None).unwrap_err().code,
+            c.test(&sz(&format!("{dir}/split.7z.001")), None)
+                .unwrap_err()
+                .code,
             ErrorCode::MissingVolume
         );
     }
@@ -210,7 +243,10 @@ fn a_corrupt_entry_fails_its_crc_and_only_its_crc() {
         o => panic!("{o:?}"),
     }
     assert_eq!(t.problems(), 1);
-    assert!(t.entries[b as usize].outcome.describe().contains("did NOT match"));
+    assert!(t.entries[b as usize]
+        .outcome
+        .describe()
+        .contains("did NOT match"));
     // A read reports the same, so the caller discards what it received.
     let (_, gots) = read_many(&c, &p, &[a, b], None).unwrap();
     assert_eq!(got(&gots, a).outcome, crc());
@@ -238,8 +274,15 @@ fn bombs_are_stopped_by_the_configured_limits() {
     let c = client();
     let t = c.test(&sz("bomb_ratio.7z"), None).unwrap();
     assert!(!t.complete);
-    assert!(t.breaches.iter().any(|b| b.kind == BreachKind::Ratio), "{:?}", t.breaches);
-    assert!(t.entries.iter().any(|e| matches!(e.outcome, EntryOutcome::Breach(BreachKind::Ratio))));
+    assert!(
+        t.breaches.iter().any(|b| b.kind == BreachKind::Ratio),
+        "{:?}",
+        t.breaches
+    );
+    assert!(t
+        .entries
+        .iter()
+        .any(|e| matches!(e.outcome, EntryOutcome::Breach(BreachKind::Ratio))));
     assert!(t.bytes_read < 8 << 20, "stopped early: {}", t.bytes_read);
 
     // Per-entry size (declared): refused without decoding.
@@ -289,8 +332,18 @@ fn hostile_names_are_carried_exactly_and_never_judged() {
     let p = sz("traversal.7z");
     let l = c.list(&p, None).unwrap();
     let want = [
-        "../evil.txt", "/abs/path.txt", "a/../../b.txt", "C:\\win.txt", "dir\\back.txt",
-        "CON", "nul.txt", "file.txt:stream", "A.txt", "a.txt", "trail.", "ok/fine.txt",
+        "../evil.txt",
+        "/abs/path.txt",
+        "a/../../b.txt",
+        "C:\\win.txt",
+        "dir\\back.txt",
+        "CON",
+        "nul.txt",
+        "file.txt:stream",
+        "A.txt",
+        "a.txt",
+        "trail.",
+        "ok/fine.txt",
     ];
     let have: Vec<Vec<u8>> = names(&l);
     for w in want {
@@ -312,4 +365,3 @@ fn read_many_validates_and_dedups_its_request() {
     assert_eq!(r.delivered, 1);
     assert_eq!(gots.len(), 1);
 }
-

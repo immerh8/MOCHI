@@ -15,7 +15,9 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 
-use sevenz_rust2::{Archive, ArchiveEntry, BlockDecoder, EncoderMethod, Error as SzError, Password};
+use sevenz_rust2::{
+    Archive, ArchiveEntry, BlockDecoder, EncoderMethod, Error as SzError, Password,
+};
 
 use crate::engine::{emit_breach, ratio_exceeded, truncate_text, EngineError, Origin, Out, Tally};
 use crate::protocol::{Message, Request, DATA_CHUNK};
@@ -88,7 +90,12 @@ fn check_truncation<R: Read + Seek>(
     let mut head = [0u8; 32];
     src.seek(SeekFrom::Start(0))
         .and_then(|_| src.read_exact(&mut head))
-        .map_err(|_| archive_err(ErrorCode::MalformedArchive, "the 7z start header is truncated"))?;
+        .map_err(|_| {
+            archive_err(
+                ErrorCode::MalformedArchive,
+                "the 7z start header is truncated",
+            )
+        })?;
     let off = u64::from_le_bytes(head[12..20].try_into().unwrap_or([0; 8]));
     let size = u64::from_le_bytes(head[20..28].try_into().unwrap_or([0; 8]));
     if off == 0 && size == 0 {
@@ -209,7 +216,12 @@ fn read_info(
     limits: &Limits,
 ) -> (EntryInfo, Option<u64> /* over-long name */) {
     let f = &archive.files[i];
-    let block = archive.stream_map.file_block_index.get(i).copied().flatten();
+    let block = archive
+        .stream_map
+        .file_block_index
+        .get(i)
+        .copied()
+        .flatten();
     let encryption = if is_encrypted(archive, block) {
         Encryption::Aes(256)
     } else {
@@ -353,7 +365,13 @@ impl Run<'_> {
         let info_size = self.infos[i].size.unwrap_or(0);
         let encrypted = self.infos[i].encryption != Encryption::None;
         if want && info_size > l.max_entry_size {
-            emit_breach(out, BreachKind::EntrySize, Some(i as u64), l.max_entry_size, info_size)?;
+            emit_breach(
+                out,
+                BreachKind::EntrySize,
+                Some(i as u64),
+                l.max_entry_size,
+                info_size,
+            )?;
             return Ok((EntryOutcome::Breach(BreachKind::EntrySize), false));
         }
         let hold = want && self.deliver() && encrypted;
@@ -395,7 +413,13 @@ impl Run<'_> {
                 return Ok((EntryOutcome::Breach(BreachKind::TotalOutput), false));
             }
             if want && entry_out > l.max_entry_size {
-                emit_breach(out, BreachKind::EntrySize, Some(i as u64), l.max_entry_size, entry_out)?;
+                emit_breach(
+                    out,
+                    BreachKind::EntrySize,
+                    Some(i as u64),
+                    l.max_entry_size,
+                    entry_out,
+                )?;
                 return Ok((EntryOutcome::Breach(BreachKind::EntrySize), false));
             }
             if ratio_exceeded(&l, self.decoded, self.archive_len) {
@@ -445,7 +469,12 @@ fn password_of(req: &Request) -> Result<Password, EngineError> {
         None => Ok(Password::empty()),
         Some(p) => std::str::from_utf8(p.as_bytes())
             .map(Password::new)
-            .map_err(|_| archive_err(ErrorCode::BadRequest, "a 7z password must be valid UTF-8 text")),
+            .map_err(|_| {
+                archive_err(
+                    ErrorCode::BadRequest,
+                    "a 7z password must be valid UTF-8 text",
+                )
+            }),
     }
 }
 
@@ -458,8 +487,8 @@ pub fn run<R: Read + Seek>(
 ) -> Result<Tally, EngineError> {
     check_truncation(&mut src, archive_len, origin)?;
     let password = password_of(req)?;
-    let archive = Archive::read(&mut src, &password)
-        .map_err(|e| open_error(e, req.password.is_some()))?;
+    let archive =
+        Archive::read(&mut src, &password).map_err(|e| open_error(e, req.password.is_some()))?;
     let l = req.limits;
     let total = archive.files.len();
     if req.op.is_read() {
@@ -475,21 +504,38 @@ pub fn run<R: Read + Seek>(
             ));
         }
     }
-    let cap = usize::try_from(l.max_entries).unwrap_or(usize::MAX).min(total);
+    let cap = usize::try_from(l.max_entries)
+        .unwrap_or(usize::MAX)
+        .min(total);
     let mut tally = Tally {
         complete: true,
         ..Tally::default()
     };
     if cap < total {
-        emit_breach(out, BreachKind::EntryCount, None, l.max_entries, total as u64)?;
+        emit_breach(
+            out,
+            BreachKind::EntryCount,
+            None,
+            l.max_entries,
+            total as u64,
+        )?;
         tally.complete = false;
-        tally.stop_reason = Some(format!("entry count {total} exceeds the limit {}", l.max_entries));
+        tally.stop_reason = Some(format!(
+            "entry count {total} exceeds the limit {}",
+            l.max_entries
+        ));
     }
     let mut infos = Vec::with_capacity(cap);
     for i in 0..cap {
         let (info, long) = read_info(&archive, i, &l);
         if let (Some(observed), true) = (long, req.wants(i as u64)) {
-            emit_breach(out, BreachKind::NameLength, Some(i as u64), u64::from(l.max_name_len), observed)?;
+            emit_breach(
+                out,
+                BreachKind::NameLength,
+                Some(i as u64),
+                u64::from(l.max_name_len),
+                observed,
+            )?;
         }
         infos.push(info);
     }
@@ -591,7 +637,9 @@ pub fn run<R: Read + Seek>(
         }
         // Whatever of the block was not reached: the stream stopped inside it.
         let why = match &result {
-            Err(e) => Some(truncate_text(format!("the block could not be decoded further: {e}"))),
+            Err(e) => Some(truncate_text(format!(
+                "the block could not be decoded further: {e}"
+            ))),
             Ok(false) if !run.stop_all => Some("the block was not decoded further".to_string()),
             _ => None,
         };
@@ -615,7 +663,9 @@ pub fn run<R: Read + Seek>(
         }
         if why.is_some() {
             tally.complete = false;
-            tally.stop_reason.get_or_insert_with(|| "a block could not be decoded; its remaining entries were not read".to_string());
+            tally.stop_reason.get_or_insert_with(|| {
+                "a block could not be decoded; its remaining entries were not read".to_string()
+            });
         }
     }
 
@@ -624,7 +674,12 @@ pub fn run<R: Read + Seek>(
         if run.outcomes[i].is_some() || !req.wants(i as u64) {
             continue;
         }
-        let block = archive.stream_map.file_block_index.get(i).copied().flatten();
+        let block = archive
+            .stream_map
+            .file_block_index
+            .get(i)
+            .copied()
+            .flatten();
         let f = &archive.files[i];
         let outcome = if block.is_none() && f.has_stream && f.size() > 0 {
             EntryOutcome::ReadError("the entry has data but belongs to no block".to_string())
@@ -640,7 +695,8 @@ pub fn run<R: Read + Seek>(
 
     if run.stop_all {
         tally.complete = false;
-        tally.stop_reason = Some("a whole-operation limit was reached; remaining entries were not run".to_string());
+        tally.stop_reason =
+            Some("a whole-operation limit was reached; remaining entries were not run".to_string());
     }
     if req.op == Op::Test {
         for i in 0..cap {
