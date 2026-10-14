@@ -259,7 +259,8 @@ fn the_corpus_files_are_the_ones_that_were_reviewed() {
 #[test]
 fn rar_contents_match_what_the_fixtures_authors_assert() {
     let gitignore = b"target\nCargo.lock\n".to_vec();
-    let cases: [(&str, Option<&str>, &str, Option<Vec<u8>>); 5] = [
+    type Case<'a> = (&'a str, Option<&'a str>, &'a str, Option<Vec<u8>>);
+    let cases: [Case; 5] = [
         (
             "rar/version.rar",
             None,
