@@ -49,6 +49,7 @@ pub mod rekey;
 pub mod repair;
 pub mod report;
 pub mod restore;
+pub mod restore_foreign;
 pub mod retention;
 pub mod salvage;
 pub mod search;

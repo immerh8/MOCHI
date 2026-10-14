@@ -509,6 +509,7 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Test { report })),
+            foreign_test: None,
         })
     }
 
@@ -562,6 +563,7 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Plan { plan: view })),
+            foreign_test: None,
         })
     }
 
@@ -648,6 +650,7 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Repair { result: view })),
+            foreign_test: None,
         })
     }
 }

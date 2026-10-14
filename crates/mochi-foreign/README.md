@@ -2,8 +2,9 @@
 
 Read-only access to **foreign archive formats** for the MOCHI desktop app (plan
 phase D8, decision O9): browse, test, and stream entries out of **ZIP**,
-**tar**, and **tar.gz / .tgz**. 7z and RAR are a later slice of D8; this build
-answers them `UNSUPPORTED_FORMAT`.
+**7z** (including AES-256, encrypted names, and split `.7z.001…` volumes),
+**RAR 4 and RAR 5** (including encrypted headers and multi-volume sets),
+**tar**, and **tar.gz / .tgz**.
 
 These formats are outside the MOCHI specification. Nothing here touches the
 `.mochi` wire format.
@@ -14,6 +15,7 @@ These formats are outside the MOCHI specification. Nothing here touches the
 app / CLI                         mochi-foreign-helper (child process)
   mochi_foreign::ForeignClient  ── stdin/stdout, protocol v1 ──▶  engine: detect, zip, tar, gzip
   (no parser linked)                                              (all parsing happens here)
+                                                                  zip, sevenz-rust2 (7z), UnRAR via unrar_sys (RAR)
 ```
 
 * **All parsing runs in the helper process**, under memory, time, and output
@@ -36,7 +38,8 @@ app / CLI                         mochi-foreign-helper (child process)
 |---|---|
 | `list` | Entry metadata only. For `.tar.gz` this still decompresses the whole stream (tar has no index), under the same limits, which also reaches the gzip trailer check. |
 | `test` | Streams every entry through its decompressor, runs the format's own check, discards the bytes. |
-| `read` | Streams one entry's bytes to the caller's sink (for the C6 engine). |
+| `read` | Streams one entry's bytes to the caller's sink. |
+| `read_many` | (protocol 2) Streams the named entries **in one pass**, in the order the archive stores them, each announced, streamed, and closed with its outcome. A solid 7z or RAR block is decoded once, not once per entry. This is what the desktop's extraction uses; the C6 restore engine (`mochi_core::restore_foreign`) is the only writer. |
 
 ## What each format checks (and nothing more)
 
@@ -45,6 +48,9 @@ app / CLI                         mochi-foreign-helper (child process)
 | ZIP | CRC32 ("CRC32 matched"); AES entries: the AES authentication code (AE-2 has no CRC32) | none |
 | tar | none ("read without error; this format has no per-entry check") | none |
 | tar.gz | none | gzip trailer CRC-32 + length; if it fails, **no** entry read from the stream is vouched for |
+| 7z | CRC32 when the archive recorded one ("CRC32 matched"); an entry with no stream (directory, empty file) is "no data stream" | none (the start header and header have CRCs, which the library checks while opening: a statement about the header, not any entry) |
+| RAR 4 | CRC32 | none |
+| RAR 5 | CRC32 **or** BLAKE2sp, as the entry's header says; the outcome names which ("BLAKE2sp matched") | none |
 
 * **ZipCrypto** entries are labelled `weak encryption (ZipCrypto)`. Its password
   test is one byte, so a wrong password can pass it and then fail the CRC:
@@ -121,7 +127,131 @@ Hostile-archive fixtures live in `fixtures/foreign/` (generator and
 explanation in its README). `tests/`: `zip_fixtures`, `tar_fixtures`,
 `detect`, `limits`, `supervision` (crash/limit breach with the parent
 surviving; helper fault hooks behind the `test-faults` feature, enabled only by
-this crate's dev-dependency on itself), `protocol`, `fuzz_smoke` (stable-Rust
+this crate's dev-dependency on itself), `protocol`, `sevenz_fixtures`, `rar_fixtures`, `corpus_interop`, `volumes`, `fuzz_smoke` (stable-Rust
 exerciser over the corpus, truncations, and seeded flips; the cargo-fuzz targets
 `foreign_zip`, `foreign_tar`, `foreign_targz`, `foreign_protocol` call the same
 functions in `mochi_foreign::fuzz`).
+
+## 7z (`sevenz-rust2`, decoders only)
+
+* The library's `compress` feature is off, and none of its extract-to-disk
+  helpers is used (`ci/check-invariants.sh`). Methods read: COPY, LZMA, LZMA2,
+  PPMd, BZip2, Deflate, BCJ/Delta filters, AES-256. The version is pinned to
+  0.20.x because later releases need a newer compiler than the repository's
+  pinned toolchain (rust 1.91).
+* A solid block is decoded front to back, so entries come out **by block, not
+  in listing order**: `test` collects outcomes and reports them in index
+  order; `read_many` delivers in block order. A block with no wanted entry is
+  not decoded at all.
+* A wrong password has no verifier in 7z: it surfaces as a decoder error or a
+  failed CRC32, and is worded "damaged data, or a wrong password". Encrypted
+  entries are held in the helper until their check passes, so a wrong password
+  delivers nothing. The largest entry held is 512 MiB; a bigger encrypted
+  entry is reported `unsupported` rather than delivered unchecked.
+* **Encrypted names** (`-mhe=on`): `list`/`test`/`read` without a password fail
+  with `PASSWORD_REQUIRED` before anything is listed; a wrong one with
+  `WRONG_PASSWORD`.
+* **Split volumes**: a `name.7z.001` is read together with `.002, .003, ...`
+  beside it, as one concatenated stream. A set that ends early is
+  `MISSING_VOLUME` (the start header says where the next header ends); opening
+  `.002` says to open the first volume.
+* A header can claim a dictionary of up to 4 GiB. The memory a block's coders
+  ask for is read from their properties (from the library's `Debug` form: the
+  version in use keeps them private; `tests/sevenz_fixtures.rs` pins it) and a
+  block over 1 GiB is refused as `unsupported` before anything is allocated.
+* Names are the UTF-8 of what the archive stored; 7-Zip separates with `/`.
+
+## RAR (UnRAR through `unrar_sys`)
+
+* `unrar_sys` is the FFI crate of the `unrar` project. The safe `unrar`
+  wrapper is not used: it buffers a whole entry in memory, hides the hash type,
+  and unwraps on unknown flags. The module drives the C API itself, and
+  `unrar_sys` 0.5.8 declares `RARHeaderDataEx` with the wrong layout (UnRAR
+  compiles `dll.hpp` under `#pragma pack(push, 4)`), so `rarfmt.rs` declares
+  its own structs; `layout` unit tests pin the offsets against a C++ compile
+  of the vendored header.
+* **Nothing is extracted by UnRAR.** Entries are processed with `RAR_TEST`
+  (decode and verify, write nothing) and their bytes arrive through the data
+  callback; `RAR_EXTRACT` and any destination argument are forbidden by
+  `ci/check-invariants.sh`. Names are the exact characters UnRAR returns; on
+  Windows its backslashes are separators and become `/`.
+* **Never writes RAR.** The license of UnRAR forbids building a RAR-compatible
+  archiver; the module only reads, and the fixtures are real files written by
+  RARLAB's `rar` (see `fixtures/foreign/rar/PROVENANCE.txt`).
+* Encrypted headers (RAR 5 and RAR 4 `-hp`): the password is supplied through
+  UnRAR's callback while opening, so `PASSWORD_REQUIRED` / `WRONG_PASSWORD`
+  come before listing. A RAR 4 wrong password has no verifier and shows as a
+  failed CRC32 or a decoder error ("damaged data, or a wrong password"); RAR 5
+  has a password check. Encrypted entries are held like 7z's.
+* **Multi-volume** (`.partN.rar`, `.rNN`): UnRAR finds the next volume by name
+  and asks, through the callback, when it is missing; that is reported
+  (`MISSING_VOLUME` for an unusable start, otherwise the listing is incomplete
+  and the affected entry is `read error: volume … is missing`). Opening a
+  volume that is not the first says so.
+* A name that fills UnRAR's header buffer (1023 characters) is not carried
+  (it would be a cut, wrong name); a dictionary over 1 GiB is refused.
+* After a limit breach in the middle of an entry the operation stops
+  (UnRAR cannot resume that entry); `complete` is false and the rest are not run.
+
+## Protocol, version 2
+
+Version 2 changes version 1 as follows (a version change is a new section, never
+an edit of the one above, so the v1 text stays as the base):
+
+* `HELLO` and `REQUEST` carry version `2`; a v1 peer is refused.
+* `REQUEST` gains `u32` count + `u64` indices after the read index (`read_many`;
+  at most 1,000,000, validated against the body length before allocating,
+  sorted and de-duplicated on decode) and op `4 = read_many`.
+* `FORMAT` gains `4 = 7z` and `5 = RAR`.
+* `ERROR` gains helper codes `16 PASSWORD_REQUIRED`, `17 WRONG_PASSWORD`,
+  `18 MISSING_VOLUME`; the parent-only code `19 CANCELLED` is never accepted
+  from the wire.
+* Check sets gain bit `8 = BLAKE2sp`.
+* For `read_many`: per delivered entry `ENTRY`, any number of `DATA`, `RESULT`;
+  entries may arrive in any order, each requested index exactly once unless
+  `DONE` says the operation stopped early. `DATA` is bounded per entry by
+  `max_entry_size` and overall by `max_total_output`.
+
+## Cancelling, progress, and the Windows memory limit
+
+`ForeignClient::with_cancel(flag)` makes the parent kill the helper soon after
+the flag is set and fail with `CANCELLED`; `test_with_progress` reports entries
+finished. On Windows the **parent** puts the helper in a Job Object
+(`jobobject.rs`: `JOB_OBJECT_LIMIT_PROCESS_MEMORY` plus kill-on-close) before it
+is sent its request; if the limit cannot be applied the call fails rather than
+running the helper unconfined. `tests/supervision.rs` has the test that a
+breach is a reported crash and the parent survives. It runs on Windows in CI;
+there is no Windows machine in the development environment.
+
+## Shipping the helper
+
+The app finds `mochi-foreign-helper(.exe)` next to its own executable
+(`default_helper_path`). Development and the E2E job build it into the same
+`target/<profile>` directory (`cargo build -p mochi-foreign`). **The installers
+(plan D7) do not include it yet**: that needs `bundle.externalBin` and the
+helper's dependency graph (`sevenz-rust2`, UnRAR, ...) in the generated license
+list, which belongs to the packaging owner. Until then a packaged build answers
+`HELPER_SPAWN_FAILED` when a foreign archive is opened.
+
+## Not done
+
+* The helper is not in the installers (above).
+* Windows: the Job Object and `unrar_sys` on MSVC are built and tested by CI
+  only; cross-compiling the library for `x86_64-pc-windows-gnu` type-checks.
+* No RAR writer is available, so no RAR fixture has a traversal name, a bomb,
+  a BLAKE2sp hash, or a RAR 5 symlink; RAR BLAKE2sp reporting is covered by the
+  wire and wording tests only. The WinRAR half of the pinned corpus is real
+  archives written by RARLAB's `rar` (versions not recorded in the files),
+  compared with the expectations their authors wrote down, not with a second
+  RAR decoder (Debian's 7-Zip omits the non-free one).
+* Encrypted entries larger than 512 MiB (7z, RAR) are refused, not streamed;
+  two passes (verify, then deliver) would lift it.
+* ZIP: mtimes (DOS local time, not guessed); bzip2/LZMA/zstd/PPMd entries
+  (reported `unsupported`); empty tar.gz (an all-zero first block).
+* 7z: modes beyond the Unix extension in the attributes; symlink targets are
+  not read at listing time; no SFX (`UNSUPPORTED_SFX`).
+* Extraction applies the modification time only; archive permission bits
+  (including the executable bit) are not applied, because the restore engine's
+  attribute call also sets the owner, and a foreign owner must not be chowned.
+* The cargo-fuzz targets `foreign_sevenz` and `foreign_rar` are in the CI
+  matrix; see the plan status for what was run locally.

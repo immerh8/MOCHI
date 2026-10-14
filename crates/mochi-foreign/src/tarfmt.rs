@@ -97,7 +97,7 @@ struct Walk {
     stopped: bool,
     /// A non-limit I/O error came out of the stream layer.
     stream_error: Option<String>,
-    found: bool,
+    found: u64,
 }
 
 fn entry_kind(t: EntryType) -> EntryKind {
@@ -140,7 +140,7 @@ fn walk<G: Read>(
         },
         stopped: false,
         stream_error: None,
-        found: false,
+        found: 0,
     };
     let mut buf = vec![0u8; DATA_CHUNK];
     let mut index: u64 = 0;
@@ -169,7 +169,7 @@ fn walk<G: Read>(
             w.stopped = true;
             break;
         }
-        let selected = req.op != Op::Read || index == req.read_index;
+        let selected = req.wants(index);
         if !selected {
             index += 1;
             continue;
@@ -276,7 +276,7 @@ fn walk<G: Read>(
                             )?;
                             break EntryOutcome::Breach(BreachKind::EntrySize);
                         }
-                        if req.op == Op::Read {
+                        if req.op.is_read() {
                             out(Message::Data(buf[..n].to_vec()))?;
                         }
                     }
@@ -293,7 +293,7 @@ fn walk<G: Read>(
             }
         };
         out(Message::Result { index, outcome })?;
-        w.found = true;
+        w.found += 1;
         if stop_all {
             w.tally.complete = false;
             w.tally.stop_reason.get_or_insert_with(|| {
@@ -302,7 +302,7 @@ fn walk<G: Read>(
             w.stopped = true;
             break;
         }
-        if req.op == Op::Read {
+        if req.wanted_count().is_some_and(|n| w.found >= n) {
             w.stopped = true;
             break;
         }
@@ -384,10 +384,10 @@ pub fn run<R: Read + Seek>(
         out(Message::StreamCheck(StreamCheck::NotApplicable))?;
         w
     };
-    if req.op == Op::Read && !w.found {
+    if req.wanted_count().is_some_and(|n| w.found < n) {
         return Err(EngineError::Archive(ForeignError::new(
             ErrorCode::EntryNotFound,
-            format!("entry {} was not found", req.read_index),
+            "a requested entry was not found",
         )));
     }
     Ok(w.tally)

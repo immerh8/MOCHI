@@ -11,13 +11,20 @@ use mochi_foreign::fuzz::*;
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let mut v = Vec::new();
-    for e in std::fs::read_dir(fixture_dir()).unwrap() {
-        let e = e.unwrap();
-        let name = e.file_name().to_string_lossy().into_owned();
-        if name.ends_with(".py") || name.ends_with(".md") {
-            continue;
+    let mut dirs = vec![fixture_dir()];
+    while let Some(dir) = dirs.pop() {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().unwrap().is_dir() {
+                dirs.push(e.path());
+                continue;
+            }
+            if name.ends_with(".py") || name.ends_with(".md") || name.ends_with(".txt") {
+                continue;
+            }
+            v.push((name, std::fs::read(e.path()).unwrap()));
         }
-        v.push((name, std::fs::read(e.path()).unwrap()));
     }
     v.sort();
     assert!(v.len() > 30, "fixture corpus went missing: {}", v.len());
@@ -28,8 +35,14 @@ fn all(data: &[u8]) {
     exercise_zip_listing(data);
     exercise_tar_listing(data);
     exercise_targz_listing(data);
+    exercise_sevenz_listing(data);
     exercise_detect(data);
     exercise_protocol(data);
+    // UnRAR reads files, not memory: write the input to a temporary file.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("in.rar");
+    std::fs::write(&path, data).unwrap();
+    exercise_rar_file(&path);
 }
 
 struct Rng(u64);

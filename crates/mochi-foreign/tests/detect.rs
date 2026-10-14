@@ -25,9 +25,10 @@ fn self_extracting_executable_is_unsupported() {
 }
 
 #[test]
-fn seven_zip_and_rar_are_unsupported_until_their_slice() {
-    assert_eq!(code("fake.7z"), ErrorCode::UnsupportedFormat);
-    assert_eq!(code("fake.rar"), ErrorCode::UnsupportedFormat);
+fn a_bare_7z_or_rar_signature_is_a_candidate_not_proof() {
+    // Detected by signature, then rejected by the format's own header checks.
+    assert_eq!(code("fake.7z"), ErrorCode::MalformedArchive);
+    assert_eq!(code("fake.rar"), ErrorCode::MalformedArchive);
 }
 
 #[test]

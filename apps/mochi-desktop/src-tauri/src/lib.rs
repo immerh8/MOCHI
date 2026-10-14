@@ -11,6 +11,7 @@ pub mod browse;
 pub mod check;
 pub mod commands;
 pub mod extract;
+pub mod foreign;
 pub mod ipc;
 pub mod jobs;
 pub mod launch;
@@ -26,11 +27,13 @@ pub fn run() -> Result<(), tauri::Error> {
     let staging = Arc::new(write::Staging::default());
     let drops = Arc::new(write::DropWatch::default());
     let destination = Arc::new(extract::Destination::default());
+    let foreign = Arc::new(foreign::Foreign::default());
     let checks = Arc::new(check::Checks::default());
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
         archives: Arc::clone(&archives),
         staging: Arc::clone(&staging),
         destination: Arc::clone(&destination),
+        foreign: Arc::clone(&foreign),
         checks: Arc::clone(&checks),
     }));
     let launches = Arc::new(launch::Launches::new(
@@ -58,6 +61,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(staging)
         .manage(drops)
         .manage(destination)
+        .manage(foreign)
         .manage(checks)
         .on_window_event(move |_window, event| {
             // Items dragged from the file manager arrive here, in Rust.
@@ -80,6 +84,10 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::clear_staged,
             commands::choose_destination,
             commands::plan_extract,
+            commands::open_foreign_archive,
+            commands::close_foreign_archive,
+            commands::foreign_children,
+            commands::plan_extract_foreign,
             commands::watch_launches,
             commands::choose_check_subject,
             commands::health_report,

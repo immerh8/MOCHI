@@ -40,7 +40,7 @@ fn a_helper_abort_is_reported_as_a_crash_with_the_signal() {
     assert_survived(&c);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn a_memory_limit_breach_is_a_reported_crash_not_a_dead_parent() {
     // The helper tries to allocate 2 GiB under a 256 MiB address-space limit.
@@ -184,4 +184,42 @@ fn password_debug_and_errors_never_show_the_secret() {
         .map(|t| format!("{t:?}"))
         .unwrap_or_else(|e| e.to_string());
     assert!(!e.contains("hunter2"));
+}
+
+#[test]
+fn cancelling_stops_the_helper_and_reports_cancelled() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let flag = Arc::new(AtomicBool::new(false));
+    let c = client()
+        .with_cancel(Arc::clone(&flag))
+        .with_run_limits(RunLimits {
+            wall_time: Duration::from_secs(120),
+            ..RunLimits::default()
+        });
+    let f2 = Arc::clone(&flag);
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        f2.store(true, Ordering::SeqCst);
+    });
+    let t0 = Instant::now();
+    let e = c.list(&fault("hang"), None).unwrap_err();
+    t.join().unwrap();
+    assert_eq!(e.code, ErrorCode::Cancelled);
+    assert!(
+        t0.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        t0.elapsed()
+    );
+    assert_survived(&client());
+}
+
+#[test]
+fn progress_counts_finished_entries() {
+    let c = client();
+    let mut last = 0;
+    let t = c
+        .test_with_progress(&fixture("basic_infozip.zip"), None, &mut |n| last = n)
+        .unwrap();
+    assert_eq!(last, t.entries.len() as u64);
 }
