@@ -795,7 +795,13 @@ fn corpus() -> Vec<(&'static str, Value)> {
     let torn = a.copy_r8("core-interrupted-after-data");
     let (_, v) = ok(
         "cli-commit.schema.json",
-        &a.g(&["append", &torn, "--truncate-tail"]),
+        &a.g(&[
+            "append",
+            &torn,
+            "--truncate-tail",
+            // Windows cannot confirm directory durability before gate G6.
+            "--accept-unconfirmed-durability",
+        ]),
     );
     assert_eq!(v["committed"], false);
     keep("cli-commit.schema.json", v);
@@ -803,7 +809,14 @@ fn corpus() -> Vec<(&'static str, Value)> {
     let torn2 = a.copy_r8("core-interrupted-torn-footer");
     let (_, v) = ok(
         "cli-commit.schema.json",
-        &a.g(&["append", &torn2, &a.s("more.txt"), "--truncate-tail"]),
+        &a.g(&[
+            "append",
+            &torn2,
+            &a.s("more.txt"),
+            "--truncate-tail",
+            // Windows cannot confirm directory durability before gate G6.
+            "--accept-unconfirmed-durability",
+        ]),
     );
     assert!(v["truncation"].is_array());
     keep("cli-commit.schema.json", v);
