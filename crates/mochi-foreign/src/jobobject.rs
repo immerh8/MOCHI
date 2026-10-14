@@ -15,8 +15,6 @@
 //! is sound. `tests/supervision.rs` has the test that a breach is reported as
 //! a crash and the parent survives (it runs on Windows in CI).
 
-#![cfg(windows)]
-
 use std::io;
 use std::os::windows::io::AsRawHandle;
 use std::process::Child;

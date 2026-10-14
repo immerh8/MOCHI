@@ -132,7 +132,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev \
-            webkit2gtk-driver xvfb
+            webkit2gtk-driver xvfb dbus
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
       - name: Install msedgedriver matching the runner's WebView2 (Windows)
@@ -164,10 +164,12 @@ jobs:
       - name: Install the E2E runner
         working-directory: apps/mochi-desktop/e2e
         run: pnpm install --frozen-lockfile
-      - name: Run the E2E tests (Ubuntu, under Xvfb)
+      - name: Run the E2E tests (Ubuntu, under Xvfb and a session bus)
+        # The D6 single-instance spec needs a session D-Bus (the plugin's
+        # transport on Linux); a desktop session has one, the runner does not.
         if: runner.os == 'Linux'
         working-directory: apps/mochi-desktop/e2e
-        run: xvfb-run -a pnpm test
+        run: dbus-run-session -- xvfb-run -a pnpm test
       # Pre-flight: start the app the way msedgedriver does (remote debugging
       # on, its own user data folder) and check that WebView2 writes
       # DevToolsActivePort there and answers on the port. Without the `e2e`

@@ -32,6 +32,7 @@ fn main() {
         "close_foreign_archive",
         "foreign_children",
         "plan_extract_foreign",
+        "watch_launches",
         "choose_check_subject",
         "health_report",
         "export_report",

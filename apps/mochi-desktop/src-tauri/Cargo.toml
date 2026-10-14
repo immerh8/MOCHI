@@ -39,6 +39,12 @@ tauri = { version = "2", features = [] }
 # The native open dialog, called from Rust only (D1): the webview gets no
 # dialog permission and never names a path (README "Security decisions").
 tauri-plugin-dialog = "2"
+# Single-instance handling (D6): a second launch forwards its arguments to the
+# running app and exits. The plugin has no webview commands, so it adds no
+# capability permission; it needs only the OS facilities that make one process
+# the owner (a named mutex and a hidden window message on Windows, the session
+# D-Bus on Linux).
+tauri-plugin-single-instance = "2"
 ts-rs = "12"
 
 [dev-dependencies]

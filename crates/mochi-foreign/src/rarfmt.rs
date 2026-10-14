@@ -275,7 +275,7 @@ fn path_of_wide(w: &[sys::WCHAR]) -> std::path::PathBuf {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
-        let units: Vec<u16> = w.iter().map(|c| *c as u16).collect();
+        let units: Vec<u16> = w.to_vec();
         std::path::PathBuf::from(std::ffi::OsString::from_wide(&units))
     }
     #[cfg(not(windows))]

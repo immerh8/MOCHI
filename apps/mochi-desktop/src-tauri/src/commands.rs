@@ -18,10 +18,17 @@ use crate::ipc::{
     SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
+use crate::launch::{LaunchEvent, LaunchSink, Launches};
 use crate::write::{DropSink, DropWatch, Staging};
 
 impl DropSink for Channel<DropEvent> {
     fn send(&self, event: DropEvent) -> bool {
+        Channel::send(self, event).is_ok()
+    }
+}
+
+impl LaunchSink for Channel<LaunchEvent> {
+    fn send(&self, event: LaunchEvent) -> bool {
         Channel::send(self, event).is_ok()
     }
 }
@@ -147,6 +154,15 @@ pub async fn entry_details(
 #[tauri::command]
 pub fn watch_drops(on_drop: Channel<DropEvent>, watch: State<'_, Arc<DropWatch>>) {
     watch.set(Arc::new(on_drop));
+}
+
+/// Listen for what the shell asked the app to do (D6): open an archive,
+/// extract one, add files. Rust receives the arguments, opens or stages
+/// itself, and the webview hears that an archive was opened or why a launch
+/// failed. Anything that arrived before this call is delivered now.
+#[tauri::command]
+pub fn watch_launches(on_launch: Channel<LaunchEvent>, launches: State<'_, Arc<Launches>>) {
+    launches.watch(Arc::new(on_launch));
 }
 
 /// What is staged to add.

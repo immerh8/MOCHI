@@ -25,6 +25,12 @@ export interface ExtractorProps {
   /** The snapshot on screen: the one extracted from. */
   seq: number | null;
   selected: SelectedEntry | null;
+  /**
+   * The shell asked to extract this archive (D6): when `token` changes, show
+   * the plan for the whole snapshot into the folder Rust already chose. Nothing
+   * is written until the user confirms it.
+   */
+  autoPlan?: { token: number; handle: number } | null;
 }
 
 type Scope = { kind: "all" } | { kind: "selected"; entry: SelectedEntry };
@@ -48,7 +54,7 @@ type JobView =
  * holds a path the user did not see, and the job runs in Rust over the shared
  * job channel. What was not extracted, and why, is listed as text.
  */
-export function Extractor({ archive, seq, selected }: ExtractorProps) {
+export function Extractor({ archive, seq, selected, autoPlan = null }: ExtractorProps) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [plan, setPlan] = useState<ExtractPlan | null>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
@@ -102,6 +108,26 @@ export function Extractor({ archive, seq, selected }: ExtractorProps) {
     },
     [handle, seq],
   );
+
+  // An extract asked for by the shell: plan the whole snapshot into the folder
+  // Rust chose (no dialog), once per request and only for that archive.
+  const plannedTokenRef = useRef(0);
+  useEffect(() => {
+    if (autoPlan === null || autoPlan.token === plannedTokenRef.current) return;
+    if (handle !== autoPlan.handle || seq === null) return;
+    plannedTokenRef.current = autoPlan.token;
+    planExtract(handle, seq, [], false).then(
+      (p) => {
+        if (p === null) return;
+        setScope({ kind: "all" });
+        setPlan(p);
+      },
+      (e: unknown) => {
+        setScope({ kind: "all" });
+        setError(errorText("Could not check the folder", e));
+      },
+    );
+  }, [autoPlan, handle, seq]);
 
   const onEvent = useCallback((event: JobEvent) => {
     setJob((prev) => {
