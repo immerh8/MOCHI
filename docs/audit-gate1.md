@@ -164,7 +164,7 @@ exists.**
 | 2 | R1–R9 published; format frozen for Core, TAR, Encrypted, Redundancy | **met** (owner review pending) | `docs/ratification/README.md`: R1–R4 frozen as draft 2 (#34, G12); R5 (G10); R6 (G11); R7 (#49, G15); R8 (#36, G13); R9 (#35, #37, G14). R10 is post-1.0 (O5). The owner's review of the delegated freezes (K11) is still pending (§6) |
 | 3 | R9 interop over R8 | **met** | CI `r9 interop` × 2 in run 38551536791; locally 76/76 equal (§1); `docs/ratification/R9-interop-results.md` |
 | 4 | Draft-to-1.0 boundary enforced | **owner-held** (W20) | Draft 1 is already refused: `exit_codes.rs` `a_draft_1_archive_is_refused_exit_4_naming_the_draft` (fixture `b2/reject-archive-draft-1.mochi`). Writing `null`, `mochi migrate`, and R8's regeneration are W20, the owner's flip |
-| 5 | User documentation (not a backup; Encrypted limits; dedup leak; what Test proves) | **not met** | `docs/user/` (#39) covers all four topics for the CLI. The gate's own status (2026-10-13) says the desktop "Test archive" text and installer-bundled help are not covered. Still true: the installers ship no help (`packaging/` copies nothing from `docs/user`), and the Test screen (`ui/src/i18n/en/check.ts`) explains levels, keyless runs, and freshness, but never says that a passing test does not make the file a backup (F8) |
+| 5 | User documentation (not a backup; Encrypted limits; dedup leak; what Test proves) | **not met** | `docs/user/` (#39) covers all four topics for the CLI. The gate's own status (2026-10-13) says the desktop "Test archive" text and installer-bundled help are not covered. The in-app text covers much of it: after a commit, "a local commit in one file. Keep an independent copy…" (`ui/src/i18n/en/write.ts`); the dedup leak and lost-passphrase warnings (`crypt.ts`); and on the Test screen, what each level checks, what a keyless test does not check, and that freshness is unknown (`check.ts`). Still missing: the installers ship no user documentation (`packaging/` copies nothing from `docs/user/`), and the app links to none. The gate's own status line names that gap. Nothing records a decision that in-app text replaces the guide (F8) |
 | 6 | Signed installers and signed updates for Windows and Ubuntu | **owner-held; not met as written** | Updates: signed (minisign, `requireSignedVersion`), rehearsed in CI with a throwaway key (`package` "Rehearse the release path"). `release.yml` has never run (the Actions API lists no run of it), so no draft release with the owner's key exists yet. Installers: **unsigned by owner decision** (no Authenticode, no `.deb`/APT signing, `docs/packaging.md`). The gate text was not amended to match (F3) |
 | 7 | Annex B decisions that block 1.0 are recorded | **met** (owner review pending) | D1–D24 all have recorded text. D10–D12, D14, D15, and D24 stay in B.2 until the owner reviews them; D13 waits for G6; D16 is 1.x. Exception: D6's symbolic links are decided but contradicted by the frozen format (F2) |
 | 8 | License permits distributing UnRAR | **met** | MIT OR Apache-2.0 (O23); UnRAR notice in `THIRD-PARTY-NOTICES.md`; `packaging/licenses.py` fails without the RARLAB paragraph (#51); MPL-2.0 `dtoa-short` accepted by the owner (2026-10-14) |
@@ -352,13 +352,13 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    **Next step:** obtain RAR fixtures under a compatible license, or written by the owner
    with a licensed `rar` (reading only; MOCHI never writes RAR), or drop "WinRAR" and
    "multi-volume RAR" from the D8 claims for 1.0.
-8. **F8 — should-fix.** Release gate 5 is not met for the desktop:
-   * the installers ship no help;
-   * the Test screen does not say that a passing test does not make the file a backup;
-   * there is no "not a backup" text anywhere in the app's catalogue.
-
-   **Next step:** add a Help entry (or bundle `docs/user/` as text) and a line in
-   `check.ts`'s test note, both covered by the existing banned-word and catalogue tests.
+8. **F8 — should-fix.** Release gate 5 is not met as its own status line defines it.
+   `docs/user/` is CLI-oriented and is not shipped: the installers bundle no user
+   documentation, and the app links to none. The app's own text covers parts of the four
+   topics (§4, gate 5). **Next step:** bundle the guide (or a desktop page of it) with
+   both installers and add a Help entry, with a line on the Test screen that a passing
+   test does not make the file a backup. Alternatively, the owner records that the
+   in-app text plus the published guide meet gate 5.
 9. **F9 — should-fix.** The owner's review (K11) of the delegated freezes and calls is
    still pending (G12–G15, D10–D15, D24, K10–K26). It is a precondition of W20.
 10. **F10 — should-fix.** The release checklist (`docs/packaging.md`) has never been run.
