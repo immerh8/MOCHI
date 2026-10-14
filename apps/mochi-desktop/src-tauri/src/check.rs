@@ -1384,7 +1384,10 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::KeyUnavailable);
-        assert!(e.message.contains("passphrase"));
+        assert!(
+            e.message.contains("plan D5"),
+            "refused by the app first: {e:?}"
+        );
     }
 
     #[test]
@@ -1541,8 +1544,17 @@ mod tests {
         let id = f.choose(&bad);
         let p = f.plan(id, false);
         f.output("new.mochi");
-        // Another plan ID is refused.
+        // Another plan ID is refused, also by the job itself (the plan can
+        // change between validation and the run).
         assert!(f.apply(id, p.plan_id + 1).is_err());
+        let stale = JobRequest::ApplyRepair {
+            subject: id,
+            plan: p.plan_id + 1,
+            accept_retention_loss: false,
+        };
+        let e = f.checks.run(&stale, &Job::new().ctx()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(!f.at("new.mochi").exists());
         // Changing the copies drops the plan.
         f.checks
             .setup(RepairSetupAction::AddCopy, Some(good.clone()))

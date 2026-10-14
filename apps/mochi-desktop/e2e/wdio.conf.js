@@ -13,7 +13,9 @@
 // drive a native file dialog, so the `e2e` build takes the paths of its
 // "Open archive" clicks from MOCHI_E2E_PICK, in order, once per app launch.
 // The D2 spec (create-add.e2e.js) builds its own source trees and takes the
-// paths of its dialogs from MOCHI_E2E_PICK_FILE.
+// paths of its dialogs from MOCHI_E2E_PICK_FILE. The D4 spec (check.e2e.js)
+// also opens damaged.mochi and compares the app's reports with
+// `mochi verify --json` (cargo build -p mochi-cli; MOCHI_CLI_BINARY overrides).
 import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -33,7 +35,7 @@ if (process.env.MOCHI_NATIVE_DRIVER) {
 const fixtures =
   process.env.MOCHI_E2E_FIXTURES ?? path.resolve(here, "../../../target/d1-fixtures");
 const picks = ["browse.mochi", "large.mochi"].map((f) => path.join(fixtures, f));
-for (const f of picks) {
+for (const f of [...picks, path.join(fixtures, "damaged.mochi")]) {
   if (!existsSync(f)) {
     console.error(
       `missing E2E fixture ${f}: run cargo run --release -p mochi-testkit --example d1_browse_fixtures -- ${fixtures}`,

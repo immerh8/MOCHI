@@ -257,6 +257,11 @@ test("repair: plan, review, choose a new file, approve, write, re-verify, test t
   await user.click(screen.getByTestId("repair-choose-output"));
   expect(b.of("repair_setup")).toEqual([{ action: { action: "choose_output" } }]);
   expect(await screen.findByTestId("repair-output")).toHaveTextContent("new.mochi");
+  expect(screen.getByTestId("repair-apply")).toBeEnabled();
+  // Withdrawing the approval disables writing again.
+  await user.click(screen.getByTestId("repair-approve"));
+  expect(screen.getByTestId("repair-apply")).toBeDisabled();
+  await user.click(screen.getByTestId("repair-approve"));
   await user.click(screen.getByTestId("repair-apply"));
   expect(b.requests()[1]).toEqual({ kind: "apply_repair", subject: 5, plan: 4, accept_retention_loss: false });
   b.finish({ kind: "repair", result: resultView() });

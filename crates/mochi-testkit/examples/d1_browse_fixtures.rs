@@ -10,6 +10,10 @@
 //!   markup, script, URL, control, and bidi text (spec §23.3 #9).
 //! * `large.mochi`: 100,000 empty files in `many/` plus `readme.txt` (plan
 //!   D1 exit: browsing without loading the whole namespace into the webview).
+//! * `damaged.mochi` (plan D4): the scripted three-commit history with one
+//!   byte flipped in the first chunk of `big` (in commit 2 only). Its head
+//!   opens; `verify` reports integrity `FAIL`; `repair plan` is partial and
+//!   leaves out `big` from snapshot 2 alone.
 //!
 //! Existing files are not replaced. After writing, it opens each archive the
 //! way the desktop app does (head, history, segment state, index) and prints
@@ -29,7 +33,7 @@ use mochi_core::publish::{
     Transaction,
 };
 use mochi_core::storage::os::{OsReadStorage, OsStorage};
-use mochi_testkit::archive::{scripted_history, test_options, Job};
+use mochi_testkit::archive::{build, first_chunk_middle, scripted_history, test_options, Job};
 use mochi_testkit::SeqIds;
 
 /// Names whose text is markup, script, or a URL, plus controls and bidi.
@@ -109,6 +113,34 @@ fn large(path: &Path) {
     w.close().unwrap();
 }
 
+fn damaged(path: &Path) {
+    let pristine = path.with_extension("pristine.tmp");
+    let _ = std::fs::remove_file(&pristine);
+    build(
+        OsStorage::create_new(&pristine).unwrap(),
+        7,
+        &scripted_history(),
+    )
+    .unwrap();
+    let src = OsReadStorage::open(&pristine).unwrap();
+    let at = first_chunk_middle(&open_head(&src, &ReadOptions::default()).unwrap(), "big").unwrap();
+    drop(src);
+    let mut bytes = std::fs::read(&pristine).unwrap();
+    bytes[usize::try_from(at).unwrap()] ^= 0x01;
+    std::fs::remove_file(&pristine).unwrap();
+    // The writer's lock file beside it (never removed by the writer).
+    let mut lock = pristine.into_os_string();
+    lock.push(".mochi-lock");
+    let _ = std::fs::remove_file(lock);
+    // A new file, never replacing one.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, &bytes))
+        .unwrap();
+}
+
 fn open_like_the_app(path: &Path) {
     let t = Instant::now();
     let src = OsReadStorage::open(path).unwrap();
@@ -135,6 +167,7 @@ fn main() {
     for (name, write) in [
         ("browse.mochi", browse as fn(&Path)),
         ("large.mochi", large),
+        ("damaged.mochi", damaged),
     ] {
         let path = dir.join(name);
         if !path.exists() {
