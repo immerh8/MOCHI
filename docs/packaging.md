@@ -1,4 +1,4 @@
-# Packaging the desktop app (plan D7, first slice)
+# Packaging the desktop app (plan D7, first slice; D6 shell integration)
 
 Unsigned installers for the two supported platforms (decision O11): a **Windows NSIS**
 setup (per-user, WebView2 bootstrapper) and an **Ubuntu `.deb`** built on 22.04. No MSI,
@@ -51,6 +51,66 @@ is prepended.
 - Both installers and the license list are uploaded as workflow artifacts
   (`mochi-installer-*-unsigned`). Nothing is published.
 
+## Shell integration (plan D6, decision O10)
+
+Defined in `tauri.conf.json` (`bundle.fileAssociations`, the NSIS `installerHooks`, the
+`.deb` `desktopTemplate` and `files`), `packaging/nsis/hooks.nsh`, and
+`packaging/linux/`. The app side (command line, single instance) is
+`src-tauri/src/launch.rs`.
+
+**The command line** (`mochi-desktop [VERB] [--] PATH...`): no verb or `--open` opens
+`PATH` read-only (what a file manager passes); `--extract-here` and
+`--extract-to-folder` open it and show the extract plan for the whole snapshot into the
+archive's folder, or into a folder named for the archive; `--add` stages paths and shows
+the add panel. Rust parses and validates every argument (unknown option, empty, NUL,
+over-long, Windows `\\.\` device paths, wrong path counts) and a launch that does not parse
+changes nothing and is reported in the window. There is no passphrase option and none
+may ever be added: one is refused by name without echoing its value. **Nothing is
+written until the user presses the button in the panel.** The one side effect before
+that is "Extract to folder" creating the empty target folder so the plan can check it
+(delegated decision 1 in plan D6).
+
+**Single instance.** `tauri-plugin-single-instance` (official, MIT/Apache) is the first
+plugin registered. A second process forwards its arguments to the running one, which
+parses them with its own working directory, opens or stages in Rust, and brings the
+window forward; the second process exits. Permissions: **none added**. The plugin has no
+webview commands, so `capabilities/main.json` gains nothing for it; it needs the OS
+facility that makes one process the owner (a named mutex and a window message on Windows;
+the session D-Bus on Linux, where a session without a bus simply runs without single
+instance). The one new app permission is `allow-watch-launches`, the command by which the
+window listens for "an archive was opened" or "this launch failed". It carries no path.
+
+**Windows (NSIS, per-user, `HKCU` only):**
+
+| What | Where | Removed by uninstall |
+|---|---|---|
+| `.mochi` association (ProgID `MOCHI.Archive`) | Tauri's `fileAssociations`; the hooks also remove the `.mochi` key and `MOCHI.Archive_backup` value that Tauri's own removal leaves | yes |
+| Classic Explorer verbs "Open with MOCHI", "Extract here", "Extract to folder" | `Software\Classes\SystemFileAssociations\.mochi\shell\Mochi*` | yes |
+| "Add to MOCHI archive" (every file and folder) | `Software\Classes\*\shell\MochiAdd`, `...\Directory\shell\MochiAdd` | yes |
+| Opt-in "Open with" for ZIP, 7z, RAR, TAR, TGZ, GZ | ProgID `MOCHI.Foreign`; the value `MOCHI.Foreign` under each `.ext\OpenWithProgids` | yes |
+
+Each verb runs `"<app>" --verb -- "%1"`. The opt-in is a question at the end of a
+normal install, **default No**, never asked by a silent (`/S`) or passive install, and
+`/ASSOCIATE_FOREIGN` on the setup's command line says yes (CI uses it). It adds MOCHI to
+"Open with"; it never writes a type's default value and never touches the user's
+choice, because Windows lets only the user make an app the default. Verbs sit under
+"Show more options" on Windows 11; the top-level Windows 11 menu (`IExplorerCommand`,
+package identity) and Nautilus extensions are 1.x (O10), not built.
+
+**Ubuntu (`.deb`):** the `.desktop` file (from `packaging/linux/mochi.desktop`, a
+replacement for Tauri's template so that `Exec` can end in `%f`) lists
+`application/x-mochi` first, then the foreign formats as "Open with" offers; the
+package ships `/usr/share/mime/packages/mochi.xml` (`*.mochi`, matched by name only; no
+magic bytes are repeated outside `mochi-format`) and no `mimeapps.list`, so the system's
+own defaults (file-roller for ZIP and tar on a stock desktop) stay in charge. The
+package's dpkg triggers run `update-mime-database` and `update-desktop-database`.
+
+Checked in CI: `smoke-nsis.ps1` (every key after install, the opt-in off by default and
+on with the switch, every key gone after uninstall, twice), `smoke-deb.sh` (`Exec`,
+`MimeType`, the mime XML, no default lists, `globs2` after install and after removal),
+the Rust tests of the argument parser and the routing, a UI test per launch event, and
+the `launch.e2e.js` spec (a second process routes to the running window).
+
 ## Signing and updater: what the owner must supply (NOT done)
 
 Nothing below is in the repository, and no key may be committed.
@@ -75,6 +135,30 @@ network), the app starts, the Start-menu entry exists, and uninstall leaves noth
 `%LOCALAPPDATA%\MOCHI`. On Ubuntu 22.04 and 24.04 desktops: install by double-click and
 by `apt install ./mochi_*.deb`, start from the launcher, remove.
 
+**Shell integration (D6).** Windows Server runners have no Explorer shell to show a
+context menu, and no second user setting defaults, so on the same clean Windows 10 22H2
+and Windows 11 client machines check by hand:
+
+- Right-click a `.mochi` file: "Open with MOCHI", "Extract here", "Extract to folder"
+  are listed (Windows 11: under "Show more options"); each starts MOCHI (or goes to the
+  running window), shows the archive or the extract plan, and writes nothing until the
+  Extract button is pressed.
+- Right-click a file, several files, and a folder: "Add to MOCHI archive" opens the add
+  panel with them staged (several files make several launches that collect in one set).
+- Double-click a `.mochi` file with MOCHI already running: no second window or process.
+- Install interactively: the foreign-format question defaults to No; with No, a `.zip`'s
+  "Open with" list does not offer MOCHI; with Yes it does, and ZIP still opens in the
+  program it did before.
+- Uninstall, then search the registry: no `Mochi*`, `MOCHI.Archive`, or `MOCHI.Foreign`
+  key remains, and `.mochi` files show no program.
+- A path with spaces, non-ASCII letters, and a `&` opens correctly from each verb.
+
+On Ubuntu 22.04 and 24.04 desktops (GNOME Files): after install, double-clicking a
+`.mochi` file opens MOCHI and its icon type reads "MOCHI archive"; "Open with" on a
+`.zip`, `.7z`, `.rar`, and `.tar.gz` lists MOCHI but the default stays Archive Manager;
+with MOCHI running, opening a second `.mochi` goes to the same window; `apt remove`
+leaves no "MOCHI archive" type.
+
 ## Open question
 
 - **MPL-2.0** is in `about.toml`'s accepted list because Tauri's dependency tree
@@ -88,6 +172,7 @@ by `apt install ./mochi_*.deb`, start from the launcher, remove.
 
 - Signing, the updater, and release publication (above).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
-- File associations and the `.zip/.7z/.rar` opt-in (D6).
+- Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign formats
+  opened from the shell answer "not supported yet" until plan D8 lands.
 - The first CI run of `package` is the proof of the Tauri bundle itself; the build
   environment used to write this slice has no webkit2gtk.

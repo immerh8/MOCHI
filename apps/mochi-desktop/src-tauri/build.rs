@@ -32,6 +32,7 @@ fn main() {
         "clear_staged",
         "choose_destination",
         "plan_extract",
+        "watch_launches",
         "choose_check_subject",
         "health_report",
         "export_report",

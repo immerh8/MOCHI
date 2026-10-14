@@ -1,4 +1,4 @@
-//! The MOCHI desktop application (plan §7, phases D0 to D5).
+//! The MOCHI desktop application (plan §7, phases D0 to D6).
 //!
 //! Commands are thin adapters (AGENTS.md "Tauri v2 rules"): they validate
 //! input, call into `mochi-core` or the job runner, and return typed
@@ -15,6 +15,7 @@ mod d5_tests;
 pub mod extract;
 pub mod ipc;
 pub mod jobs;
+pub mod launch;
 mod picker;
 pub mod rekey;
 pub mod search;
@@ -36,10 +37,26 @@ pub fn run() -> Result<(), tauri::Error> {
         destination: Arc::clone(&destination),
         checks: Arc::clone(&checks),
     }));
+    let launches = Arc::new(launch::Launches::new(
+        Arc::clone(&archives),
+        Arc::clone(&staging),
+        Arc::clone(&destination),
+        Arc::clone(&drops),
+    ));
     let window_staging = Arc::clone(&staging);
     let window_drops = Arc::clone(&drops);
+    let second_launches = Arc::clone(&launches);
+    let first_launches = Arc::clone(&launches);
     tauri::Builder::default()
+        // First, so that a second process hands over before anything else
+        // starts. Its arguments are parsed and validated in Rust like the
+        // first launch's (`launch`), and the running window comes forward.
+        .plugin(tauri_plugin_single_instance::init(move |app, argv, cwd| {
+            second_launches.submit(launch::from_forwarded(&argv, &cwd));
+            focus_main(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
+        .manage(launches)
         .manage(jobs)
         .manage(archives)
         .manage(staging)
@@ -71,13 +88,16 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::clear_staged,
             commands::choose_destination,
             commands::plan_extract,
+            commands::watch_launches,
             commands::choose_check_subject,
             commands::health_report,
             commands::export_report,
             commands::repair_setup
         ])
-        .setup(|app| {
+        .setup(move |app| {
             main_window(app)?;
+            // The shell's arguments for this first launch.
+            first_launches.submit(launch::from_environment());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -92,4 +112,14 @@ fn main_window(app: &mut tauri::App) -> tauri::Result<()> {
         .inner_size(900.0, 640.0);
     automation::configure(builder).build()?;
     Ok(())
+}
+
+/// Bring the window forward for a launch forwarded by a second instance.
+fn focus_main(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }

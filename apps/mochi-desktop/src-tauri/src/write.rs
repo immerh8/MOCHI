@@ -292,11 +292,19 @@ pub trait DropSink: Send + Sync + 'static {
 #[derive(Default)]
 pub struct DropWatch {
     sink: Mutex<Option<Arc<dyn DropSink>>>,
+    /// An announcement (D6) made while nobody listened, replayed to the next
+    /// listener: an "Add to archive" from the shell can arrive before the
+    /// window has started listening.
+    waiting: Mutex<Option<DropEvent>>,
 }
 
 impl DropWatch {
     /// Listen with `sink`, replacing any earlier listener (a reloaded page).
     pub fn set(&self, sink: Arc<dyn DropSink>) {
+        let waiting = lock(&self.waiting).take();
+        if let Some(event) = waiting {
+            sink.send(event);
+        }
         *lock(&self.sink) = Some(sink);
     }
 
@@ -306,6 +314,22 @@ impl DropWatch {
             if !sink.send(event) {
                 *lock(&self.sink) = None;
             }
+        }
+    }
+
+    /// Tell the window that items were staged from outside it (the shell's
+    /// "Add to archive", plan D6), as a drop would: the window opens its add
+    /// panel. Held for the next listener if there is none.
+    pub fn announce_staged(&self, outcome: StageOutcome) {
+        let event = DropEvent::Dropped {
+            staged: outcome.staged,
+            problems: outcome.problems,
+        };
+        let sink = lock(&self.sink).clone();
+        let delivered = sink.is_some_and(|s| s.send(event.clone()));
+        if !delivered {
+            *lock(&self.sink) = None;
+            *lock(&self.waiting) = Some(event);
         }
     }
 }
