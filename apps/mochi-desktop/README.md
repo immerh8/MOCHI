@@ -1,8 +1,8 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 to D3 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+**Phases D0 to D4 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
 the archive browser (snapshot timeline, folder tree, virtualized list, details),
-create, add, and remove (D2), and extract (D3).
+create, add, and remove (D2), extract (D3), and test, health, and repair (D4).
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
@@ -14,6 +14,7 @@ apps/mochi-desktop/
 │   ├── capabilities/   # least-privilege capability files
 │   └── src/
 │       ├── browse.rs   # D1: open archives and snapshots, paged listings, details
+│       ├── check.rs    # D4: Test archive, health, report export, repair plan/apply
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
@@ -25,6 +26,7 @@ apps/mochi-desktop/
 │   ├── src/browser/    # D1: Browser, Tree, VirtualList, Name (text-only names)
 │   ├── src/write/      # D2: Writer (create, add, remove), messages (wording rules)
 │   ├── src/extract/    # D3: Extractor (plan, collisions, progress, report), messages
+│   ├── src/check/      # D4: Checker (test, health, repair wizard), Report, messages
 │   └── src/ipc/        # typed invoke wrappers; generated/ is never edited by hand
 └── e2e/                # WebdriverIO + tauri-driver
 ```
@@ -76,7 +78,11 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   `allow-clear-staged`, and `allow-choose-destination` (D2, each needed by the create
   and add panel), and `allow-plan-extract` (D3, needed to show the folder dialog and
   the collision plan; the extract job itself runs through `start_job`, so it needs no
-  permission of its own). All are the app's own commands, not plugin permissions. The commands are declared in
+  permission of its own), and `allow-choose-check-subject`, `allow-health-report`,
+  `allow-export-report`, and `allow-repair-setup` (D4: choosing the archive to test or
+  repair, the health summary, exporting a report, and choosing a repair's copies and new
+  file, each of which shows a native dialog from Rust or reads only what Rust kept; the
+  test and repair jobs run through `start_job`). All are the app's own commands, not plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
@@ -117,6 +123,16 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   On Linux the engine refuses a folder other users can modify; on Windows the destination's
   ACL is not checked (`docs/c6-restore-platforms.md`, W2), so the panel says: "Extract into
   a folder only you can modify."
+- **Tests, reports, and repairs stay in Rust (D4).** The archive to test or repair, each
+  independent copy, the new archive a repair writes, and where a report is exported are
+  chosen in native dialogs shown from Rust and kept there (`src/check.rs`); the webview
+  refers to them by ID. "Test archive" and the health summary open the file read-only
+  (`OsReadStorage`) and call `mochi_core::verify` and `mochi_core::health` as the CLI
+  does; a repair plans read-only and writes only a new file that does not exist yet (the
+  source is never written, an existing file is never replaced). A report's JSON is
+  rendered once, exactly as `mochi verify --json` prints it, and exporting writes those
+  bytes to a new file. With the `e2e` feature only, these dialogs take paths from the pick
+  queue and `MOCHI_E2E_PACE_MS` slows tests and repairs per progress event.
 - **Browsing pages over IPC (D1 exit).** `mochi_core::browse::SnapshotIndex` keeps a
   snapshot's tree in Rust; the webview asks for at most 1,000 entries per call (the
   list asks for 200) and renders only the rows in view, so a folder of 100,000 entries
@@ -175,6 +191,14 @@ written and leaves the files already published, each complete; folders made so f
 not had their recorded times and permissions applied yet (the engine applies them last),
 and the result says so. An extraction is not a verification: it states what it extracted
 and that nothing else was checked (`ui/src/extract/messages.ts`).
+
+Test and repair jobs (D4) are `TestArchive { subject, level, deep }`, `PlanRepair {
+subject, salvage, archive_id }`, and `ApplyRepair { subject, plan, accept_retention_loss }`,
+finishing with `completed` carrying a `CheckResult` (the report, the plan, or what the
+repair wrote with its re-verification). The plan is the approval: `ApplyRepair` names the
+plan the user reviewed, core plans again and refuses any difference, and changing the
+archive or the copies drops the plan. Only a §20.4 `PASS` gets success styling
+(`ui/src/check/messages.ts`, tested); the overall line names every failing dimension.
 
 ## Rules that apply from the first commit (AGENTS.md, spec §23.3)
 

@@ -1,4 +1,4 @@
-//! The MOCHI desktop application (plan §7, phases D0 to D3).
+//! The MOCHI desktop application (plan §7, phases D0 to D4).
 //!
 //! Commands are thin adapters (AGENTS.md "Tauri v2 rules"): they validate
 //! input, call into `mochi-core` or the job runner, and return typed
@@ -8,6 +8,7 @@
 
 mod automation;
 pub mod browse;
+pub mod check;
 pub mod commands;
 pub mod extract;
 pub mod ipc;
@@ -24,10 +25,12 @@ pub fn run() -> Result<(), tauri::Error> {
     let staging = Arc::new(write::Staging::default());
     let drops = Arc::new(write::DropWatch::default());
     let destination = Arc::new(extract::Destination::default());
+    let checks = Arc::new(check::Checks::default());
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
         archives: Arc::clone(&archives),
         staging: Arc::clone(&staging),
         destination: Arc::clone(&destination),
+        checks: Arc::clone(&checks),
     }));
     let window_staging = Arc::clone(&staging);
     let window_drops = Arc::clone(&drops);
@@ -38,6 +41,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(staging)
         .manage(drops)
         .manage(destination)
+        .manage(checks)
         .on_window_event(move |_window, event| {
             // Items dragged from the file manager arrive here, in Rust.
             if let tauri::WindowEvent::DragDrop(drag) = event {
@@ -58,7 +62,11 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::unstage_source,
             commands::clear_staged,
             commands::choose_destination,
-            commands::plan_extract
+            commands::plan_extract,
+            commands::choose_check_subject,
+            commands::health_report,
+            commands::export_report,
+            commands::repair_setup
         ])
         .setup(|app| {
             main_window(app)?;

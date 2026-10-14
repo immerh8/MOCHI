@@ -28,6 +28,10 @@ fn main() {
         "clear_staged",
         "choose_destination",
         "plan_extract",
+        "choose_check_subject",
+        "health_report",
+        "export_report",
+        "repair_setup",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

@@ -8,10 +8,12 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
 use crate::browse::Archives;
+use crate::check::{Checks, SubjectPick};
 use crate::extract::Destination;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan, IpcError,
-    JobEvent, JobId, JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
+    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan, HealthView,
+    IpcError, JobEvent, JobId, JobRequest, PathKey, RepairSetupAction, RepairSetupView, ReportId,
+    SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::write::{DropSink, DropWatch, Staging};
@@ -230,6 +232,89 @@ pub async fn plan_extract(
             None
         };
         crate::extract::plan(&archives, &destination, picked, handle, seq, &keys).map(Some)
+    })
+    .await
+}
+
+/// Choose the archive to test, check, or repair (D4): the native open dialog
+/// (in Rust; the webview never names a path), the file of an archive open in
+/// the browser, or the new archive the last repair wrote. `null` if the user
+/// cancelled the dialog. Nothing is read yet.
+#[tauri::command]
+pub async fn choose_check_subject(
+    app: AppHandle,
+    from: SubjectSource,
+    archives: State<'_, Arc<Archives>>,
+    checks: State<'_, Arc<Checks>>,
+) -> Result<Option<SubjectView>, IpcError> {
+    let archives = Arc::clone(&archives);
+    let checks = Arc::clone(&checks);
+    blocking(move || {
+        let pick = match from {
+            SubjectSource::Dialog => match crate::picker::pick_check_subject(&app) {
+                Some(path) => SubjectPick::Path(path),
+                None => return Ok(None),
+            },
+            SubjectSource::OpenArchive { handle } => SubjectPick::OpenArchive(handle),
+            SubjectSource::RepairOutput => SubjectPick::RepairOutput,
+        };
+        checks.choose_subject(&archives, pick).map(Some)
+    })
+    .await
+}
+
+/// The health summary of the chosen archive (D4; `mochi health`): recorded
+/// evidence judged at the current head. Runs no check and writes nothing.
+#[tauri::command]
+pub async fn health_report(
+    subject: SubjectId,
+    checks: State<'_, Arc<Checks>>,
+) -> Result<HealthView, IpcError> {
+    let checks = Arc::clone(&checks);
+    blocking(move || checks.health(subject)).await
+}
+
+/// Export a report (D4): the native save dialog (in Rust), then the exact
+/// report v1 JSON that core produced, written to a new file. Returns the
+/// file's name, or `null` if the user cancelled the dialog.
+#[tauri::command]
+pub async fn export_report(
+    app: AppHandle,
+    report: ReportId,
+    checks: State<'_, Arc<Checks>>,
+) -> Result<Option<String>, IpcError> {
+    let checks = Arc::clone(&checks);
+    blocking(move || {
+        let (suggested, json) = checks.report_json(report)?;
+        let Some(path) = crate::picker::pick_report_destination(&app, &suggested) else {
+            return Ok(None);
+        };
+        crate::check::write_new_file(&path, json.as_bytes())?;
+        Ok(Some(
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ))
+    })
+    .await
+}
+
+/// Change a repair's setup (D4): add a copy or choose the new file in a
+/// native dialog (in Rust), remove a copy, or just report the setup.
+#[tauri::command]
+pub async fn repair_setup(
+    app: AppHandle,
+    action: RepairSetupAction,
+    checks: State<'_, Arc<Checks>>,
+) -> Result<RepairSetupView, IpcError> {
+    let checks = Arc::clone(&checks);
+    blocking(move || {
+        let picked = match action {
+            RepairSetupAction::AddCopy => crate::picker::pick_copy(&app),
+            RepairSetupAction::ChooseOutput => crate::picker::pick_repair_output(&app),
+            _ => None,
+        };
+        checks.setup(action, picked)
     })
     .await
 }

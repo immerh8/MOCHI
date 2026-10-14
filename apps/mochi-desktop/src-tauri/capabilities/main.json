@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0), the browsing commands (D1), the staging commands (D2), and the extract plan command (D3). The native dialogs (open, choose sources, save, choose an extract folder) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted.",
+  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0), the browsing commands (D1), the staging commands (D2), the extract plan command (D3), and the test, health, export, and repair setup commands (D4; the test and repair jobs themselves run through start_job). The native dialogs (open, choose sources, save, choose an extract folder, choose an archive to test or repair, a copy, the new archive, a report file) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted.",
   "windows": [
     "main"
   ],
@@ -19,6 +19,10 @@
     "allow-unstage-source",
     "allow-clear-staged",
     "allow-choose-destination",
-    "allow-plan-extract"
+    "allow-plan-extract",
+    "allow-choose-check-subject",
+    "allow-health-report",
+    "allow-export-report",
+    "allow-repair-setup"
   ]
 }
