@@ -1407,3 +1407,31 @@ pub struct ForeignTestReport {
     pub bytes_read: u64,
     pub dimensions: ForeignDimensionsView,
 }
+
+// ---- D7: crash-report policy ------------------------------------------------
+//
+// Opt-in and local: nothing is sent anywhere (`crashlog` module docs).
+
+/// The crash-log switches and what the log holds now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CrashSettingsView {
+    /// Write a local record when the app panics. Off by default.
+    pub enabled: bool,
+    /// Also record the panic message, which can quote a file name. Off by default.
+    pub include_details: bool,
+    /// Records in the log on disk.
+    pub entries: u32,
+    /// The log's size on disk, in bytes.
+    pub bytes: u32,
+}
+
+/// The newest part of the crash log, as text to show (never as markup).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct CrashLogView {
+    pub text: String,
+    /// Older text was left out of `text`.
+    pub truncated: bool,
+    pub entries: u32,
+}

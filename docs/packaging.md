@@ -234,6 +234,19 @@ On Ubuntu 22.04 and 24.04 desktops (GNOME Files): after install, double-clicking
 with MOCHI running, opening a second `.mochi` goes to the same window; `apt remove`
 leaves no "MOCHI archive" type.
 
+**Accessibility (D7).** Machines can check names, structure, tab order, and contrast
+(CI: `pnpm test`, the keyboard E2E spec); they cannot hear a screen reader or see a
+high-contrast theme. Before a release, on Windows 10 22H2 and 11 with **NVDA**, and on
+Ubuntu 22.04 and 24.04 with **Orca**: (1) open an archive, move through the list with
+the arrow keys, and hear each row's name and kind; (2) create an archive with a
+passphrase and hear the panel's heading when it opens and the result when it ends;
+(3) run a test and hear the overall status word and each dimension's status as words;
+(4) trigger a wrong passphrase and hear the alert, with focus back in the field. Also:
+Windows *Contrast black* and *Contrast white* themes (selection and status shapes stay
+visible), 200 % display scaling and a 1280x720 window (no horizontal scrolling of the
+page), and the crash-report switches read correctly (the message option's warning is
+read with it). Record the result in the release notes.
+
 ## Open question
 
 - **MPL-2.0** is in `about.toml`'s accepted list because Tauri's dependency tree

@@ -1,8 +1,10 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 to D5 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+**Phases D0 to D6, D8, and two slices of D7 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
 the archive browser (snapshot timeline, folder tree, virtualized list, details),
-create, add, and remove (D2), extract (D3), and test, health, and repair (D4).
+create, add, and remove (D2), extract (D3), test, health, and repair (D4), encryption and
+search (D5), shell integration (D6), foreign formats (D8), packaging (D7 slice 1), and
+accessibility, the message catalogue, and the opt-in crash log (D7 slice 2).
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
@@ -16,6 +18,7 @@ apps/mochi-desktop/
 │       ├── browse.rs   # D1: open archives and snapshots, paged listings, details
 │       ├── check.rs    # D4: Test archive, health, report export, repair plan/apply
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
+│       ├── crashlog.rs # D7: the opt-in local crash log (panic hook, settings, rotation)
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
@@ -27,6 +30,10 @@ apps/mochi-desktop/
 │   ├── src/write/      # D2: Writer (create, add, remove), messages (wording rules)
 │   ├── src/extract/    # D3: Extractor (plan, collisions, progress, report), messages
 │   ├── src/check/      # D4: Checker (test, health, repair wizard), Report, messages
+│   ├── src/a11y/       # D7: Live, Panel (focus in/out), ProgressMeter; keyboard + contrast tests
+│   ├── src/i18n/       # D7: typed message lookup t(); en/ = the English catalogue, one file per screen
+│   ├── src/settings/   # D7: CrashReports (the opt-in crash log screen)
+│   ├── src/test/       # test setup; audit.ts (the accessibility audit run after every test)
 │   └── src/ipc/        # typed invoke wrappers; generated/ is never edited by hand
 └── e2e/                # WebdriverIO + tauri-driver
 ```
@@ -91,8 +98,12 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   crosses IPC once per use, as a `Secret` (zeroizing, `Debug` prints `<redacted>`, no
   `Serialize`); Rust keeps it only as a `mochi-core` key session on the open archive or
   the chosen subject, never in the webview after submit and never on disk. The optional
-  OS keychain is not built: see the plan, D5 status. All are the app's own commands, not
-  plugin permissions. The commands are declared in
+  OS keychain is not built: see the plan, D5 status. Also `allow-get-crash-settings`,
+  `allow-set-crash-settings`, `allow-read-crash-log`, `allow-export-crash-log`, and
+  `allow-clear-crash-log` (D7: the two crash-log switches, showing the log text, saving
+  a copy through a save dialog that Rust shows, and deleting it; the log is a local file
+  that only Rust opens, so these add no `fs`, `http`, or `dialog` permission and the CSP
+  is unchanged). All are the app's own commands, not plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
@@ -220,6 +231,89 @@ repair wrote with its re-verification). The plan is the approval: `ApplyRepair` 
 plan the user reviewed, core plans again and refuses any difference, and changing the
 archive or the copies drops the plan. Only a §20.4 `PASS` gets success styling
 (`ui/src/check/messages.ts`, tested); the overall line names every failing dimension.
+
+## Accessibility (plan D7)
+
+What is built, and how each part is checked:
+
+- **Keyboard.** Every control is a native button, link, input, select, or summary, so it
+  is in the tab order in reading order; nothing sets a positive `tabindex`. The page opens
+  with a *Sections* list of buttons that move focus to a section's heading (buttons, not
+  anchors: the window has no `href` at all, which the browse E2E spec asserts). Long lists (the
+  folder contents, a foreign archive's entries) are **one tab stop** with roving focus:
+  Up/Down, Page Up/Down, Home, and End move between rows (rows outside the window are
+  scrolled in first), Space selects, Enter opens a folder and puts focus in the new
+  listing. The folder tree is a plain nested list of buttons (no ARIA `tree`, which would
+  need its own key contract); each expander names its folder and sets `aria-expanded`.
+- **Focus.** A panel the user opens (new archive, add, remove, extract, passphrase,
+  rekey, foreign password) takes focus on its heading and gives it back to the button
+  that opened it when it closes (`a11y/Panel.tsx`). The panels are inline, not modal, so
+  there is no focus trap and Tab simply continues. After a passphrase attempt the field
+  disabled during the attempt gets focus back, with the error tied to it by
+  `aria-describedby`. Every focusable thing has a 3 px ring (`:focus-visible`); the
+  stylesheet never sets `outline: none` (tested).
+- **Names and live regions.** Every control has an accessible name; the progress bar
+  has a name and a spoken value. Results go to **polite status regions that exist before
+  they have text** (`a11y/Live.tsx`); failures are `role="alert"`; progress ticks are not
+  announced (the start and the end are).
+- **Colour.** All colours are tokens in `styles.css :root`. `a11y/contrast.test.ts`
+  reads the real stylesheet and checks WCAG 2.1 AA: 4.5:1 for each text colour on every
+  surface, 3:1 for the focus ring and status borders, no raw colour outside `:root`.
+  A status is always its word, plus a glyph (`data-mark`) and a solid or dashed border;
+  only PASS is green (§23.3 #2). Forced-colour (Windows high contrast) keeps selection
+  and status shapes. Narrow windows stack the panes (reflow).
+- **The audit.** Axe-core is MPL-2.0, and O23 asks for MIT/Apache-compatible
+  dependencies, so `test/audit.ts` is an in-house structural audit (accessible names via
+  `dom-accessibility-api`, MIT; unique ids and resolvable `aria-*` references; heading
+  levels; reviewed roles; list, table, and radio-group structure; status words) that
+  `test/setup.ts` runs on **the screen every UI test ends on**, and `test/audit.test.tsx`
+  proves it can fail. Add `expectAccessible()` mid-flow when a test passes through a
+  state worth checking.
+- **E2E.** `e2e/specs/a11y.e2e.js` drives the real app by key only (Tab, arrows, Space,
+  Enter): section buttons, opening an archive, the roving list, panel focus in and out,
+  a keyboard-started test with its result, and a full tab cycle with no trap.
+
+Not checked by a machine, so on the release checklist (`docs/packaging.md`): a pass with
+NVDA on Windows and Orca on Ubuntu, Windows high-contrast themes, and 200 % zoom.
+
+## Messages (i18n scaffolding, plan D7)
+
+All user-visible wording is in the typed catalogue `ui/src/i18n/en/*.ts` (one file per
+screen, merged in `en.ts`); screens call `t("area.key", { param })`. One locale, English,
+ships; adding another is a catalogue plus a language switch, which is deliberately not
+built. A key that does not exist, or a placeholder that is not supplied, fails
+`pnpm typecheck`. The rules:
+
+- Wording did not change in the move (the existing screen tests assert it).
+- The lookup interprets only the catalogue's own templates. **Archive-supplied strings
+  (names, labels, foreign-format messages) are parameters**: inserted once as plain text,
+  never scanned for `{placeholders}`, never used as a key or a template (tested).
+- `i18n.test.ts` applies the §23.3 banned words ("safe", "secure", "backed up",
+  "preserved", "revoked", "repaired", …) to the whole catalogue, and fails on a key that
+  nothing uses.
+- ESLint refuses English text in JSX and in `aria-label`/`title`/`placeholder`/`alt`
+  attributes outside tests, so wording cannot bypass the catalogue.
+- Constants exported from `*/messages.ts` are evaluated once at import (fine for one
+  locale); a second locale turns them into functions.
+
+## Crash reports (plan D7): opt-in, local, never sent
+
+There is no reporting endpoint, so nothing is sent. The app has an **off-by-default
+local panic log** (`src-tauri/src/crashlog.rs`, screen: *Settings → Crash reports*):
+
+| Question | Answer |
+|---|---|
+| Collected? | Only if the user turns it on: time, app version, OS and CPU, the failed thread's name, the source `file:line` of the panic, up to 60 backtrace lines of function names. |
+| Never | Passphrases, archive contents, file or folder names. |
+| The panic message | Left out unless the user also turns on "Include the panic message", which warns that it can quote a file name. Then it is escaped to one line and cut at 500 characters. |
+| Where | `crash.log` (+ one rotated `crash.log.1`, 256 KiB each at most, owner-only on Unix) in the app's local data folder. The webview never sees a path. |
+| Sent? | No. No network client, no new permission; the CSP is unchanged. |
+| What the user can do | Show the text, save a copy through a save dialog, delete it. Deleting keeps the switches. |
+| Not caught | Faults outside a Rust panic: the system web view, out-of-memory, the OS ending the app. |
+
+Real reporting needs an **owner decision** (plan D7 status lists the options). Until then
+the way to report a crash is: turn the log on, reproduce it, save a copy, read it, and
+attach it to an issue.
 
 ## Rules that apply from the first commit (AGENTS.md, spec §23.3)
 

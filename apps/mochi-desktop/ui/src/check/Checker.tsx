@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
+import { Live } from "../a11y/Live";
+import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
+import { t } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary } from "../ipc/browse";
 import { chooseCheckSubject, exportReport, healthReport, repairSetup } from "../ipc/check";
@@ -56,8 +60,16 @@ type JobView =
       cancelRequested: boolean;
     };
 
-const WHAT: Record<Kind, string> = { test: "The test was", plan: "Planning was", apply: "Writing the new archive was" };
-const FAILED_WHAT: Record<Kind, string> = { test: "The test", plan: "Planning", apply: "Writing the new archive" };
+const WHAT: Record<Kind, () => string> = {
+  test: () => t("check.wasTest"),
+  plan: () => t("check.wasPlan"),
+  apply: () => t("check.wasApply"),
+};
+const FAILED_WHAT: Record<Kind, () => string> = {
+  test: () => t("check.whatTest"),
+  plan: () => t("check.whatPlan"),
+  apply: () => t("check.whatApply"),
+};
 
 /**
  * Plan D4: test an archive (the core library's verification, read-only), see
@@ -85,6 +97,7 @@ export function Checker({ archive }: CheckerProps) {
   const [exporting, setExporting] = useState(false);
 
   const busy = job.state !== "idle";
+  const rememberFocus = useJobFocus(busy);
 
   // Results open below the controls: bring each into view when it appears.
   const resultRef = useRef<HTMLDivElement>(null);
@@ -113,16 +126,16 @@ export function Checker({ archive }: CheckerProps) {
       if (s !== null) adopt(s);
       return s;
     } catch (e) {
-      setError(errorText("Could not choose that archive", e));
+      setError(errorText(t("check.chooseFailed"), e));
       return null;
     }
   };
 
   /** Show what a job produced; a job without a result says why. */
   const finished = useCallback((kind: Kind, outcome: JobOutcome) => {
-    const note = failedLine(FAILED_WHAT[kind], outcome);
+    const note = failedLine(FAILED_WHAT[kind](), outcome);
     if (outcome.status === "cancelled") {
-      setJobNote(`${WHAT[kind]} cancelled before it finished. Nothing was written.`);
+      setJobNote(t("check.wasCancelled", { was: WHAT[kind]() }));
       return;
     }
     setJobNote(note);
@@ -179,13 +192,14 @@ export function Checker({ archive }: CheckerProps) {
   }, [finished]);
 
   const run = (kind: Kind, request: JobRequest) => {
+    rememberFocus();
     setError(null);
     setJobNote(null);
     setExported(null);
     setJob({ state: "starting", kind });
     startJob(request, onEvent(kind)).catch((e: unknown) => {
       setJob({ state: "idle" });
-      setError(errorText("Could not start", e));
+      setError(errorText(t("check.startFailed"), e));
     });
   };
 
@@ -199,7 +213,7 @@ export function Checker({ archive }: CheckerProps) {
       setHealth(await healthReport(subject.id));
     } catch (e) {
       setHealth(null);
-      setError(errorText("Could not summarise the health of this archive", e));
+      setError(errorText(t("check.healthFailed"), e));
     }
   };
 
@@ -208,9 +222,9 @@ export function Checker({ archive }: CheckerProps) {
     setExporting(true);
     try {
       const name = await exportReport(r.report_id);
-      if (name !== null) setExported(`Exported the ${r.kind} report to ${name}, exactly as produced.`);
+      if (name !== null) setExported(t("check.exported", { kind: r.kind, name }));
     } catch (e) {
-      setError(errorText("Could not export the report", e));
+      setError(errorText(t("check.exportFailed"), e));
     } finally {
       setExporting(false);
     }
@@ -227,7 +241,7 @@ export function Checker({ archive }: CheckerProps) {
       }
       setSetup(next);
     } catch (e) {
-      setError(errorText("Could not change the repair", e));
+      setError(errorText(t("check.setupFailed"), e));
     }
   };
 
@@ -273,40 +287,39 @@ export function Checker({ archive }: CheckerProps) {
 
   return (
     <section aria-labelledby="check-heading" className="checker" data-testid="checker">
-      <h2 id="check-heading">Test, health, and repair</h2>
+      <h2 id="check-heading" tabIndex={-1}>
+        {t("check.heading")}
+      </h2>
       <div className="actions">
         <button type="button" data-testid="check-choose" onClick={() => void choose({ from: "dialog" })} disabled={busy}>
-          Choose archive…
+          {t("check.choose")}
         </button>
         <button
           type="button"
           data-testid="check-use-open"
           onClick={() => archive && void choose({ from: "open_archive", handle: archive.handle })}
           disabled={busy || archive === null}
-          title={archive ? undefined : "Open an archive first"}
+          title={archive ? undefined : t("check.openFirst")}
         >
-          Use the open archive
+          {t("check.useOpen")}
         </button>
       </div>
       <p data-testid="check-subject">
         {subject ? (
           <>
-            Archive: <strong>{subject.file_name}</strong>
+            {t("check.subjectLabel")} <strong>{subject.file_name}</strong>
           </>
         ) : (
-          "No archive chosen. Any archive can be chosen, including one too damaged to open."
+          t("check.noSubject")
         )}
       </p>
       {subject?.encrypted && !subject.unlocked && (
-        <div className="panel" role="group" aria-label="Passphrase" data-testid="check-unlock">
-          <p>
-            This archive is encrypted. Without its passphrase a test checks stored bytes only and is never
-            PASS overall, and a repair cannot run.
-          </p>
+        <div className="panel" role="group" aria-label={t("check.unlockGroup")} data-testid="check-unlock">
+          <p>{t("check.unlockIntro")}</p>
           <PassphraseForm
             testId="check-unlock-form"
-            label="Passphrase"
-            submitLabel="Use this passphrase"
+            label={t("check.unlockLabel")}
+            submitLabel={t("check.unlockSubmit")}
             onSubmit={async (p) => {
               setError(null);
               setSubject(await unlockCheckSubject(subject.id, p));
@@ -316,7 +329,7 @@ export function Checker({ archive }: CheckerProps) {
       )}
       {subject?.encrypted && subject.unlocked && (
         <p className="note" data-testid="check-unlocked">
-          The passphrase is held in the app for this archive until you choose another one or close the app.
+          {t("check.unlocked")}
         </p>
       )}
       {error && (
@@ -326,10 +339,10 @@ export function Checker({ archive }: CheckerProps) {
       )}
 
       <fieldset disabled={busy || subject === null}>
-        <legend>Test archive</legend>
+        <legend>{t("check.testLegend")}</legend>
         <p className="note">{TEST_NOTE}</p>
         <label>
-          Level{" "}
+          {t("check.level")}{" "}
           <select data-testid="check-level" value={level} onChange={(e) => setLevel(e.target.value as CheckLevel)}>
             {LEVELS.map((l) => (
               <option key={l.level} value={l.level}>
@@ -342,15 +355,15 @@ export function Checker({ archive }: CheckerProps) {
         <div>
           <label>
             <input type="checkbox" data-testid="check-deep" checked={deep} onChange={(e) => setDeep(e.target.checked)} />{" "}
-            Deep check (fsck): also open every commit at its own footer and rebuild every segment
+            {t("check.deep")}
           </label>
         </div>
         <div className="actions">
           <button type="button" data-testid="check-test" onClick={() => subject && test(subject.id)}>
-            Test archive
+            {t("check.test")}
           </button>
           <button type="button" data-testid="check-health" onClick={() => void showHealth()}>
-            Show health
+            {t("check.health")}
           </button>
         </div>
       </fieldset>
@@ -359,34 +372,30 @@ export function Checker({ archive }: CheckerProps) {
         <div className="progress" data-testid="check-running" data-kind={job.kind}>
           {job.state === "running" && (
             <>
-              <progress value={job.total === null ? undefined : job.completed} max={job.total ?? undefined} />
-              <span data-testid="check-progress">
-                {job.phase ? progressText(job.phase, job.completed, job.total) : "Starting…"}
-                {job.cancelRequested ? " (cancelling…)" : ""}
-              </span>
+              <ProgressMeter
+                completed={job.completed}
+                total={job.total}
+                text={
+                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+                  (job.cancelRequested ? t("common.cancelling") : "")
+                }
+                textTestId="check-progress"
+              />
             </>
           )}
-          {job.state === "starting" && <span>Starting…</span>}
+          {job.state === "starting" && <span>{t("common.starting")}</span>}
           <button
             type="button"
             data-testid="check-cancel"
             onClick={cancel}
             disabled={job.state !== "running" || job.cancelRequested}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
         </div>
       )}
-      {jobNote && (
-        <p role="status" data-testid="check-status">
-          {jobNote}
-        </p>
-      )}
-      {exported && (
-        <p role="status" data-testid="report-exported">
-          {exported}
-        </p>
-      )}
+      <Live data-testid="check-status">{jobNote}</Live>
+      <Live data-testid="report-exported">{exported}</Live>
 
       <div ref={resultRef}>
         {report && (
@@ -394,9 +403,10 @@ export function Checker({ archive }: CheckerProps) {
         )}
         {health && (
           <div data-testid="health">
-            <h3>Health</h3>
+            <h3>{t("check.healthHeading")}</h3>
             <p className="note" data-testid="health-note">
-              {HEALTH_NOTE} Records used: {health.records}.
+              {HEALTH_NOTE}
+              {t("check.recordsUsed", { n: health.records })}
             </p>
             <Report report={health.report} onExport={() => void doExport(health.report)} exporting={exporting} />
           </div>
@@ -404,23 +414,21 @@ export function Checker({ archive }: CheckerProps) {
       </div>
 
       <fieldset disabled={busy || subject === null} data-testid="repair">
-        <legend>Repair</legend>
-        <p className="note">
-          A repair is planned first and changes nothing. You review the plan, approve it, and choose a new file; the
-          archive itself is never written.
-        </p>
-        <p>Independent copies of the same archive (optional; used only where they match it byte for byte):</p>
+        <legend>{t("check.repairLegend")}</legend>
+        <p className="note">{t("check.repairIntro")}</p>
+        <p>{t("check.copiesIntro")}</p>
         {setup.copies.length > 0 && (
-          <ul className="staged" aria-label="Copies">
+          <ul className="staged" aria-label={t("check.copies")}>
             {keyed(setup.copies, (c) => c).map(({ key, item: c, index }) => (
               <li key={key} data-testid="repair-copy">
                 {c}{" "}
                 <button
                   type="button"
                   data-testid="repair-remove-copy"
+                  aria-label={t("check.removeCopyNamed", { name: c })}
                   onClick={() => void changeSetup({ action: "remove_copy", index })}
                 >
-                  Remove
+                  {t("check.removeCopy")}
                 </button>
               </li>
             ))}
@@ -428,7 +436,7 @@ export function Checker({ archive }: CheckerProps) {
         )}
         <div className="actions">
           <button type="button" data-testid="repair-add-copy" onClick={() => void changeSetup({ action: "add_copy" })}>
-            Add a copy…
+            {t("check.addCopy")}
           </button>
         </div>
         <label>
@@ -441,12 +449,12 @@ export function Checker({ archive }: CheckerProps) {
               setPlan(null);
             }}
           />{" "}
-          Allow the bounded salvage scan (step 7). Anything it is used for makes the repair partial.
+          {t("check.salvage")}
         </label>
         {salvage && (
           <div>
             <label>
-              Archive ID, if the scan finds several archives (optional, 64 hexadecimal digits){" "}
+              {t("check.archiveId")}{" "}
               <input
                 type="text"
                 data-testid="repair-archive-id"
@@ -459,7 +467,7 @@ export function Checker({ archive }: CheckerProps) {
         )}
         <div className="actions">
           <button type="button" data-testid="repair-plan" onClick={planRepair}>
-            Plan repair
+            {t("check.plan")}
           </button>
         </div>
       </fieldset>
@@ -467,8 +475,8 @@ export function Checker({ archive }: CheckerProps) {
       {plan && <PlanReview plan={plan} />}
 
       {plan && plan.outcome !== "nothing_recoverable" && (
-        <div className="panel" data-testid="repair-approve-panel" role="group" aria-label="Approve the repair">
-          <h3>Approve and write</h3>
+        <div className="panel" data-testid="repair-approve-panel" role="group" aria-label={t("check.approveGroup")}>
+          <h3>{t("check.approveHeading")}</h3>
           <p className="note">{APPROVAL_NOTE}</p>
           <div className="actions">
             <button
@@ -477,11 +485,11 @@ export function Checker({ archive }: CheckerProps) {
               onClick={() => void changeSetup({ action: "choose_output" })}
               disabled={busy}
             >
-              Choose the new file…
+              {t("check.chooseOutput")}
             </button>
           </div>
           <p data-testid="repair-output">
-            {setup.output ? <>New file: {setup.output}</> : "No new file chosen yet. Nothing is ever written in place."}
+            {setup.output ? t("check.output", { path: setup.output }) : t("check.noOutput")}
           </p>
           {retentionUnresolved && (
             <label>
@@ -492,7 +500,7 @@ export function Checker({ archive }: CheckerProps) {
                 onChange={(e) => setAcceptRetentionLoss(e.target.checked)}
                 disabled={busy}
               />{" "}
-              Write the new archive without the legal holds and expiries that cannot be carried over
+              {t("check.acceptRetention")}
             </label>
           )}
           <div>
@@ -504,13 +512,12 @@ export function Checker({ archive }: CheckerProps) {
                 onChange={(e) => setApproved(e.target.checked)}
                 disabled={busy}
               />{" "}
-              I have reviewed this plan
-              {plan.outcome === "partial" ? ", including everything it leaves out" : ""}. Write it.
+              {t("check.approve", { extra: plan.outcome === "partial" ? t("check.approveExtra") : "" })}
             </label>
           </div>
           <div className="actions">
             <button type="button" data-testid="repair-apply" onClick={apply} disabled={busy || !canApply}>
-              Write the new archive
+              {t("check.apply")}
             </button>
           </div>
         </div>
@@ -524,16 +531,17 @@ export function Checker({ archive }: CheckerProps) {
           data-exit={result.exit_code}
           role="status"
         >
-          <h3>Repair result: {OUTCOME_LABEL[result.outcome]}</h3>
+          <h3>{t("check.resultHeading", { outcome: OUTCOME_LABEL[result.outcome] })}</h3>
           <p data-testid="repair-result-line">{resultLine(result)}</p>
           <p data-testid="repair-reverification" data-status={result.reverification.overall_status}>
             <StatusBadge status={result.reverification.overall_status} /> {reverificationLine(result)}
           </p>
           {result.lost.length > 0 && (
-            <ul className="staged" aria-label="Snapshots not written">
+            <ul className="staged" aria-label={t("check.snapshotsNotWritten")}>
               {result.lost.map((l) => (
                 <li key={l.seq} data-testid="repair-result-lost">
-                  Snapshot {l.seq} not written <span className="meta">({l.code})</span> <Prose text={l.reason} />
+                  {t("check.resultLost", { seq: l.seq })}
+                  <span className="meta">({l.code})</span> <Prose text={l.reason} />
                 </li>
               ))}
             </ul>
@@ -541,19 +549,19 @@ export function Checker({ archive }: CheckerProps) {
           {result.omitted.length > 0 && <OmittedList items={result.omitted} total={result.omitted_total} />}
           {result.profile_constraints_lost.map((c) => (
             <p key={c} className="warning">
-              Not carried into the new archive: {c}
+              {t("check.notCarried", { what: c })}
             </p>
           ))}
           {result.retention_loss_accepted && (
-            <p className="warning">Retention was not carried over: the new archive has no legal holds and nothing expired.</p>
+            <p className="warning">{t("check.retentionNotCarried")}</p>
           )}
           {result.durability_note && (
-            <p className="warning">Degraded: the new file's directory entry is not confirmed durable ({result.durability_note}).</p>
+            <p className="warning">{t("check.durabilityDegraded", { note: result.durability_note })}</p>
           )}
           <p className="note">{SOURCE_KEPT_NOTE}</p>
           <div className="actions">
             <button type="button" data-testid="repair-test-new" onClick={() => void testNewArchive()} disabled={busy}>
-              Test the new archive
+              {t("check.testNew")}
             </button>
           </div>
         </div>
@@ -566,18 +574,20 @@ function OmittedList({ items, total }: { items: RepairPlanView["omitted"]; total
   return (
     <>
       <p className="warning">
-        Left out ({total}) — every snapshot that held these is written without them:
+        {t("check.leftOut", { total })}
       </p>
-      <ul className="staged" aria-label="Entries left out">
+      <ul className="staged" aria-label={t("check.leftOutList")}>
         {keyed(items, (o) => `${o.path.text}:${o.code}`).map(({ key, item: o }) => (
           <li key={key} data-testid="repair-omitted">
-            <Name name={o.path} /> <span className="meta">({o.kind}, {o.code}, snapshots {o.snapshots.join(", ")})</span>{" "}
+            <Name name={o.path} /> <span className="meta">
+              {t("check.omittedMeta", { kind: o.kind, code: o.code, snapshots: o.snapshots.join(", ") })}
+            </span>{" "}
             <Prose text={o.reason} />
           </li>
         ))}
       </ul>
       {BigInt(total) > BigInt(items.length) && (
-        <p className="note">…and {(BigInt(total) - BigInt(items.length)).toString()} more.</p>
+        <p className="note">{t("common.andMore", { n: (BigInt(total) - BigInt(items.length)).toString() })}</p>
       )}
     </>
   );
@@ -586,28 +596,30 @@ function OmittedList({ items, total }: { items: RepairPlanView["omitted"]; total
 /** The plan as the core library made it, for review before any approval. */
 function PlanReview({ plan: p }: { plan: RepairPlanView }) {
   return (
-    <div className="panel" data-testid="repair-plan-view" data-outcome={p.outcome} data-exit={p.exit_code} role="group" aria-label="Repair plan">
-      <h3>Repair plan for {p.file_name}</h3>
+    <div className="panel" data-testid="repair-plan-view" data-outcome={p.outcome} data-exit={p.exit_code} role="group" aria-label={t("check.planGroup")}>
+      <h3>{t("check.planHeading", { file: p.file_name })}</h3>
       <p data-testid="repair-plan-line">
         <strong>{planLine(p)}</strong>
       </p>
       <p className="note">{PLAN_NOTE}</p>
       <dl className="report-facts">
-        <dt>Head</dt>
-        <dd>{p.head_seq === null ? "no valid head found" : `commit ${p.head_seq}, found by ${p.head_found_by ?? "?"}`}</dd>
+        <dt>{t("check.head")}</dt>
+        <dd>
+          {p.head_seq === null
+            ? t("check.headNone")
+            : t("check.headFound", { seq: p.head_seq, by: p.head_found_by ?? t("check.headFoundUnknown") })}
+        </dd>
         {p.tail_state && (
           <>
-            <dt>After the head</dt>
-            <dd>
-              {p.tail_state} ({p.tail_len} bytes)
-            </dd>
+            <dt>{t("check.afterHead")}</dt>
+            <dd>{t("check.afterHeadValue", { state: p.tail_state, len: p.tail_len ?? "" })}</dd>
           </>
         )}
         {p.chain_break_at !== null && (
           <>
-            <dt>Chain break</dt>
+            <dt>{t("check.chainBreak")}</dt>
             <dd>
-              before commit {p.chain_break_at}
+              {t("check.chainBreakBefore", { seq: p.chain_break_at })}
               {p.chain_break_reason && (
                 <>
                   : <Prose text={p.chain_break_reason} />
@@ -616,67 +628,81 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
             </dd>
           </>
         )}
-        <dt>Damage found while planning</dt>
-        <dd>{p.damage_found ? "yes" : "none in what the plan read (planning is not a verification)"}</dd>
+        <dt>{t("check.damage")}</dt>
+        <dd>{p.damage_found ? t("check.damageYes") : t("check.damageNone")}</dd>
       </dl>
-      <p>The §22 ladder:</p>
+      <p>{t("check.ladder")}</p>
       <ol className="ladder">
         {p.ladder.map((l) => (
           <li key={l.step} data-testid="ladder-step" data-step={l.step} data-status={l.status}>
-            {l.name}: <strong>{l.status.replaceAll("_", " ").toUpperCase()}</strong> — <Prose text={l.detail} />
+            {t("check.ladderStep", { name: l.name })}<strong>{l.status.replaceAll("_", " ").toUpperCase()}</strong> — <Prose text={l.detail} />
           </li>
         ))}
       </ol>
       <p>
-        Snapshots the new archive would hold ({p.snapshots.length}):{" "}
+        {t("check.snapshotsHeld", { n: p.snapshots.length })}
         {p.snapshots
-          .map((s) => `${s.seq}${s.trust === "chain" ? "" : ` (${s.trust.replaceAll("_", " ")})`}`)
-          .join(", ") || "none"}
+          .map((s) =>
+            s.trust === "chain" ? `${s.seq}` : t("check.snapshotTrust", { seq: s.seq, trust: s.trust.replaceAll("_", " ") }),
+          )
+          .join(", ") || t("check.snapshotsNone")}
       </p>
       {p.lost.length > 0 && (
-        <ul className="staged" aria-label="Snapshots not written">
+        <ul className="staged" aria-label={t("check.snapshotsNotWritten")}>
           {p.lost.map((l) => (
             <li key={l.seq} data-testid="repair-lost">
-              Snapshot {l.seq} would not be written <span className="meta">({l.code})</span> <Prose text={l.reason} />
+              {t("check.lostWould", { seq: l.seq })}
+              <span className="meta">({l.code})</span> <Prose text={l.reason} />
             </li>
           ))}
         </ul>
       )}
       {p.omitted.length > 0 && <OmittedList items={p.omitted} total={p.omitted_total} />}
       {p.manifest_failures > 0 && (
-        <p className="warning">{p.manifest_failures} recovery manifest(s) failed their checks; the plan works around them.</p>
+        <p className="warning">{t("check.manifestFailures", { n: p.manifest_failures })}</p>
       )}
       {p.retention?.state === "carried" && (
         <p data-testid="repair-retention">
-          Retention carried over: {p.retention.holds} hold(s){p.retention.holds_lost > 0 ? `, ${p.retention.holds_lost} lost with their snapshots` : ""},{" "}
-          {p.retention.expired} expired snapshot(s).
+          {t("check.retentionCarried", {
+            holds: p.retention.holds,
+            lost: p.retention.holds_lost > 0 ? t("check.retentionCarriedLost", { n: p.retention.holds_lost }) : "",
+            expired: p.retention.expired,
+          })}
         </p>
       )}
       {p.retention?.state === "unresolved" && (
         <p className="warning" data-testid="repair-retention">
-          Retention cannot be carried over ({p.retention.code}): <Prose text={p.retention.reason} />
+          {t("check.retentionCannot", { code: p.retention.code })}<Prose text={p.retention.reason} />
         </p>
       )}
       {p.parity && (
         <p>
-          Recovery record ({p.parity.declared_percent ?? "?"} %): {p.parity.shards_rebuilt} shard(s) rebuilt of{" "}
-          {p.parity.shards_damaged} damaged; {p.parity.groups_beyond_capacity} group(s) beyond its capacity.
+          {t("check.parity", {
+            percent: p.parity.declared_percent ?? t("check.parityUnknown"),
+            rebuilt: p.parity.shards_rebuilt,
+            damaged: p.parity.shards_damaged,
+            beyond: p.parity.groups_beyond_capacity,
+          })}
         </p>
       )}
       {p.copies.length > 0 && (
-        <ul className="staged" aria-label="Copies used">
+        <ul className="staged" aria-label={t("check.copiesUsed")}>
           {keyed(p.copies, (c) => c.file_name).map(({ key, item: c }) => (
             <li key={key} data-testid="repair-copy-status" data-status={c.status}>
-              {c.file_name}: {c.status.replaceAll("_", " ")}, {c.frames_donated} frame(s) supplied — <Prose text={c.detail} />
+              {t("check.copyStatus", { file: c.file_name, status: c.status.replaceAll("_", " "), frames: c.frames_donated })}
+              <Prose text={c.detail} />
             </li>
           ))}
         </ul>
       )}
       {p.salvage && (
         <p className={p.salvage.limit_reached ? "warning" : undefined}>
-          Salvage scan: {p.salvage.confirmed_commits} confirmed commit(s), {p.salvage.unconfirmed_commits} unconfirmed
-          (never written), {p.salvage.orphan_data_objects} data object(s) no commit references
-          {p.salvage.limit_reached ? "; it stopped at its limit, so it is incomplete" : ""}.
+          {t("check.salvageLine", {
+            confirmed: p.salvage.confirmed_commits,
+            unconfirmed: p.salvage.unconfirmed_commits,
+            orphans: p.salvage.orphan_data_objects,
+            limit: p.salvage.limit_reached ? t("check.salvageLimit") : "",
+          })}
         </p>
       )}
     </div>

@@ -8,8 +8,8 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import type { JobEvent } from "../ipc/jobs";
 import type { UpdateCheckView, UpdateOffer, UpdateSettingsView } from "../ipc/update";
-import { failureText, messages } from "./messages";
-import { Updates } from "./Updates";
+import { t } from "../i18n";
+import { failureText, Updates } from "./Updates";
 
 type Internals = { runCallback: (id: number, data: unknown) => void };
 const internals = () =>
@@ -207,7 +207,7 @@ describe("the update dialog", () => {
     backend({ check: { result: "available", offer: offer({ needs_admin_prompt: true }) } });
     render(<Updates />);
     await userEvent.click(await screen.findByTestId("update-check"));
-    expect(await screen.findByText(messages.adminPrompt)).toBeInTheDocument();
+    expect(await screen.findByText(t("update.adminPrompt"))).toBeInTheDocument();
   });
 });
 
@@ -228,7 +228,6 @@ describe("failures", () => {
 
   test("no wording calls anything verified, trusted, safe, or secure", () => {
     const all = [
-      ...Object.values(messages),
       failureText("offline", "x"),
       failureText("server", "x"),
       failureText("signature", "x"),

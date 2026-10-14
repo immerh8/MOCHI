@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Panel } from "../a11y/Panel";
+import { t, tn } from "../i18n";
+
 import {
   closeArchive,
   entryDetails,
@@ -33,11 +36,11 @@ import { Writer } from "../write/Writer";
 export const ROW_HEIGHT = 28;
 
 function profileText(a: ArchiveSummary): string {
-  const parts = ["Core"];
-  if (a.profile.tar_compatible) parts.push("TAR-compatible");
-  if (a.profile.encrypted) parts.push("Encrypted");
+  const parts = [t("browser.profileCore")];
+  if (a.profile.tar_compatible) parts.push(t("browser.profileTar"));
+  if (a.profile.encrypted) parts.push(t("browser.profileEncrypted"));
   if (a.profile.redundancy_percent !== null) {
-    parts.push(`recovery record (${a.profile.redundancy_percent}% parity)`);
+    parts.push(t("browser.profileRecovery", { percent: a.profile.redundancy_percent }));
   }
   return parts.join(", ");
 }
@@ -45,10 +48,10 @@ function profileText(a: ArchiveSummary): string {
 /** Retention wording for one commit. Unknown is said as unknown. */
 function retentionText(c: CommitView): string {
   const notes: string[] = [];
-  if (c.retained === null) notes.push("retention unknown");
-  else if (c.expired) notes.push("expired");
-  else if (!c.retained) notes.push("not retained");
-  return notes.join(", ");
+  if (c.retained === null) notes.push(t("browser.retentionUnknown"));
+  else if (c.expired) notes.push(t("browser.retentionExpired"));
+  else if (!c.retained) notes.push(t("browser.retentionNotRetained"));
+  return notes.join(t("browser.retentionSeparator"));
 }
 
 /** The snapshot timeline: every commit, newest first. */
@@ -63,7 +66,7 @@ function Timeline({
 }) {
   const head = commits.length - 1;
   return (
-    <ol className="timeline" aria-label="Snapshots" data-testid="timeline" reversed>
+    <ol className="timeline" aria-label={t("browser.timeline")} data-testid="timeline" reversed>
       {[...commits].reverse().map((c) => (
         <li key={c.seq}>
           <button
@@ -74,16 +77,18 @@ function Timeline({
             onClick={() => onSelect(c.seq)}
           >
             <span className="seq">
-              Commit {c.seq}
-              {c.seq === head ? " (head)" : ""}
+              {t(c.seq === head ? "browser.commitHead" : "browser.commit", { seq: c.seq })}
             </span>
             <span className="meta">
-              {c.time ?? "no time recorded"} · {c.checkpoint ? "checkpoint" : "delta"}
+              {c.time ?? t("browser.noTime")}
+              {t("browser.metaSeparator")}
+              {c.checkpoint ? t("browser.checkpoint") : t("browser.delta")}
             </span>
             {retentionText(c) && <span className="meta">{retentionText(c)}</span>}
             {c.holds.map((h) => (
               <span className="meta" key={h.text}>
-                hold: <Name name={h} />
+                {t("browser.hold")}
+                <Name name={h} />
               </span>
             ))}
           </button>
@@ -97,50 +102,51 @@ function Details({ details }: { details: EntryDetails }) {
   const a = details.attributes;
   return (
     <section aria-labelledby="details-heading" className="details" data-testid="details">
-      <h3 id="details-heading">Details</h3>
+      <h3 id="details-heading">{t("browser.details")}</h3>
       <dl>
-        <dt>Path</dt>
+        <dt>{t("browser.detailPath")}</dt>
         <dd data-testid="details-path">
           <Name name={details.path} />
         </dd>
-        <dt>Kind</dt>
-        <dd>{details.kind === "directory" ? "Folder" : "File"}</dd>
+        <dt>{t("browser.detailKind")}</dt>
+        <dd>{details.kind === "directory" ? t("common.folder") : t("common.file")}</dd>
         {details.kind === "file" && (
           <>
-            <dt>Size</dt>
+            <dt>{t("browser.detailSize")}</dt>
             <dd>{formatSize(details.size)}</dd>
-            <dt>Content hash (BLAKE3, as recorded)</dt>
+            <dt>{t("browser.detailHash")}</dt>
             <dd className="hash">{details.content_hash}</dd>
           </>
         )}
-        <dt>File version ID</dt>
+        <dt>{t("browser.detailVersionId")}</dt>
         <dd className="hash">{details.file_version_id}</dd>
         {a.state === "recorded" ? (
           <>
-            <dt>Permissions</dt>
+            <dt>{t("browser.detailPermissions")}</dt>
             <dd>
               {a.posix
-                ? `${formatMode(a.posix.mode)}, owner ${a.posix.uid}, group ${a.posix.gid}`
-                : "not recorded"}
+                ? t("browser.detailPosix", {
+                    mode: formatMode(a.posix.mode),
+                    uid: a.posix.uid,
+                    gid: a.posix.gid,
+                  })
+                : t("browser.detailNotRecorded")}
             </dd>
-            <dt>Windows attributes</dt>
-            <dd>{a.windows ? a.windows.join(", ") || "none set" : "not recorded"}</dd>
-            <dt>Modified</dt>
-            <dd>{a.mtime ?? "not recorded"}</dd>
+            <dt>{t("browser.detailWindows")}</dt>
+            <dd>{a.windows ? a.windows.join(", ") || t("browser.detailNoneSet") : t("browser.detailNotRecorded")}</dd>
+            <dt>{t("browser.detailModified")}</dt>
+            <dd>{a.mtime ?? t("browser.detailNotRecorded")}</dd>
           </>
         ) : (
           <>
-            <dt>Attributes</dt>
+            <dt>{t("browser.detailAttributes")}</dt>
             <dd role="note">
-              Not available ({a.error.code}): {a.error.message}
+              {t("browser.detailAttributesError", { code: a.error.code, message: a.error.message })}
             </dd>
           </>
         )}
       </dl>
-      <p className="note">
-        Browsing reads the archive's catalog, which was hash-checked when the snapshot was
-        opened. It does not read or check file content.
-      </p>
+      <p className="note">{t("browser.detailsNote")}</p>
     </section>
   );
 }
@@ -158,6 +164,9 @@ export function Browser() {
   const [details, setDetails] = useState<EntryDetails | null>(null);
   const [waiting, setWaiting] = useState<{ pending: number; fileName: string } | null>(null);
   // Set when the shell asked to extract (D6): the Extractor then shows its plan.
+  // Set when a folder was opened from the list by key or double click, so the
+  // new listing takes keyboard focus instead of dropping it on the page.
+  const [focusList, setFocusList] = useState(false);
   const [autoExtract, setAutoExtract] = useState<{ token: number; handle: number } | null>(null);
 
   const handle = open?.archive.handle ?? null;
@@ -167,7 +176,7 @@ export function Browser() {
   const total = counted?.id === listingId ? counted.total : null;
 
   const fail = useCallback((what: string) => (e: unknown) => setError(errorText(what, e)), []);
-  const listError = useCallback((e: unknown) => setError(errorText("Could not list", e)), []);
+  const listError = useCallback((e: unknown) => setError(errorText(t("browser.listFailed"), e)), []);
 
   // The current directory's size, which the list needs before it pages.
   useEffect(() => {
@@ -194,7 +203,8 @@ export function Browser() {
     [handle, seq, dir],
   );
 
-  const navigate = useCallback((to: Crumb[]) => {
+  const navigate = useCallback((to: Crumb[], fromList = false) => {
+    setFocusList(fromList);
     setPath(to);
     setSelected(null);
     setDetails(null);
@@ -204,7 +214,7 @@ export function Browser() {
     (row: EntryRow) => {
       if (handle === null || seq === null) return;
       setSelected(row.key);
-      entryDetails(handle, seq, row.key).then(setDetails, fail("Could not read details"));
+      entryDetails(handle, seq, row.key).then(setDetails, fail(t("browser.detailsFailed")));
     },
     [handle, seq, fail],
   );
@@ -234,7 +244,7 @@ export function Browser() {
       }
       await show(outcome.archive);
     } catch (e) {
-      setError(errorText("Could not open the archive", e));
+      setError(errorText(t("browser.openFailed"), e));
     } finally {
       setBusy(false);
     }
@@ -248,7 +258,7 @@ export function Browser() {
     try {
       await show(archive);
     } catch (e) {
-      setError(errorText("Could not open the archive", e));
+      setError(errorText(t("browser.openFailed"), e));
     }
   };
 
@@ -270,7 +280,7 @@ export function Browser() {
         setOpen({ archive, snapshot });
         navigate([]);
       } catch (e) {
-        setError(errorText("The commit was made, but the archive could not be shown", e));
+        setError(errorText(t("browser.adoptFailed"), e));
       }
     },
     [open, navigate],
@@ -298,7 +308,7 @@ export function Browser() {
       navigate([]);
       if (extract) setAutoExtract((a) => ({ token: (a?.token ?? 0) + 1, handle: archive.handle }));
     } catch (e) {
-      setError(errorText("Could not open the archive", e));
+      setError(errorText(t("browser.openFailed"), e));
     }
   };
   useEffect(() => {
@@ -329,7 +339,7 @@ export function Browser() {
       setOpen({ ...open, snapshot });
       navigate([]);
     } catch (e) {
-      setError(errorText(`Could not open commit ${to}`, e));
+      setError(errorText(t("browser.openCommitFailed", { seq: to }), e));
     } finally {
       setBusy(false);
     }
@@ -337,13 +347,15 @@ export function Browser() {
 
   return (
     <section aria-labelledby="browser-heading" className="browser">
-      <h2 id="browser-heading">Archive</h2>
+      <h2 id="browser-heading" tabIndex={-1}>
+        {t("browser.heading")}
+      </h2>
       <div className="actions">
         <button type="button" data-testid="open-archive" onClick={doOpen} disabled={busy}>
-          Open archive…
+          {t("browser.open")}
         </button>
         <button type="button" data-testid="close-archive" onClick={doClose} disabled={!open || busy}>
-          Close
+          {t("browser.close")}
         </button>
       </div>
       {error && (
@@ -352,20 +364,22 @@ export function Browser() {
         </p>
       )}
       {waiting && (
-        <div className="panel" role="group" aria-label="Passphrase" data-testid="unlock-panel">
-          <h3>
-            <Name name={{ text: waiting.fileName, verbatim: true }} /> is encrypted
-          </h3>
+        <Panel
+          label={t("browser.passphraseGroup")}
+          testId="unlock-panel"
+          fallbackId="browser-heading"
+          heading={t("browser.isEncrypted", { name: waiting.fileName })}
+        >
           <PassphraseForm
             testId="unlock"
-            label="Passphrase"
-            submitLabel="Open archive"
+            label={t("browser.unlockLabel")}
+            submitLabel={t("browser.unlockSubmit")}
             onSubmit={unlock}
             onCancel={giveUp}
           >
             <EncryptionNotes creating={false} />
           </PassphraseForm>
-        </div>
+        </Panel>
       )}
       <Writer
         archive={open?.archive ?? null}
@@ -389,19 +403,25 @@ export function Browser() {
         }}
       />
       <Checker archive={open?.archive ?? null} />
-      {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
+      {!open && !error && <p data-testid="browse-empty">{t("browser.empty")}</p>}
       {open && (
         <>
           <p className="archive-meta" data-testid="archive-meta">
-            <strong>{open.archive.file_name}</strong> · {profileText(open.archive)} ·{" "}
-            {open.archive.commits.length} commit{open.archive.commits.length === 1 ? "" : "s"} ·
-            archive ID <span className="hash">{open.archive.archive_id}</span>
+            <strong>{open.archive.file_name}</strong>
+            {t("browser.metaSeparator")}
+            {profileText(open.archive)}
+            {t("browser.metaSeparator")}
+            {tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
+              n: open.archive.commits.length,
+            })}
+            {t("browser.metaSeparator")}
+            {t("browser.metaArchiveId")} <span className="hash">{open.archive.archive_id}</span>
           </p>
           {open.archive.profile.encrypted && (
             <details className="note" data-testid="encrypted-note">
-              <summary>Encrypted archive: what is sealed and what stays visible</summary>
+              <summary>{t("browser.encryptedSummary")}</summary>
               <p>{HIDDEN_WITH_KEY}</p>
-              <p>Visible to anyone who has the file, without the passphrase:</p>
+              <p>{t("browser.visibleWithoutKeyIntro")}</p>
               <ul>
                 {VISIBLE_WITHOUT_KEY.map((v) => (
                   <li key={v}>{v}</li>
@@ -412,14 +432,15 @@ export function Browser() {
           )}
           {open.archive.retention_error && (
             <p role="note" className="warning">
-              Retention could not be determined ({open.archive.retention_error.code}):{" "}
-              {open.archive.retention_error.message}
+              {t("browser.retentionError", {
+                code: open.archive.retention_error.code,
+                message: open.archive.retention_error.message,
+              })}
             </p>
           )}
           {open.snapshot.catalog_source.source === "snapshot_manifest" && (
             <p role="note" className="warning" data-testid="catalog-note">
-              This commit's catalog image is damaged; the listing was rebuilt from the same
-              commit's snapshot manifest ({open.snapshot.catalog_source.image_error.code}).
+              {t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}
             </p>
           )}
           <div className="panes">
@@ -437,23 +458,27 @@ export function Browser() {
               onError={listError}
             />
             <div className="listing">
-              <nav aria-label="Current folder" className="crumbs" data-testid="crumbs">
+              <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
                 <button type="button" className="link" onClick={() => navigate([])}>
-                  Commit {open.snapshot.seq}
+                  {t("browser.commit", { seq: open.snapshot.seq })}
                 </button>
                 {path.map((c, i) => (
                   <span key={c.key}>
-                    {" / "}
+                    {t("common.nameSeparator")}
                     <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
                       <Name name={c.name} />
                     </button>
                   </span>
                 ))}
               </nav>
-              <p className="count" data-testid="entry-count">
+              <p className="count" data-testid="entry-count" id="entry-count">
                 {total === null
-                  ? "Loading…"
-                  : `${total.toLocaleString("en-US")} ${total === 1 ? "entry" : "entries"} in this folder; ${open.snapshot.entries.toLocaleString("en-US")} in the snapshot`}
+                  ? t("common.loading")
+                  : t("browser.entryCount", {
+                      total: total.toLocaleString("en-US"),
+                      noun: t(total === 1 ? "common.entryOne" : "common.entryMany"),
+                      snapshot: open.snapshot.entries.toLocaleString("en-US"),
+                    })}
               </p>
               {total !== null && (
                 <VirtualList
@@ -461,28 +486,31 @@ export function Browser() {
                   total={total}
                   rowHeight={ROW_HEIGHT}
                   loadPage={loadPage}
-                  label="Folder contents"
+                  label={t("browser.folderContents")}
+                  hintId="entry-hint"
+                  focusFirst={focusList}
                   testId="entries"
                   onError={listError}
-                  renderRow={(row: EntryRow) => (
+                  renderRow={(row: EntryRow, _index: number, tabIndex: 0 | -1) => (
                     <button
                       type="button"
                       className={row.key === selected ? "entry selected" : "entry"}
                       data-testid="entry"
                       data-kind={row.kind}
                       aria-pressed={row.key === selected}
+                      tabIndex={tabIndex}
                       onClick={() => select(row)}
                       onDoubleClick={() => {
-                        if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }]);
+                        if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && row.kind === "directory") {
                           e.preventDefault();
-                          navigate([...path, { key: row.key, name: row.name }]);
+                          navigate([...path, { key: row.key, name: row.name }], true);
                         }
                       }}
                     >
-                      <span className="kind" aria-label={row.kind === "directory" ? "Folder" : "File"}>
+                      <span className="kind" aria-label={row.kind === "directory" ? t("common.folder") : t("common.file")}>
                         {row.kind === "directory" ? "▣" : "▢"}
                       </span>
                       <span className="entry-name">
@@ -490,13 +518,16 @@ export function Browser() {
                       </span>
                       <span className="size">
                         {row.kind === "directory"
-                          ? `${(row.child_dirs + row.child_files).toLocaleString("en-US")} items`
+                          ? t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") })
                           : shortSize(row.size)}
                       </span>
                     </button>
                   )}
                 />
               )}
+              <p className="note" id="entry-hint">
+                {t("browser.listHint")}
+              </p>
             </div>
             {details && <Details details={details} />}
           </div>

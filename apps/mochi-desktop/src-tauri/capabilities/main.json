@@ -35,6 +35,11 @@
     "allow-unlock-check-subject",
     "allow-get-update-settings",
     "allow-set-update-settings",
-    "allow-check-for-update"
+    "allow-check-for-update",
+    "allow-get-crash-settings",
+    "allow-set-crash-settings",
+    "allow-read-crash-log",
+    "allow-export-crash-log",
+    "allow-clear-crash-log"
   ]
 }

@@ -5,7 +5,26 @@ import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
 import type { JobEvent } from "../ipc/jobs";
 import { checkForUpdate, getUpdateSettings, setUpdateSettings } from "../ipc/update";
 import type { UpdateOffer, UpdateSettingsView } from "../ipc/update";
-import { available, failureText, fill, messages as m, upToDate } from "./messages";
+import { t } from "../i18n";
+import type { UpdateFailureKind } from "../ipc/update";
+
+/** One sentence per kind of failure; the network's own words go in as a parameter, as text. */
+export function failureText(kind: UpdateFailureKind, detail: string): string {
+  switch (kind) {
+    case "offline":
+      return t("update.failOffline");
+    case "server":
+      return t("update.failServer", { detail });
+    case "signature":
+      return t("update.failSignature");
+    case "install":
+      return t("update.failInstall", { detail });
+    case "unavailable":
+      return t("update.failUnavailable", { detail });
+    case "other":
+      return t("update.failOther", { detail });
+  }
+}
 
 type View =
   | { state: "idle" }
@@ -73,7 +92,7 @@ export function Updates() {
         }
       },
       () => {
-        if (live) setError(m.loadFailed);
+        if (live) setError(t("update.loadFailed"));
       },
     );
     return () => {
@@ -87,7 +106,7 @@ export function Updates() {
     try {
       setSettings(await setUpdateSettings(on));
     } catch {
-      setError(m.saveFailed);
+      setError(t("update.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -105,7 +124,7 @@ export function Updates() {
           const o = event.outcome;
           if (o.status === "completed") return { state: "installed", version: prev.offer.version };
           if (o.status === "cancelled") return { state: "cancelled" };
-          return { state: "failed", text: `${m.installFailed}: ${o.message}` };
+          return { state: "failed", text: t("update.installFailed", { message: o.message }) };
         }
       }
     });
@@ -117,7 +136,7 @@ export function Updates() {
     startJob({ kind: "install_update", version: offer.version }, onEvent).catch((e: unknown) => {
       setView({
         state: "failed",
-        text: `${m.installFailed}: ${isIpcError(e) ? e.message : "could not start"}`,
+        text: t("update.installFailed", { message: isIpcError(e) ? e.message : t("update.couldNotStart") }),
       });
     });
   };
@@ -133,14 +152,14 @@ export function Updates() {
   const busy = view.state === "checking" || view.state === "installing";
 
   return (
-    <section aria-labelledby={headingId}>
-      <h2 id={headingId}>{m.heading}</h2>
-      <p>{m.intro}</p>
-      <p>{m.signing}</p>
-      {settings && <p data-testid="update-version">{fill(m.version, { current: settings.current_version })}</p>}
+    <div role="group" aria-labelledby={headingId} data-testid="updates">
+      <h3 id={headingId}>{t("update.heading")}</h3>
+      <p>{t("update.intro")}</p>
+      <p>{t("update.signing")}</p>
+      {settings && <p data-testid="update-version">{t("update.version", { current: settings.current_version })}</p>}
       <div className="actions">
         <button type="button" data-testid="update-check" onClick={() => void runCheck(false)} disabled={busy}>
-          {m.check}
+          {t("update.check")}
         </button>
       </div>
       <p>
@@ -152,16 +171,16 @@ export function Updates() {
             disabled={settings === null || saving}
             onChange={(e) => void toggle(e.target.checked)}
           />{" "}
-          {m.startup}
+          {t("update.startup")}
         </label>
       </p>
-      {settings && <p>{settings.check_on_start ? m.startupOn : m.startupOff}</p>}
+      {settings && <p>{settings.check_on_start ? t("update.startupOn") : t("update.startupOff")}</p>}
       {error && <p role="alert">{error}</p>}
       <p role="status" data-testid="update-status" data-state={view.state}>
-        {view.state === "checking" && m.checking}
-        {view.state === "up_to_date" && upToDate(view.current)}
-        {view.state === "cancelled" && m.cancelled}
-        {view.state === "installed" && fill(m.installedRestart, { version: view.version })}
+        {view.state === "checking" && t("update.checking")}
+        {view.state === "up_to_date" && t("update.upToDate", { current: view.current })}
+        {view.state === "cancelled" && t("update.cancelled")}
+        {view.state === "installed" && t("update.installedRestart", { version: view.version })}
       </p>
       {view.state === "failed" && (
         <p role="alert" data-testid="update-failed">
@@ -169,29 +188,29 @@ export function Updates() {
         </p>
       )}
       {(view.state === "available" || view.state === "installing") && (
-        <div role="group" aria-label={m.dialogLabel} data-testid="update-dialog">
-          <h3>{available(view.offer)}</h3>
+        <div role="group" aria-label={t("update.dialogLabel")} data-testid="update-dialog">
+          <h4>{t("update.available", { version: view.offer.version, current: view.offer.current_version })}</h4>
           {view.offer.date && <p>{view.offer.date}</p>}
-          <h4 id={notesId}>{m.notesHeading}</h4>
+          <h5 id={notesId}>{t("update.notesHeading")}</h5>
           {/* Remote text: a text node inside <pre>, never markup. */}
           <pre aria-labelledby={notesId} data-testid="update-notes" className="update-notes">
-            {view.offer.notes ?? m.notesNone}
+            {view.offer.notes ?? t("update.notesNone")}
           </pre>
-          {view.offer.notes_truncated && <p>{m.notesCut}</p>}
+          {view.offer.notes_truncated && <p>{t("update.notesCut")}</p>}
           {view.offer.install_mode === "manual" ? (
             <>
-              <p>{m.manual}</p>
+              <p>{t("update.manual")}</p>
               <p data-testid="update-page">{view.offer.download_page}</p>
               <div className="actions">
                 <button type="button" onClick={() => setView({ state: "idle" })}>
-                  {m.later}
+                  {t("update.later")}
                 </button>
               </div>
             </>
           ) : (
             <>
-              {view.offer.needs_admin_prompt && <p>{m.adminPrompt}</p>}
-              <p>{m.closesApp}</p>
+              {view.offer.needs_admin_prompt && <p>{t("update.adminPrompt")}</p>}
+              <p>{t("update.closesApp")}</p>
               <div className="actions">
                 <button
                   type="button"
@@ -199,11 +218,11 @@ export function Updates() {
                   disabled={view.state === "installing"}
                   onClick={() => install(view.offer)}
                 >
-                  {m.install}
+                  {t("update.install")}
                 </button>
                 {view.state === "available" ? (
                   <button type="button" data-testid="update-later" onClick={() => setView({ state: "idle" })}>
-                    {m.later}
+                    {t("update.later")}
                   </button>
                 ) : (
                   <button
@@ -212,7 +231,7 @@ export function Updates() {
                     onClick={cancel}
                     disabled={view.jobId === null || view.cancelRequested}
                   >
-                    {m.cancel}
+                    {t("update.cancel")}
                   </button>
                 )}
               </div>
@@ -223,8 +242,8 @@ export function Updates() {
               <progress data-testid="update-progress" value={view.done} max={view.total ?? undefined} />
               <span data-testid="update-progress-text">
                 {view.total === null
-                  ? fill(m.installingBytes, { size: formatSize(String(view.done)) })
-                  : fill(m.installingOf, {
+                  ? t("update.installingBytes", { size: formatSize(String(view.done)) })
+                  : t("update.installingOf", {
                       size: formatSize(String(view.done)),
                       total: formatSize(String(view.total)),
                     })}
@@ -233,6 +252,6 @@ export function Updates() {
           )}
         </div>
       )}
-    </section>
+    </div>
   );
 }
