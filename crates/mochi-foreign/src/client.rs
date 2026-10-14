@@ -248,7 +248,6 @@ impl ForeignClient {
         self
     }
 
-
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
@@ -1065,5 +1064,114 @@ mod tests {
         let mut c = Collector::new(Op::List, Limits::default());
         c.push(fmt()).unwrap();
         assert!(c.into_list().is_err());
+    }
+
+    fn many(wanted: &[u64]) -> Collector {
+        Collector::new_many(Limits::default(), wanted.to_vec())
+    }
+
+    fn result(i: u64) -> Message {
+        Message::Result {
+            index: i,
+            outcome: EntryOutcome::NoEntryCheck,
+        }
+    }
+
+    #[test]
+    fn read_many_accepts_any_order_of_the_requested_set() {
+        // Blocks of a 7z archive are decoded in an order of their own.
+        let mut c = many(&[1, 4, 7]);
+        for m in [
+            fmt(),
+            Message::Entry(entry(7)),
+            Message::Data(vec![1]),
+            result(7),
+            Message::Entry(entry(1)),
+            result(1),
+            Message::Entry(entry(4)),
+            Message::Data(vec![2, 3]),
+            result(4),
+            Message::StreamCheck(StreamCheck::NotApplicable),
+            done(),
+        ] {
+            c.push(m).unwrap();
+        }
+        assert_eq!(c.into_read_many().unwrap().delivered, 3);
+    }
+
+    #[test]
+    fn read_many_rejects_what_the_parent_did_not_ask_for_or_got_twice() {
+        let ok = |m: Vec<Message>| !rejects_many(&[1, 4], m);
+        assert!(!ok(vec![fmt(), Message::Entry(entry(2))]), "not requested");
+        assert!(
+            !ok(vec![
+                fmt(),
+                Message::Entry(entry(1)),
+                result(1),
+                Message::Entry(entry(1))
+            ]),
+            "twice"
+        );
+        assert!(
+            !ok(vec![
+                fmt(),
+                Message::Entry(entry(1)),
+                Message::Entry(entry(4))
+            ]),
+            "entry before the previous result"
+        );
+        assert!(
+            !ok(vec![fmt(), Message::Data(vec![1])]),
+            "data outside an entry"
+        );
+        assert!(
+            !ok(vec![fmt(), Message::Entry(entry(1)), result(4)]),
+            "wrong result"
+        );
+        assert!(!ok(vec![fmt(), result(1)]), "result without an entry");
+        assert!(ok(vec![
+            fmt(),
+            Message::Entry(entry(1)),
+            Message::Data(vec![1]),
+            result(1)
+        ]));
+    }
+
+    fn rejects_many(wanted: &[u64], msgs: Vec<Message>) -> bool {
+        let mut c = many(wanted);
+        msgs.into_iter().any(|m| c.push(m).is_err())
+    }
+
+    #[test]
+    fn read_many_needs_every_requested_entry_unless_the_run_stopped_early() {
+        let mut c = many(&[1, 4]);
+        for m in [fmt(), Message::Entry(entry(1)), result(1), done()] {
+            c.push(m).unwrap();
+        }
+        assert!(c.into_read_many().is_err(), "an entry went missing");
+        let mut c = many(&[1, 4]);
+        for m in [
+            fmt(),
+            Message::Entry(entry(1)),
+            result(1),
+            Message::Done(Done {
+                complete: false,
+                entries: 1,
+                bytes_out: 0,
+                stop_reason: Some("limit".into()),
+            }),
+        ] {
+            c.push(m).unwrap();
+        }
+        assert_eq!(
+            c.into_read_many().unwrap().delivered,
+            1,
+            "an early stop is allowed to deliver fewer"
+        );
+        let mut c = many(&[1]);
+        for m in [fmt(), Message::Entry(entry(1)), done()] {
+            c.push(m).unwrap();
+        }
+        assert!(c.into_read_many().is_err(), "an entry without its result");
     }
 }

@@ -149,3 +149,9 @@ struct.pack_into("<I", raw, 8, zlib.crc32(bytes(raw[12:32])))
 wr("lzma_huge_dict.7z", bytes(raw))
 os.remove(os.path.join(OUT, "lzma_raw_header.7z"))
 print("ok2")
+
+# --- an AES-256 ZIP written by 7-Zip (interop for the `zip` crate's reader) ---
+# Slice 1 could only test AES-ZIP against the same library's writer; 7-Zip
+# writes WinZip-style AES, so this is the interop evidence.
+sz("zip_aes256_7zip.zip", ["-tzip", "-mem=AES256"], BASIC, password="SECRET")
+print("ok3")

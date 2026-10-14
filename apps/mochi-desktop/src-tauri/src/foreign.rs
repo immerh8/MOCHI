@@ -90,7 +90,6 @@ fn mochi_error(e: &ForeignError) -> MochiError {
     let code = match e.code {
         mochi_foreign::ErrorCode::Cancelled => ErrorCode::Cancelled,
         c if c.is_unsupported() => ErrorCode::UnsupportedFeature,
-        mochi_foreign::ErrorCode::OpenFailed => ErrorCode::IoError,
         _ => ErrorCode::IoError,
     };
     MochiError::new(code, format!("{}: {}", e.code.as_str(), e.message))
@@ -123,7 +122,9 @@ pub struct Foreign {
 
 fn checks_text(f: ForeignFormat) -> &'static str {
     match f {
-        ForeignFormat::Zip => "CRC32 per entry (AES-encrypted entries: the AES authentication code)",
+        ForeignFormat::Zip => {
+            "CRC32 per entry (AES-encrypted entries: the AES authentication code)"
+        }
         ForeignFormat::SevenZ => "CRC32 per entry",
         ForeignFormat::Rar => "CRC32 or BLAKE2sp per entry, as each entry records",
         ForeignFormat::Tar => "no per-entry check",
@@ -359,7 +360,10 @@ impl Foreign {
                 reason,
             });
         };
-        for r in plan.refusals.iter().filter(|r| r.reason.code() == ErrorCode::NameUnsupported)
+        for r in plan
+            .refusals
+            .iter()
+            .filter(|r| r.reason.code() == ErrorCode::NameUnsupported)
         {
             push(NameText::of(&r.name), r.reason.code(), r.reason.describe());
         }
@@ -473,7 +477,11 @@ impl Foreign {
             "read {} entr{} of the {} archive; {} problem{}{}. This reports the checks the \
              format has; it is not a verification of the archive",
             report.entries.len(),
-            if report.entries.len() == 1 { "y" } else { "ies" },
+            if report.entries.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
             report.format.label(),
             problems_total,
             if problems_total == 1 { "" } else { "s" },
@@ -550,7 +558,10 @@ impl Foreign {
                     // job ends as cancelled.
                     if ctx.cancel.is_cancelled() || e.code == mochi_foreign::ErrorCode::Cancelled {
                         restorer.abandon("cancelled");
-                        return Err(MochiError::new(ErrorCode::Cancelled, "extraction cancelled"));
+                        return Err(MochiError::new(
+                            ErrorCode::Cancelled,
+                            "extraction cancelled",
+                        ));
                     }
                     if let Some(me) = sink_error {
                         restorer.abandon("the destination refused the write");
@@ -631,7 +642,9 @@ impl RestoreSink<'_, '_, '_> {
 
 impl ReadManySink for RestoreSink<'_, '_, '_> {
     fn begin(&mut self, info: &EntryInfo) -> io::Result<()> {
-        self.restorer.begin_file(info.index).map_err(|e| self.fail(e))
+        self.restorer
+            .begin_file(info.index)
+            .map_err(|e| self.fail(e))
     }
 
     fn data(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -665,7 +678,9 @@ fn kind_view(k: ForeignKind) -> ForeignKindView {
 }
 
 fn row(s: &Session, r: &TreeRow) -> ForeignRow {
-    let info = r.index.and_then(|i| s.entries.get(usize::try_from(i).ok()?));
+    let info = r
+        .index
+        .and_then(|i| s.entries.get(usize::try_from(i).ok()?));
     let encryption = info
         .filter(|e| e.encryption != mochi_foreign::Encryption::None)
         .map(|e| e.encryption.label());
@@ -795,7 +810,10 @@ mod tests {
                 .status()
                 .unwrap()
                 .success();
-            assert!(ok && path.exists(), "could not build the helper at {path:?}");
+            assert!(
+                ok && path.exists(),
+                "could not build the helper at {path:?}"
+            );
         }
         path
     }
@@ -837,11 +855,7 @@ mod tests {
         page.entries.iter().map(|e| e.name.text.clone()).collect()
     }
 
-    fn run(
-        f: &Foreign,
-        d: &Dest,
-        req: &JobRequest,
-    ) -> std::result::Result<JobDone, MochiError> {
+    fn run(f: &Foreign, d: &Dest, req: &JobRequest) -> std::result::Result<JobDone, MochiError> {
         f.validate(&d.destination, req)?;
         let job = Job::new();
         f.run(&d.destination, req, &job.ctx())
@@ -871,7 +885,12 @@ mod tests {
         assert_eq!(names(&root), vec!["empty", "sub", "a.txt"]);
         assert_eq!(root.entries[1].child_files, 1);
         let sub = f
-            .children(s.handle, Some(&root.entries[1].key.clone().unwrap()), 0, 100)
+            .children(
+                s.handle,
+                Some(&root.entries[1].key.clone().unwrap()),
+                0,
+                100,
+            )
             .unwrap();
         assert_eq!(names(&sub), vec!["b.txt"]);
         assert_eq!(sub.entries[0].size.as_deref(), Some("600"));
@@ -894,7 +913,11 @@ mod tests {
             .find(|e| e.name.text.contains("evil.txt"))
             .unwrap();
         assert!(evil.key.is_none(), "a refused name cannot be selected");
-        assert!(evil.note.as_deref().unwrap().contains("will not be extracted"));
+        assert!(evil
+            .note
+            .as_deref()
+            .unwrap()
+            .contains("will not be extracted"));
     }
 
     #[test]
@@ -903,7 +926,11 @@ mod tests {
         let p = fx("7z/enc_names.7z");
         let e = f.open(&p, None).unwrap_err();
         assert_eq!(e.code, "PASSWORD_REQUIRED");
-        assert_eq!(f.pending().as_deref(), Some(p.as_path()), "kept for the retry");
+        assert_eq!(
+            f.pending().as_deref(),
+            Some(p.as_path()),
+            "kept for the retry"
+        );
         assert_eq!(f.open_count(), 0, "nothing is open");
         let e = f.open(&p, Some(b"nope".to_vec())).unwrap_err();
         assert_eq!(e.code, "WRONG_PASSWORD");
@@ -943,7 +970,11 @@ mod tests {
         }
         for w in ["pass", "verified", "healthy", "intact"] {
             // "passed" appears nowhere either: only the check's own words.
-            assert!(!done.summary.to_lowercase().contains(w), "{w}: {}", done.summary);
+            assert!(
+                !done.summary.to_lowercase().contains(w),
+                "{w}: {}",
+                done.summary
+            );
         }
     }
 
@@ -956,8 +987,15 @@ mod tests {
             .unwrap()
             .foreign_test
             .unwrap();
-        assert!(r.stream_check.contains("gzip stream CRC32 matched"), "{}", r.stream_check);
-        assert!(r.checks.iter().any(|c| c.what.contains("no per-entry check")));
+        assert!(
+            r.stream_check.contains("gzip stream CRC32 matched"),
+            "{}",
+            r.stream_check
+        );
+        assert!(r
+            .checks
+            .iter()
+            .any(|c| c.what.contains("no per-entry check")));
         let bad = f.open(&fx("gz_crc_corrupt.tar.gz"), None).unwrap();
         let r = run(&f, &d, &JobRequest::TestForeign { handle: bad.handle })
             .unwrap()
@@ -987,7 +1025,12 @@ mod tests {
         assert!(done.summary.contains("CRC32 matched"), "{}", done.summary);
         assert!(done.summary.contains("not a verification"));
         // A second run collides with everything and writes nothing new.
-        let again = run(&f, &d, &extract(s.handle, &[], ConflictChoice::SkipConflicts)).unwrap();
+        let again = run(
+            &f,
+            &d,
+            &extract(s.handle, &[], ConflictChoice::SkipConflicts),
+        )
+        .unwrap();
         assert!(again.extract.unwrap().not_extracted_total > 0);
         assert_eq!(std::fs::read(d.dir.join("a.txt")).unwrap(), b"hello\n");
     }
@@ -1014,8 +1057,16 @@ mod tests {
                 .collect();
             let s = f.open(&fx(name), None).unwrap();
             let plan = f.plan(&d.destination, None, s.handle, &[]).unwrap();
-            assert!(plan.plan.conflicts_total >= 1, "{name}: the plan names what is refused");
-            let done = run(&f, &d, &extract(s.handle, &[], ConflictChoice::SkipConflicts)).unwrap();
+            assert!(
+                plan.plan.conflicts_total >= 1,
+                "{name}: the plan names what is refused"
+            );
+            let done = run(
+                &f,
+                &d,
+                &extract(s.handle, &[], ConflictChoice::SkipConflicts),
+            )
+            .unwrap();
             let r = done.extract.unwrap();
             assert!(r.not_extracted_total >= 1, "{name}");
             let after: Vec<_> = std::fs::read_dir(&parent)
@@ -1047,7 +1098,12 @@ mod tests {
         let s = f.open(&fx("traversal.tar"), None).unwrap();
         let plan = f.plan(&d.destination, None, s.handle, &[]).unwrap();
         assert!(plan.skipped_kinds >= 2, "symlink, hard link, device, fifo");
-        run(&f, &d, &extract(s.handle, &[], ConflictChoice::SkipConflicts)).unwrap();
+        run(
+            &f,
+            &d,
+            &extract(s.handle, &[], ConflictChoice::SkipConflicts),
+        )
+        .unwrap();
         fn any_link(p: &Path) -> bool {
             std::fs::read_dir(p).unwrap().any(|e| {
                 let e = e.unwrap();
@@ -1062,8 +1118,15 @@ mod tests {
     fn a_wrong_password_extracts_no_encrypted_file_and_no_partial_output() {
         let f = service();
         let d = dest();
-        let s = f.open(&fx("7z/enc_data.7z"), Some(b"not-it".to_vec())).unwrap();
-        let done = run(&f, &d, &extract(s.handle, &[], ConflictChoice::SkipConflicts)).unwrap();
+        let s = f
+            .open(&fx("7z/enc_data.7z"), Some(b"not-it".to_vec()))
+            .unwrap();
+        let done = run(
+            &f,
+            &d,
+            &extract(s.handle, &[], ConflictChoice::SkipConflicts),
+        )
+        .unwrap();
         let r = done.extract.unwrap();
         // The two encrypted files are reported; only the empty one (no data,
         // so nothing to decrypt) exists, and no temporary file is left.
@@ -1085,7 +1148,9 @@ mod tests {
         assert_eq!(left, vec!["zero.txt".to_string()], "{left:?}");
         // The right password extracts.
         let d2 = dest();
-        let ok = f.open(&fx("7z/enc_data.7z"), Some(b"SECRET".to_vec())).unwrap();
+        let ok = f
+            .open(&fx("7z/enc_data.7z"), Some(b"SECRET".to_vec()))
+            .unwrap();
         let done = run(&f, &d2, &extract(ok.handle, &[], ConflictChoice::Stop)).unwrap();
         assert_eq!(done.extract.unwrap().files, 3);
     }
@@ -1095,10 +1160,18 @@ mod tests {
         let f = service();
         let d = dest();
         let s = f.open(&fx("7z/crc_corrupt.7z"), None).unwrap();
-        let done = run(&f, &d, &extract(s.handle, &[], ConflictChoice::SkipConflicts)).unwrap();
+        let done = run(
+            &f,
+            &d,
+            &extract(s.handle, &[], ConflictChoice::SkipConflicts),
+        )
+        .unwrap();
         let r = done.extract.unwrap();
         assert_eq!(r.not_extracted_total, 1);
-        assert!(r.not_extracted[0].reason.text.contains("CRC32 did NOT match"));
+        assert!(r.not_extracted[0]
+            .reason
+            .text
+            .contains("CRC32 did NOT match"));
         assert!(!d.dir.join("sub/b.txt").exists());
         assert!(d.dir.join("a.txt").exists());
     }
@@ -1127,12 +1200,20 @@ mod tests {
             cancel: &cancel,
         };
         let e = f
-            .run(&d.destination, &extract(s.handle, &[], ConflictChoice::Stop), &ctx)
+            .run(
+                &d.destination,
+                &extract(s.handle, &[], ConflictChoice::Stop),
+                &ctx,
+            )
             .err()
             .unwrap();
         assert_eq!(e.code, ErrorCode::Cancelled);
         let e = f
-            .run(&d.destination, &JobRequest::TestForeign { handle: s.handle }, &ctx)
+            .run(
+                &d.destination,
+                &JobRequest::TestForeign { handle: s.handle },
+                &ctx,
+            )
             .err()
             .unwrap();
         assert_eq!(e.code, ErrorCode::Cancelled);
@@ -1147,9 +1228,14 @@ mod tests {
             ..dest()
         };
         let s = f.open(&fx("basic.tar"), None).unwrap();
-        assert!(f.validate(&d.destination, &JobRequest::TestForeign { handle: 99 }).is_err());
         assert!(f
-            .validate(&Destination::default(), &extract(s.handle, &[], ConflictChoice::Stop))
+            .validate(&d.destination, &JobRequest::TestForeign { handle: 99 })
+            .is_err());
+        assert!(f
+            .validate(
+                &Destination::default(),
+                &extract(s.handle, &[], ConflictChoice::Stop)
+            )
             .is_err());
         assert!(f
             .validate(

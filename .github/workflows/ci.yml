@@ -34,6 +34,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
+      # D8: the pinned foreign-format corpus is also extracted by independent
+      # tools (7-Zip, Info-ZIP unzip, GNU tar) and compared byte for byte.
+      # Ubuntu requires them (MOCHI_REQUIRE_TOOLS); Windows has 7-Zip and
+      # bsdtar preinstalled and skips what it lacks (unzip).
+      - name: Independent extractors for the foreign-format corpus (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends p7zip-full unzip
+          echo "MOCHI_REQUIRE_TOOLS=1" >> "$GITHUB_ENV"
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -143,6 +152,10 @@ jobs:
       - name: Build the app with the UI embedded
         # `e2e`: test builds only; lets msedgedriver configure WebView2 (src/automation.rs).
         run: cargo build --locked -p mochi-desktop --features custom-protocol,e2e
+      - name: Build the foreign-format helper next to the app (D8)
+        # The app starts mochi-foreign-helper from its own directory; the
+        # foreign-archive spec needs it there.
+        run: cargo build --locked -p mochi-foreign
       - name: Write the archives the D1 browse spec opens
         shell: bash
         run: cargo run --locked --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures

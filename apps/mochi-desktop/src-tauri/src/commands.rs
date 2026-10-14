@@ -12,8 +12,8 @@ use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{
     ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan,
-    ForeignArchiveSummary, ForeignChildrenPage, ForeignExtractPlan, IpcError,
-    JobEvent, JobId, JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
+    ForeignArchiveSummary, ForeignChildrenPage, ForeignExtractPlan, IpcError, JobEvent, JobId,
+    JobRequest, PathKey, SnapshotView, SourcePick, StageOutcome, StagedView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::write::{DropSink, DropWatch, Staging};
