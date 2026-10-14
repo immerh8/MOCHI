@@ -1427,7 +1427,7 @@ Before claiming preservation readiness, demonstrate:
 
 Until these gates pass, implementations MUST describe support as experimental or draft-compatible.
 
-**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). The independent results R9 (G14) are met (2026-10-13). R7 (G15) is pending, so the description above still applies.
+**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). The independent results R9 (G14) are met (2026-10-13). R7 is frozen (G15 met 2026-10-14). The 1.0 flip (W20, D24) has not been made, so the description above still applies.
 
 ## 29. Summary of Changes from v1.2
 
