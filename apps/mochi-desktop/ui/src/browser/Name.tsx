@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { NameText } from "../ipc/browse";
 
 /**
@@ -11,12 +12,8 @@ export function Name({ name }: { name: NameText }) {
     <>
       <span className="name">{name.text}</span>
       {!name.verbatim && (
-        <span
-          className="escaped"
-          title="Shown with escapes: the stored name has control characters, direction overrides, a backslash, or bytes that are not UTF-8."
-        >
-          {" "}
-          (escaped)
+        <span className="escaped" title={t("common.escapedHint")}>
+          {t("common.escapedMarker")}
         </span>
       )}
     </>

@@ -1,19 +1,20 @@
 // Presentation helpers. Sizes arrive as decimal strings (an archive may
 // claim values above 2^53), so they are handled as BigInt.
+import { t } from "../i18n";
 import { isIpcError } from "../ipc/jobs";
 
 const UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
 
-/** "1,234 bytes", or "1.5 MiB (1,572,864 bytes)" from 1 KiB up. */
-export function formatSize(decimal: string): string {
+/** The exact byte count, and (from 1 KiB up) the same size in binary units. */
+function sizeParts(decimal: string): { exact: string; human: string | null } | string {
   let n: bigint;
   try {
     n = BigInt(decimal);
   } catch {
     return decimal;
   }
-  const exact = `${n.toLocaleString("en-US")} ${n === 1n ? "byte" : "bytes"}`;
-  if (n < 1024n) return exact;
+  const exact = t(n === 1n ? "common.byteOne" : "common.bytesMany", { n: n.toLocaleString("en-US") });
+  if (n < 1024n) return { exact, human: null };
   let unit = 0;
   let base = 1024n;
   while (unit < UNITS.length - 1 && n >= base * 1024n) {
@@ -22,14 +23,25 @@ export function formatSize(decimal: string): string {
   }
   // Tenths of the unit, rounded down, in integers.
   const tenths = (n * 10n) / base;
-  return `${(tenths / 10n).toString()}.${(tenths % 10n).toString()} ${UNITS[unit]} (${exact})`;
+  const human = t("common.sizeHuman", {
+    value: `${(tenths / 10n).toString()}.${(tenths % 10n).toString()}`,
+    unit: UNITS[unit] ?? "",
+  });
+  return { exact, human };
+}
+
+/** "1,234 bytes", or "1.5 MiB (1,572,864 bytes)" from 1 KiB up. */
+export function formatSize(decimal: string): string {
+  const p = sizeParts(decimal);
+  if (typeof p === "string") return p;
+  return p.human === null ? p.exact : t("common.sizeWithExact", { human: p.human, exact: p.exact });
 }
 
 /** Compact size for a list column. */
 export function shortSize(decimal: string): string {
-  const s = formatSize(decimal);
-  const paren = s.indexOf(" (");
-  return paren === -1 ? s : s.slice(0, paren);
+  const p = sizeParts(decimal);
+  if (typeof p === "string") return p;
+  return p.human ?? p.exact;
 }
 
 /** `-rw-r--r--`-style permission bits plus the octal mode. */
@@ -44,5 +56,7 @@ export function formatMode(mode: number): string {
 
 /** An IPC error as one sentence; anything else as a generic failure. */
 export function errorText(what: string, e: unknown): string {
-  return isIpcError(e) ? `${what} (${e.code}): ${e.message}` : `${what}.`;
+  return isIpcError(e)
+    ? t("common.errorWithCode", { what, code: e.code, message: e.message })
+    : t("common.errorPlain", { what });
 }

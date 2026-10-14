@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { t } from "../i18n";
 import { listChildren } from "../ipc/browse";
 import type { EntryRow } from "../ipc/browse";
 import { Name } from "./Name";
@@ -50,14 +51,14 @@ function Subdirs({ dir, ancestors, ctx }: { dir: string | null; ancestors: Crumb
 
   if (total === null) return null;
   return (
-    <ul role="group">
+    <ul>
       {rows.map((r) => (
         <TreeNode key={r.key} row={r} ancestors={ancestors} ctx={ctx} />
       ))}
       {rows.length < total && (
         <li>
           <button type="button" className="link" onClick={more}>
-            Show more folders ({(total - rows.length).toLocaleString("en-US")} not shown)
+            {t("browser.showMoreFolders", { n: (total - rows.length).toLocaleString("en-US") })}
           </button>
         </li>
       )}
@@ -65,17 +66,23 @@ function Subdirs({ dir, ancestors, ctx }: { dir: string | null; ancestors: Crumb
   );
 }
 
+// The folder tree is a nested list of buttons, not an ARIA `tree`: every
+// control is an ordinary tab stop, so keyboard use needs no roving-focus
+// widget contract. The expand button says which folder it opens and whether
+// it is open (`aria-expanded`).
 function TreeNode({ row, ancestors, ctx }: { row: EntryRow; ancestors: Crumb[]; ctx: Ctx }) {
   const [expanded, setExpanded] = useState(false);
   const path = [...ancestors, { key: row.key, name: row.name }];
   const hasDirs = row.child_dirs > 0;
+  const current = ctx.current === row.key;
   return (
-    <li role="treeitem" aria-expanded={hasDirs ? expanded : undefined} aria-selected={ctx.current === row.key}>
+    <li>
       <span className="tree-row">
         <button
           type="button"
           className="twisty"
-          aria-label={expanded ? "Collapse" : "Expand"}
+          aria-label={t(expanded ? "browser.collapseFolder" : "browser.expandFolder", { name: row.name.text })}
+          aria-expanded={hasDirs ? expanded : undefined}
           disabled={!hasDirs}
           onClick={() => setExpanded((x) => !x)}
         >
@@ -83,7 +90,8 @@ function TreeNode({ row, ancestors, ctx }: { row: EntryRow; ancestors: Crumb[]; 
         </button>
         <button
           type="button"
-          className={ctx.current === row.key ? "tree-label current" : "tree-label"}
+          className={current ? "tree-label current" : "tree-label"}
+          aria-current={current ? "true" : undefined}
           onClick={() => ctx.onOpen(path)}
         >
           <Name name={row.name} />
@@ -97,17 +105,16 @@ function TreeNode({ row, ancestors, ctx }: { row: EntryRow; ancestors: Crumb[]; 
 /** The folder tree of one snapshot, loaded lazily (directories only). */
 export function Tree(props: Ctx) {
   return (
-    <nav aria-label="Folders" className="tree" data-testid="tree">
+    <nav aria-label={t("browser.folders")} className="tree" data-testid="tree">
       <button
         type="button"
         className={props.current === null ? "tree-label current" : "tree-label"}
+        aria-current={props.current === null ? "true" : undefined}
         onClick={() => props.onOpen([])}
       >
-        Archive root
+        {t("browser.archiveRoot")}
       </button>
-      <div role="tree" aria-label="Folders">
-        <Subdirs dir={null} ancestors={[]} ctx={props} />
-      </div>
+      <Subdirs dir={null} ancestors={[]} ctx={props} />
     </nav>
   );
 }

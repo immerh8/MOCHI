@@ -32,6 +32,11 @@
     "allow-unlock-archive",
     "allow-cancel-unlock",
     "allow-list-envelopes",
-    "allow-unlock-check-subject"
+    "allow-unlock-check-subject",
+    "allow-get-crash-settings",
+    "allow-set-crash-settings",
+    "allow-read-crash-log",
+    "allow-export-crash-log",
+    "allow-clear-crash-log"
   ]
 }

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
+import { Live } from "../a11y/Live";
+import { Panel } from "../a11y/Panel";
+import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
+import { t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
 import {
@@ -47,13 +52,13 @@ type JobView =
 function kindLabel(row: ForeignRow): string {
   switch (row.kind) {
     case "directory":
-      return "Folder";
+      return t("foreign.kindFolder");
     case "file":
-      return "File";
+      return t("foreign.kindFile");
     case "link":
-      return "Link";
+      return t("foreign.kindLink");
     case "special":
-      return "Special file";
+      return t("foreign.kindSpecial");
   }
 }
 
@@ -86,8 +91,9 @@ export function ForeignBrowser() {
   const listingId = `${handle ?? ""}:${dir ?? ""}`;
   const count = total?.id === listingId ? total.n : null;
   const jobBusy = job.state === "starting" || job.state === "running";
+  const rememberFocus = useJobFocus(jobBusy);
 
-  const listError = useCallback((e: unknown) => setError(errorText("Could not list", e)), []);
+  const listError = useCallback((e: unknown) => setError(errorText(t("foreign.listFailed"), e)), []);
 
   useEffect(() => {
     if (handle === null) return;
@@ -140,7 +146,7 @@ export function ForeignBrowser() {
       if (kind !== null) setAsk({ reason: kind });
       else {
         setAsk(null);
-        setError(errorText("Could not open the archive", e));
+        setError(errorText(t("foreign.openFailed"), e));
       }
     } finally {
       setBusy(false);
@@ -182,11 +188,12 @@ export function ForeignBrowser() {
   }, []);
 
   const begin = (request: Parameters<typeof startJob>[0]) => {
+    rememberFocus();
     setError(null);
     setJob({ state: "starting" });
     startJob(request, onEvent).catch((e: unknown) => {
       setJob({ state: "idle" });
-      setError(errorText("Could not start", e));
+      setError(errorText(t("foreign.startFailed"), e));
     });
   };
 
@@ -198,7 +205,7 @@ export function ForeignBrowser() {
       (p) => {
         if (p !== null) setPlan({ plan: p, keys, what });
       },
-      (e: unknown) => setError(errorText("Could not check the folder", e)),
+      (e: unknown) => setError(errorText(t("foreign.folderFailed"), e)),
     );
   };
 
@@ -215,13 +222,15 @@ export function ForeignBrowser() {
 
   return (
     <section aria-labelledby="foreign-heading" className="browser foreign" data-testid="foreign">
-      <h2 id="foreign-heading">Other archive formats (read-only)</h2>
+      <h2 id="foreign-heading" tabIndex={-1}>
+        {t("foreign.heading")}
+      </h2>
       <div className="actions">
         <button type="button" data-testid="foreign-open" onClick={() => void doOpen(false)} disabled={busy || jobBusy}>
-          Open ZIP, 7z, RAR or tar…
+          {t("foreign.open")}
         </button>
         <button type="button" data-testid="foreign-close" onClick={() => void doClose()} disabled={!open || busy || jobBusy}>
-          Close
+          {t("foreign.close")}
         </button>
       </div>
       {error && (
@@ -230,40 +239,46 @@ export function ForeignBrowser() {
         </p>
       )}
       {ask && (
-        <form
-          className="panel"
-          data-testid="foreign-password"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void doOpen(true);
-          }}
+        <Panel
+          label={t("foreign.passwordGroup")}
+          heading={t("foreign.passwordGroup")}
+          testId="foreign-password"
+          fallbackId="foreign-heading"
         >
-          <p role="note" data-testid="foreign-password-note">
-            {ask.reason === "wrong"
-              ? "That password did not open the archive. Try again."
-              : "This archive's names are encrypted, so a password is needed before it can be listed."}
-          </p>
-          <label>
-            Password{" "}
-            <input ref={passwordRef} type="password" autoComplete="off" data-testid="foreign-password-input" />
-          </label>
-          <div className="actions">
-            <button type="submit" data-testid="foreign-password-submit" disabled={busy}>
-              Open
-            </button>
-            <button type="button" data-testid="foreign-password-cancel" onClick={() => setAsk(null)}>
-              Cancel
-            </button>
-          </div>
-        </form>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void doOpen(true);
+            }}
+          >
+            <p role="note" data-testid="foreign-password-note">
+              {t(ask.reason === "wrong" ? "foreign.wrongPassword" : "foreign.needPassword")}
+            </p>
+            <label>
+              {t("foreign.password")}{" "}
+              <input ref={passwordRef} type="password" autoComplete="off" data-testid="foreign-password-input" />
+            </label>
+            <div className="actions">
+              <button type="submit" data-testid="foreign-password-submit" disabled={busy}>
+                {t("foreign.passwordSubmit")}
+              </button>
+              <button type="button" data-testid="foreign-password-cancel" onClick={() => setAsk(null)}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        </Panel>
       )}
-      {!open && !error && !ask && <p data-testid="foreign-empty">No ZIP, 7z, RAR or tar archive is open.</p>}
+      {!open && !error && !ask && <p data-testid="foreign-empty">{t("foreign.empty")}</p>}
       {open && (
         <>
           <p className="archive-meta" data-testid="foreign-meta">
-            <strong>{open.file_name}</strong> · {open.format} archive (foreign format) ·{" "}
-            {open.entries.toLocaleString("en-US")} {open.entries === 1 ? "entry" : "entries"}
-            {open.opened_with_password ? " · opened with a password" : ""}
+            <strong>{open.file_name}</strong>
+            {t("browser.metaSeparator")}
+            {t("foreign.meta", { format: open.format })}
+            {t("browser.metaSeparator")}
+            {tc(open.entries, "count.entryOne", "count.entryMany")}
+            {open.opened_with_password ? t("foreign.openedWithPassword") : ""}
           </p>
           <p className="note" data-testid="foreign-label">
             {FOREIGN_NOTE}
@@ -272,7 +287,7 @@ export function ForeignBrowser() {
             {dimensionsLine(open.dimensions)}
           </p>
           <p className="note" data-testid="foreign-checks">
-            Checks this format has: {open.checks}.
+            {t("foreign.checks", { checks: open.checks })}
           </p>
           {open.weak_encryption && (
             <p role="note" className="warning" data-testid="foreign-weak">
@@ -281,12 +296,11 @@ export function ForeignBrowser() {
           )}
           {!open.complete && (
             <p role="note" className="warning" data-testid="foreign-partial">
-              Partial listing: {open.stop_reason?.text ?? "the listing stopped early"}. Entries after
-              that point are not shown.
+              {t("foreign.partial", { reason: open.stop_reason?.text ?? t("foreign.partialDefault") })}
             </p>
           )}
           {open.notes.length > 0 && (
-            <ul className="staged" aria-label="Limits reached while listing" data-testid="foreign-notes">
+            <ul className="staged" aria-label={t("foreign.limitNotes")} data-testid="foreign-notes">
               {open.notes.map((n) => (
                 <li key={n}>{n}</li>
               ))}
@@ -300,7 +314,7 @@ export function ForeignBrowser() {
               onClick={() => begin({ kind: "test_foreign", handle: open.handle })}
               title={TEST_NOTE}
             >
-              Read and check entries
+              {t("foreign.testButton")}
             </button>
             <button
               type="button"
@@ -308,49 +322,55 @@ export function ForeignBrowser() {
               disabled={jobBusy}
               onClick={() => planFor([], null, true)}
             >
-              Extract all…
+              {t("foreign.extractAll")}
             </button>
             <button
               type="button"
               data-testid="foreign-extract-selected"
               disabled={jobBusy || selected === null || selected.key === null}
               onClick={() => selected?.key && planFor([selected.key], selected.name, true)}
-              title={selected ? undefined : "Select an entry first"}
+              title={selected ? undefined : t("foreign.selectFirst")}
             >
-              Extract selected…
+              {t("foreign.extractSelected")}
             </button>
           </div>
           <p className="note">{TEST_NOTE}</p>
 
           {plan && (
-            <div className="panel" role="group" aria-label="Extract to" data-testid="foreign-plan">
-              <h3>Extract to…</h3>
+            <Panel
+              label={t("foreign.planGroup")}
+              heading={t("foreign.planHeading")}
+              testId="foreign-plan"
+              fallbackId="foreign-heading"
+            >
               <dl>
-                <dt>Folder</dt>
+                <dt>{t("foreign.folder")}</dt>
                 <dd data-testid="foreign-destination">{plan.plan.plan.destination}</dd>
-                <dt>What</dt>
+                <dt>{t("foreign.what2")}</dt>
                 <dd>
-                  {plan.what ? <Name name={plan.what} /> : "Everything in the archive"} (
-                  {plan.plan.plan.entries.toLocaleString("en-US")}{" "}
-                  {plan.plan.plan.entries === 1 ? "item" : "items"})
+                  {plan.what ? <Name name={plan.what} /> : t("foreign.everything")} (
+                  {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
+                    n: plan.plan.plan.entries.toLocaleString("en-US"),
+                  })}
+                  )
                 </dd>
               </dl>
               <p className="note">{EXTRACT_NOTE}</p>
               {plan.plan.skipped_kinds > 0 && (
                 <p role="note" className="warning" data-testid="foreign-skipped-kinds">
-                  {plan.plan.skipped_kinds.toLocaleString("en-US")}{" "}
-                  {plan.plan.skipped_kinds === 1 ? "entry is" : "entries are"} a link or special file and
-                  will be skipped.
+                  {t(plan.plan.skipped_kinds === 1 ? "foreign.skippedKindsOne" : "foreign.skippedKindsMany", {
+                    n: plan.plan.skipped_kinds.toLocaleString("en-US"),
+                  })}
                 </p>
               )}
               {hasConflicts && (
                 <div data-testid="foreign-conflicts">
                   <p role="note" className="warning">
-                    {plan.plan.plan.conflicts_total.toLocaleString("en-US")}{" "}
-                    {plan.plan.plan.conflicts_total === 1 ? "entry cannot" : "entries cannot"} be extracted
-                    here:
+                    {t(plan.plan.plan.conflicts_total === 1 ? "foreign.cannotOne" : "foreign.cannotMany", {
+                      n: plan.plan.plan.conflicts_total.toLocaleString("en-US"),
+                    })}
                   </p>
-                  <ul className="staged" aria-label="Entries that cannot be extracted">
+                  <ul className="staged" aria-label={t("foreign.cannotList")}>
                     {plan.plan.plan.conflicts.map((c) => (
                       <li key={`${c.code}:${c.path.text}`} data-testid="foreign-conflict">
                         <Name name={c.path} /> <span className="meta">({c.code})</span> {c.reason}
@@ -373,7 +393,7 @@ export function ForeignBrowser() {
                     })
                   }
                 >
-                  {hasConflicts ? "Extract the rest, skipping these" : "Extract"}
+                  {hasConflicts ? t("foreign.confirmSkip") : t("foreign.confirm")}
                 </button>
                 <button
                   type="button"
@@ -381,22 +401,27 @@ export function ForeignBrowser() {
                   disabled={jobBusy}
                   onClick={() => planFor(plan.keys, plan.what, true)}
                 >
-                  Choose a different folder…
+                  {t("foreign.changeFolder")}
                 </button>
                 <button type="button" data-testid="foreign-plan-close" disabled={jobBusy} onClick={() => setPlan(null)}>
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
-            </div>
+            </Panel>
           )}
 
           {jobBusy && (
             <div className="progress" data-testid="foreign-running">
               {job.state === "running" && (
-                <span data-testid="foreign-progress">
-                  {job.phase ? progressText(job.phase, job.completed, job.total) : "Starting…"}
-                  {job.cancelRequested ? " (cancelling…)" : ""}
-                </span>
+                <ProgressMeter
+                  completed={job.completed}
+                  total={job.total}
+                  text={
+                    (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+                    (job.cancelRequested ? t("common.cancelling") : "")
+                  }
+                  textTestId="foreign-progress"
+                />
               )}
               <button
                 type="button"
@@ -404,32 +429,33 @@ export function ForeignBrowser() {
                 onClick={cancel}
                 disabled={job.state !== "running" || job.cancelRequested}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           )}
 
-          {described && job.state === "done" && (
-            <div role="status" data-testid="foreign-status" data-state={job.outcome.status}>
+          <Live data-testid="foreign-status" data-state={job.state === "done" ? job.outcome.status : undefined}>
+            {described && job.state === "done" && (
+            <>
               <p data-testid="foreign-headline">{described.headline}</p>
               {done?.foreign_test && (
                 <div data-testid="foreign-test-report">
-                  <ul className="staged" aria-label="What was checked">
+                  <ul className="staged" aria-label={t("foreign.whatChecked")}>
                     {done.foreign_test.checks.map((c) => (
                       <li key={c.what} data-testid="foreign-check-count">
-                        {c.count.toLocaleString("en-US")} × {c.what}
+                        {t("foreign.checkCount", { count: c.count.toLocaleString("en-US"), what: c.what })}
                       </li>
                     ))}
                   </ul>
                   <p className="note" data-testid="foreign-stream-check">
-                    Whole-archive check: {done.foreign_test.stream_check}
+                    {t("foreign.streamCheck", { check: done.foreign_test.stream_check })}
                   </p>
                   <p className="note">{dimensionsLine(done.foreign_test.dimensions)}</p>
                   {done.foreign_test.stop_reason && (
-                    <p className="warning">Stopped early: {done.foreign_test.stop_reason.text}</p>
+                    <p className="warning">{t("foreign.stoppedEarly", { reason: done.foreign_test.stop_reason.text })}</p>
                   )}
                   {done.foreign_test.problems.length > 0 && (
-                    <ul className="staged" data-testid="foreign-problems" aria-label="Entries with problems">
+                    <ul className="staged" data-testid="foreign-problems" aria-label={t("foreign.problems")}>
                       {done.foreign_test.problems.map((p) => (
                         <li key={`${p.path.text}:${p.what.text}`} data-testid="foreign-problem">
                           <Name name={p.path} /> — {p.what.text}
@@ -441,8 +467,8 @@ export function ForeignBrowser() {
               )}
               {done?.extract && done.extract.not_extracted.length > 0 && (
                 <>
-                  <p className="warning">Not extracted:</p>
-                  <ul className="staged" data-testid="foreign-not-extracted" aria-label="Entries not extracted">
+                  <p className="warning">{t("foreign.notExtracted")}</p>
+                  <ul className="staged" data-testid="foreign-not-extracted" aria-label={t("foreign.notExtractedList")}>
                     {done.extract.not_extracted.map((e) => (
                       <li key={`${e.code}:${e.path.text}`} data-testid="foreign-not-extracted-item">
                         <Name name={e.path} /> <span className="meta">({e.code})</span> {e.reason.text}
@@ -451,9 +477,9 @@ export function ForeignBrowser() {
                   </ul>
                   {done.extract.not_extracted_total > done.extract.not_extracted.length && (
                     <p className="note">
-                      …and{" "}
-                      {(done.extract.not_extracted_total - done.extract.not_extracted.length).toLocaleString("en-US")}{" "}
-                      more.
+                      {t("common.andMore", {
+                        n: (done.extract.not_extracted_total - done.extract.not_extracted.length).toLocaleString("en-US"),
+                      })}
                     </p>
                   )}
                 </>
@@ -463,17 +489,18 @@ export function ForeignBrowser() {
                   {l}
                 </p>
               ))}
-            </div>
-          )}
+            </>
+            )}
+          </Live>
 
           <div className="listing">
-            <nav aria-label="Current folder" className="crumbs" data-testid="foreign-crumbs">
+            <nav aria-label={t("foreign.currentFolder")} className="crumbs" data-testid="foreign-crumbs">
               <button type="button" className="link" onClick={() => navigate([])}>
                 {open.file_name}
               </button>
               {path.map((c, i) => (
                 <span key={c.key}>
-                  {" / "}
+                  {t("common.nameSeparator")}
                   <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
                     <Name name={c.name} />
                   </button>
@@ -482,8 +509,8 @@ export function ForeignBrowser() {
             </nav>
             <p className="count" data-testid="foreign-count">
               {count === null
-                ? "Loading…"
-                : `${count.toLocaleString("en-US")} ${count === 1 ? "entry" : "entries"} in this folder`}
+                ? t("common.loading")
+                : t("foreign.countInFolder", { count: tc(count, "count.entryOne", "count.entryMany") })}
             </p>
             {count !== null && (
               <VirtualList
@@ -491,10 +518,11 @@ export function ForeignBrowser() {
                 total={count}
                 rowHeight={ROW_HEIGHT}
                 loadPage={loadPage}
-                label="Folder contents"
+                label={t("foreign.folderContents")}
+                hintId="foreign-entry-hint"
                 testId="foreign-entries"
                 onError={listError}
-                renderRow={(row: ForeignRow) => (
+                renderRow={(row: ForeignRow, _index: number, tabIndex: 0 | -1) => (
                   <button
                     type="button"
                     className={selected && row.key !== null && row.key === selected.key ? "entry selected" : "entry"}
@@ -502,6 +530,7 @@ export function ForeignBrowser() {
                     data-kind={row.kind}
                     data-refused={row.note ? "true" : undefined}
                     aria-pressed={selected !== null && row.key !== null && row.key === selected.key}
+                    tabIndex={tabIndex}
                     onClick={() => setSelected(row)}
                     onDoubleClick={() => {
                       if (row.kind === "directory" && row.key !== null)
@@ -524,7 +553,7 @@ export function ForeignBrowser() {
                     </span>
                     <span className="size">
                       {row.kind === "directory"
-                        ? `${(row.child_dirs + row.child_files).toLocaleString("en-US")} items`
+                        ? t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") })
                         : row.size === null
                           ? ""
                           : shortSize(row.size)}
@@ -533,34 +562,34 @@ export function ForeignBrowser() {
                 )}
               />
             )}
+            <p className="note" id="foreign-entry-hint">
+              {t("foreign.listHint")}
+            </p>
           </div>
           {selected && (
-            <section className="details" aria-label="Details" data-testid="foreign-details">
-              <h3>Details</h3>
+            <section className="details" aria-label={t("foreign.details")} data-testid="foreign-details">
+              <h3>{t("foreign.details")}</h3>
               <dl>
-                <dt>Name</dt>
+                <dt>{t("foreign.detailName")}</dt>
                 <dd>
                   <Name name={selected.name} />
                 </dd>
-                <dt>Kind</dt>
+                <dt>{t("foreign.detailKind")}</dt>
                 <dd>{kindLabel(selected)}</dd>
                 {selected.size !== null && (
                   <>
-                    <dt>Declared size</dt>
+                    <dt>{t("foreign.detailSize")}</dt>
                     <dd>{formatSize(selected.size)}</dd>
                   </>
                 )}
                 {selected.encryption && (
                   <>
-                    <dt>Encryption</dt>
+                    <dt>{t("foreign.detailEncryption")}</dt>
                     <dd>{selected.encryption}</dd>
                   </>
                 )}
               </dl>
-              <p className="note">
-                Listing reads the archive's index only. The size is what the archive claims; no entry
-                has been read or checked.
-              </p>
+              <p className="note">{t("foreign.detailsNote")}</p>
             </section>
           )}
         </>

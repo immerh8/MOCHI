@@ -3,9 +3,28 @@
    to a PASS status; everything else stays neutral. Browsing
    (D1) shows recorded facts and warnings, never a green state. */
 :root {
+  /* Colour tokens (plan D7 accessibility). Every colour in this file comes from
+     here, so that src/a11y/contrast.test.ts can check each pairing against
+     WCAG 2.1 AA (4.5:1 for text, 3:1 for focus rings and control borders).
+     Text tokens must hold on all three surfaces below. */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --accent-bg: #ddf4ff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --error: #82071e;
+  --warning: #9a6700;
+  --accent: #0969da;
+  --border: #d1d9e0;
+  /* Status badges: text on a strong fill. */
+  --pass: #1a7f37;
+  --fail: #82071e;
+  --on-strong: #ffffff;
+  /* The keyboard focus ring. */
+  --focus: #0550ae;
   font-family: system-ui, sans-serif;
-  color: #1f2328;
-  background: #f6f7f9;
+  color: var(--fg);
+  background: var(--bg);
 }
 main {
   max-width: 90rem;
@@ -40,14 +59,14 @@ progress {
   overflow-wrap: anywhere;
 }
 .error {
-  color: #82071e;
+  color: var(--error);
 }
 .warning {
-  border-left: 3px solid #9a6700;
+  border-left: 3px solid var(--warning);
   padding-left: 0.5rem;
 }
 .escaped {
-  color: #59636e;
+  color: var(--muted);
   font-size: 0.85em;
 }
 .name {
@@ -64,8 +83,8 @@ progress {
 .details {
   max-height: 32rem;
   overflow: auto;
-  background: #fff;
-  border: 1px solid #d1d9e0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   padding: 0.25rem;
   margin: 0;
 }
@@ -85,12 +104,12 @@ progress {
 .commit.current,
 .tree-label.current,
 .entry.selected {
-  border: 1px solid #0969da;
-  background: #ddf4ff;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
 }
 .meta {
   font-size: 0.8em;
-  color: #59636e;
+  color: var(--muted);
 }
 .tree ul {
   list-style: none;
@@ -125,8 +144,8 @@ progress {
 .vlist {
   height: 28rem;
   overflow-y: auto;
-  background: #fff;
-  border: 1px solid #d1d9e0;
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 .vspacer {
   position: relative;
@@ -155,11 +174,11 @@ progress {
   white-space: nowrap;
 }
 .size {
-  color: #59636e;
+  color: var(--muted);
   font-size: 0.85em;
 }
 .loading {
-  color: #59636e;
+  color: var(--muted);
   padding: 0 0.5rem;
 }
 .details dl {
@@ -176,7 +195,7 @@ progress {
 }
 .note {
   font-size: 0.8em;
-  color: #59636e;
+  color: var(--muted);
 }
 
 /* ---- D2: create and add ------------------------------------------------------
@@ -186,8 +205,8 @@ progress {
   margin: 1rem 0;
 }
 .panel {
-  background: #fff;
-  border: 1px solid #d1d9e0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   padding: 0.5rem 1rem;
   margin: 0.5rem 0;
 }
@@ -199,7 +218,7 @@ progress {
 }
 .note {
   font-size: 0.9em;
-  color: #59636e;
+  color: var(--muted);
 }
 .staged {
   list-style: none;
@@ -214,12 +233,12 @@ progress {
 }
 .kind-label {
   font-size: 0.8em;
-  color: #59636e;
+  color: var(--muted);
   min-width: 4rem;
 }
 .drop-overlay {
-  border: 2px dashed #0969da;
-  background: #ddf4ff;
+  border: 2px dashed var(--accent);
+  background: var(--accent-bg);
   padding: 0.75rem;
   text-align: center;
 }
@@ -253,27 +272,27 @@ progress {
   font-family: ui-monospace, monospace;
   font-size: 0.85em;
   padding: 0 0.4rem;
-  border: 1px solid #59636e;
+  border: 1px solid var(--muted);
   border-radius: 3px;
 }
 .status-pass {
-  color: #fff;
-  background: #1a7f37;
-  border-color: #1a7f37;
+  color: var(--on-strong);
+  background: var(--pass);
+  border-color: var(--pass);
 }
 .status-fail {
-  color: #fff;
-  background: #82071e;
-  border-color: #82071e;
+  color: var(--on-strong);
+  background: var(--error);
+  border-color: var(--error);
 }
 .status-attention {
-  color: #1f2328;
-  background: #fff;
+  color: var(--fg);
+  background: var(--surface);
   border-style: dashed;
 }
 .checker fieldset {
   margin: 1rem 0;
-  border: 1px solid #d1d9e0;
+  border: 1px solid var(--border);
 }
 .dimensions {
   border-collapse: collapse;
@@ -293,10 +312,85 @@ progress {
   overflow-wrap: anywhere;
   max-height: 20rem;
   overflow: auto;
-  background: #fff;
-  border: 1px solid #d1d9e0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   padding: 0.5rem;
 }
 .report-facts dd {
   margin-left: 1rem;
+}
+
+/* ---- D7: accessibility ------------------------------------------------------ */
+/* A visible focus ring on everything the keyboard can reach. Rows and list
+   buttons sit inside scrolling boxes, so their ring is drawn inside them. */
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.entry:focus-visible,
+.commit:focus-visible,
+.tree-label:focus-visible,
+.twisty:focus-visible {
+  outline-offset: -3px;
+}
+/* Headings and panels take focus from code (a jump link, an opened panel); that
+   is not a tab stop, so it needs a marker but not a heavy one. */
+h2:focus,
+h3:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.sections {
+  margin: 0.5rem 0 1rem;
+}
+.sections ul {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  list-style: none;
+  margin: 0 0 0 0.5rem;
+  padding: 0;
+}
+.sections button {
+  color: var(--accent);
+}
+/* A status is its word first; the glyph and the border style repeat it for
+   people who cannot tell the colours apart. The second declaration gives the
+   glyph an empty spoken alternative where the engine supports it. */
+.status::before {
+  content: attr(data-mark) " ";
+  content: attr(data-mark) " " / "";
+}
+.twisty {
+  min-width: 1.75rem;
+  min-height: 1.5rem;
+}
+.sections li {
+  min-height: 1.5rem;
+}
+/* Reflow (WCAG 1.4.10): narrow windows stack the panes instead of scrolling
+   sideways. */
+@media (max-width: 64rem) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+  progress {
+    width: 100%;
+    max-width: 20rem;
+  }
+}
+/* Windows high-contrast and other forced-colour modes drop our colours; keep
+   the selection and the status shapes visible. */
+@media (forced-colors: active) {
+  .commit.current,
+  .tree-label.current,
+  .entry.selected {
+    border: 2px solid Highlight;
+  }
+  .status {
+    border: 2px solid CanvasText;
+  }
+  .status-attention {
+    border-style: dashed;
+  }
 }
