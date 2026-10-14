@@ -34,24 +34,29 @@ holds the shared definitions.
 | `health-evidence-v1.schema.json` | one line of `<state dir>/evidence/<archive id>.jsonl` | `append_evidence` | `schema: 1` | frozen |
 | `health-policy-v1.schema.json` | the file `health --policy` reads (an input) | — | `schema: "mochi-health-policy-v1"` | frozen |
 | `local-heads-v1.schema.json` | `<state dir>/heads.json` | `record` | `version: 1` | frozen |
-| `cli-commit.schema.json` | `create`, `append` (also `append --truncate-tail` with nothing to commit) | `emit_commit`, `append` | none | checked, not frozen (R7 §9, owner item O2) |
-| `cli-maintenance.schema.json` | `snapshot retain\|expire\|release`, `checkpoint`, `rekey --add-passphrase\|--remove-passphrase` | `commit_maintenance` | none | checked, not frozen (O2) |
-| `cli-list.schema.json` | `list` | `list_cmd` | none | checked, not frozen (O2) |
-| `cli-snapshot-list.schema.json` | `snapshot list` | `snapshot_list` | none | checked, not frozen (O2) |
-| `cli-search.schema.json` | `search` | `search_cmd` | none | checked, not frozen (O2) |
-| `cli-dump-index.schema.json` | `dump-index` | `dump_index` | none | checked, not frozen (O2) |
-| `cli-restore.schema.json` | `get -C DIR`, `restore-test` | `emit_restore` | none | checked, not frozen (O2) |
-| `cli-rewrite.schema.json` | `compact`, `gc apply`, `rekey --reencrypt` | `rewrite`, `reencrypt_cmd` | none | checked, not frozen (O2) |
-| `cli-repair-apply.schema.json` | `repair apply` | `repair_apply` | none | checked, not frozen (O2) |
-| `cli-rekey-list.schema.json` | `rekey --list` | `rekey` | none | checked, not frozen (O2) |
-| `cli-plan-saved.schema.json` | `gc plan --output`, `repair plan --output`, with `--json` | `gc_plan`, `repair_plan` | none | checked, not frozen (O2) |
+| `cli-commit.schema.json` | `create`, `append` (also `append --truncate-tail` with nothing to commit) | `emit_commit`, `append` | `schema: "mochi-cli-commit-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-maintenance.schema.json` | `snapshot retain\|expire\|release`, `checkpoint`, `rekey --add-passphrase\|--remove-passphrase` | `commit_maintenance` | `schema: "mochi-cli-maintenance-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-list.schema.json` | `list` | `list_cmd` | `schema: "mochi-cli-list-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-snapshot-list.schema.json` | `snapshot list` | `snapshot_list` | `schema: "mochi-cli-snapshot-list-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-search.schema.json` | `search` | `search_cmd` | `schema: "mochi-cli-search-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-dump-index.schema.json` | `dump-index` | `dump_index` | `schema: "mochi-cli-dump-index-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-restore.schema.json` | `get -C DIR`, `restore-test` | `emit_restore` | `schema: "mochi-cli-restore-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-rewrite.schema.json` | `compact`, `gc apply`, `rekey --reencrypt` | `rewrite`, `reencrypt_cmd` | `schema: "mochi-cli-rewrite-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-repair-apply.schema.json` | `repair apply` | `repair_apply` | `schema: "mochi-cli-repair-apply-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-rekey-list.schema.json` | `rekey --list` | `rekey` | `schema: "mochi-cli-rekey-list-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
+| `cli-plan-saved.schema.json` | `gc plan --output`, `repair plan --output`, with `--json` | `gc_plan`, `repair_plan` | `schema: "mochi-cli-plan-saved-v1"` | tagged; checked, freezes at the 1.0 flip (W20) (R7 §9, O2) |
 
 **Frozen** means R7's rule applies: adding an error code is allowed (it appends to
 `error-code` in `common.schema.json`); any other change is a new identifier (a new
 `schema_version`, `format`, `schema`, or `version`, and a new file here), never an edit.
-**Checked, not frozen** means the schema is kept equal to the code by the test (a
-change to the output must change the schema in the same pull request), and whether its
-fields are guaranteed is the owner decision O2 in R7 §9.
+**Tagged; checked, freezes at the 1.0 flip (W20)** is the state of the eleven command
+outputs, by the owner's decision O2 (R7 §9, 2026-10-14): each output carries an in-band
+`schema` tag (`mochi-cli-<name>-v1`, named after its file) that its schema requires as a
+`const`, and the schema is kept equal to the code by the test (a change to the output
+must change the schema in the same pull request). They are **not frozen now**: at the
+1.0 flip each tag becomes a frozen identifier, and a later change is a `-v2` tag and a
+new file. Until then a consumer may rely on the tag to tell documents apart, not on the
+fields staying as they are. The eight frozen documents received no tag and no new field.
 
 A consumer that validates an output should use the schema of the tool version that
 wrote it (`tool.version` in a report): a newer tool may emit an error code an older

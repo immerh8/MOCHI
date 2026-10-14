@@ -388,7 +388,13 @@ fn json_writing_functions() -> BTreeSet<String> {
                     .to_owned();
                 continue;
             }
+            // `emit_tagged` is the one helper that adds the in-band tag and
+            // then calls `emit_json`; its callers are the writers.
+            if current == "emit_tagged" {
+                continue;
+            }
             if t.contains("emit_json(")
+                || t.contains("emit_tagged(")
                 || t.contains("serde_json::to_vec")
                 || t.contains("\"{value}\"")
             {
@@ -411,6 +417,42 @@ fn readme_lists_every_schema_and_every_place_that_writes_json() {
         json_writing_functions(),
         "every function that writes JSON is named in the README (a new output needs a schema)"
     );
+}
+
+/// R7 O2 (owner decision 2026-10-14): each of the eleven command-output
+/// schemas requires an in-band tag, a `const` named after its file
+/// (`cli-list.schema.json` -> `mochi-cli-list-v1`), in every branch of a
+/// `oneOf`. The eight frozen documents carry no such property.
+#[test]
+fn command_output_schemas_require_their_in_band_tag() {
+    let docs = documents();
+    let mut seen = 0;
+    for name in SCHEMAS {
+        let doc = &docs[*name];
+        let Some(stem) = name
+            .strip_prefix("cli-")
+            .and_then(|n| n.strip_suffix(".schema.json"))
+        else {
+            // The frozen documents are not touched by O2.
+            let has_tag = doc["properties"]["schema"]["const"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("mochi-cli-"));
+            assert!(!has_tag, "{name} is frozen and must not carry an O2 tag");
+            continue;
+        };
+        let tag = format!("mochi-cli-{stem}-v1");
+        let branches: Vec<&Value> = match doc.get("oneOf") {
+            Some(Value::Array(b)) => b.iter().collect(),
+            _ => vec![doc],
+        };
+        for b in branches {
+            assert_eq!(b["properties"]["schema"]["const"], json!(tag), "{name}");
+            let req = b["required"].as_array().expect("required");
+            assert!(req.contains(&json!("schema")), "{name} requires its tag");
+        }
+        seen += 1;
+    }
+    assert_eq!(seen, 11, "the eleven command-output schemas");
 }
 
 // ---- enumerations ------------------------------------------------------------------
@@ -1813,6 +1855,160 @@ fn targeted() -> Vec<(&'static str, &'static str, Value, &'static str, Pick)> {
             "/command",
             json!("compact"),
             "not a planning command",
+            any,
+        ),
+        (
+            "cli-commit.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-commit.schema.json",
+            "/schema",
+            json!("mochi-cli-commit-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-maintenance.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-maintenance.schema.json",
+            "/schema",
+            json!("mochi-cli-maintenance-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-list.schema.json",
+            "/schema",
+            json!("mochi-cli-search-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-list.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-snapshot-list.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-snapshot-list.schema.json",
+            "/schema",
+            json!("mochi-cli-snapshot-list-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-search.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-search.schema.json",
+            "/schema",
+            json!("mochi-cli-search-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-dump-index.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-dump-index.schema.json",
+            "/schema",
+            json!("mochi-cli-dump-index-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-restore.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-restore.schema.json",
+            "/schema",
+            json!("mochi-cli-restore-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-rewrite.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-rewrite.schema.json",
+            "/schema",
+            json!("mochi-cli-rewrite-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-repair-apply.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-repair-apply.schema.json",
+            "/schema",
+            json!("mochi-cli-repair-apply-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-rekey-list.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-rekey-list.schema.json",
+            "/schema",
+            json!("mochi-cli-rekey-list-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-plan-saved.schema.json",
+            "/schema",
+            json!("mochi-cli-list-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-plan-saved.schema.json",
+            "/schema",
+            json!("mochi-cli-plan-saved-v2"),
+            "another version of the same document",
             any,
         ),
     ]

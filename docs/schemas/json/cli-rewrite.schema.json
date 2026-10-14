@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "command",
     "source",
     "output",
@@ -27,6 +28,9 @@
     "exit_code"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-rewrite-v1"
+    },
     "command": {
       "enum": [
         "compact",

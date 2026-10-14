@@ -6,12 +6,16 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "archive_id",
     "seq",
     "commit_id",
     "entries"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-list-v1"
+    },
     "archive_id": {
       "$ref": "common.schema.json#/$defs/hex32"
     },

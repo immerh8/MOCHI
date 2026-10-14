@@ -8,12 +8,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "schema",
         "command",
         "plan_file",
         "collects_anything",
         "plan"
       ],
       "properties": {
+        "schema": {
+          "const": "mochi-cli-plan-saved-v1"
+        },
         "command": {
           "const": "gc plan"
         },
@@ -32,6 +36,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "schema",
         "command",
         "plan_file",
         "outcome",
@@ -39,6 +44,9 @@
         "plan"
       ],
       "properties": {
+        "schema": {
+          "const": "mochi-cli-plan-saved-v1"
+        },
         "command": {
           "const": "repair plan"
         },
