@@ -76,6 +76,9 @@ sz("bzip2.7z", ["-m0=BZip2"], BASIC)
 sz("lzma_d16m.7z", ["-m0=LZMA:d=16m"], BASIC)
 sz("enc_data.7z", ["-ms=off"], BASIC, password="SECRET")
 sz("enc_names.7z", ["-mhe=on"], BASIC, password="SECRET")
+# Encrypted but stored (no compressor): a wrong password decrypts to garbage that
+# no decoder rejects, so only the CRC32 at the end of the entry says so.
+sz("enc_copy.7z", ["-m0=Copy", "-ms=off"], BASIC, password="SECRET")
 # A split set: plain byte splits, read as one stream (plan D8 rule 8).
 sz("split.7z", ["-m0=Copy", "-v400b"], {"noise.bin": NOISE, "a.txt": b"hello\n"})
 vols = sorted(f for f in os.listdir(OUT) if f.startswith("split.7z."))

@@ -365,3 +365,36 @@ fn read_many_validates_and_dedups_its_request() {
     assert_eq!(r.delivered, 1);
     assert_eq!(gots.len(), 1);
 }
+
+#[test]
+fn a_wrong_password_on_stored_data_delivers_no_garbage() {
+    // `enc_copy.7z` is encrypted but not compressed: with the wrong password
+    // the decrypted bytes are noise that no decoder rejects, so they stream
+    // out of the reader and only the CRC32 at the end says they are wrong.
+    // The helper holds them until then, so the caller receives nothing.
+    let c = client();
+    let p = sz("enc_copy.7z");
+    let l = c.list(&p, None).unwrap();
+    let b = index_of(&l, "sub/b.txt");
+    let wrong = pw("not-the-password");
+    let (_, gots) = read_many(&c, &p, &[b], Some(&wrong)).unwrap();
+    assert!(
+        matches!(
+            gots[0].outcome,
+            EntryOutcome::Mismatch {
+                wrong_password_possible: true,
+                ..
+            }
+        ),
+        "{:?}",
+        gots[0].outcome
+    );
+    assert!(
+        gots[0].bytes.is_empty(),
+        "{} bytes of noise were delivered",
+        gots[0].bytes.len()
+    );
+    let ok = pw("SECRET");
+    let (_, gots) = read_many(&c, &p, &[b], Some(&ok)).unwrap();
+    assert_eq!(gots[0].bytes, B_TXT.repeat(50).as_bytes());
+}
