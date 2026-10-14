@@ -76,60 +76,107 @@
     },
     "ladder": {
       "type": "array",
-      "items": {
-        "$ref": "#/$defs/ladder-step"
-      },
+      "description": "The seven steps of spec 22, in order.",
       "minItems": 7,
-      "maxItems": 7,
+      "items": false,
       "prefixItems": [
         {
-          "properties": {
-            "step": {
-              "const": 1
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 1
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 2
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 2
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 3
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 3
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 4
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 4
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 5
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 5
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 6
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 6
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "properties": {
-            "step": {
-              "const": 7
+          "allOf": [
+            {
+              "$ref": "#/$defs/ladder-step"
+            },
+            {
+              "properties": {
+                "step": {
+                  "const": 7
+                }
+              }
             }
-          }
+          ]
         }
       ]
     },
@@ -294,9 +341,6 @@
     }
   ],
   "$defs": {
-    "problem": {
-      "$ref": "common.schema.json#/$defs/problem"
-    },
     "ladder-step": {
       "description": "One rung of the spec 22 ladder. not_attempted and incomplete are never a pass.",
       "type": "object",
