@@ -1,4 +1,4 @@
-//! The MOCHI desktop application (plan §7, phases D0 to D4 and D6).
+//! The MOCHI desktop application (plan §7, phases D0 to D6).
 //!
 //! Commands are thin adapters (AGENTS.md "Tauri v2 rules"): they validate
 //! input, call into `mochi-core` or the job runner, and return typed
@@ -10,12 +10,16 @@ mod automation;
 pub mod browse;
 pub mod check;
 pub mod commands;
+#[cfg(test)]
+mod d5_tests;
 pub mod extract;
 pub mod foreign;
 pub mod ipc;
 pub mod jobs;
 pub mod launch;
 mod picker;
+pub mod rekey;
+pub mod search;
 pub mod self_test;
 pub mod write;
 
@@ -73,6 +77,10 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::start_job,
             commands::cancel_job,
             commands::open_archive,
+            commands::unlock_archive,
+            commands::cancel_unlock,
+            commands::list_envelopes,
+            commands::unlock_check_subject,
             commands::close_archive,
             commands::open_snapshot,
             commands::list_children,

@@ -2879,6 +2879,7 @@ dependencies = [
  "blake3",
  "mochi-core",
  "mochi-foreign",
+ "mochi-format",
  "mochi-testkit",
  "serde",
  "serde_json",
@@ -2888,6 +2889,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "ts-rs",
+ "zeroize",
 ]
 
 [[package]]

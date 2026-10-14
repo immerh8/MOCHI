@@ -508,6 +508,8 @@ impl Foreign {
             commit: None,
             extract: None,
             foreign_test: Some(Box::new(view)),
+            search: None,
+            rekey: None,
             check: None,
         })
     }
@@ -619,6 +621,8 @@ impl Foreign {
             commit: None,
             extract: Some(Box::new(view)),
             foreign_test: None,
+            search: None,
+            rekey: None,
             check: None,
         })
     }

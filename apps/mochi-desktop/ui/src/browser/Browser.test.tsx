@@ -73,7 +73,7 @@ function fakeBackend(opts: { open?: () => unknown } = {}) {
     calls.push({ cmd, args: a });
     switch (cmd) {
       case "open_archive":
-        return opts.open ? opts.open() : SUMMARY;
+        return opts.open ? opts.open() : { status: "opened", archive: SUMMARY };
       case "close_archive":
         return true;
       case "open_snapshot":
@@ -193,9 +193,11 @@ test("selecting an entry shows its recorded details without verification wording
   expect(details).toHaveTextContent("does not read or check file content");
   expect(container.querySelector("img")).toBeNull();
   const text = (container.textContent ?? "").toLowerCase();
-  for (const banned of ["backed up", "safe", "preserved", "verified", "pass"]) {
+  for (const banned of ["backed up", "safe", "preserved", "verified"]) {
     expect(text).not.toContain(banned);
   }
+  // "pass" as a status word (PASS), not as the start of "passphrase" (D5).
+  expect(text).not.toMatch(/\bpass\b/);
 });
 
 test("the tree opens folders lazily and choosing a commit reopens at the root", async () => {

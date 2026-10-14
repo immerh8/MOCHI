@@ -3,6 +3,8 @@ import type { CheckResult } from "./CheckResult";
 import type { CommitReport } from "./CommitReport";
 import type { ExtractReport } from "./ExtractReport";
 import type { ForeignTestReport } from "./ForeignTestReport";
+import type { RekeyReport } from "./RekeyReport";
+import type { SearchResultView } from "./SearchResultView";
 
 /**
  * How a job ended. Only `completed` means the job did everything it was
@@ -21,6 +23,14 @@ extract?: ExtractReport,
  * Set by the test and repair jobs (D4).
  */
 check?: CheckResult, 
+/**
+ * Set by the search job (D5).
+ */
+search?: SearchResultView, 
+/**
+ * Set by the rekey jobs (D5).
+ */
+rekey?: RekeyReport, 
 /**
  * Set by the foreign-archive test job (D8).
  */

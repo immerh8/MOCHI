@@ -367,6 +367,14 @@ impl Inner {
             Ok(_) => return self.problem(format!("{shown} is not a file.")),
             Err(e) => return self.problem(format!("{shown} cannot be read: {e}.")),
         }
+        // An Encrypted archive needs its passphrase (D5), which the shell verbs
+        // cannot carry: say so instead of failing with a misleading code.
+        if crate::browse::head_encrypted(path) {
+            return self.problem(format!(
+                "{shown} is encrypted. Use Open archive… in MOCHI and enter its passphrase; \
+                 the shell's open and extract verbs cannot ask for one."
+            ));
+        }
         let archive = match self
             .archives
             .open(path, mochi_core::publish::ReadOptions::default())

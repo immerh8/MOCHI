@@ -14,6 +14,15 @@ import {
   watchDrops,
 } from "../ipc/write";
 import type { CompressionPreset, SourcePick, StagedView } from "../ipc/write";
+import { EncryptionNotes } from "../crypt/PassphraseForm";
+import {
+  HIDDEN_WITH_KEY,
+  NO_GENERIC_TOOLS,
+  RECOVERY_CHOICES,
+  RECOVERY_NOTES,
+  recoveryLabel,
+  VISIBLE_WITHOUT_KEY,
+} from "../crypt/messages";
 import { DELETE_NOTE, outcomeLines, progressText, TAR_NOTES } from "./messages";
 import type { Operation } from "./messages";
 
@@ -76,6 +85,12 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   const [dragging, setDragging] = useState(false);
   const [preset, setPreset] = useState<CompressionPreset>("balanced");
   const [tar, setTar] = useState(false);
+  const [encrypt, setEncrypt] = useState(false);
+  const [recovery, setRecovery] = useState<number | null>(null);
+  // The passphrase is read from these inputs when the button is pressed and
+  // goes straight into the request; it is never put in state.
+  const passRef = useRef<HTMLInputElement>(null);
+  const againRef = useRef<HTMLInputElement>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
 
@@ -173,6 +188,12 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   };
 
   const open = (to: Mode) => {
+    // Each new archive starts from the plain defaults: encryption and a
+    // recovery record are chosen on purpose, never carried over.
+    if (to === "create") {
+      setEncrypt(false);
+      setRecovery(null);
+    }
     setJob({ state: "idle" });
     setError(null);
     setProblems([]);
@@ -191,11 +212,33 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
 
   const create = () => {
     setError(null);
+    let passphrase: string | undefined;
+    if (encrypt) {
+      const first = passRef.current?.value ?? "";
+      if (first === "") {
+        setError("Enter a passphrase for the encrypted archive.");
+        return;
+      }
+      if (first !== (againRef.current?.value ?? "")) {
+        setError("The two passphrases differ. Nothing was created.");
+        return;
+      }
+      passphrase = first;
+    }
     chooseDestination().then(
       (view) => {
         if (view === null) return; // the user cancelled the dialog
         setStaged(view);
-        run("create", { kind: "create_archive", preset, tar_compatible: tar });
+        run("create", {
+          kind: "create_archive",
+          preset,
+          tar_compatible: tar,
+          ...(passphrase === undefined ? {} : { passphrase }),
+          ...(recovery === null ? {} : { recovery_percent: recovery }),
+        });
+        // Rust holds it now; the page does not.
+        if (passRef.current) passRef.current.value = "";
+        if (againRef.current) againRef.current.value = "";
       },
       (e: unknown) => setError(errorText("Could not choose a location", e)),
     );
@@ -328,6 +371,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
                 type="checkbox"
                 data-testid="tar-compatible"
                 checked={tar}
+                disabled={encrypt}
                 onChange={(e) => setTar(e.target.checked)}
               />{" "}
               Readable with standard zstd + tar
@@ -338,15 +382,85 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
               ))}
             </ul>
           </fieldset>
-          <fieldset disabled>
-            <legend>Not available yet</legend>
+          <fieldset disabled={busy}>
+            <legend>Encryption</legend>
             <label>
-              <input type="checkbox" data-testid="encryption-unavailable" disabled /> Encryption
+              <input
+                type="checkbox"
+                data-testid="encrypt"
+                checked={encrypt}
+                disabled={tar}
+                onChange={(e) => {
+                  setEncrypt(e.target.checked);
+                  if (e.target.checked) setTar(false);
+                }}
+              />{" "}
+              Encrypt with a passphrase
             </label>
+            {tar && <p className="note">{NO_GENERIC_TOOLS}</p>}
+            {encrypt && (
+              <div data-testid="encrypt-panel">
+                <label>
+                  Passphrase{" "}
+                  <input
+                    ref={passRef}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-testid="create-passphrase"
+                  />
+                </label>
+                <label>
+                  Repeat it{" "}
+                  <input
+                    ref={againRef}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-testid="create-passphrase-again"
+                  />
+                </label>
+                <EncryptionNotes creating />
+                <p className="note">{HIDDEN_WITH_KEY}</p>
+                <p className="note">Visible to anyone who has the file, without the passphrase:</p>
+                <ul className="note" data-testid="visible-without-key">
+                  {VISIBLE_WITHOUT_KEY.map((v) => (
+                    <li key={v}>{v}</li>
+                  ))}
+                </ul>
+                <p className="note">The choice is fixed when the archive is created.</p>
+              </div>
+            )}
+          </fieldset>
+          <fieldset disabled={busy}>
+            <legend>Recovery record</legend>
             <label>
-              <input type="checkbox" data-testid="recovery-unavailable" disabled /> Recovery record
+              <input
+                type="radio"
+                name="recovery"
+                data-testid="recovery-none"
+                checked={recovery === null}
+                onChange={() => setRecovery(null)}
+              />{" "}
+              None
             </label>
-            <p className="note">These arrive in a later version and cannot be turned on yet.</p>
+            {RECOVERY_CHOICES.map((p) => (
+              <label key={p}>
+                <input
+                  type="radio"
+                  name="recovery"
+                  data-testid={`recovery-${p}`}
+                  checked={recovery === p}
+                  onChange={() => setRecovery(p)}
+                />{" "}
+                {recoveryLabel(p)}
+              </label>
+            ))}
+            <ul className="note" data-testid="recovery-notes">
+              {RECOVERY_NOTES.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
           </fieldset>
           <div className="actions">
             <button
