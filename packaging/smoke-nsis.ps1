@@ -56,7 +56,7 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if ($p.ExitCode -ne 0) { Fail "installer exit code $($p.ExitCode)" }
 
   Get-ChildItem $dir -Recurse | Select-Object -ExpandProperty FullName
-  $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notmatch "^uninstall" }
+  $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notmatch "^uninstall" -and $_.Name -ne "mochi-foreign-helper.exe" }
   if ($exe.Count -ne 1) { Fail "expected one app exe in $dir, found $($exe.Count)" }
   if ($exe.Length -lt 1MB) { Fail "$($exe.Name) is suspiciously small" }
   $uninst = Join-Path $dir "uninstall.exe"
@@ -67,6 +67,21 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   foreach ($s in "Rust crates:", "npm packages (UI bundle):", "MIT License") {
     if (-not $text.Contains($s)) { Fail "license list lacks '$s'" }
   }
+  foreach ($s in "UnRAR source code may be used in any software") {
+    if (-not $text.Contains($s)) { Fail "license list lacks the RARLAB UnRAR notice" }
+  }
+  foreach ($c in "unrar_sys", "sevenz-rust2", "zip", "tar", "flate2") {
+    if ($text -notmatch "Used by:[^\r\n]*(^|[ ,])$([regex]::Escape($c)) \d") { Fail "license list does not cover the helper's dependency $c" }
+  }
+  # D8 (T16): the foreign-format helper sits next to the app (where the app looks for it),
+  # runs, and answers a protocol-v2 list of a real fixture.
+  $helper = Join-Path $dir "mochi-foreign-helper.exe"
+  if (-not (Test-Path $helper)) { Fail "mochi-foreign-helper.exe not installed next to the app" }
+  if ((Get-Item $helper).Length -lt 500KB) { Fail "mochi-foreign-helper.exe is suspiciously small" }
+  $fixture = Join-Path $PSScriptRoot "..\fixtures\foreign\basic_infozip.zip"
+  $probe = Join-Path $PSScriptRoot "helper_probe.py"
+  & python -I $probe $helper (Resolve-Path $fixture).Path --expect a.txt --expect sub/b.txt
+  if ($LASTEXITCODE -ne 0) { Fail "the installed helper did not list the fixture" }
   # Per-user: the uninstall entry is under HKCU, nothing needed elevation.
   $key = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
     Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -eq "MOCHI" }
@@ -110,6 +125,7 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   $u = Start-Process -FilePath $uninst -ArgumentList "/S", "_?=$dir" -Wait -PassThru
   if ($u.ExitCode -ne 0) { Fail "uninstaller exit code $($u.ExitCode)" }
   if (Test-Path (Join-Path $dir $exe.Name)) { Fail "app exe still present after uninstall" }
+  if (Test-Path $helper) { Fail "mochi-foreign-helper.exe still present after uninstall" }
   Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
   # Uninstall removes every key and association it added (plan D6).
   Assert-NothingRegistered "after uninstall"

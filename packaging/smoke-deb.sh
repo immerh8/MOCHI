@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke-check a built .deb (plan D7, D6, O11): metadata, dependency, contents, the
 # .desktop MimeType and the shared-mime-info type for .mochi; with
-# --install, also install it with apt, check that every shared library resolves,
+# --install, also install it with apt, check that every shared library resolves, that the
+# installed foreign-format helper lists a fixture (D8),
 # then remove it. Usage: smoke-deb.sh [--install] path/to/mochi.deb
 set -euo pipefail
 install=0
@@ -22,8 +23,13 @@ case "$depends" in *libwebkit2gtk-4.0*) fail "Depends names the 4.0 series, not 
 # Tauri's builder does not): compare them without.
 contents=$(dpkg-deb --contents "$deb" | sed -E 's# \./# #')
 echo "$contents"
-exe=$(echo "$contents" | awk '$1 ~ /^-..x/ && $6 ~ /^usr\/bin\// {print $6}')
-[ "$(echo "$exe" | grep -c .)" = 1 ] || fail "expected exactly one executable in /usr/bin, got: $exe"
+# The app and, next to it, the foreign-format helper (D8, T16; the app looks for it in
+# its own directory, mochi_foreign::default_helper_path).
+helper=usr/bin/mochi-foreign-helper
+exes=$(echo "$contents" | awk '$1 ~ /^-..x/ && $6 ~ /^usr\/bin\// {print $6}')
+echo "$exes" | grep -qx "$helper" || fail "$helper missing or not executable in the package"
+exe=$(echo "$exes" | grep -vx "$helper" || true)
+[ "$(echo "$exe" | grep -c .)" = 1 ] || fail "expected the app plus $helper in /usr/bin, got: $exes"
 echo "$contents" | grep -Eq ' usr/share/applications/[^ ]*\.desktop$' || fail "no .desktop entry"
 lic=usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt
 echo "$contents" | grep -q " $lic\$" || fail "third-party license list ($lic) missing"
@@ -31,6 +37,11 @@ dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
 dpkg-deb --extract "$deb" "$dir"
 grep -q "Rust crates:" "$dir/$lic" && grep -q "npm packages (UI bundle):" "$dir/$lic" \
   && grep -q "MIT License" "$dir/$lic" || fail "license list lacks an expected section"
+# The helper's own graph (T16): the RARLAB UnRAR paragraph and the crates only it links.
+grep -q "UnRAR source code may be used in any software" "$dir/$lic" || fail "license list lacks the RARLAB UnRAR notice"
+for c in unrar_sys sevenz-rust2 zip tar flate2; do
+  grep -Eq "Used by:.*(^|[ ,])$c [0-9]" "$dir/$lic" || fail "license list does not cover the helper's dependency $c"
+done
 
 # D6 (O10): .mochi association and "Open with". The .desktop passes the file
 # (%f) and lists application/x-mochi; the foreign formats are only listed; the
@@ -72,12 +83,22 @@ if [ "$install" = 1 ]; then
   [ -x "$bin" ] || fail "$bin not installed"
   missing=$(ldd "$bin" | grep 'not found' || true)
   [ -z "$missing" ] || fail "unresolved libraries: $missing"
+  # D8 (T16): the helper is installed, executable, links, and answers a protocol-v2 list of a
+  # real fixture. Run from the installed path, as the app does.
+  hbin="/$helper"
+  [ -x "$hbin" ] || fail "$hbin not installed or not executable"
+  missing=$(ldd "$hbin" | grep 'not found' || true)
+  [ -z "$missing" ] || fail "helper: unresolved libraries: $missing"
+  here=$(cd "$(dirname "$0")/.." && pwd)
+  python3 -I "$here/packaging/helper_probe.py" "$hbin" "$here/fixtures/foreign/basic_infozip.zip" \
+    --expect a.txt --expect sub/b.txt || fail "$hbin did not list the fixture"
   # dpkg triggers (shared-mime-info, desktop-file-utils) registered the type.
   if [ -d /usr/share/mime ] && command -v update-mime-database > /dev/null; then
     grep -q 'application/x-mochi:\*\.mochi' /usr/share/mime/globs2 || fail "update-mime-database did not register *.mochi"
   fi
   sudo apt-get remove -y mochi
   [ ! -e "$bin" ] || fail "$bin still present after removal"
+  [ ! -e "$hbin" ] || fail "$hbin still present after removal"
   [ ! -e "/$mime" ] || fail "/$mime still present after removal"
   if [ -f /usr/share/mime/globs2 ]; then
     ! grep -q 'application/x-mochi' /usr/share/mime/globs2 || fail "*.mochi still registered after removal"

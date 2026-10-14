@@ -212,3 +212,10 @@ archive or the copies drops the plan. Only a §20.4 `PASS` gets success styling
 - Passphrases cross IPC once and are never persisted unless the user opts into the OS credential store.
 - Foreign archives (D8): opened read-only, parsed in the helper process, extracted only
   through the shared restore engine, and tested with CRC wording, never MOCHI verification wording.
+
+## Foreign-format helper in the installers
+
+Both installers ship `mochi-foreign-helper` next to the app (T16), so a packaged
+build opens ZIP, 7z, RAR, and tar archives. How it is built, staged, licensed, and
+smoke-tested: `crates/mochi-foreign/README.md` "Shipping the helper". Dev runs are
+unchanged (the helper is built into `target/<profile>`).
