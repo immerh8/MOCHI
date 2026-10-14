@@ -177,5 +177,22 @@ hits=$(grep -rnE --include='*.rs' 'write_all\([^)]*Rar!|b"Rar!' crates/mochi-for
         | grep -vE '^crates/mochi-foreign/src/detect\.rs:' || true)
 [ -n "$hits" ] && report "possible RAR writing in mochi-foreign (plan D8 rule 1; MOCHI never writes RAR)" "$hits"
 
+# 11. In-app updates (plan D7, T13). The webview gets none of the updater plugin's own
+#     permissions and does not import its JavaScript API: Rust makes the request and
+#     checks the signature (docs/packaging.md "Updates"). No private key material is
+#     committed. The release workflow only ever creates DRAFT releases and never pushes
+#     a tag or publishes.
+hits=$(grep -nE '"(updater:|core:)' apps/mochi-desktop/src-tauri/capabilities/*.json || true)
+[ -n "$hits" ] && report "an updater:/core: permission granted to the webview (T13: the app's own commands only)" "$hits"
+hits=$(grep -rnE 'plugin-updater' apps/mochi-desktop/ui/src apps/mochi-desktop/ui/package.json || true)
+[ -n "$hits" ] && report "the webview uses the updater plugin directly (T13: Rust only)" "$hits"
+hits=$(grep -rnIE 'BEGIN [A-Z ]*PRIVATE KEY|untrusted comment: (rsign )?encrypted secret key|dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQg' \
+        --exclude-dir=target --exclude-dir=node_modules --exclude-dir=.git --exclude=check-invariants.sh . || true)
+[ -n "$hits" ] && report "private key material in the repository (T13)" "$hits"
+hits=$(grep -E '^[^#]*(git +(push|tag)|gh +release +(edit|publish|delete)|--latest|prerelease=false|draft: *false|--draft=false)' .github/workflows/release.yml || true)
+[ -n "$hits" ] && report "release workflow pushes a tag or publishes (T13: draft releases only)" "$hits"
+hits=$(grep -E '^[^#]*gh +release +create' .github/workflows/release.yml | grep -v -e '--draft' || true)
+[ -n "$hits" ] && report "release workflow creates a release without --draft (T13)" "$hits"
+
 if [ "$fail" -eq 0 ]; then echo "invariants: ok"; fi
 exit "$fail"

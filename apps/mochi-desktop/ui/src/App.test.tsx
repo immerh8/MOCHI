@@ -21,6 +21,16 @@ function fakeBackend(startResult: () => unknown = () => 7) {
     // The Writer's start-up calls (D2) are tested in write/Writer.test.tsx.
     if (cmd === "staged_sources") return { items: [], destination: null };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    // The update settings (T13) are tested in update/Updates.test.tsx.
+    if (cmd === "get_update_settings") {
+      return {
+        check_on_start: false,
+        current_version: "0.1.0",
+        install_mode: "manual",
+        download_page: "https://github.com/immerh8/MOCHI/releases/latest",
+        needs_admin_prompt: false,
+      };
+    }
     // The crash-report settings (D7) are tested in settings/CrashReports.test.tsx.
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
     calls.push({ cmd, args: a });

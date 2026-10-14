@@ -320,6 +320,13 @@ progress {
   margin-left: 1rem;
 }
 
+.update-notes {
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---- D7: accessibility ------------------------------------------------------ */
 /* A visible focus ring on everything the keyboard can reach. Rows and list
    buttons sit inside scrolling boxes, so their ring is drawn inside them. */

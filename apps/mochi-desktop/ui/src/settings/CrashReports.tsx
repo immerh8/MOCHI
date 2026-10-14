@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import type { ReactNode } from "react";
 
 import { Live } from "../a11y/Live";
 import { errorText, formatSize } from "../browser/format";
@@ -17,7 +18,7 @@ import type { CrashLogView, CrashSettingsView } from "../ipc/crash";
  * off (the state comes from Rust, which persists them). The log text is shown
  * as text only; saving a copy goes through a native dialog shown by Rust.
  */
-export function CrashReports() {
+export function CrashReports({ children }: { children?: ReactNode }) {
   const [state, setState] = useState<CrashSettingsView | null>(null);
   const [log, setLog] = useState<CrashLogView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export function CrashReports() {
       <h2 id="settings-heading" tabIndex={-1}>
         {t("settings.heading")}
       </h2>
+      {children}
       <h3>{t("settings.crashHeading")}</h3>
       <p data-testid="crash-policy">{t("settings.crashPolicy")}</p>
       <p className="note">{t("settings.crashCollected")}</p>

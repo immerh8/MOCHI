@@ -1,8 +1,9 @@
 # Packaging the desktop app (plan D7, first slice; D6 shell integration)
 
-Unsigned installers for the two supported platforms (decision O11): a **Windows NSIS**
+Installers for the two supported platforms (decision O11): a **Windows NSIS**
 setup (per-user, WebView2 bootstrapper) and an **Ubuntu `.deb`** built on 22.04. No MSI,
-AppImage, or macOS target. Signing and the updater are **not done**; see below.
+AppImage, or macOS target. The installers are **not code-signed** (below); updates are
+authenticated by the updater's own signature.
 
 ## Build
 
@@ -49,7 +50,8 @@ is prepended.
   and the `HKCU` uninstall entry, then silently uninstalls.
 - `package smoke (ubuntu-24.04)`: installs the 22.04-built `.deb` on 24.04.
 - Both installers and the license list are uploaded as workflow artifacts
-  (`mochi-installer-*-unsigned`). Nothing is published.
+  (`mochi-installer-*-unsigned`). Nothing is published; releases come from `release.yml`
+  (below).
 
 ## Shell integration (plan D6, decision O10)
 
@@ -111,22 +113,105 @@ on with the switch, every key gone after uninstall, twice), `smoke-deb.sh` (`Exe
 the Rust tests of the argument parser and the routing, a UI test per launch event, and
 the `launch.e2e.js` spec (a second process routes to the running window).
 
-## Signing and updater: what the owner must supply (NOT done)
+## Signing and the updater
 
-Nothing below is in the repository, and no key may be committed.
+**[owner, 2026-10-14]** Decisions: no Windows Authenticode code signing for 1.0; the updater
+key pair is the owner's; the update endpoint is GitHub Releases of `immerh8/MOCHI`.
 
-| Need | Used for | Where it goes |
-|---|---|---|
-| Windows code-signing identity: a cloud signing service (such as Azure Trusted Signing or SignPath), or an OV certificate whose private key stays in the CA's cloud key store (EV certificates are hardware-backed as well) | Authenticode-signing the NSIS setup and app exe; without it SmartScreen warns | Since the CA/B Forum baseline requirements of 2023, a code-signing private key must live in a hardware module or a cloud HSM, so it cannot be exported as a PFX into CI secrets. The credentials of the chosen service (a service principal or API token, not a key file) go in CI secrets; then set `signCommand` (or `certificateThumbprint`, for a certificate the runner can reach) in an overlay config and replace the marked placeholder comment in the `package` job. **The owner has not chosen between these options.** |
-| Tauri updater key pair (`cargo tauri signer generate`) | Signing update artifacts | Private key and password as CI secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`; the **public** key goes in `plugins.updater.pubkey` in the config |
-| Update endpoint / hosting (a URL serving the update manifest) | The updater's `endpoints` | Owner decision; none exists yet |
-| `.deb` signing (optional) | A signed APT repository or `dpkg-sig`; a loose `.deb` download needs none | Owner decision on whether to publish an APT repository |
+| Item | State |
+|---|---|
+| Windows Authenticode certificate | **Not used for 1.0.** The NSIS setup and the app are unsigned. |
+| `.deb` / APT repository signing | Not done (a loose `.deb` download needs none). |
+| Updater key pair (minisign, key ID `79A2DBFA840725F5`) | **Supplied by the owner.** The public key is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. The private key and its **password** are the Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; they are not in the repository and must never be (`ci/check-invariants.sh` looks for key material). |
+| Update endpoint | `https://github.com/immerh8/MOCHI/releases/latest/download/latest.json`, fixed in `tauri.conf.json`. |
 
-The updater also needs `tauri-plugin-updater` and a `core:updater` permission, which
-is a webview-permission change that AGENTS.md says needs its own justification; it was
-deliberately not added in this slice.
+If Authenticode is ever revisited: since the CA/B Forum baseline requirements of 2023 a
+code-signing private key must live in a hardware module or a cloud HSM, so it cannot be
+exported as a PFX into CI secrets; the choice would be a cloud signing service (such as
+Azure Trusted Signing or SignPath) or an OV/EV certificate in the CA's key store, with the
+service's credentials (not a key file) as CI secrets. Not needed for 1.0.
+
+**Running an unsigned installer (Windows).** SmartScreen shows "Windows protected your PC"
+with the publisher "unknown". Choose **More info**, then **Run anyway**. That is the
+expected result of an unsigned installer; it says nothing about the file either way. This
+project does not call an unsigned installer verified, trusted, safe, or secure. What
+authenticates an *update* is the updater's signature: the app checks it against the
+public key built into it before installing anything, and refuses an update that fails.
+(A first install from a download is not covered by that check; compare the file with the
+release page if that matters to you.)
+
+## Updates in the app (plan D7, T13)
+
+Settings has **Check for updates**. It makes one request, from Rust, to the endpoint above
+and shows the newer version and its release notes as plain text; nothing is downloaded or
+installed until you press **Download and install**. A check **at start-up** is a separate
+checkbox, **off by default** (stored in `update-settings.json` in the app's config folder),
+and Rust refuses an automatic check while it is off. A failure (offline, an unusable
+answer, a signature that does not match) is shown as a failure, never as success; a
+signature that does not match is refused and nothing is installed. The check carries no
+file names or archive contents; GitHub sees the request as it sees any download.
+
+| Install | What happens |
+|---|---|
+| Windows (NSIS setup) | The app downloads the setup, checks its signature, and starts it in passive mode (a progress bar, no questions); MOCHI closes when the installer starts. |
+| Ubuntu (`.deb`) | The app downloads the `.deb`, checks its signature, and runs `dpkg -i` through `pkexec` (or a graphical password prompt, or `sudo` in a terminal): **Ubuntu asks for your password.** `dpkg -i` does not fetch new dependencies. Close and reopen MOCHI afterwards. |
+| A binary not installed from a MOCHI package | Cannot update itself: it says a new version exists and shows `https://github.com/immerh8/MOCHI/releases/latest`. |
+
+The Tauri v2 updater can install a `.deb` (checked in `tauri-plugin-updater` 2.13.3,
+`install_deb`); that is why Ubuntu updates in place. Which path runs depends on the bundle
+marker `tauri build` writes into the binary, not on anything the server says.
+
+**Least privilege.** The webview is granted only `allow-get-update-settings`,
+`allow-set-update-settings`, `allow-check-for-update` (the app's own commands; the
+capability description gives the reason) and starts the download as the `install_update`
+job through `start_job`. It gets no `updater:*`, `core:*`, `http`, `fs`, or `shell`
+permission and supplies no URL; the CSP is unchanged because the request is made in Rust.
+`requireSignedVersion` is on: the signature must name the version the manifest announces.
+
+## Releasing (owner steps)
+
+`.github/workflows/release.yml` builds both installers with updater artifacts, smoke-checks
+them (including the `.deb` on 24.04), makes `latest.json`, and creates a **draft** release.
+It never publishes and never pushes a tag.
+
+1. **Once:** in the repository settings add the Actions secrets
+   `TAURI_SIGNING_PRIVATE_KEY` (the contents of the private key file) and
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. **The key must have a password:** GitHub Actions
+   secrets cannot be empty, and the workflow requires both. A key made without a password
+   must be regenerated (`cargo tauri signer generate -w mochi-updater.key`, entering a
+   password when asked), and then the public key in `tauri.conf.json` replaced and a new
+   release made, because apps already installed trust only the old public key. Without the secrets the workflow stops in `preflight`
+   with an error naming the missing secret, and builds nothing.
+2. Set the version in `src-tauri/tauri.conf.json` and `[workspace.package]` in
+   `Cargo.toml` (they must match) and merge it. Optionally write plain-text release notes
+   in `docs/release-notes/v<version>.txt`; the app shows them as text.
+3. Push the tag `v<version>` on that commit (or run the workflow by hand from the Actions
+   tab; the tag is then created only when you publish the draft).
+4. When the run is green, open Releases, review the **draft** (assets: the setup, the
+   `.deb`, a `.sig` for each, `latest.json`, `THIRD-PARTY-LICENSES.txt`), edit the text
+   if you like, and publish it. Publishing makes `latest.json` visible to installed apps
+   (`releases/latest` is the newest *published, non-draft, non-prerelease* release).
+5. Do the release checklist below, including updating from the previous release.
+
+Never reuse a version: an app compares versions, and a `latest.json` for a lower or equal
+version offers nothing. To withdraw a bad release, delete or unpublish it (`releases/latest`
+then points to the previous one) and publish a higher version.
+
+CI rehearses the signed path on every pull request (`package`, "Rehearse the release
+path"): it generates a throwaway key on the runner, builds with `MOCHI_UPDATER_ARTIFACTS=1`,
+and checks that each `.sig` names the app version. `packaging/test_latest_json.py` tests the
+manifest generator.
 
 ## Release checklist (not reproducible on CI)
+
+**Updater (T13).** With the previous release installed on a Windows 10 22H2 and a Windows
+11 client machine and on Ubuntu 22.04 and 24.04 desktops: Settings → Check for updates shows
+the new version and notes as text and installs nothing by itself; confirm, and the app
+updates (Windows: the installer's progress bar, MOCHI closes, the new version starts;
+Ubuntu: the password prompt appears, reopen MOCHI; the Updates section shows the new version).
+With the start-up checkbox off, a Network monitor (or a firewall log) shows no request at
+start; with it on, one. With the network off, the check says it could not reach the server.
+A `latest.json` whose `.sig` was edited is refused and nothing is installed.
 
 GitHub's Windows runners are Windows Server (plan O11). Before a release, on a clean
 Windows 10 22H2 and a Windows 11 *client* machine **without** WebView2 (or with it
@@ -184,7 +269,9 @@ read with it). Record the result in the release notes.
 
 ## Not done
 
-- Signing, the updater, and release publication (above).
+- Windows Authenticode signing (decided against for 1.0), `.deb` or APT signing, and
+  publishing a release without the owner's review (the workflow makes drafts only).
+- An update applied end to end on a real pair of published releases (the release checklist).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
 - Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign formats
   opened from the shell answer "not supported yet" until plan D8 lands.

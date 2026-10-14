@@ -516,6 +516,25 @@ jobs:
           name: mochi-installer-${{ matrix.bundle }}-unsigned
           path: target/installer-out/*
           if-no-files-found: error
+      - name: Rehearse the release path with a throwaway updater key (T13)
+        # Proves that createUpdaterArtifacts writes a .sig that names the app version, that
+        # latest.json can be made from it, and that nothing here needs the owner's secrets.
+        # The key is generated here, is not the owner's, and is discarded with the runner.
+        shell: bash
+        run: |
+          cargo tauri signer generate --ci --password rehearsal --write-keys "$RUNNER_TEMP/rehearsal.key"
+          export MOCHI_UPDATER_ARTIFACTS=1
+          export TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/rehearsal.key")"
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=rehearsal
+          packaging/build-installer.sh ${{ matrix.bundle }}
+          version=$(python3 -I -c "import json;print(json.load(open('apps/mochi-desktop/src-tauri/tauri.conf.json'))['version'])")
+          shopt -s nullglob
+          files=(target/release/bundle/${{ matrix.bundle }}/*.deb target/release/bundle/${{ matrix.bundle }}/*-setup.exe)
+          [ "${#files[@]}" = 1 ] || { echo "::error::expected exactly one installer"; exit 1; }
+          python3 -I packaging/latest_json.py check --version "$version" "${files[@]}"
+      - name: Packaging scripts (latest.json)
+        if: matrix.bundle == 'deb'
+        run: python3 -I -m unittest discover -s packaging -p 'test_*.py'
 
   package-ubuntu-24:
     # The 22.04-built .deb must also install and run its libraries on the

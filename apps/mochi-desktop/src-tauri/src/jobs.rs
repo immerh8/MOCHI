@@ -115,7 +115,8 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::DeleteFromArchive { .. }
         | JobRequest::ExtractArchive { .. }
         | JobRequest::TestForeign { .. }
-        | JobRequest::ExtractForeign { .. } => services.validate(request)?,
+        | JobRequest::ExtractForeign { .. }
+        | JobRequest::InstallUpdate { .. } => services.validate(request)?,
         JobRequest::TestArchive { .. }
         | JobRequest::PlanRepair { .. }
         | JobRequest::ApplyRepair { .. }

@@ -13,7 +13,7 @@ import type { Secret } from "./Secret";
  * *deserialized*: it has no `Serialize` (nothing can write one out), its
  * `Debug` text redacts every secret, and it has no equality (D5).
  */
-export type JobRequest = { "kind": "self_test", steps: number, step_ms: number, } | { "kind": "create_archive", preset: CompressionPreset, 
+export type JobRequest = { "kind": "self_test", steps: number, step_ms: number, } | { "kind": "install_update", version: string, } | { "kind": "create_archive", preset: CompressionPreset, 
 /**
  * "Readable with standard zstd + tar" (O4): fixed at creation.
  */

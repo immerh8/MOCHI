@@ -4,6 +4,7 @@ import { useJobFocus } from "./a11y/focus";
 import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
+import { Updates } from "./update/Updates";
 import { t } from "./i18n";
 import { CrashReports } from "./settings/CrashReports";
 import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
@@ -196,7 +197,9 @@ export function App() {
           {view.state === "error" && view.text}
         </p>
       </section>
-      <CrashReports />
+      <CrashReports>
+        <Updates />
+      </CrashReports>
     </main>
   );
 }

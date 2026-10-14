@@ -48,6 +48,7 @@ tauri-plugin-dialog = "2"
 # D-Bus on Linux).
 tauri-plugin-single-instance = "2"
 ts-rs = "12"
+tauri-plugin-updater = "2"
 
 [dev-dependencies]
 mochi-testkit.workspace = true
