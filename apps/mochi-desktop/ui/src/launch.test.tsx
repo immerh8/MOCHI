@@ -1,11 +1,14 @@
 // Plan D6: the shell's verbs reach the window as events from Rust. The webview
 // hears that an archive was opened (or why a launch failed) and never a path.
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test } from "vitest";
 
 import { Browser } from "./browser/Browser";
+import { ForeignBrowser } from "./foreign/ForeignBrowser";
+import type { ForeignArchiveSummary } from "./ipc/foreign";
 import type { ArchiveSummary } from "./ipc/browse";
 import type { LaunchEvent } from "./ipc/launch";
 
@@ -21,6 +24,22 @@ function summary(handle: number, name: string): ArchiveSummary {
     profile: { tar_compatible: false, encrypted: false, redundancy_percent: null },
     commits: [{ seq: 0, commit_id: "0".repeat(64), time: null, checkpoint: true, retained: true, expired: false, holds: [] }],
     retention_error: null,
+  };
+}
+
+function foreignSummary(handle: number, name: string): ForeignArchiveSummary {
+  return {
+    handle,
+    file_name: name,
+    format: "7z",
+    entries: 1,
+    complete: true,
+    stop_reason: null,
+    notes: [],
+    checks: "CRC32 per entry",
+    opened_with_password: false,
+    weak_encryption: false,
+    dimensions: { recoverability: "UNSUPPORTED", freshness: "UNSUPPORTED", retention: "UNSUPPORTED" },
   };
 }
 
@@ -44,7 +63,27 @@ function backend() {
       case "list_children":
         return { total: 0, offset: 0, entries: [] };
       case "close_archive":
+      case "close_foreign_archive":
         return true;
+      case "foreign_children":
+        return {
+          total: 1,
+          offset: 0,
+          entries: [
+            {
+              key: "3c",
+              name: { text: '<img src=x onerror="alert(1)">', verbatim: true },
+              kind: "file",
+              size: "5",
+              child_dirs: 0,
+              child_files: 0,
+              encryption: null,
+              note: null,
+            },
+          ],
+        };
+      case "open_foreign_archive":
+        return foreignSummary(12, "retried.7z");
       case "plan_extract":
         return { destination: "/home/me/photos", entries: 4, conflicts: [], conflicts_total: 0, case_insensitive: false };
     }
@@ -106,4 +145,51 @@ test("a launch that failed is shown as text, hostile markup inert", async () => 
   const alert = await screen.findByTestId("browse-error");
   expect(alert).toHaveTextContent('<img src=x onerror="alert(1)"> could not be opened');
   expect(container.querySelector("img")).toBeNull();
+});
+
+test("a foreign archive opened by the shell shows the foreign browser, read-only, with names as text", async () => {
+  const b = backend();
+  const { container } = render(
+    <>
+      <Browser />
+      <ForeignBrowser />
+    </>,
+  );
+  await screen.findByTestId("browse-empty");
+  b.launch({ event: "foreign_opened", archive: foreignSummary(11, "photos.zip") });
+  expect(await screen.findByTestId("foreign-meta")).toHaveTextContent("photos.zip");
+  expect(screen.getByTestId("foreign-label")).toBeInTheDocument();
+  expect(await screen.findByTestId("foreign-entry")).toHaveTextContent('<img src=x onerror="alert(1)">');
+  expect(container.querySelector("img")).toBeNull();
+  // The MOCHI browser is untouched, and nothing asked for a dialog or a path.
+  expect(screen.getByTestId("browse-empty")).toBeInTheDocument();
+  const cmds = b.calls.map((c) => c.cmd);
+  expect(cmds).not.toContain("open_archive");
+  expect(cmds).not.toContain("open_foreign_archive");
+  // A second one replaces the first and closes it.
+  b.launch({ event: "foreign_opened", archive: foreignSummary(13, "other.zip") });
+  await waitFor(() => expect(screen.getByTestId("foreign-meta")).toHaveTextContent("other.zip"));
+  expect(b.calls.find((c) => c.cmd === "close_foreign_archive")?.args).toEqual({ handle: 11 });
+});
+
+test("a password-protected foreign archive asks in the window and sends the password once", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(
+    <>
+      <Browser />
+      <ForeignBrowser />
+    </>,
+  );
+  await screen.findByTestId("browse-empty");
+  b.launch({ event: "foreign_password", wrong: false });
+  const input = await screen.findByTestId("foreign-password-input");
+  await user.type(input, "SECRET");
+  await user.click(screen.getByTestId("foreign-password-submit"));
+  await waitFor(() => expect(screen.getByTestId("foreign-meta")).toHaveTextContent("retried.7z"));
+  const opens = b.calls.filter((c) => c.cmd === "open_foreign_archive");
+  // The retry names no file (Rust remembers it) and carries the password once.
+  expect(opens.map((c) => c.args)).toEqual([{ retry: true, password: "SECRET" }]);
+  expect(screen.queryByTestId("foreign-password")).toBeNull();
+  expect(JSON.stringify(b.calls.filter((c) => c.cmd !== "open_foreign_archive"))).not.toContain("SECRET");
 });

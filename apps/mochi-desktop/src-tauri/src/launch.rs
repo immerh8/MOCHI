@@ -19,9 +19,19 @@
 //! * **Arguments are untrusted.** Every path is checked (empty, NUL, length,
 //!   Windows device namespace, a verb's path count) before anything touches
 //!   the file system, and a launch that does not parse changes nothing.
-//! * **Foreign formats are not parsed here.** A ZIP, 7z, RAR, or tar path
-//!   gets a plain "not supported yet" until the foreign-format helper
-//!   (plan D8) exists.
+//! * **Foreign formats are not parsed here.** A ZIP, 7z, RAR, tar, or tar.gz
+//!   path (by extension, [`foreign_kind`]) goes to the same open path as the
+//!   in-app "Open foreign archive" button ([`Foreign::open`], plan D8): the
+//!   isolated helper lists it and the window shows the read-only foreign
+//!   browser. An archive that needs a password is remembered in Rust
+//!   (`Foreign::pending`) and the window asks for it, once, exactly as it
+//!   does for the in-app path. What D8 does not support (a split ZIP, an SFX,
+//!   an unsupported method) comes back as the helper's typed refusal.
+//! * **Extract verbs are for `.mochi`.** `--extract-here` and
+//!   `--extract-to-folder` on a foreign archive extract nothing and choose no
+//!   folder: the archive is opened for browsing, with a plain sentence that
+//!   extraction from the shell is for `.mochi` archives. The user extracts
+//!   from the foreign browser's own buttons, which show the plan first.
 //!
 //! # Command line
 //!
@@ -47,7 +57,8 @@ use ts_rs::TS;
 
 use crate::browse::Archives;
 use crate::extract::Destination;
-use crate::ipc::{ArchiveSummary, IpcError};
+use crate::foreign::Foreign;
+use crate::ipc::{ArchiveSummary, ForeignArchiveSummary, IpcError};
 use crate::write::{DropWatch, Staging, MAX_STAGED};
 
 /// Longest path accepted from the command line, in bytes (Windows allows
@@ -215,6 +226,13 @@ pub enum LaunchEvent {
         archive: ArchiveSummary,
         extract: bool,
     },
+    /// A ZIP, 7z, RAR, tar, or tar.gz was opened read-only (plan D8); show
+    /// the foreign browser on it. Nothing here says it was verified.
+    ForeignOpened { archive: ForeignArchiveSummary },
+    /// The foreign archive needs a password (or the one given was wrong). Rust
+    /// remembers the file; the window asks and retries with the password, which
+    /// crosses IPC once, in that call.
+    ForeignPassword { wrong: bool },
     /// The launch could not be carried out, in one sentence.
     Problem { message: String },
 }
@@ -237,6 +255,7 @@ struct Inner {
     staging: Arc<Staging>,
     destination: Arc<Destination>,
     drops: Arc<DropWatch>,
+    foreign: Arc<Foreign>,
     delivery: Mutex<Delivery>,
 }
 
@@ -259,12 +278,14 @@ impl Launches {
         staging: Arc<Staging>,
         destination: Arc<Destination>,
         drops: Arc<DropWatch>,
+        foreign: Arc<Foreign>,
     ) -> Launches {
         let inner = Arc::new(Inner {
             archives,
             staging,
             destination,
             drops,
+            foreign,
             delivery: Mutex::default(),
         });
         let (tx, rx) = channel::<Result<Launch, LaunchError>>();
@@ -357,10 +378,8 @@ impl Inner {
 
     fn open(&self, verb: Verb, path: &Path) {
         let shown = path.display();
-        if let Some(kind) = foreign_kind(path) {
-            return self.problem(format!(
-                "{shown}: {kind} archives cannot be opened yet. MOCHI opens .mochi archives."
-            ));
+        if foreign_kind(path).is_some() {
+            return self.open_foreign(verb, path);
         }
         match std::fs::metadata(path) {
             Ok(m) if m.is_file() => {}
@@ -410,6 +429,37 @@ impl Inner {
     }
 }
 
+impl Inner {
+    /// Open a foreign archive for browsing through the in-app path
+    /// ([`Foreign::open`]); the password, if any, is asked for in the window.
+    fn open_foreign(&self, verb: Verb, path: &Path) {
+        let shown = path.display();
+        match std::fs::metadata(path) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return self.problem(format!("{shown} is not a file.")),
+            Err(e) => return self.problem(format!("{shown} cannot be read: {e}.")),
+        }
+        match self.foreign.open(path, None) {
+            Ok(archive) => {
+                if verb != Verb::Open {
+                    self.problem(format!(
+                        "{shown}: extracting from the shell is for .mochi archives. \
+                         It is open for browsing; use Extract in the foreign archive section."
+                    ));
+                }
+                self.emit(LaunchEvent::ForeignOpened { archive });
+            }
+            Err(e) if e.code == mochi_foreign::ErrorCode::PasswordRequired.as_str() => {
+                self.emit(LaunchEvent::ForeignPassword { wrong: false });
+            }
+            Err(e) => self.problem(format!(
+                "{shown} could not be opened ({}): {}",
+                e.code, e.message
+            )),
+        }
+    }
+}
+
 /// The archive's own folder.
 fn extract_here(archive: &Path) -> Result<PathBuf, String> {
     archive
@@ -445,8 +495,8 @@ fn extract_to_folder(archive: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// The foreign format a name suggests, by extension only (the helper that
-/// parses them is plan D8; until then they are refused plainly).
+/// The foreign format a name suggests, by extension only. A name is a hint
+/// for routing, never proof: the helper decides what the bytes are.
 pub fn foreign_kind(path: &Path) -> Option<&'static str> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
     const SUFFIXES: [(&str, &str); 7] = [
@@ -669,13 +719,58 @@ mod tests {
         }
     }
 
+    /// The helper binary next to the test executable, built on demand when
+    /// only this package's tests were asked for.
+    fn helper() -> PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let name = if cfg!(windows) {
+            "mochi-foreign-helper.exe"
+        } else {
+            "mochi-foreign-helper"
+        };
+        let path = exe.parent().unwrap().parent().unwrap().join(name);
+        if !path.exists() {
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+            let ok = std::process::Command::new(cargo)
+                .args(["build", "-p", "mochi-foreign"])
+                .status()
+                .unwrap()
+                .success();
+            assert!(
+                ok && path.exists(),
+                "could not build the helper at {path:?}"
+            );
+        }
+        path
+    }
+
+    fn fx(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures/foreign")
+            .join(name)
+    }
+
     fn launches() -> Launches {
-        Launches::new(
+        launches_with().0
+    }
+
+    fn launches_with() -> (Launches, Arc<Foreign>) {
+        let (l, foreign, _) = launches_full();
+        (l, foreign)
+    }
+
+    fn launches_full() -> (Launches, Arc<Foreign>, Arc<Destination>) {
+        let foreign = Arc::new(Foreign::default());
+        foreign.set_helper(helper());
+        let destination = Arc::new(Destination::default());
+        let l = Launches::new(
             Arc::new(Archives::default()),
             Arc::new(Staging::default()),
-            Arc::new(Destination::default()),
+            Arc::clone(&destination),
             Arc::new(DropWatch::default()),
-        )
+            Arc::clone(&foreign),
+        );
+        (l, foreign, destination)
     }
 
     fn write_archive(dir: &Path, name: &str) -> PathBuf {
@@ -736,19 +831,126 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_archive_is_refused_plainly_and_never_opened() {
-        let l = launches();
+    fn a_foreign_archive_opens_in_the_foreign_browser_not_the_mochi_one() {
+        let (l, foreign) = launches_with();
         let sink = Sink::live();
         l.watch(sink.clone());
+        for name in [
+            "basic_infozip.zip",
+            "basic.tar",
+            "basic.tar.gz",
+            "7z/basic.7z",
+        ] {
+            l.handle_now(Ok(Launch {
+                verb: Verb::Open,
+                paths: vec![fx(name)],
+            }));
+        }
+        let events = sink.events();
+        let formats: Vec<&str> = events
+            .iter()
+            .map(|e| match e {
+                LaunchEvent::ForeignOpened { archive } => archive.format.as_str(),
+                other => panic!("expected ForeignOpened, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(formats.len(), 4);
+        assert_eq!(formats[0], "ZIP");
+        assert_eq!(formats[3], "7z");
+        assert_eq!(foreign.open_count(), 4, "opened by the in-app service");
+        // The foreign wording: no MOCHI health dimension is claimed.
+        if let LaunchEvent::ForeignOpened { archive } = &events[0] {
+            assert_eq!(archive.dimensions.recoverability, "UNSUPPORTED");
+        }
+    }
+
+    #[test]
+    fn extract_verbs_on_a_foreign_archive_extract_nothing_and_open_it_for_browsing() {
+        let (l, foreign, dest) = launches_full();
+        let sink = Sink::live();
+        l.watch(sink.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let zip = dir.path().join("photos.zip");
+        std::fs::copy(fx("basic_infozip.zip"), &zip).unwrap();
+        for verb in [Verb::ExtractHere, Verb::ExtractToFolder] {
+            l.handle_now(Ok(Launch {
+                verb,
+                paths: vec![zip.clone()],
+            }));
+        }
+        let events = sink.events();
+        assert_eq!(events.len(), 4, "{events:?}");
+        for pair in events.chunks(2) {
+            assert!(
+                matches!(&pair[0], LaunchEvent::Problem { message }
+                    if message.contains("extracting from the shell is for .mochi")),
+                "{pair:?}"
+            );
+            assert!(
+                matches!(&pair[1], LaunchEvent::ForeignOpened { .. }),
+                "{pair:?}"
+            );
+        }
+        assert_eq!(foreign.open_count(), 2);
+        // No folder was made and none chosen.
+        assert!(!dir.path().join("photos").exists());
+        assert!(dest.get().is_none());
+    }
+
+    #[test]
+    fn an_encrypted_foreign_archive_asks_for_its_password_in_the_window() {
+        let (l, foreign) = launches_with();
+        let sink = Sink::live();
+        l.watch(sink.clone());
+        let p = fx("7z/enc_names.7z");
         l.handle_now(Ok(Launch {
             verb: Verb::Open,
-            paths: vec![abs("nowhere/x.zip")],
+            paths: vec![p.clone()],
         }));
+        assert_eq!(
+            sink.events(),
+            vec![LaunchEvent::ForeignPassword { wrong: false }]
+        );
+        assert_eq!(foreign.open_count(), 0);
+        // The retry is the in-app one: the file is remembered in Rust.
+        assert_eq!(foreign.pending().as_deref(), Some(p.as_path()));
+        let s = foreign.open(&p, Some(b"SECRET".to_vec())).unwrap();
+        assert!(s.opened_with_password);
+    }
+
+    #[test]
+    fn foreign_variants_d8_does_not_support_keep_their_typed_refusal() {
+        let (l, foreign) = launches_with();
+        let sink = Sink::live();
+        l.watch(sink.clone());
+        let dir = tempfile::tempdir().unwrap();
+        // A `.zip` that is not one, and a missing file.
+        let fake = dir.path().join("fake.zip");
+        std::fs::copy(fx("garbage.bin"), &fake).unwrap();
+        let split = dir.path().join("split.zip");
+        std::fs::copy(fx("split_last.zip"), &split).unwrap();
+        for path in [fake, split, dir.path().join("missing.zip")] {
+            l.handle_now(Ok(Launch {
+                verb: Verb::Open,
+                paths: vec![path],
+            }));
+        }
         let events = sink.events();
+        assert_eq!(events.len(), 3);
         assert!(
-            matches!(&events[0], LaunchEvent::Problem { message } if message.contains("ZIP archives cannot be opened yet")),
+            matches!(&events[0], LaunchEvent::Problem { message }
+                if message.contains("could not be opened (NOT_AN_ARCHIVE)")),
             "{events:?}"
         );
+        assert!(
+            matches!(&events[1], LaunchEvent::Problem { message }
+                if message.contains("could not be opened (UNSUPPORTED")),
+            "{events:?}"
+        );
+        assert!(
+            matches!(&events[2], LaunchEvent::Problem { message } if message.contains("cannot be read"))
+        );
+        assert_eq!(foreign.open_count(), 0);
     }
 
     #[test]
