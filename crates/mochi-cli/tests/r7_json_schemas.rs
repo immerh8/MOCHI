@@ -626,6 +626,10 @@ fn r8_reports_evidence_and_heads_validate() {
             heads += 1;
         }
     }
+    println!(
+        "R7 over R8: {reports} verify/fsck reports, {health} health reports, \
+         {evidence} evidence lines, {heads} head histories"
+    );
     // Most cases open far enough for a report; health needs a locatable head.
     assert!(reports >= 3 * 70, "{reports} reports");
     assert!(health >= 60, "{health} health reports");
@@ -662,6 +666,7 @@ fn r8_repair_plans_validate() {
             with_parity_copies_salvage[2] |= !v["salvage"].is_null();
         }
     }
+    println!("R7 over R8: {plans} repair plans, outcomes {outcomes:?}");
     assert!(plans >= 70, "{plans} plans");
     assert_eq!(outcomes.len(), 3, "every outcome seen: {outcomes:?}");
     assert_eq!(with_parity_copies_salvage, [true; 3]);
@@ -714,6 +719,7 @@ fn r8_read_only_outputs_validate() {
             *seen.entry(schema).or_default() += usize::from(v.is_some());
         }
     }
+    println!("R7 over R8: real outputs per schema {seen:?}");
     for (schema, n) in &seen {
         assert!(*n >= 10, "{schema}: only {n} real outputs");
     }
@@ -1101,7 +1107,6 @@ fn corpus() -> Vec<(&'static str, Value)> {
     let v: Value = serde_json::from_str(o.stdout.trim()).unwrap();
     valid("error.schema.json", &v, "error");
     keep("error.schema.json", v);
-    drop(keep);
 
     let covered: BTreeSet<&str> = out.iter().map(|(s, _)| *s).collect();
     let all: BTreeSet<&str> = SCHEMAS

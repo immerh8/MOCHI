@@ -1201,11 +1201,13 @@ fn r3_schema_registry_matches_the_code() {
     }
     assert_eq!(seen_current.len(), current.len());
 
-    // The table lists every schema file, and nothing else.
+    // The table lists every CDDL schema file, and nothing else (R7's JSON
+    // Schemas in `docs/schemas/json/` are checked by r7_json_schemas.rs).
     let on_disk: BTreeSet<String> =
         std::fs::read_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schemas"))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".cddl"))
             .collect();
     assert_eq!(files, on_disk);
 }

@@ -1924,7 +1924,7 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
 - **G14 Interoperability (R9).** **Met 2026-10-13** [delegated; owner review pending at the desktop checkpoint]: CI run 38364569151, job `r9-interop`, 76 of 76 R8 cases equal; results and every disagreement in `docs/ratification/R9-interop-results.md`. No byte changed.
   - The independent verifier (B.1 D7) produces, for every R8 case, an interop summary equal to the reference implementation's, in CI.
   - Every disagreement is resolved at its source and recorded in `docs/ratification/R9-interop-results.md`.
-- **G15 Report freeze (R7).** Pending, at Beta.
+- **G15 Report freeze (R7).** **Met 2026-10-14** [delegated; owner review pending at the desktop checkpoint, plan K11]: R7 ends with its freeze review (§9 there; two owner questions recorded as options, neither changing a schema, a code, or an exit code); `docs/schemas/json/` holds a JSON Schema (2020-12) for every JSON the CLI writes, eight of them frozen; `crates/mochi-cli/tests/r7_json_schemas.rs` validates real outputs over all 76 R8 cases and temporary archives, kills 4,260 of 4,346 mutated outputs (the 86 survivors listed with reasons), and regenerates Section 20.6's example. No error code was renamed or changed meaning.
   - R7 is frozen, with a JSON Schema for every machine-readable output, and real outputs are validated against them in tests.
 
 #### B.2.7 Writer lock (D17; decided by the owner 2026-10-06, plan Q54)
