@@ -176,6 +176,23 @@ pub fn pick_report_destination<R: Runtime>(app: &AppHandle<R>, suggested: &str) 
         .ok()
 }
 
+/// Show the save dialog for an exported crash log (plan D7). `None` if the
+/// user cancelled. Blocks.
+pub fn pick_crash_log_destination<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Export the crash log (text)")
+        .set_file_name("mochi-crash-log.txt")
+        .add_filter("Text", &["txt"])
+        .blocking_save_file()?
+        .into_path()
+        .ok()
+}
+
 /// `path` with `.mochi` appended when it has no extension.
 pub fn with_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {

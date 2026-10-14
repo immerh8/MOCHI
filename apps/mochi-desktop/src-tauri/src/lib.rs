@@ -10,6 +10,7 @@ mod automation;
 pub mod browse;
 pub mod check;
 pub mod commands;
+pub mod crashlog;
 #[cfg(test)]
 mod d5_tests;
 pub mod extract;
@@ -100,9 +101,19 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::choose_check_subject,
             commands::health_report,
             commands::export_report,
-            commands::repair_setup
+            commands::repair_setup,
+            commands::get_crash_settings,
+            commands::set_crash_settings,
+            commands::read_crash_log,
+            commands::export_crash_log,
+            commands::clear_crash_log
         ])
         .setup(move |app| {
+            // The opt-in crash log (D7): off until the user turns it on.
+            use tauri::Manager;
+            let crash_log = crashlog::CrashLog::open(app.path().app_local_data_dir()?);
+            crashlog::install(Arc::clone(&crash_log));
+            app.manage(crash_log);
             main_window(app)?;
             // The shell's arguments for this first launch.
             first_launches.submit(launch::from_environment());

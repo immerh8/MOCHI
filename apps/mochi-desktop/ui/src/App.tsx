@@ -4,6 +4,7 @@ import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
 import { t } from "./i18n";
+import { CrashReports } from "./settings/CrashReports";
 import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
 import type { JobEvent, JobOutcome } from "./ipc/jobs";
 
@@ -52,6 +53,7 @@ const SECTIONS: { id: string; name: () => string }[] = [
   { id: "check-heading", name: () => t("app.sectionCheck") },
   { id: "foreign-heading", name: () => t("app.sectionForeign") },
   { id: "self-test-heading", name: () => t("app.sectionSelfTest") },
+  { id: "settings-heading", name: () => t("app.sectionSettings") },
 ];
 
 /**
@@ -188,6 +190,7 @@ export function App() {
           {view.state === "error" && view.text}
         </p>
       </section>
+      <CrashReports />
     </main>
   );
 }
