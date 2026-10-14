@@ -42,6 +42,9 @@ afterEach(() => clearMocks());
 test("both switches are off when nothing was ever chosen, and the policy says nothing is sent", async () => {
   const calls = backend();
   render(<CrashReports />);
+  // Before Rust has answered, the switch is off and cannot be flipped.
+  expect(screen.getByTestId("crash-enabled")).not.toBeChecked();
+  expect(screen.getByTestId("crash-enabled")).toBeDisabled();
   await waitFor(() => expect(screen.getByTestId("crash-enabled")).toBeEnabled());
   expect(screen.getByTestId("crash-enabled")).not.toBeChecked();
   expect(screen.getByTestId("crash-details")).not.toBeChecked();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { errorText } from "../browser/format";
@@ -77,9 +78,11 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
   }, [handle, encrypted, commits]);
 
   const busy = run.state === "running";
+  const rememberFocus = useJobFocus(busy);
 
   const start = (request: JobRequest) =>
     new Promise<void>((resolve) => {
+      rememberFocus();
       setError(null);
       setRun({ state: "running", jobId: null });
       const onEvent = (event: JobEvent) => {

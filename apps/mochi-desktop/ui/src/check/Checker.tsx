@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
@@ -96,6 +97,7 @@ export function Checker({ archive }: CheckerProps) {
   const [exporting, setExporting] = useState(false);
 
   const busy = job.state !== "idle";
+  const rememberFocus = useJobFocus(busy);
 
   // Results open below the controls: bring each into view when it appears.
   const resultRef = useRef<HTMLDivElement>(null);
@@ -190,6 +192,7 @@ export function Checker({ archive }: CheckerProps) {
   }, [finished]);
 
   const run = (kind: Kind, request: JobRequest) => {
+    rememberFocus();
     setError(null);
     setJobNote(null);
     setExported(null);

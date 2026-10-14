@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
@@ -65,6 +66,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
   const [error, setError] = useState<string | null>(null);
 
   const busy = job.state === "starting" || job.state === "running";
+  const rememberFocus = useJobFocus(busy);
   const handle = archive?.handle ?? null;
 
   // The panel takes focus when it opens (which scrolls it into view); the
@@ -160,6 +162,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
 
   const start = (on_conflict: ConflictChoice) => {
     if (handle === null || seq === null || scope === null) return;
+    rememberFocus();
     setError(null);
     setJob({ state: "starting" });
     startJob({ kind: "extract_archive", handle, seq, keys: keysOf(scope), on_conflict }, onEvent).catch(

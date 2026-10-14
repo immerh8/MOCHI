@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { errorText, shortSize } from "../browser/format";
 import { t, tn } from "../i18n";
@@ -43,9 +44,11 @@ export function Search({ archive }: { archive: ArchiveSummary | null }) {
   const [view, setView] = useState<View>({ state: "idle" });
 
   const running = view.state === "running";
+  const rememberFocus = useJobFocus(running);
 
   const go = () => {
     if (!archive) return;
+    rememberFocus();
     setView({ state: "running", jobId: null, completed: 0, total: null });
     const onEvent = (e: JobEvent) => {
       if (e.event === "started") {

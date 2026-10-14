@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
@@ -127,6 +128,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   }, []);
 
   const busy = job.state === "starting" || job.state === "running";
+  const rememberFocus = useJobFocus(busy);
 
   const onEvent = useCallback((event: JobEvent) => {
     setJob((prev) => {
@@ -167,6 +169,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   }, []);
 
   const run = (op: Operation, request: JobRequest) => {
+    rememberFocus();
     operationRef.current = op;
     setError(null);
     setJob({ state: "starting" });
@@ -215,6 +218,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   };
 
   const create = () => {
+    rememberFocus();
     setError(null);
     let passphrase: string | undefined;
     if (encrypt) {

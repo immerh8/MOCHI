@@ -2,7 +2,7 @@
 // is never lost or trapped, and results reach a screen reader. jsdom has no
 // layout, so these tests pin the behaviour that does not depend on it: tab
 // order, key handling, and where focus goes.
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test } from "vitest";
@@ -226,7 +226,21 @@ test("a wrong passphrase leaves focus in the passphrase field with the error att
 
   const input = screen.getByTestId("unlock-input");
   await user.click(input);
-  await user.keyboard("nope{Enter}");
+  // jsdom keeps focus on a field that gets disabled, a browser does not, so
+  // watch for the call that gives it back rather than only for where it ends.
+  const focusCalls: unknown[] = [];
+  const original = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function (this: HTMLElement, ...args: Parameters<typeof original>) {
+    focusCalls.push(this);
+    return original.apply(this, args);
+  };
+  try {
+    await user.keyboard("nope{Enter}");
+    await screen.findByTestId("unlock-error");
+    await waitFor(() => expect(focusCalls).toContain(input));
+  } finally {
+    HTMLElement.prototype.focus = original;
+  }
   const alert = await screen.findByTestId("unlock-error");
   expect(alert).toHaveAttribute("role", "alert");
   await waitFor(() => expect(focused()).toBe(input));
@@ -295,4 +309,88 @@ test("the self-test progress bar has a name and a spoken value", async () => {
   const bar = await screen.findByTestId("progress");
   expect(bar).toHaveAccessibleName("Progress");
   expect(bar).toHaveAttribute("aria-valuetext", "Step 3 of 50");
+});
+
+/** A backend whose `start_job` hands the test the channel, to finish the job by hand. */
+function jobBackend() {
+  let channel: { id: number } | undefined;
+  let index = 0;
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
+    if (cmd === "start_job") {
+      channel = a.onEvent as { id: number };
+      return 1;
+    }
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  return (message: unknown) => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__: { runCallback: (id: number, data: unknown) => void } })
+      .__TAURI_INTERNALS__;
+    act(() => internals.runCallback(channel?.id ?? 0, { index: index++, message }));
+  };
+}
+
+/** Put focus on the page body, as a browser does when the focused control becomes disabled. */
+function loseFocus() {
+  const heading = document.getElementById("self-test-heading");
+  heading?.focus(); // moves focus off the (disabled) button, which jsdom will not blur directly
+  heading?.blur();
+  expect(document.activeElement).toBe(document.body);
+}
+
+/** Record which elements are given focus by code. */
+function spyOnFocus() {
+  const given: unknown[] = [];
+  const original = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function (this: HTMLElement, ...args: Parameters<typeof original>) {
+    given.push(this);
+    return original.apply(this, args);
+  };
+  return { given, stop: () => (HTMLElement.prototype.focus = original) };
+}
+
+test("when a job ends, focus goes back to the button that started it", async () => {
+  const finish = jobBackend();
+  const user = userEvent.setup();
+  render(<App />);
+  const start = screen.getByTestId("start");
+  start.focus();
+  const spy = spyOnFocus();
+  try {
+    await user.keyboard("{Enter}");
+    finish({ event: "started", job_id: 1 });
+    expect(start).toBeDisabled();
+    loseFocus(); // a browser drops focus from a control that becomes disabled; jsdom does not
+    finish({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "done" } });
+    await waitFor(() => expect(screen.getByTestId("start")).toBeEnabled());
+    await waitFor(() => expect(spy.given).toContain(start));
+    expect(focused()).toBe(start);
+  } finally {
+    spy.stop();
+  }
+});
+
+test("…but focus the user moved elsewhere in the meantime is left alone", async () => {
+  const finish = jobBackend();
+  const user = userEvent.setup();
+  render(<App />);
+  const start = screen.getByTestId("start");
+  start.focus();
+  await user.keyboard("{Enter}");
+  finish({ event: "started", job_id: 1 });
+  loseFocus();
+  const link = screen.getByRole("navigation", { name: "Sections" }).querySelector("a");
+  link?.focus();
+  const spy = spyOnFocus();
+  try {
+    finish({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "done" } });
+    await waitFor(() => expect(screen.getByTestId("start")).toBeEnabled());
+    expect(spy.given).not.toContain(start);
+    expect(focused()).toBe(link);
+  } finally {
+    spy.stop();
+  }
 });

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import { useJobFocus } from "./a11y/focus";
 import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
@@ -89,6 +90,10 @@ function SectionNav() {
 
 export function App() {
   const [view, setView] = useState<View>({ state: "idle" });
+  const running = view.state === "running";
+  const busy = running || view.state === "starting";
+  // Starting disables the button that was pressed; give focus back at the end.
+  const rememberFocus = useJobFocus(busy);
 
   const onEvent = useCallback((event: JobEvent) => {
     setView((prev) => {
@@ -119,6 +124,7 @@ export function App() {
   }, []);
 
   const start = useCallback(() => {
+    rememberFocus();
     setView({ state: "starting" });
     startJob(SELF_TEST, onEvent).catch((e: unknown) => {
       setView({
@@ -128,7 +134,7 @@ export function App() {
           : t("selfTest.couldNotStartPlain"),
       });
     });
-  }, [onEvent]);
+  }, [onEvent, rememberFocus]);
 
   const cancel = useCallback(() => {
     if (view.state !== "running") return;
@@ -138,9 +144,6 @@ export function App() {
       // The job's own `finished` event reports how it ended.
     });
   }, [view]);
-
-  const running = view.state === "running";
-  const busy = running || view.state === "starting";
 
   return (
     <main>

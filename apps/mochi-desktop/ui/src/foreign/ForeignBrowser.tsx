@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
@@ -90,6 +91,7 @@ export function ForeignBrowser() {
   const listingId = `${handle ?? ""}:${dir ?? ""}`;
   const count = total?.id === listingId ? total.n : null;
   const jobBusy = job.state === "starting" || job.state === "running";
+  const rememberFocus = useJobFocus(jobBusy);
 
   const listError = useCallback((e: unknown) => setError(errorText(t("foreign.listFailed"), e)), []);
 
@@ -186,6 +188,7 @@ export function ForeignBrowser() {
   }, []);
 
   const begin = (request: Parameters<typeof startJob>[0]) => {
+    rememberFocus();
     setError(null);
     setJob({ state: "starting" });
     startJob(request, onEvent).catch((e: unknown) => {

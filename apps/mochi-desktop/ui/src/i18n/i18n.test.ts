@@ -1,8 +1,10 @@
 // The message catalogue as a whole (plan D7 i18n scaffolding; spec §23.3).
 /// <reference types="vite/client" />
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 
-import { allMessages, t, tn } from "./index";
+import { allMessages, LOCALE, t, tn } from "./index";
 import { en } from "./en";
 
 /**
@@ -84,4 +86,10 @@ test("every catalogue key is used, so the catalogue does not collect dead wordin
     (k) => !text.includes(`"${k}"`) && !dynamic.some((p) => k.startsWith(p)),
   );
   expect(unused).toEqual([]);
+});
+
+test("the page declares the language of the shipped locale and has a title", () => {
+  const html = readFileSync(join(process.cwd(), "index.html"), "utf8");
+  expect(html).toContain(`<html lang="${LOCALE}">`);
+  expect(html).toMatch(/<title>MOCHI<\/title>/);
 });
