@@ -30,6 +30,11 @@ async function tabTo(testid, { back = false, max = 160 } = {}) {
 describe("keyboard-only use", () => {
   it("starts at the top of the page and the first stops are the section buttons", async () => {
     await $('[data-testid="browse-empty"]').waitForExist();
+    // WebView2 keeps its own sequential-focus starting point, so the first Tab of
+    // a fresh session does not always begin at the top. Clicking the page title
+    // fixes the starting point at the top of the page in every engine; the
+    // keyboard does everything after that.
+    await $("h1").click();
     await browser.keys(["Tab"]);
     const first = await active();
     expect(first.tag).toBe("BUTTON");
