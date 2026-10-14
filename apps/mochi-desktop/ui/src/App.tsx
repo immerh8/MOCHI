@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { Browser } from "./browser/Browser";
+import { ForeignBrowser } from "./foreign/ForeignBrowser";
 import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
 import type { JobEvent, JobOutcome } from "./ipc/jobs";
 
@@ -96,6 +97,7 @@ export function App() {
     <main>
       <h1>MOCHI</h1>
       <Browser />
+      <ForeignBrowser />
       <section aria-labelledby="self-test-heading">
         <h2 id="self-test-heading">Job runner self-test</h2>
         <p>

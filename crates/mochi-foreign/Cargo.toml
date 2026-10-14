@@ -22,7 +22,7 @@ default = ["engine"]
 # talks to the helper) depends on this crate with `default-features = false`,
 # so no ZIP/tar/gzip parser is linked into its process; ci/check-invariants.sh
 # checks that.
-engine = ["dep:zip", "dep:tar", "dep:flate2", "dep:rustix"]
+engine = ["dep:zip", "dep:tar", "dep:flate2", "dep:rustix", "dep:sevenz-rust2", "dep:unrar_sys"]
 # Fault hooks for the crash/limit tests (panic, abort, huge allocation, hang,
 # stdout flood). Enabled only by this crate's own dev-dependency below;
 # ci/check-invariants.sh forbids it anywhere else.
@@ -35,8 +35,20 @@ zip = { version = "8", default-features = false, features = ["aes-crypto", "defl
 # MIT OR Apache-2.0 each.
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
+sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["aes256", "bzip2", "deflate", "ppmd"], optional = true }
+# The FFI crate of the `unrar` project (muja/unrar.rs; MIT OR Apache-2.0). It
+# builds the vendored RARLAB UnRAR C++ source, which is NOT MIT/Apache: see
+# THIRD-PARTY-NOTICES.md. We use it, not the safe `unrar` wrapper, because the
+# wrapper buffers a whole entry in memory, hides the hash type, and unwraps on
+# unknown flags; streaming with limits needs the callback API directly.
+unrar_sys = { version = "0.5.8", optional = true }
 zeroize.workspace = true
 rustix = { workspace = true, features = ["process"], optional = true }
+
+# Windows only: the Job Object that caps the helper's memory (src/jobobject.rs).
+# MIT OR Apache-2.0; already in the tree through the desktop app's stack.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 mochi-foreign = { path = ".", features = ["test-faults"] }

@@ -27,6 +27,13 @@ impl CancellationToken {
         self.0.store(true, Ordering::SeqCst);
     }
 
+    /// The shared flag itself, for a collaborator outside this crate that
+    /// must notice cancellation on its own thread (the foreign-format helper
+    /// supervisor kills its child process when it is set).
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }

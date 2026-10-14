@@ -1,4 +1,5 @@
-//! Helper protocol, version 1. Documented in the crate README.
+//! Helper protocol, version 2 (v1 plus 7z and RAR; see the crate README).
+//! Documented in the crate README.
 //!
 //! A frame is `len: u32 LE` (counts `kind` and body, 1..=MAX_FRAME_LEN), then
 //! `kind: u8`, then the body. Integers are little-endian; a byte string is
@@ -10,7 +11,9 @@ use std::io::{self, Read, Write};
 
 use crate::types::*;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
+/// Entries a `ReadMany` request may name.
+pub const MAX_READ_INDICES: usize = 1_000_000;
 /// Largest frame either side accepts (kind + body).
 pub const MAX_FRAME_LEN: usize = 1 << 20;
 /// Entry bytes travel in frames of at most this many bytes.
@@ -241,6 +244,9 @@ impl<'a> Dec<'a> {
             Ok(None)
         }
     }
+    pub fn remaining(&self) -> usize {
+        self.0.len()
+    }
     pub fn finish(self) -> Result<(), ProtocolError> {
         if self.0.is_empty() {
             Ok(())
@@ -260,6 +266,9 @@ pub struct Request {
     pub op: Op,
     /// `Read` only: the entry index to stream.
     pub read_index: u64,
+    /// `ReadMany` only: the entry indices to stream (any order; each is
+    /// delivered once, in the order the archive stores them).
+    pub read_indices: Vec<u64>,
     pub limits: Limits,
     /// Address-space limit the helper applies to itself (Unix `RLIMIT_AS`).
     pub memory_limit: Option<u64>,
@@ -272,11 +281,34 @@ pub struct Request {
 }
 
 impl Request {
+    /// Whether the operation handles entry `index`: every entry for a listing
+    /// or test, the named ones for a read.
+    pub fn wants(&self, index: u64) -> bool {
+        match self.op {
+            Op::List | Op::Test => true,
+            Op::Read => index == self.read_index,
+            Op::ReadMany => self.read_indices.binary_search(&index).is_ok(),
+        }
+    }
+
+    /// How many entries a read must find (`None` for a listing or test).
+    pub fn wanted_count(&self) -> Option<u64> {
+        match self.op {
+            Op::List | Op::Test => None,
+            Op::Read => Some(1),
+            Op::ReadMany => Some(self.read_indices.len() as u64),
+        }
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Enc::new();
         e.u16(PROTOCOL_VERSION)
             .u8(self.op.code())
             .u64(self.read_index);
+        e.u32(self.read_indices.len() as u32);
+        for i in &self.read_indices {
+            e.u64(*i);
+        }
         let l = &self.limits;
         e.u64(l.max_total_output)
             .u64(l.max_entry_size)
@@ -297,6 +329,18 @@ impl Request {
         }
         let op = Op::from_code(d.u8()?).ok_or(ProtocolError("unknown operation"))?;
         let read_index = d.u64()?;
+        let n = d.u32()? as usize;
+        if n > MAX_READ_INDICES || n.saturating_mul(8) > d.remaining() {
+            return Err(ProtocolError("too many read indices"));
+        }
+        let mut read_indices = Vec::with_capacity(n);
+        for _ in 0..n {
+            read_indices.push(d.u64()?);
+        }
+        // Sorted and unique, so membership is a binary search and a duplicate
+        // cannot make the helper deliver an entry twice.
+        read_indices.sort_unstable();
+        read_indices.dedup();
         let limits = Limits {
             max_total_output: d.u64()?,
             max_entry_size: d.u64()?,
@@ -313,6 +357,7 @@ impl Request {
         Ok(Request {
             op,
             read_index,
+            read_indices,
             limits,
             memory_limit,
             cpu_seconds,
@@ -434,7 +479,7 @@ fn enc_outcome(e: &mut Enc, o: &EntryOutcome) {
 }
 
 fn check_set(v: u8) -> Result<CheckSet, ProtocolError> {
-    if v == 0 || v > 7 {
+    if v == 0 || v > 15 {
         return Err(ProtocolError("bad check set"));
     }
     Ok(CheckSet(v))

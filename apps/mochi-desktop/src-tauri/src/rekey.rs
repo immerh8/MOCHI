@@ -208,6 +208,7 @@ fn rewrap(
         check: None,
         search: None,
         rekey: Some(Box::new(report)),
+        foreign_test: None,
     })
 }
 
@@ -278,5 +279,6 @@ fn reencrypt(
         check: None,
         search: None,
         rekey: Some(Box::new(out)),
+        foreign_test: None,
     })
 }

@@ -30,6 +30,11 @@ e2e = []
 mochi-core.workspace = true
 mochi-format.workspace = true
 zeroize.workspace = true
+# The client only: no ZIP/7z/RAR/tar parser is linked into the app process
+# (plan D8 rule 3; ci/check-invariants.sh checks `default-features = false`).
+# The helper binary it talks to is built from the same package and shipped
+# next to the app (crates/mochi-foreign/README.md "Shipping the helper").
+mochi-foreign = { path = "../../../crates/mochi-foreign", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

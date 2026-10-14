@@ -72,4 +72,9 @@ entry_kind: EntryKindView | null, } | { "kind": "add_passphrase", handle: number
 /**
  * 32 hexadecimal digits, from `list_envelopes`.
  */
-envelope_id: string, } | { "kind": "reencrypt", handle: number, passphrase: Secret, };
+envelope_id: string, } | { "kind": "reencrypt", handle: number, passphrase: Secret, } | { "kind": "test_foreign", handle: number, } | { "kind": "extract_foreign", handle: number, 
+/**
+ * Entries (and what is under them) as the listing returned them;
+ * empty extracts everything.
+ */
+keys: Array<string>, on_conflict: ConflictChoice, };

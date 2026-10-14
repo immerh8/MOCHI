@@ -319,17 +319,22 @@ pub fn run<R: Read + Seek>(
         complete: true,
         ..Tally::default()
     };
-    let (first, last) = match req.op {
-        Op::Read => {
-            if req.read_index >= total {
+    let indices: Vec<u64> = match req.op {
+        Op::Read | Op::ReadMany => {
+            let wanted: Vec<u64> = if req.op == Op::Read {
+                vec![req.read_index]
+            } else {
+                req.read_indices.clone()
+            };
+            if let Some(bad) = wanted.iter().find(|i| **i >= total) {
                 return Err(EngineError::Archive(ForeignError::new(
                     ErrorCode::EntryNotFound,
-                    format!("entry {} does not exist ({total} entries)", req.read_index),
+                    format!("entry {bad} does not exist ({total} entries)"),
                 )));
             }
-            (req.read_index, req.read_index + 1)
+            wanted
         }
-        _ => (0, total),
+        _ => (0..total).collect(),
     };
     if let Some(d) = declared.filter(|d| *d > total) {
         // The library keeps one entry per name. Say so rather than present a
@@ -339,8 +344,10 @@ pub fn run<R: Read + Seek>(
             "the archive declares {d} entries but {total} distinct names; entries that share a name with another entry are not listed individually"
         ));
     }
-    let capped = last.min(first.saturating_add(l.max_entries));
-    if capped < last {
+    let capped = usize::try_from(l.max_entries)
+        .unwrap_or(usize::MAX)
+        .min(indices.len());
+    if capped < indices.len() {
         emit_breach(out, BreachKind::EntryCount, None, l.max_entries, total)?;
         tally.complete = false;
         tally.stop_reason = Some(format!(
@@ -353,10 +360,10 @@ pub fn run<R: Read + Seek>(
         password: req.password.as_ref().map(|p| p.as_bytes()),
         archive_len,
         total_out: 0,
-        deliver: req.op == Op::Read,
+        deliver: req.op.is_read(),
         buf: vec![0u8; DATA_CHUNK],
     };
-    for index in first..capped {
+    for &index in &indices[..capped] {
         let (info, long_name) = read_info(&mut archive, i_usize(index), &l);
         if let Some(observed) = long_name {
             emit_breach(

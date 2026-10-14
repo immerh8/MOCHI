@@ -2,6 +2,7 @@
 import type { CheckResult } from "./CheckResult";
 import type { CommitReport } from "./CommitReport";
 import type { ExtractReport } from "./ExtractReport";
+import type { ForeignTestReport } from "./ForeignTestReport";
 import type { RekeyReport } from "./RekeyReport";
 import type { SearchResultView } from "./SearchResultView";
 
@@ -29,4 +30,8 @@ search?: SearchResultView,
 /**
  * Set by the rekey jobs (D5).
  */
-rekey?: RekeyReport, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };
+rekey?: RekeyReport, 
+/**
+ * Set by the foreign-archive test job (D8).
+ */
+foreign_test?: ForeignTestReport, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };

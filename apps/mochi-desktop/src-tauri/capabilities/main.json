@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0), the browsing commands (D1), the staging commands (D2), the extract plan command (D3), the test, health, export, and repair setup commands (D4; the test and repair jobs themselves run through start_job), and the launch listener (D6: the shell's open, extract, and add verbs are handled in Rust; the webview only hears that an archive was opened or why a launch failed). The native dialogs (open, choose sources, save, choose an extract folder, choose an archive to test or repair, a copy, the new archive, a report file) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted. Also, the passphrase and key-envelope commands (D5: unlock_archive and unlock_check_subject take a passphrase once into a zeroizing key session in Rust, cancel_unlock, list_envelopes; the create, rekey, and search jobs run through start_job). The native dialogs (open, choose sources, save, choose an extract folder, choose an archive to test or repair, a copy, the new archive, a report file) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted.",
+  "description": "The main window. Least privilege (AGENTS.md): the app's own commands and nothing else. The job commands (D0), the browsing commands (D1), the staging commands (D2), the extract plan command (D3), the foreign-archive commands (D8: open, close, list, plan an extract; a password is sent once in the open call and kept only in Rust), the test, health, export, and repair setup commands (D4; the test and repair jobs themselves run through start_job), and the launch listener (D6: the shell's open, extract, and add verbs are handled in Rust; the webview only hears that an archive was opened or why a launch failed). The native dialogs (open, choose sources, save, choose an extract folder, choose an archive to test or repair, a copy, the new archive, a report file) are shown from Rust and dropped paths are received by Rust, so the webview never names a path: no fs, shell, http, or dialog permission is granted, and core:default is not granted. Also the passphrase and key-envelope commands (D5: unlock_archive and unlock_check_subject take a passphrase once into a zeroizing key session in Rust, cancel_unlock, list_envelopes; the create, rekey, and search jobs run through start_job).",
   "windows": [
     "main"
   ],
@@ -9,10 +9,6 @@
     "allow-start-job",
     "allow-cancel-job",
     "allow-open-archive",
-    "allow-unlock-archive",
-    "allow-cancel-unlock",
-    "allow-list-envelopes",
-    "allow-unlock-check-subject",
     "allow-close-archive",
     "allow-open-snapshot",
     "allow-list-children",
@@ -28,6 +24,14 @@
     "allow-health-report",
     "allow-export-report",
     "allow-repair-setup",
-    "allow-watch-launches"
+    "allow-open-foreign-archive",
+    "allow-close-foreign-archive",
+    "allow-foreign-children",
+    "allow-plan-extract-foreign",
+    "allow-watch-launches",
+    "allow-unlock-archive",
+    "allow-cancel-unlock",
+    "allow-list-envelopes",
+    "allow-unlock-check-subject"
   ]
 }

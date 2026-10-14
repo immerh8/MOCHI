@@ -114,7 +114,9 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::AddToArchive { .. }
         | JobRequest::DeleteFromArchive { .. }
         | JobRequest::ExtractArchive { .. }
-        | JobRequest::TestArchive { .. }
+        | JobRequest::TestForeign { .. }
+        | JobRequest::ExtractForeign { .. } => services.validate(request)?,
+        JobRequest::TestArchive { .. }
         | JobRequest::PlanRepair { .. }
         | JobRequest::ApplyRepair { .. }
         | JobRequest::SearchArchive { .. }
@@ -216,6 +218,7 @@ fn run_job(
                 summary,
                 commit: None,
                 extract: None,
+                foreign_test: None,
                 check: None,
                 search: None,
                 rekey: None,
@@ -232,6 +235,7 @@ fn run_job(
             summary,
             commit,
             extract,
+            foreign_test,
             check,
             search,
             rekey,
@@ -239,6 +243,7 @@ fn run_job(
             summary,
             commit,
             extract,
+            foreign_test,
             check,
             search,
             rekey,
