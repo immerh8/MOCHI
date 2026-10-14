@@ -64,6 +64,7 @@ tools.
 | `7z/gap/`, `7z/short/` | `.001` + `.003`; `.001` + `.002` of the three | `MISSING_VOLUME` |
 | `7z/crc_corrupt.7z` | a stored entry with one flipped byte | CRC32 mismatch for that entry only |
 | `7z/header_huge_count.7z` | fuzzer finding: a header whose file count overflows a vector capacity | `MALFORMED_ARCHIVE`, not a helper crash |
+| `7z/hang_zeroed_start_header.7z` | fuzzer finding (audit F16; CI run 38558591812, SHA-1 `9b2ba6ed…`): zero start-header CRC and zeroed start header, so sevenz-rust2 scans backwards for headers and never finishes | `MALFORMED_ARCHIVE` in milliseconds; the start header is checked before the library sees the file |
 | `7z/truncated.7z`, `bad_start_crc.7z`, `bad_header.7z` | cut / start-header CRC / header byte flipped | `MALFORMED_ARCHIVE` |
 | `7z/bomb_ratio.7z`, `bomb_count.7z`, `long_name.7z` | 8 MiB of zeros in ~1 KiB / 300 empty files / a 1,008-byte name | ratio, total, entry-size, count, name-length limits |
 | `7z/lzma_huge_dict.7z` | a raw header patched to claim a 2 GiB dictionary (CRCs repaired) | refused as `unsupported`, never allocated |

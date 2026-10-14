@@ -407,3 +407,22 @@ fn a_header_claiming_absurd_counts_is_malformed_not_a_crash() {
     let e = c.list(&sz("header_huge_count.7z"), None).unwrap_err();
     assert_eq!(e.code, ErrorCode::MalformedArchive, "{e}");
 }
+
+#[test]
+fn a_zeroed_start_header_is_refused_promptly_not_scanned_for_headers() {
+    // Audit F16, found by the fuzzer: with a zero start-header CRC and 20 zero
+    // bytes, sevenz-rust2 scans backwards for header-looking bytes and parses
+    // each candidate; on this input the scan never finished. The start header
+    // is checked before the library sees the file.
+    let c = client();
+    let t = std::time::Instant::now();
+    let e = c
+        .list(&sz("hang_zeroed_start_header.7z"), None)
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::MalformedArchive, "{e}");
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "took {:?}",
+        t.elapsed()
+    );
+}

@@ -96,6 +96,17 @@ fn check_truncation<R: Read + Seek>(
                 "the 7z start header is truncated",
             )
         })?;
+    // A zeroed start header with a zero CRC is how 7-Zip leaves an archive it
+    // never finished. sevenz-rust2 then scans backwards for anything that looks
+    // like a header and tries to parse each candidate, which on hostile bytes
+    // can spin for minutes (audit F16). A magic byte is a candidate, not proof:
+    // refuse rather than guess.
+    if head[8..32].iter().all(|b| *b == 0) {
+        return Err(archive_err(
+            ErrorCode::MalformedArchive,
+            "the 7z start header is empty (an unfinished or damaged archive); its headers are not guessed at",
+        ));
+    }
     let off = u64::from_le_bytes(head[12..20].try_into().unwrap_or([0; 8]));
     let size = u64::from_le_bytes(head[20..28].try_into().unwrap_or([0; 8]));
     if off == 0 && size == 0 {
