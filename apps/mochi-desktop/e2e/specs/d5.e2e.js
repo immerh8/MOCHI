@@ -171,6 +171,8 @@ describe("passphrases, rekey, recovery record, and search", () => {
   it("creates an archive with a recovery record and states what it does and does not do", async () => {
     queuePicks(path.join(src, "vault-docs"), recovered);
     await stageFolderAndOpenCreate();
+    // The previous create's choices were not carried over.
+    await expect($('[data-testid="encrypt"]')).not.toBeSelected();
     await expect($('[data-testid="recovery-notes"]')).toHaveText(
       expect.stringContaining("not a second copy"),
     );

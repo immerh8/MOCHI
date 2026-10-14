@@ -1,6 +1,6 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 to D4 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+**Phases D0 to D5 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
 the archive browser (snapshot timeline, folder tree, virtualized list, details),
 create, add, and remove (D2), extract (D3), and test, health, and repair (D4).
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
@@ -82,7 +82,17 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   `allow-export-report`, and `allow-repair-setup` (D4: choosing the archive to test or
   repair, the health summary, exporting a report, and choosing a repair's copies and new
   file, each of which shows a native dialog from Rust or reads only what Rust kept; the
-  test and repair jobs run through `start_job`). All are the app's own commands, not plugin permissions. The commands are declared in
+  test and repair jobs run through `start_job`), and
+  `allow-unlock-archive`, `allow-cancel-unlock`, `allow-list-envelopes`, and
+  `allow-unlock-check-subject` (D5: the passphrase prompt for an encrypted archive,
+  forgetting a waiting archive, listing a head's key envelopes, and the passphrase for
+  an archive chosen for testing or repair; the create, rekey, and search jobs run
+  through `start_job` and need nothing of their own). **Passphrases (D5).** A passphrase
+  crosses IPC once per use, as a `Secret` (zeroizing, `Debug` prints `<redacted>`, no
+  `Serialize`); Rust keeps it only as a `mochi-core` key session on the open archive or
+  the chosen subject, never in the webview after submit and never on disk. The optional
+  OS keychain is not built: see the plan, D5 status. All are the app's own commands, not
+  plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no

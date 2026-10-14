@@ -376,6 +376,27 @@ fn cancelling_the_prompt_forgets_the_archive_and_the_wait_is_bounded() {
     assert!(!f.svc.archives.cancel_pending(first));
 }
 
+#[test]
+fn only_a_wrong_passphrase_keeps_the_wait_any_other_outcome_ends_it() {
+    let f = fx();
+    let (path, _) = f
+        .create("vault.mochi", &[("a.txt", b"x")], Some(PASS), None)
+        .unwrap();
+    let pending = f.pend(&path);
+    std::fs::remove_file(&path).unwrap();
+    let e = f
+        .svc
+        .archives
+        .unlock(pending, &Secret::new(PASS))
+        .unwrap_err();
+    assert_ne!(e.code, ErrorCode::KeyUnavailable, "{e:?}");
+    assert_eq!(
+        f.svc.archives.pending_count(),
+        0,
+        "the wait ended with the failure"
+    );
+}
+
 // ---- create ----------------------------------------------------------------------
 
 #[test]
@@ -901,6 +922,11 @@ fn rekey_requests_that_cannot_work_are_refused_before_starting() {
         let e = f.svc.validate(r).unwrap_err();
         assert_no_secret("the refusal", &format!("{e:?}"));
     }
+    // A Core archive is refused for what it is, not for lacking a key.
+    assert_eq!(
+        f.svc.validate(&bad[0]).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
     // An envelope the head does not list is refused by core at run time.
     let e = f
         .run(&JobRequest::RemovePassphrase {
@@ -1031,6 +1057,8 @@ fn a_search_finds_names_in_the_head_and_states_exactly_what_it_covered() {
     assert_eq!(r.hits.len(), 1);
     assert_eq!(r.hits[0].path.text, "report-2023.txt");
     assert_eq!(r.hits[0].seq, 0);
+    assert_eq!(r.hits[0].size, "3");
+    assert_eq!(r.hits[0].kind, EntryKindView::File);
     let ci = search(&f, a.handle, "report", SearchScopeChoice::Head, None, true).unwrap();
     assert_eq!(ci.total_hits, 2);
     // Files only, and folders only (there are none: inputs are top-level).

@@ -188,6 +188,12 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   };
 
   const open = (to: Mode) => {
+    // Each new archive starts from the plain defaults: encryption and a
+    // recovery record are chosen on purpose, never carried over.
+    if (to === "create") {
+      setEncrypt(false);
+      setRecovery(null);
+    }
     setJob({ state: "idle" });
     setError(null);
     setProblems([]);

@@ -225,6 +225,19 @@ test("the passphrase crosses once in the create request and the page keeps no co
   expect(container.innerHTML).not.toContain(SECRET);
 });
 
+test("a new archive does not inherit the encryption or recovery choice of the last one", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("encrypt"));
+  await user.click(screen.getByTestId("recovery-20"));
+  await user.click(screen.getByTestId("write-close"));
+  await user.click(screen.getByTestId("new-archive"));
+  expect(screen.getByTestId("encrypt")).not.toBeChecked();
+  expect(screen.getByTestId("recovery-none")).toBeChecked();
+});
+
 test("two different passphrases start nothing, and an empty one is refused", async () => {
   const user = userEvent.setup();
   const b = backend();
