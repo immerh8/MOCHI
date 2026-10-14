@@ -26,6 +26,25 @@ pub fn pick_archive<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
         .ok()
 }
 
+/// Show the open dialog for a foreign archive (plan D8). `None` if the user
+/// cancelled. Blocks: call it off the async runtime.
+pub fn pick_foreign_archive<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    app.dialog()
+        .file()
+        .set_title("Open a ZIP, 7z, RAR or tar archive (read-only)")
+        .add_filter(
+            "ZIP, 7z, RAR, tar",
+            &["zip", "7z", "rar", "tar", "tgz", "gz", "001"],
+        )
+        .blocking_pick_file()?
+        .into_path()
+        .ok()
+}
+
 /// Show the dialog that chooses sources to add (plan D2). `None` if the user
 /// cancelled. Blocks: call it off the async runtime.
 pub fn pick_sources<R: Runtime>(app: &AppHandle<R>, what: SourcePick) -> Option<Vec<PathBuf>> {

@@ -5,11 +5,12 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::engine::{self, EngineError, Out};
+use crate::engine::{self, EngineError, Origin, Out};
 use crate::protocol::{
     kind, path_from_bytes, read_frame, FrameError, Message, Request, PROTOCOL_VERSION,
 };
 use crate::types::*;
+use crate::volumes::{self, SplitName};
 
 /// Exit codes the parent can see (it reports them in `HELPER_CRASHED`).
 pub const EXIT_OK: i32 = 0;
@@ -118,13 +119,38 @@ fn process(req: &Request, out: &mut Out) -> Result<(), EngineError> {
         return r;
     }
     let path = path_from_bytes(&req.archive_path);
-    let file = File::open(&path).map_err(|e| {
+    let open_failed = |e: std::io::Error| {
         EngineError::Archive(ForeignError::new(
             ErrorCode::OpenFailed,
             format!("cannot open the archive: {}", e.kind()),
         ))
-    })?;
-    engine::run(BufReader::new(file), req, out)
+    };
+    match volumes::classify(&path) {
+        SplitName::Later(n) => Err(EngineError::Archive(ForeignError::new(
+            ErrorCode::NotAnArchive,
+            format!("this is volume {n} of a split 7z set; open the first volume (.7z.001)"),
+        ))),
+        SplitName::First => {
+            // Plain byte splits of one archive: read as one stream.
+            let found = volumes::find_volumes(&path);
+            let set = volumes::MultiFile::open(&found).map_err(open_failed)?;
+            let origin = Origin {
+                path: Some(&path),
+                split: SplitName::First,
+                volumes: set.volume_count(),
+            };
+            engine::run(set, &origin, req, out)
+        }
+        SplitName::NotSplit => {
+            let file = File::open(&path).map_err(open_failed)?;
+            let origin = Origin {
+                path: Some(&path),
+                split: SplitName::NotSplit,
+                volumes: 1,
+            };
+            engine::run(BufReader::new(file), &origin, req, out)
+        }
+    }
 }
 
 fn panic_text(p: &(dyn std::any::Any + Send)) -> String {

@@ -147,3 +147,17 @@ path = "fuzz_targets/foreign_protocol.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "foreign_sevenz"
+path = "fuzz_targets/foreign_sevenz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "foreign_rar"
+path = "fuzz_targets/foreign_rar.rs"
+test = false
+doc = false
+bench = false

@@ -139,5 +139,43 @@ hits=$(grep -rnE --include='*.rs' '\.extract\(|extract_unwrapped|unpack\(|unpack
         | grep -vE '^[^:]+:[0-9]+:\s*//' || true)
 [ -n "$hits" ] && report "file writing or library extract-to-disk in mochi-foreign (plan D8 rule 4)" "$hits"
 
+#     (f) `unsafe` in the foreign crate lives only in the two modules that need
+#     it (the UnRAR FFI and the Windows Job Object), each block with a SAFETY
+#     comment on a line above it (AGENTS.md: any exception needs a justification).
+hits=$(grep -rnE --include='*.rs' '\bunsafe\b' crates/mochi-foreign/src \
+        | grep -vE '^crates/mochi-foreign/src/(rarfmt|jobobject)\.rs:' \
+        | grep -vE '^[^:]+:[0-9]+:\s*(//|\*)' || true)
+[ -n "$hits" ] && report "unsafe outside mochi-foreign's rarfmt.rs / jobobject.rs" "$hits"
+hits=$(awk '
+  FNR==1 { for (k=0;k<8;k++) w[k]=""; n=0 }
+  { line=$0; ok=0
+    if (line ~ /(^|[^a-z_])unsafe[[:space:]]*(\{|fn|impl)/ && line !~ /^[[:space:]]*(\/\/|\*)/) {
+      for (k=0;k<8;k++) if (w[k] ~ /SAFETY:|# Safety/) ok=1
+      if (line ~ /SAFETY:/) ok=1
+      if (!ok) print FILENAME ":" FNR ": " line
+    }
+    for (k=7;k>0;k--) w[k]=w[k-1]; w[0]=line }' \
+  crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs || true)
+[ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign)" "$hits"
+#     (g) UnRAR is only ever asked to TEST an entry (RAR_TEST) or skip it: never
+#     RAR_EXTRACT, and RARProcessFile never gets a destination (plan D8 rule 4:
+#     its own extract-to-disk path bypasses the restore engine's protections).
+hits=$(grep -rnE --include='*.rs' '\bRAR_EXTRACT\b|RARProcessFileW|RARExtract' crates/mochi-foreign/src \
+        | grep -vE '^[^:]+:[0-9]+:\s*(//|\*)' || true)
+[ -n "$hits" ] && report "UnRAR extract-to-disk operation in mochi-foreign (plan D8 rule 4)" "$hits"
+hits=$(grep -n 'RARProcessFile(' crates/mochi-foreign/src/rarfmt.rs | grep -v 'std::ptr::null(), std::ptr::null()' | grep -vE '^[0-9]+:\s*(//|\*)' || true)
+hits="$hits$(grep -n -A2 'sys::RARProcessFile(' crates/mochi-foreign/src/rarfmt.rs | grep -E 'dest|path' || true)"
+[ -n "$(printf '%s' "$hits" | tr -d '[:space:]')" ] && report "RARProcessFile called with a destination (plan D8 rule 4)" "$hits"
+#     (h) sevenz-rust2 is a decoder here: its `compress` feature stays off, and
+#     none of its extract-to-disk helpers are called.
+hits=$(grep -nE 'sevenz-rust2' crates/mochi-foreign/Cargo.toml | grep -E 'compress|"util"|default-features *= *true' || true)
+hits="$hits$(grep -rnE --include='*.rs' 'sevenz_rust2::(decompress|compress|SevenZWriter|SevenZArchiveEntry)|\bdecompress_file|\bdecompress_with' crates/mochi-foreign/src || true)"
+[ -n "$(printf '%s' "$hits" | tr -d '[:space:]')" ] && report "sevenz-rust2 compress feature or extract-to-disk helper (plan D8 rules 1 and 4)" "$hits"
+#     (i) Nothing writes a RAR: no RAR writer, no Rar! signature emitted outside
+#     the detector and the tests that read fixtures.
+hits=$(grep -rnE --include='*.rs' 'write_all\([^)]*Rar!|b"Rar!' crates/mochi-foreign/src \
+        | grep -vE '^crates/mochi-foreign/src/detect\.rs:' || true)
+[ -n "$hits" ] && report "possible RAR writing in mochi-foreign (plan D8 rule 1; MOCHI never writes RAR)" "$hits"
+
 if [ "$fail" -eq 0 ]; then echo "invariants: ok"; fi
 exit "$fail"

@@ -2,6 +2,7 @@
 import type { CheckResult } from "./CheckResult";
 import type { CommitReport } from "./CommitReport";
 import type { ExtractReport } from "./ExtractReport";
+import type { ForeignTestReport } from "./ForeignTestReport";
 
 /**
  * How a job ended. Only `completed` means the job did everything it was
@@ -19,4 +20,8 @@ extract?: ExtractReport,
 /**
  * Set by the test and repair jobs (D4).
  */
-check?: CheckResult, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };
+check?: CheckResult, 
+/**
+ * Set by the foreign-archive test job (D8).
+ */
+foreign_test?: ForeignTestReport, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };

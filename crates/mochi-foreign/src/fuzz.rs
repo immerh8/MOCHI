@@ -5,13 +5,14 @@
 //! promises for any input. A panic here is a finding.
 
 use std::io::Cursor;
+use std::path::Path;
 
 use crate::detect::detect;
 use crate::engine::{self, EngineError, Out};
 use crate::protocol::{read_frame, Message, Request, DATA_CHUNK};
-use crate::tarfmt;
 use crate::types::*;
 use crate::zipfmt;
+use crate::{rarfmt, sevenfmt, tarfmt};
 
 pub fn fuzz_limits() -> Limits {
     Limits {
@@ -28,6 +29,11 @@ fn request(op: Op, read_index: u64) -> Request {
     Request {
         op,
         read_index,
+        read_indices: if op == Op::ReadMany {
+            vec![0, 2, 5]
+        } else {
+            Vec::new()
+        },
         limits: fuzz_limits(),
         memory_limit: None,
         cpu_seconds: None,
@@ -41,6 +47,9 @@ fn request(op: Op, read_index: u64) -> Request {
 struct Checker {
     limits: Limits,
     entries: u64,
+    /// Listings and tests announce entries in index order; reads announce the
+    /// requested ones in the order the archive stores them.
+    sequential: bool,
 }
 
 impl Checker {
@@ -50,7 +59,9 @@ impl Checker {
         assert_eq!(back.as_ref().ok(), Some(&m), "wire round trip");
         match &m {
             Message::Entry(e) => {
-                assert_eq!(e.index, self.entries, "entry indices are sequential");
+                if self.sequential {
+                    assert_eq!(e.index, self.entries, "entry indices are sequential");
+                }
                 self.entries += 1;
                 assert!(self.entries <= self.limits.max_entries);
                 assert!(e.name.len() as u64 <= u64::from(self.limits.max_name_len));
@@ -63,11 +74,18 @@ impl Checker {
 }
 
 fn run_ops(data: &[u8], f: impl Fn(&Request, &mut Out) -> Result<(), EngineError>) {
-    for (op, idx) in [(Op::List, 0), (Op::Test, 0), (Op::Read, 0), (Op::Read, 3)] {
+    for (op, idx) in [
+        (Op::List, 0),
+        (Op::Test, 0),
+        (Op::Read, 0),
+        (Op::Read, 3),
+        (Op::ReadMany, 0),
+    ] {
         let req = request(op, idx);
         let mut c = Checker {
             limits: req.limits,
             entries: 0,
+            sequential: matches!(op, Op::List | Op::Test),
         };
         let mut sink = |m: Message| c.check(m);
         let _ = f(&req, &mut sink);
@@ -99,10 +117,32 @@ pub fn exercise_targz_listing(data: &[u8]) {
     });
 }
 
+/// 7z path, bypassing detection so every input reaches it.
+pub fn exercise_sevenz_listing(data: &[u8]) {
+    let len = data.len() as u64;
+    run_ops(data, |req, out| {
+        sevenfmt::run(Cursor::new(data), len, &engine::Origin::MEMORY, req, out).map(|_| ())
+    });
+}
+
+/// RAR path. UnRAR opens files itself, so this takes a path; the fuzz target
+/// and the smoke test write their input to a temporary file first (outside
+/// this crate, which never writes a file).
+pub fn exercise_rar_file(path: &Path) {
+    let origin = engine::Origin {
+        path: Some(path),
+        split: crate::volumes::SplitName::NotSplit,
+        volumes: 1,
+    };
+    run_ops(&[], |req, out| rarfmt::run(&origin, req, out).map(|_| ()));
+}
+
 /// Detection plus dispatch, as the helper runs it.
 pub fn exercise_detect(data: &[u8]) {
     let _ = detect(&mut Cursor::new(data));
-    run_ops(data, |req, out| engine::run(Cursor::new(data), req, out));
+    run_ops(data, |req, out| {
+        engine::run(Cursor::new(data), &engine::Origin::MEMORY, req, out)
+    });
 }
 
 /// The parent's decoder for a stream from a (possibly hostile) helper, and the

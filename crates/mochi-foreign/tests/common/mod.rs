@@ -74,3 +74,71 @@ pub fn aes_zip(password: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
     }
     w.finish().expect("finish").into_inner()
 }
+
+/// One entry as `read_many` delivered it.
+pub struct Got {
+    pub info: EntryInfo,
+    pub outcome: EntryOutcome,
+    pub bytes: Vec<u8>,
+}
+
+struct Collect {
+    done: Vec<Got>,
+    cur: Option<(EntryInfo, Vec<u8>)>,
+}
+
+impl ReadManySink for Collect {
+    fn begin(&mut self, info: &EntryInfo) -> std::io::Result<()> {
+        assert!(self.cur.is_none(), "begin inside an entry");
+        self.cur = Some((info.clone(), Vec::new()));
+        Ok(())
+    }
+    fn data(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.cur
+            .as_mut()
+            .expect("data outside an entry")
+            .1
+            .extend_from_slice(bytes);
+        Ok(())
+    }
+    fn finish(&mut self, info: &EntryInfo, outcome: &EntryOutcome) -> std::io::Result<()> {
+        let (i, bytes) = self.cur.take().expect("finish outside an entry");
+        assert_eq!(i.index, info.index);
+        self.done.push(Got {
+            info: i,
+            outcome: outcome.clone(),
+            bytes,
+        });
+        Ok(())
+    }
+}
+
+/// Streams `indices` in one helper run; entries come back in the order the
+/// helper delivered them, keyed by index through `Got::info`.
+pub fn read_many(
+    c: &ForeignClient,
+    archive: &Path,
+    indices: &[u64],
+    pw: Option<&Password>,
+) -> Result<(ReadManyReport, Vec<Got>), ForeignError> {
+    let mut sink = Collect {
+        done: Vec::new(),
+        cur: None,
+    };
+    let r = c.read_many(archive, indices, pw, &mut sink)?;
+    Ok((r, sink.done))
+}
+
+pub fn pw(s: &str) -> Password {
+    Password::new(s.as_bytes().to_vec())
+}
+
+pub fn crc() -> EntryOutcome {
+    EntryOutcome::Matched(CheckSet::of(&[CheckKind::Crc32]))
+}
+
+pub fn got(all: &[Got], index: u64) -> &Got {
+    all.iter()
+        .find(|g| g.info.index == index)
+        .expect("entry delivered")
+}
