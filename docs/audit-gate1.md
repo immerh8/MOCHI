@@ -30,7 +30,7 @@ the release-blocking fault matrix (spec §24.2).
 * **Blockers for 1.0** (§9):
   * **F16:** a real bug that makes `main` CI red. A 358-byte 7z hangs the 7z
     listing (found by the `foreign_sevenz` fuzz smoke on `main`; reproduced here).
-  * **F1:** a real bug. A ZIP/7z/RAR/tar opened from the shell gets "cannot be opened
+  * **F1 (fixed in #58):** a real bug. A ZIP/7z/RAR/tar opened from the shell gets "cannot be opened
     yet", although D8 shipped and the installer offers that association.
   * **F2:** spec D6 makes symbolic links an entry type, but the frozen draft-2 format
     refuses kind 2 and the writer skips links. No decision defers this.
@@ -292,7 +292,7 @@ exists.**
 Severity: **blocker** = must be closed before the 1.0 flip; **should-fix** = fix or
 explicitly accept before 1.0; **nit** = wording or tidiness.
 
-1. **F1 — blocker (real bug).** Shell "Open with MOCHI" on a ZIP, 7z, RAR, or tar file
+1. **F1 — blocker (real bug). Fixed in #58** (shell launches of foreign archives now open the foreign browser; the tests named below were replaced, and extract verbs on a foreign file only open it for browsing). Shell "Open with MOCHI" on a ZIP, 7z, RAR, or tar file
    refuses to open it, although D8 shipped and the installer offers this association.
    * **Where:** `launch.rs` `Launcher::open` returns
      "`<path>: <kind> archives cannot be opened yet. MOCHI opens .mochi archives.`" for
