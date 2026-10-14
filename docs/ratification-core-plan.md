@@ -36,7 +36,7 @@ and get CI green on Windows and Ubuntu.
 | R3 | Canonical serialization and separators | No artifact at that commit. The encoding, schemas, and separators existed as drafts in code and CDDL. **Written by W13; frozen 2026-10-12 by W15** | **W13**, frozen in **W15** |
 | R5 | Crypto | **Frozen** 2026-10-11 | — |
 | R6 | Erasure coding | **Frozen** 2026-10-12 (W14, G11 met; the row below was the state when this plan was written: draft with independent vectors, 5 open items, G11 not met) | — |
-| R7 | Reports and error codes | Draft; decided items; freezes at Beta | **W19** |
+| R7 | Reports and error codes | Draft; decided items; freezes at Beta. **Frozen 2026-10-14 by W19 (G15), with JSON Schemas for every JSON the CLI writes** | **W19** |
 | R8 | Golden valid, corrupt, and interrupted archives | Per-phase sets `c1`–`c12`, `b2`; no whole-set R8. **Built by W16 (2026-10-13, G13): 76 cases, `fixtures/golden/r8/`** | **W16** |
 | R9 | Independent reader results | Not started; author not chosen | **W17**, **W18** (call K22) |
 | Gate 4 | Draft-to-1.0 boundary (§26) | Descriptor key 3 = draft 1; a reader refuses any other draft | **W20** (K25) |
@@ -739,6 +739,21 @@ plan §6 and §8.2 item 3.
   README.
 
 **PR:** "R7 freeze: report schema, error codes, JSON Schemas (G15)".
+
+**Status (2026-10-14 [delegated]; gate G15 met, owner review pending at the desktop
+checkpoint).** Done as written, and wider in one respect: K24 named five documents, and
+the CLI writes JSON in nineteen shapes, so `docs/schemas/json/` has a schema for each
+(the shared definitions, report v1, the error line, `mochi-repair-plan-v2`, the GC plan
+as `gc-plan-v1`, health evidence, health policy, `heads.json`, and eleven command
+outputs). The first eight are frozen; whether the eleven command-output schemas are
+guaranteed is owner question O2 in R7 §9 (provisional: checked, not frozen). The test
+(10 tests) validates real outputs over all 76 R8 cases and temporary archives, kills
+4,260 of 4,346 mutated outputs (86 allowed survivors listed with reasons; 60 of 60
+targeted), checks the enumerations against the code, requires its README to name every
+function that writes JSON, and regenerates spec §20.6 from
+`core-corrupt-chunk-older`. Eleven disagreements between the documents and the code
+are decided in R7 §9; no code was renamed or changed meaning, and no CLI code changed.
+Owner question O1: `KEY_UNAVAILABLE` as a report finding versus spec B.2.10 item 12.
 
 ### W20 — 1.0 flip and `migrate` (M; at 1.0)
 
