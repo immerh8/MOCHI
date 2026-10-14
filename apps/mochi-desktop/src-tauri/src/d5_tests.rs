@@ -1180,17 +1180,34 @@ fn search_scopes_cover_every_snapshot_they_name_and_a_commit_after_the_head_is_r
 #[test]
 fn hostile_names_in_hits_cross_as_escaped_text() {
     let f = fx();
-    let (path, _) = f
-        .create(
-            "evil.mochi",
-            &[
-                ("<img src=x onerror=alert(1)>.txt", b"a"),
-                ("tab\there.txt", b"b"),
-            ],
-            None,
-            None,
+    // Written straight through the archive writer: a file system (Windows)
+    // may refuse such names, an archive may carry them.
+    let path = f.at("evil.mochi");
+    {
+        use mochi_core::catalog::path::ArchivePath;
+        use mochi_core::manifest::Attributes;
+        use mochi_core::publish::{ArchiveWriter, Transaction};
+        use mochi_core::storage::os::OsStorage;
+        let mut w = ArchiveWriter::create(
+            OsStorage::create_new(&path).unwrap(),
+            Box::new(mochi_testkit::SeqIds::new(9)),
+            mochi_testkit::archive::test_options(),
         )
         .unwrap();
+        let mut tx = Transaction::new();
+        for name in [
+            &b"<img src=x onerror=alert(1)>.txt"[..],
+            &b"tab\there.txt"[..],
+        ] {
+            tx.put_file(
+                ArchivePath::from_stored(name).unwrap(),
+                b"a".to_vec(),
+                Attributes::default(),
+            );
+        }
+        w.commit(tx, &Job::new().ctx()).unwrap();
+        w.close().unwrap();
+    }
     let a = f.svc.archives.open(&path, ReadOptions::default()).unwrap();
     let r = search(
         &f,
