@@ -1,6 +1,6 @@
-# Report schema v1 (draft)
+# Report schema v1 (frozen with R7)
 
-Spec §20.5 lists what a machine-readable report must contain; this file is the field reference for what MOCHI emits today. It is a **draft**: the final schema and error-code registry are ratification item R7 (plan §6). Rust type: `mochi_core::report::Report`. `mochi verify --json`, `mochi fsck --json`, and the desktop "Test archive" export (D4) emit exactly this object.
+Spec §20.5 lists what a machine-readable report must contain; this file is the field reference for what MOCHI emits today. R7 froze it on 2026-10-14 (gate G15): the registry and field tables are `docs/ratification/R7-reports-and-error-codes-draft.md`, and the machine-checked definition is `docs/schemas/json/report-v1.schema.json`; where this file and they differ, they win. Rust type: `mochi_core::report::Report`. `mochi verify --json`, `mochi fsck --json`, and the desktop "Test archive" export (D4) emit exactly this object.
 
 ## Changes from v0
 
@@ -43,7 +43,7 @@ From `mochi_core::verify` (plan C7 records these as delegated decisions):
 | Dimension | Value |
 |---|---|
 | integrity | `FAIL` on any violation at any level, including a tail that may hold a damaged commit; `PASS` only at `stored_integrity` or deeper with every check run; otherwise `UNKNOWN` |
-| recoverability | Worst of the history damage assessment (D10.9) and, when data objects were read, `FAIL` for a damaged one (1.0 has no parity); `UNKNOWN` if data objects were not read |
+| recoverability | Worst of the history damage assessment (D10.9) and, when data objects were read, `FAIL` for a damaged one, except that in an archive with a recovery record (D21) damage that parity rebuilds and that verifies is `DEGRADED`, and damage beyond a group's parity is `FAIL` (`PARITY_CAPACITY_EXCEEDED`); `UNKNOWN` if data objects were not read |
 | freshness | `UNKNOWN` without an anchor; `PASS` if the verified history contains the anchor (at its sequence, for `local-history`); `FAIL` otherwise |
 | durability | `UNKNOWN`: bytes cannot show whether they reached stable media |
 | key_availability | `PASS` for an unencrypted archive (no key needed); `UNKNOWN` if the descriptor was not read |

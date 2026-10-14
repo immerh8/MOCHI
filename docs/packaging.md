@@ -274,6 +274,7 @@ read with it). Record the result in the release notes.
 - An update applied end to end on a real pair of published releases (the release checklist).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
 - Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign formats
-  opened from the shell answer "not supported yet" until plan D8 lands.
-- The first CI run of `package` is the proof of the Tauri bundle itself; the build
-  environment used to write this slice has no webkit2gtk.
+  opened from the shell still answer "cannot be opened yet", although plan D8 has landed
+  and the in-app dialog opens them: a bug (`docs/audit-gate1.md` F1).
+- The Tauri bundle itself is proved by CI (`package` on both platforms and
+  `package smoke (ubuntu-24.04)`, green in main run 38551536791).
