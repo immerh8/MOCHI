@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
 import { errorText } from "../browser/format";
+import { t } from "../i18n";
 import { isIpcError } from "../ipc/jobs";
 import {
   DEDUP_LEAK as DEDUP,
@@ -35,6 +36,15 @@ export function PassphraseForm(props: PassphraseFormProps) {
   const secondRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+
+  // The fields are disabled while the passphrase is with Rust, which drops
+  // keyboard focus; give it back to the first field when the answer is in.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !busy) firstRef.current?.focus();
+    wasBusy.current = busy;
+  }, [busy]);
 
   const clear = () => {
     if (firstRef.current) firstRef.current.value = "";
@@ -45,11 +55,11 @@ export function PassphraseForm(props: PassphraseFormProps) {
     e.preventDefault();
     const text = firstRef.current?.value ?? "";
     if (text === "") {
-      setError("Enter a passphrase.");
+      setError(t("crypt.enterPassphrase"));
       return;
     }
     if (props.confirm && text !== (secondRef.current?.value ?? "")) {
-      setError("The two passphrases differ. Nothing was done.");
+      setError(t("crypt.passphrasesDiffer"));
       return;
     }
     setError(null);
@@ -63,7 +73,7 @@ export function PassphraseForm(props: PassphraseFormProps) {
         setError(
           isIpcError(err) && err.code === "KEY_UNAVAILABLE"
             ? `${WRONG_PASSPHRASE} ${WRONG_PASSPHRASE_NOTE}`
-            : errorText("Not done", err),
+            : errorText(t("crypt.notDone"), err),
         );
       },
     );
@@ -79,19 +89,22 @@ export function PassphraseForm(props: PassphraseFormProps) {
           name="passphrase"
           autoComplete="off"
           data-testid={`${props.testId}-input`}
+          aria-invalid={error !== null ? true : undefined}
+          aria-describedby={error !== null ? errorId : undefined}
           disabled={busy}
           spellCheck={false}
         />
       </label>
       {props.confirm && (
         <label>
-          Repeat it{" "}
+          {t("crypt.repeatIt")}{" "}
           <input
             ref={secondRef}
             type="password"
             name="passphrase-again"
             autoComplete="off"
             data-testid={`${props.testId}-confirm`}
+            aria-describedby={error !== null ? errorId : undefined}
             disabled={busy}
             spellCheck={false}
           />
@@ -104,12 +117,12 @@ export function PassphraseForm(props: PassphraseFormProps) {
         </button>
         {props.onCancel && (
           <button type="button" data-testid={`${props.testId}-cancel`} onClick={props.onCancel} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </button>
         )}
       </div>
       {error && (
-        <p role="alert" className="error" data-testid={`${props.testId}-error`}>
+        <p id={errorId} role="alert" className="error" data-testid={`${props.testId}-error`}>
           {error}
         </p>
       )}

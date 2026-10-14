@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode, UIEvent } from "react";
+import type { KeyboardEvent, ReactNode, UIEvent } from "react";
+
+import { t } from "../i18n";
 
 /** Rows fetched per request. */
 export const PAGE = 200;
@@ -15,9 +17,18 @@ type Props<T> = {
   rowHeight: number;
   /** Fetch rows `offset .. offset + limit`. */
   loadPage: (offset: number, limit: number) => Promise<T[]>;
-  renderRow: (row: T, index: number) => ReactNode;
+  /**
+   * Render one row. `tabIndex` is the row's place in the tab order (roving:
+   * only one row is a tab stop, the arrow keys move it); put it on the row's
+   * main control.
+   */
+  renderRow: (row: T, index: number, tabIndex: 0 | -1) => ReactNode;
   label: string;
   testId?: string;
+  /** Id of an element that explains the keys; it describes the list. */
+  hintId?: string;
+  /** Put keyboard focus on the first row as soon as it is loaded (after a folder opened by key). */
+  focusFirst?: boolean;
   onError: (e: unknown) => void;
 };
 
@@ -34,6 +45,8 @@ export function VirtualList<T>({
   renderRow,
   label,
   testId,
+  hintId,
+  focusFirst = false,
   onError,
 }: Props<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -42,6 +55,10 @@ export function VirtualList<T>({
   const requestedRef = useRef(new Set<number>());
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
+  // The row that is the tab stop, and the row that should take focus once it
+  // is on screen (set by the keyboard handler and by `focusFirst`).
+  const [active, setActive] = useState(0);
+  const pendingFocusRef = useRef<number | null>(focusFirst ? 0 : null);
   // Rows that arrive after a scroll still re-render; only unmounting stops it.
   const mountedRef = useRef(false);
   useEffect(() => {
@@ -83,6 +100,67 @@ export function VirtualList<T>({
     }
   }, [first, last, total, loadPage, onError]);
 
+  // Keyboard (plan D7): arrows, Page Up/Down, Home, End move between rows.
+  // Rows outside the window are not in the DOM, so the viewport is scrolled
+  // first and the row is focused once it exists.
+  const shown = height > 0 ? height : FALLBACK_VISIBLE * rowHeight;
+  const firstVisible = Math.min(Math.max(0, Math.floor(scrollTop / rowHeight)), Math.max(0, total - 1));
+  const lastVisible = Math.max(firstVisible, Math.min(total, Math.ceil((scrollTop + shown) / rowHeight)) - 1);
+  const tabStop = Math.min(Math.max(active, firstVisible), lastVisible);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || total === 0) return;
+    const target = e.target instanceof Element ? e.target.closest("[data-row-index]") : null;
+    if (target === null) return;
+    const from = Number(target.getAttribute("data-row-index"));
+    const page = Math.max(1, Math.floor(shown / rowHeight) - 1);
+    let to: number;
+    switch (e.key) {
+      case "ArrowDown":
+        to = from + 1;
+        break;
+      case "ArrowUp":
+        to = from - 1;
+        break;
+      case "PageDown":
+        to = from + page;
+        break;
+      case "PageUp":
+        to = from - page;
+        break;
+      case "Home":
+        to = 0;
+        break;
+      case "End":
+        to = total - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    to = Math.min(Math.max(0, to), total - 1);
+    const el = viewportRef.current;
+    let top = scrollTop;
+    if (to * rowHeight < top) top = to * rowHeight;
+    else if ((to + 1) * rowHeight > top + shown) top = (to + 1) * rowHeight - shown;
+    if (el && top !== scrollTop) el.scrollTop = top;
+    setScrollTop(top);
+    setActive(to);
+    pendingFocusRef.current = to;
+  };
+
+  useEffect(() => {
+    const want = pendingFocusRef.current;
+    if (want === null) return;
+    const control = viewportRef.current?.querySelector<HTMLElement>(
+      `[data-row-index="${want}"] button, [data-row-index="${want}"] [tabindex]`,
+    );
+    if (control) {
+      control.focus();
+      pendingFocusRef.current = null;
+    }
+  });
+
   const items: ReactNode[] = [];
   for (let i = first; i < last; i++) {
     const row = pages.get(Math.floor(i / PAGE))?.[i % PAGE];
@@ -94,8 +172,13 @@ export function VirtualList<T>({
         style={{ top: i * rowHeight, height: rowHeight }}
         aria-posinset={i + 1}
         aria-setsize={total}
+        data-row-index={i}
       >
-        {row === undefined ? <span className="loading">Loading…</span> : renderRow(row, i)}
+        {row === undefined ? (
+          <span className="loading">{t("common.loading")}</span>
+        ) : (
+          renderRow(row, i, i === tabStop ? 0 : -1)
+        )}
       </div>,
     );
   }
@@ -108,7 +191,18 @@ export function VirtualList<T>({
       data-total={total}
       onScroll={(e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop)}
     >
-      <div role="list" aria-label={label} className="vspacer" style={{ height: total * rowHeight }}>
+      <div
+        role="list"
+        aria-label={label}
+        aria-describedby={hintId}
+        className="vspacer"
+        style={{ height: total * rowHeight }}
+        onKeyDown={onKeyDown}
+        onFocus={(e) => {
+          const row = e.target.closest("[data-row-index]");
+          if (row) setActive(Number(row.getAttribute("data-row-index")));
+        }}
+      >
         {items}
       </div>
     </div>
