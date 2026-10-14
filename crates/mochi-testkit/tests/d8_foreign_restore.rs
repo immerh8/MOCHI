@@ -7,7 +7,6 @@ use mochi_core::catalog::path::ArchivePath;
 use mochi_core::job::JobContext;
 use mochi_core::restore::{ExceptionKind, RestoreReport};
 use mochi_core::restore_foreign::*;
-use mochi_core::storage::os::OsRestoreDir;
 use mochi_core::storage::{CaseBehavior, NameIssue, RestoreDir};
 use mochi_core::ErrorCode;
 use mochi_testkit::archive::Job;
@@ -555,6 +554,7 @@ fn the_listing_tree_orders_implies_and_labels() {
 #[cfg(unix)]
 #[test]
 fn on_a_real_directory_a_planted_symlink_is_never_followed() {
+    use mochi_core::storage::os::OsRestoreDir;
     use std::os::unix::fs::symlink;
     let outside = tempfile::tempdir().unwrap();
     let dest = tempfile::tempdir().unwrap();
