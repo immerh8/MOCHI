@@ -28,6 +28,8 @@ the release-blocking fault matrix (spec §24.2).
   not hold. Gates 1, 5, and 6 are not met, G6 is not started, and gate 6's text
   contradicts an owner decision.
 * **Blockers for 1.0** (§9):
+  * **F16:** a real bug that makes `main` CI red. A 358-byte 7z hangs the 7z
+    listing (found by the `foreign_sevenz` fuzz smoke on `main`; reproduced here).
   * **F1:** a real bug. A ZIP/7z/RAR/tar opened from the shell gets "cannot be opened
     yet", although D8 shipped and the installer offers that association.
   * **F2:** spec D6 makes symbolic links an entry type, but the frozen draft-2 format
@@ -57,9 +59,9 @@ whole workspace, the desktop crate included, built and was tested here.
 |---|---|
 | `cargo fmt --all --check` | pass |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | pass (no warning) |
-| `cargo test --workspace --locked` | RESULT_TEST |
-| `cargo test -p mochi-testkit --test r3_cddl` | RESULT_R3 |
-| `cargo test -p mochi-testkit --test r8_golden` | RESULT_R8 |
+| `cargo test --workspace --locked` | pass: 99 test binaries and doctests, 1,368 passed, 0 failed, 13 ignored. The ignored ones are the 12 fixture writers ("run by hand") and `c6_casefold_destination`, which needs an ext4 casefold mount (CI job `casefold`) |
+| `cargo test -p mochi-testkit --test r3_cddl` | pass: 7 passed, 1 ignored (`print_vector_index`, prints R3 §7 data) |
+| `cargo test -p mochi-testkit --test r8_golden` | pass: 10 passed, 1 ignored (`write_r8_golden_files`) |
 | `bash ci/check-invariants.sh` | `invariants: ok` |
 | `python3 docs/ratification/R6-vectors/gen_vectors.py \| diff - docs/ratification/R6-vectors/vectors.json` (venv, `blake3==1.0.8`) | identical |
 | `interop/pyverify`: `pytest`, then `tools/compare_r8.py fixtures/golden/r8` (hash-pinned requirements) | 315 passed; "76 cases compared, 0 differ" |
@@ -93,8 +95,12 @@ Not run here, with where CI proves each instead:
   * 21 `fuzz smoke (*)` jobs.
 
   This run includes #39–#53.
-* **Runs 38558591812** (`eae258b`, #54) **and 38561036215** (`8cac973`, #55) were still
-  running when this file was written. RESULT_CI_HEAD
+* **Run 38558591812** (`eae258b`, #54) **failed**. 29 of 30 jobs passed; `fuzz smoke
+  (foreign_sevenz)` hit a libFuzzer timeout in its 60-second fuzzing phase. #54 does not
+  touch `mochi-foreign`: this is a latent hang in the 7z listing path that the fuzzer
+  happened to find, and it is reproduced below (F16).
+* **Run 38561036215** (`8cac973`, #55) was still running when this was written. The CI
+  run on this PR's head is the evidence for `main` at the audited commit (F6).
 * Older evidence the gates cite (runs 37260826727 … 37735586637) ran on
   `Sepiolina/MOCHI` and early `immerh8/MOCHI` PRs, before the format freeze. Every test
   those gates name still exists and still passes in the run above. That run is the
@@ -127,7 +133,7 @@ test in CI, on Windows and Ubuntu (release gate 1). Unless a row says otherwise:
 | Search | **not met** | "rebuild matches expected coverage": `c13_search.rs` `c13_discovery_rebuilds_from_manifests_when_an_image_is_damaged`, `c13_zero_hits_under_partial_coverage_are_reported_partial` | **"Interrupted indexing visible" has no test and cannot have one.** 1.0 builds no index (plan C13 "Open": waits for an index). No amendment states how the row is met in 1.0 (compare K17 for dictionaries) (F4) |
 | Concurrency (Core) | **met** | `c5_publication.rs` `a_second_writer_is_refused_and_an_unlocked_write_is_detected`; `q54_writer_lock.rs` (4, Windows included); `t22_creation.rs` two concurrent creators | — |
 | Desktop app | **met, evidence pending** | §3.1 below maps every §23.3 requirement to its tests. `check.e2e.js` compares the report shown, and the exported JSON, with `mochi verify --json` over the same file, on both OSes | #8 (zero results under partial coverage shown as incomplete) is tested in vitest and Rust (`d5_tests.rs`), not in E2E. The vitest job runs only on Ubuntu, so the UI half has no Windows run. E2E covers only complete coverage |
-| Foreign archives (D8) | **met, evidence pending** | `d8_foreign_restore.rs` (traversal, absolute, links, reserved names, ADS, case and duplicate names, nothing overwritten, planted symlink on a real directory); `mochi-foreign/tests` `limits.rs`, `supervision.rs` (crash, panic, memory, hang, flood; parent unaffected), `zip_fixtures.rs`, `sevenz_fixtures.rs`, `rar_fixtures.rs` (`rar4_data_encryption_fails_closed`), `corpus_interop.rs`; E2E `foreign.e2e.js` (hostile 7z writes nothing outside; no MOCHI vocabulary) on both OSes; fuzz `foreign_*` | The hostile corpus has **no RAR case**: no traversal, bomb, ratio, or BLAKE2sp RAR fixture, because nothing here can write RAR (plan D8 slice 2 "Not done"; 8 mutation survivors). **Multi-volume RAR** is promised by D8 rule 8 but tested only with a missing volume, never with a complete set. The "WinRAR" part of the D8 exit corpus is RARLAB `rar` archives of unknown version from 2015–2019 (F7) |
+| Foreign archives (D8) | **met, evidence pending** | `d8_foreign_restore.rs` (traversal, absolute, links, reserved names, ADS, case and duplicate names, nothing overwritten, planted symlink on a real directory); `mochi-foreign/tests` `limits.rs`, `supervision.rs` (crash, panic, memory, hang, flood; parent unaffected), `zip_fixtures.rs`, `sevenz_fixtures.rs`, `rar_fixtures.rs` (`rar4_data_encryption_fails_closed`), `corpus_interop.rs`; E2E `foreign.e2e.js` (hostile 7z writes nothing outside; no MOCHI vocabulary) on both OSes; fuzz `foreign_*` | The hostile corpus has **no RAR case**: no traversal, bomb, ratio, or BLAKE2sp RAR fixture, because nothing here can write RAR (plan D8 slice 2 "Not done"; 8 mutation survivors). **Multi-volume RAR** is promised by D8 rule 8 but tested only with a missing volume, never with a complete set. The "WinRAR" part of the D8 exit corpus is RARLAB `rar` archives of unknown version from 2015–2019 (F7). A 358-byte 7z hangs the listing until the helper's wall-time kill (F16); the app is unaffected, as the row requires, but the fuzz job is red |
 
 **Rows outside 1.0** (deleted primary archive, original machine unavailable, key service
 unavailable, corrupted inventory, stale writer resumes): **met where a 1.0 entry point
@@ -160,7 +166,7 @@ exists.**
 
 | # | Gate | Verdict | Evidence / gap |
 |---|---|---|---|
-| 1 | Every §8.1 row passes in CI on Windows and Ubuntu | **not met** | The Search row is not met (F4). The Desktop and Foreign rows have evidence pending (F7, F13). Every other row is met (§3) |
+| 1 | Every §8.1 row passes in CI on Windows and Ubuntu | **not met** | The Search row is not met (F4). The Desktop and Foreign rows have evidence pending (F7, F13). `main` CI is red on the `foreign_sevenz` fuzz smoke (F16). Every other row is met (§3) |
 | 2 | R1–R9 published; format frozen for Core, TAR, Encrypted, Redundancy | **met** (owner review pending) | `docs/ratification/README.md`: R1–R4 frozen as draft 2 (#34, G12); R5 (G10); R6 (G11); R7 (#49, G15); R8 (#36, G13); R9 (#35, #37, G14). R10 is post-1.0 (O5). The owner's review of the delegated freezes (K11) is still pending (§6) |
 | 3 | R9 interop over R8 | **met** | CI `r9 interop` × 2 in run 38551536791; locally 76/76 equal (§1); `docs/ratification/R9-interop-results.md` |
 | 4 | Draft-to-1.0 boundary enforced | **owner-held** (W20) | Draft 1 is already refused: `exit_codes.rs` `a_draft_1_archive_is_refused_exit_4_naming_the_draft` (fixture `b2/reject-archive-draft-1.mochi`). Writing `null`, `mochi migrate`, and R8's regeneration are W20, the owner's flip |
@@ -184,8 +190,8 @@ exists.**
 | G9 Reports | **met** | `t26_t27_reports.rs` `g9_mixed_outcome_matrix`, timestamp property (T28); the CLI takes its exit code from `Report::conclude` (`c14-cli.md` rule 9, `r7_json_schemas.rs` checks `exit_code` equals the process exit) |
 | G10 Encrypted (R5) | **met** | `R5-crypto-draft.md` §12; `c11_*` tests; fuzz `key_envelope`, `sealed_object` |
 | G11 Redundancy (R6) | **met** | `R6-erasure-coding-draft.md` §10; CI R6 regeneration (also identical locally); `c12_*`; fuzz `parity_frame` |
-| G12 Format freeze | **met** (owner review pending, K11) | #34; `ratification_drafts.rs`; `r3_cddl.rs` RESULT_R3_SHORT; `DRAFT_ID = 2` (`mochi-core/src/descriptor.rs`); `b2/reject-archive-draft-1.mochi` |
-| G13 Golden set (R8) | **met** (owner review pending) | #36; `r8_golden.rs` RESULT_R8_SHORT (76 cases, coverage checked by test, 12 MiB budget) |
+| G12 Format freeze | **met** (owner review pending, K11) | #34; `ratification_drafts.rs`; `r3_cddl.rs` (passes locally and in CI); `DRAFT_ID = 2` (`mochi-core/src/descriptor.rs`); `b2/reject-archive-draft-1.mochi` |
+| G13 Golden set (R8) | **met** (owner review pending) | #36; `r8_golden.rs` (passes locally and in CI; 76 cases, coverage checked by test, 12 MiB budget) |
 | G14 Interop (R9) | **met** (owner review pending) | #35, #37; CI `r9 interop` × 2; local 76/76 |
 | G15 Report freeze (R7) | **met** (owner review pending) | #49 (#54 added the in-band tags per O2); `r7_json_schemas.rs`; 8 schemas frozen, the 11 command-output schemas freeze at W20 |
 
@@ -339,10 +345,10 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    Plan D4 wrote options A (move `HeadStore` into core), B (a shared `mochi-state`
    crate), and C (rejected). No decision is recorded. **Next step:** the owner picks A or
    B, or accepts the gap for 1.0 in D8's text.
-6. **F6 — should-fix.** The CI run for the audited head (`8cac973`, #55) and for #54 was
-   not complete when this file was written. The last fully green `main` run is
-   38551536791 at `db611b3`. **Next step:** the run on this PR's head is the evidence
-   for the whole of `main`. Record its id in this file when it is green.
+6. **F6 — should-fix.** `main` is not green at the audited head. The run for #54
+   (38558591812) failed on F16. The run for #55 (38561036215) was still running when
+   this was written. The last fully green `main` run is 38551536791 at `db611b3`.
+   **Next step:** fix F16, then record a green `main` run id here and in the plan.
 7. **F7 — should-fix.** The D8 hostile corpus has no RAR case:
    * no traversal, bomb, ratio, or BLAKE2sp fixture;
    * multi-volume RAR (D8 rule 8) is never read as a complete set;
@@ -385,3 +391,35 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
 15. **F15 — nit.** Spec §10.4.1 is still marked "(Proposed, open)". `AGENTS.md` and
     `apps/mochi-desktop/README.md` status lines lag (§8.2). The D6 forwarded `argv`
     loses unpaired surrogates on a second launch (recorded in D6; Windows-only, rare).
+16. **F16 — blocker (real bug; makes `main` CI red).** A crafted 358-byte 7z makes the
+    listing loop without end:
+    * **Where:** in `sevenz_rust2` 0.20,
+      `Archive::read` → `try_to_locale_end_header` → `init_archive` → `read_header` →
+      `read_variable_u64`, which spins with constant memory (about 4 MB resident).
+    * **How it was found:** CI `fuzz smoke (foreign_sevenz)` on `main` run 38558591812
+      (head `eae258b`, #54), artifact `timeout-9b2ba6ed372fbec405e789b92be1223e9c9fbf77`.
+    * **Impact:** in the product the helper's wall-time limit (default 600 s,
+      `crates/mochi-foreign/src/client.rs`) ends it with a `HELPER_*` error. Until then,
+      opening the file in the app burns a core for up to ten minutes.
+    * **Reproduction:** write the bytes below to `t.7z`; a 4-line binary that calls
+      `mochi_foreign::fuzz::exercise_sevenz_listing(&std::fs::read("t.7z")?)` (release
+      build, on `main` `8cac973`) had not returned after 300 s, and gdb showed the stack
+      above. Or `cargo +nightly fuzz run foreign_sevenz t.7z`. SHA-1
+      `9b2ba6ed372fbec405e789b92be1223e9c9fbf77`, hex:
+
+      ```text
+    377abcaf271c0004000000000000000000000000000000000000000000000000fffffffffffffffff7ffffffffffffff
+    ffffffffffffffff0022000000000000001cf00100000000000008da630118af3442196effffff196e0421d2cfff251c
+    483ee8ffffffffffffffffffffffffffffffffffffffffffffffffffffff71ffffffffffffff2cc96c85ff544dac9218
+    1a9fd702ff0001000000000000000a0102fb415cfa105e0408438100003b0400000000fd0000ffffffffffffffffffff
+    ffffffffffffffffffffffffffffffffff71717171717171717171717171717171717171717171717171717171717171
+    717171717171717171717171717171717171717171717171717171717171717171717171717171717171717171ffffff
+    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    ffffffffffffffffffc0ffffffffffffff0000000000
+      ```
+    * **Next step:** bound the end-header search and every count read in `sevenfmt`
+      before handing input to `sevenz-rust2` (or patch or upgrade the crate; versions
+      after 0.20 need rustc 1.93, plan D8). Then add the input to
+      `fixtures/fuzz-regressions/foreign_sevenz` with the fix. Until the fix lands, the
+      `foreign_sevenz` smoke job can fail on any PR. That is the reason this PR does not
+      add the input now: it would turn every run red.
