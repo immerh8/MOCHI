@@ -398,3 +398,12 @@ fn a_wrong_password_on_stored_data_delivers_no_garbage() {
     let (_, gots) = read_many(&c, &p, &[b], Some(&ok)).unwrap();
     assert_eq!(gots[0].bytes, B_TXT.repeat(50).as_bytes());
 }
+
+#[test]
+fn a_header_claiming_absurd_counts_is_malformed_not_a_crash() {
+    // Found by the fuzzer: sevenz-rust2 sizes a vector from the file count and
+    // panics on capacity overflow; that is reported as a malformed archive.
+    let c = client();
+    let e = c.list(&sz("header_huge_count.7z"), None).unwrap_err();
+    assert_eq!(e.code, ErrorCode::MalformedArchive, "{e}");
+}

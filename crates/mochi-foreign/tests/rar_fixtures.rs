@@ -186,3 +186,15 @@ fn not_rar_and_unsupported_rar_variants_are_typed() {
         assert_eq!(c.test(&rar(name), None).unwrap().problems(), 0, "{name}");
     }
 }
+
+#[test]
+fn an_entry_over_the_dictionary_limit_is_never_handed_to_unrar() {
+    // Found by the fuzzer: skipping an entry of a solid archive makes UnRAR
+    // allocate the entry's dictionary (2 GiB here) before any limit applies.
+    let c = client();
+    let p = rar("solid_huge_dict.rar");
+    let l = c.list(&p, None).unwrap();
+    assert!(!l.complete, "a listing that stopped must say so");
+    let t = c.test(&p, None).unwrap();
+    assert!(!t.complete || t.problems() > 0, "never a clean verdict");
+}

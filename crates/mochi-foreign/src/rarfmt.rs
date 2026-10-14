@@ -58,6 +58,30 @@ const NAME_UNITS: usize = 1024;
 /// A volume name UnRAR asks for is at most this many units.
 const VOLUME_NAME_UNITS: usize = 2048;
 
+// UnRAR's Windows build reads the registry (RegOpenKeyExW) and the system
+// random source (CryptGenRandom), but unrar_sys links neither library, which
+// fails the link of the helper binary on MSVC. An empty extern block with a
+// link attribute adds the import library and declares no symbol.
+#[cfg(windows)]
+#[link(name = "advapi32")]
+extern "C" {}
+
+/// UnRAR decodes even a skipped entry of a solid archive to keep its window,
+/// which allocates the entry's dictionary. An entry whose dictionary is over
+/// the limit is therefore never handed to UnRAR, and nothing after it is
+/// reachable.
+fn dict_blocked(h: &Header) -> bool {
+    !h.is_dir() && h.redir_type == 0 && h.dict_kb > MAX_DICT_KB
+}
+
+fn dict_stop_text(h: &Header) -> String {
+    format!(
+        "stopped at an entry that needs a {} MiB dictionary, over the {} MiB limit",
+        h.dict_kb >> 10,
+        MAX_DICT_KB >> 10
+    )
+}
+
 const HOST_UNIX: c_uint = 3;
 const FSREDIR_UNIXSYMLINK: c_uint = 1;
 const FSREDIR_WINSYMLINK: c_uint = 2;
@@ -824,6 +848,11 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
 
         if list {
             out(Message::Entry(info))?;
+            if dict_blocked(&header) {
+                tally.complete = false;
+                tally.stop_reason = Some(dict_stop_text(&header));
+                break;
+            }
             let code = rar.process(sys::RAR_SKIP, &mut |_| true);
             index += 1;
             if code != sys::ERAR_SUCCESS {
@@ -837,6 +866,11 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         if !want {
             // Not asked for. A solid archive still decodes it to keep its
             // dictionary in step, and that work counts against the limits.
+            if dict_blocked(&header) {
+                tally.complete = false;
+                tally.stop_reason = Some(dict_stop_text(&header));
+                break;
+            }
             let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| {
                 meter.add(chunk.len()).is_none()
             });
@@ -890,12 +924,22 @@ pub fn run(origin: &Origin<'_>, req: &Request, out: &mut Out) -> Result<Tally, E
         };
 
         let outcome = if let Some(o) = pre {
-            let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| {
-                meter.add(chunk.len()).is_none()
-            });
-            if code != sys::ERAR_SUCCESS && code != sys::ERAR_BAD_DATA {
+            // Skipping an entry in a solid archive makes UnRAR decode it to
+            // keep the window, which allocates the entry's dictionary. An
+            // entry over the dictionary limit is therefore never handed to
+            // UnRAR at all, and nothing after it can be reached safely.
+            let unreachable_dict = dict_blocked(&header);
+            if unreachable_dict {
                 stop_all = true;
-                tally.stop_reason = Some(stop_text(code, rar.cb.missing_volume.as_deref()));
+                tally.stop_reason = Some(dict_stop_text(&header));
+            } else {
+                let code = rar.process(sys::RAR_SKIP, &mut |chunk: &[u8]| {
+                    meter.add(chunk.len()).is_none()
+                });
+                if code != sys::ERAR_SUCCESS && code != sys::ERAR_BAD_DATA {
+                    stop_all = true;
+                    tally.stop_reason = Some(stop_text(code, rar.cb.missing_volume.as_deref()));
+                }
             }
             o
         } else {

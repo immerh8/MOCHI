@@ -63,6 +63,7 @@ tools.
 | `7z/split.7z.001-003` | `-v400b` split set | read as one stream |
 | `7z/gap/`, `7z/short/` | `.001` + `.003`; `.001` + `.002` of the three | `MISSING_VOLUME` |
 | `7z/crc_corrupt.7z` | a stored entry with one flipped byte | CRC32 mismatch for that entry only |
+| `7z/header_huge_count.7z` | fuzzer finding: a header whose file count overflows a vector capacity | `MALFORMED_ARCHIVE`, not a helper crash |
 | `7z/truncated.7z`, `bad_start_crc.7z`, `bad_header.7z` | cut / start-header CRC / header byte flipped | `MALFORMED_ARCHIVE` |
 | `7z/bomb_ratio.7z`, `bomb_count.7z`, `long_name.7z` | 8 MiB of zeros in ~1 KiB / 300 empty files / a 1,008-byte name | ratio, total, entry-size, count, name-length limits |
 | `7z/lzma_huge_dict.7z` | a raw header patched to claim a 2 GiB dictionary (CRCs repaired) | refused as `unsupported`, never allocated |
@@ -75,4 +76,5 @@ tools.
 | `rar/archive.part1.rar` | volume 1 of a set whose volume 2 is absent | incomplete, `volume ... is missing` |
 | `rar/100M.part00002.rar` | a later volume | "open the first volume" |
 | `rar/recovery-record.rar`, `locked.rar` | recovery record / locked flag | still read |
+| `rar/solid_huge_dict.rar` | fuzzer finding: a solid entry with a 2 GiB dictionary | never handed to UnRAR; the listing says it stopped |
 | `rar/crc_corrupt.rar`, `truncated.rar`, `bad_header.rar`, `rar5_corrupt.rar`, `rar5_truncated.rar` | byte mutations of the above | reported as damage (read error or CRC32 mismatch), never as clean |

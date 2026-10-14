@@ -487,8 +487,21 @@ pub fn run<R: Read + Seek>(
 ) -> Result<Tally, EngineError> {
     check_truncation(&mut src, archive_len, origin)?;
     let password = password_of(req)?;
-    let archive =
-        Archive::read(&mut src, &password).map_err(|e| open_error(e, req.password.is_some()))?;
+    // sevenz-rust2 sizes some vectors straight from header counts, which can
+    // overflow a capacity and panic. A panic while reading the header is a
+    // malformed archive, not a crash of the helper.
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Archive::read(&mut src, &password)
+    }));
+    let archive = match read {
+        Ok(r) => r.map_err(|e| open_error(e, req.password.is_some()))?,
+        Err(_) => {
+            return Err(archive_err(
+                ErrorCode::MalformedArchive,
+                "the 7z header claims more entries or streams than can be held",
+            ))
+        }
+    };
     let l = req.limits;
     let total = archive.files.len();
     if req.op.is_read() {
