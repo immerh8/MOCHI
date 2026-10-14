@@ -175,6 +175,17 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   only ESLint up to 9, which is out of support, so the maintained `@eslint-react`
   plugin carries the rule. `ci/check-invariants.sh` rule 7 also greps `ui/src`.
 
+### In-app updates (T13)
+
+`src/update.rs` drives `tauri-plugin-updater` from Rust. The webview is granted three of
+the app's own commands (`get_update_settings`, `set_update_settings`, `check_for_update`),
+starts the download as the `install_update` job, and gets **no** `updater:*` permission:
+the request, the signature check, and the install all happen in Rust, so the CSP is
+unchanged. The start-up check is opt-in and off by default; Rust refuses an automatic check
+while it is off. Release notes are remote text and are shown as text only. The decision
+logic is behind the `Backend` trait and is tested without a network. Endpoint, public key,
+the release workflow, and the owner's steps: `docs/packaging.md`.
+
 ## Jobs
 
 Long operations are `mochi-core` jobs (a progress sink and a cancellation token).

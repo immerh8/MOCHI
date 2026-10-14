@@ -4,11 +4,21 @@
 # Linux the webkit2gtk 4.1 build dependencies (apps/mochi-desktop/README.md).
 # Output: target/release/bundle/<nsis|deb>/ and target/packaging/THIRD-PARTY-LICENSES.txt
 #
-# Signing is NOT done here (docs/packaging.md lists what the owner must supply).
+# Windows code signing is NOT done (owner decision 2026-10-14: no Authenticode for 1.0).
+# Updater artifacts (a `.sig` next to each installer, signed with the owner's minisign key)
+# are made only when MOCHI_UPDATER_ARTIFACTS=1, which the release workflow sets; then
+# TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be set (the script
+# stops with a clear message if they are not). An ordinary build, and every PR build,
+# needs no key and reads none.
 set -euo pipefail
 
 kind="${1:?usage: build-installer.sh nsis|deb}"
 case "$kind" in nsis | deb) ;; *) echo "unknown bundle '$kind' (nsis|deb only: O11)" >&2; exit 2 ;; esac
+
+if [ "${MOCHI_UPDATER_ARTIFACTS:-0}" = 1 ]; then
+  : "${TAURI_SIGNING_PRIVATE_KEY:?MOCHI_UPDATER_ARTIFACTS=1 needs TAURI_SIGNING_PRIVATE_KEY (the updater signing key; docs/packaging.md)}"
+  : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:?MOCHI_UPDATER_ARTIFACTS=1 needs TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
+fi
 
 cd "$(dirname "$0")/.."
 licenses=target/packaging/THIRD-PARTY-LICENSES.txt
@@ -48,9 +58,13 @@ if kind == "nsis":  # next to the exe: <install dir>\licenses\
 else:  # Debian convention
     bundle = {"linux": {"deb": {"files": {"/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt": rel}}}}
 bundle["externalBin"] = ["binaries/mochi-foreign-helper"]
+# Release builds only: write the updater's `.sig` files (needs the signing key in the environment).
+if os.environ.get("MOCHI_UPDATER_ARTIFACTS") == "1":
+    bundle["createUpdaterArtifacts"] = True
 json.dump({"bundle": bundle}, open("target/packaging/bundle-overlay.json", "w"), indent=2)
 PY
 
-# 5. Bundle. `--ci` keeps the tool non-interactive; no signing environment is read.
+# 5. Bundle. `--ci` keeps the tool non-interactive; the signing environment is read only
+# when the overlay above asked for updater artifacts.
 cd apps/mochi-desktop/src-tauri
 cargo tauri build --ci --bundles "$kind" --config ../../../target/packaging/bundle-overlay.json -- --locked
