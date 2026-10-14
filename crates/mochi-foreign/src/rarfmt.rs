@@ -217,9 +217,20 @@ impl Callback {
                 let Ok(len) = usize::try_from(p2) else {
                     return -1;
                 };
-                // SAFETY: UnRAR passes a buffer of `p2` readable bytes at
-                // `p1`, valid for the duration of the call.
-                let chunk = unsafe { std::slice::from_raw_parts(p1 as *const u8, len) };
+                // UnRAR may call with a null buffer (found by fuzzing). A
+                // slice from a null pointer is undefined behaviour even when
+                // empty, so an empty chunk never touches `p1`, and a null
+                // buffer with bytes claimed is damage, not data.
+                let chunk: &[u8] = if len == 0 {
+                    &[]
+                } else if p1 == 0 {
+                    return -1;
+                } else {
+                    // SAFETY: `p1` is non-null and UnRAR passes a buffer of
+                    // `p2` (= `len`) readable bytes at it, valid for the
+                    // duration of the call; `u8` needs no alignment.
+                    unsafe { std::slice::from_raw_parts(p1 as *const u8, len) }
+                };
                 // SAFETY: `data` was set by `Rar::process` to the address of a
                 // `&mut dyn FnMut(&[u8]) -> bool` on its stack, and is reset to
                 // null before that frame returns.
@@ -239,7 +250,7 @@ impl Callback {
                 let Ok(cap) = usize::try_from(p2) else {
                     return -1;
                 };
-                if cap == 0 || pw.len() >= cap {
+                if p1 == 0 || cap == 0 || pw.len() >= cap {
                     return -1;
                 }
                 // SAFETY: UnRAR gives a writable buffer of `p2` wide units at
@@ -259,7 +270,7 @@ impl Callback {
                 let Ok(cap) = usize::try_from(p2) else {
                     return -1;
                 };
-                if cap == 0 || pw.len() >= cap {
+                if p1 == 0 || cap == 0 || pw.len() >= cap {
                     return -1;
                 }
                 // SAFETY: as above, for a byte buffer.
@@ -1146,5 +1157,43 @@ mod layout {
         assert_eq!(offset_of!(RawOpen, op_flags), 64);
         assert_eq!(offset_of!(RawOpen, cmt_buf_w), 68);
         assert_eq!(size_of::<RawOpen>(), 176);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn callback(data: *mut c_void) -> Callback {
+        Callback {
+            password_wide: None,
+            password_narrow: None,
+            password_asked: false,
+            missing_volume: None,
+            volume_bytes: Rc::new(Cell::new(0)),
+            data,
+            stopped_by_sink: false,
+            panicked: false,
+        }
+    }
+
+    /// UnRAR was seen calling `UCM_PROCESSDATA` with a null buffer.
+    #[test]
+    fn null_data_buffer_is_an_empty_chunk_or_damage() {
+        let mut seen = 0usize;
+        let mut sink = |c: &[u8]| {
+            seen += c.len();
+            true
+        };
+        let mut sink_ref: &mut dyn FnMut(&[u8]) -> bool = &mut sink;
+        let mut cb = callback(&mut sink_ref as *mut _ as *mut c_void);
+        assert_eq!(cb.handle(sys::UCM_PROCESSDATA, 0, 0), 0);
+        assert_eq!(cb.handle(sys::UCM_PROCESSDATA, 0, 16), -1);
+        assert_eq!(cb.handle(sys::UCM_PROCESSDATA, 0, -1), -1);
+        let bytes = [1u8, 2, 3];
+        assert_eq!(cb.handle(sys::UCM_PROCESSDATA, bytes.as_ptr() as _, 3), 0);
+        drop(cb);
+        assert_eq!(seen, 3);
     }
 }
