@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
+import { Updates } from "./update/Updates";
 import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
 import type { JobEvent, JobOutcome } from "./ipc/jobs";
 
@@ -141,6 +142,7 @@ export function App() {
           {view.state === "error" && view.text}
         </p>
       </section>
+      <Updates />
     </main>
   );
 }
