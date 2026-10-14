@@ -2,15 +2,33 @@
 import type { CheckLevel } from "./CheckLevel";
 import type { CompressionPreset } from "./CompressionPreset";
 import type { ConflictChoice } from "./ConflictChoice";
+import type { EntryKindView } from "./EntryKindView";
+import type { SearchScopeChoice } from "./SearchScopeChoice";
+import type { Secret } from "./Secret";
 
 /**
  * What the UI asks the job runner to do.
+ *
+ * A request can carry a passphrase ([`Secret`]), so it is only ever
+ * *deserialized*: it has no `Serialize` (nothing can write one out), its
+ * `Debug` text redacts every secret, and it has no equality (D5).
  */
 export type JobRequest = { "kind": "self_test", steps: number, step_ms: number, } | { "kind": "create_archive", preset: CompressionPreset, 
 /**
  * "Readable with standard zstd + tar" (O4): fixed at creation.
  */
-tar_compatible: boolean, } | { "kind": "add_to_archive", handle: number, } | { "kind": "delete_from_archive", handle: number, 
+tar_compatible: boolean, 
+/**
+ * D5: make the archive Encrypted (D20), wrapped under this
+ * passphrase. It crosses IPC here, once, and goes straight into a
+ * zeroizing type. Fixed at creation; conflicts with `tar_compatible`.
+ */
+passphrase?: Secret, 
+/**
+ * D5: give the archive a recovery record of this many percent
+ * (D21; 1 to 100). Fixed at creation.
+ */
+recovery_percent?: number, } | { "kind": "add_to_archive", handle: number, } | { "kind": "delete_from_archive", handle: number, 
 /**
  * Entries of the head snapshot, as the listing returned them.
  */
@@ -37,4 +55,21 @@ archive_id: string | null, } | { "kind": "apply_repair", subject: number,
 /**
  * The plan the user reviewed and approved.
  */
-plan: number, accept_retention_loss: boolean, };
+plan: number, accept_retention_loss: boolean, } | { "kind": "search_archive", handle: number, 
+/**
+ * Bytes that must occur in a stored path; empty matches every path.
+ */
+query: string, 
+/**
+ * Fold ASCII letters only (search normalization; identity is
+ * untouched).
+ */
+ignore_case: boolean, scope: SearchScopeChoice, 
+/**
+ * Only files or only folders; `null` for both.
+ */
+entry_kind: EntryKindView | null, } | { "kind": "add_passphrase", handle: number, passphrase: Secret, } | { "kind": "remove_passphrase", handle: number, 
+/**
+ * 32 hexadecimal digits, from `list_envelopes`.
+ */
+envelope_id: string, } | { "kind": "reencrypt", handle: number, passphrase: Secret, };

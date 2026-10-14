@@ -11,9 +11,10 @@ use crate::browse::Archives;
 use crate::check::{Checks, SubjectPick};
 use crate::extract::Destination;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, ExtractPlan, HealthView,
-    IpcError, JobEvent, JobId, JobRequest, PathKey, RepairSetupAction, RepairSetupView, ReportId,
-    SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
+    ArchiveHandle, ArchiveSummary, ChildrenPage, DropEvent, EntryDetails, EnvelopeList,
+    ExtractPlan, HealthView, IpcError, JobEvent, JobId, JobRequest, OpenOutcome, PathKey,
+    PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret, SnapshotView, SourcePick,
+    StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::write::{DropSink, DropWatch, Staging};
@@ -68,21 +69,65 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Ask the user for an archive in the native open dialog (in Rust; the
-/// webview never names a path) and open it read-only. `null` if the user
-/// cancelled the dialog.
+/// webview never names a path) and open it read-only. An Encrypted archive
+/// waits in Rust for `unlock_archive` (D5). `null` if the user cancelled the
+/// dialog.
 #[tauri::command]
 pub async fn open_archive(
     app: AppHandle,
     archives: State<'_, Arc<Archives>>,
-) -> Result<Option<ArchiveSummary>, IpcError> {
+) -> Result<Option<OpenOutcome>, IpcError> {
     let archives = Arc::clone(&archives);
     blocking(move || match crate::picker::pick_archive(&app) {
         None => Ok(None),
-        Some(path) => archives
-            .open(&path, mochi_core::publish::ReadOptions::default())
-            .map(Some),
+        Some(path) => archives.open_or_pend(&path).map(Some),
     })
     .await
+}
+
+/// Open the Encrypted archive that is waiting for `pending` with the
+/// passphrase (D5). The passphrase crosses IPC here, once; it goes into a
+/// zeroizing key session in Rust and is not returned, logged, or kept
+/// anywhere else. A wrong passphrase is `KEY_UNAVAILABLE` ("the passphrase
+/// did not open this archive"), never a statement about the archive.
+#[tauri::command]
+pub async fn unlock_archive(
+    pending: PendingId,
+    passphrase: Secret,
+    archives: State<'_, Arc<Archives>>,
+) -> Result<ArchiveSummary, IpcError> {
+    let archives = Arc::clone(&archives);
+    blocking(move || archives.unlock(pending, &passphrase)).await
+}
+
+/// Stop waiting for a passphrase. `false` if it was not waiting.
+#[tauri::command]
+pub fn cancel_unlock(pending: PendingId, archives: State<'_, Arc<Archives>>) -> bool {
+    archives.cancel_pending(pending)
+}
+
+/// The head's key envelopes of an open Encrypted archive (D5; `mochi rekey
+/// --list`, which needs no key).
+#[tauri::command]
+pub async fn list_envelopes(
+    handle: ArchiveHandle,
+    archives: State<'_, Arc<Archives>>,
+) -> Result<EnvelopeList, IpcError> {
+    let archives = Arc::clone(&archives);
+    blocking(move || crate::rekey::envelopes(&archives, handle)).await
+}
+
+/// Give the chosen Encrypted archive its passphrase for testing and repair
+/// (D5). The passphrase crosses here, once, into a zeroizing key session kept
+/// in Rust. A wrong one is `KEY_UNAVAILABLE` and changes nothing.
+#[tauri::command]
+pub async fn unlock_check_subject(
+    subject: SubjectId,
+    passphrase: Secret,
+    checks: State<'_, Arc<Checks>>,
+) -> Result<SubjectView, IpcError> {
+    let checks = Arc::clone(&checks);
+    blocking(move || checks.unlock_subject(subject, &passphrase)).await
 }
 
 /// Close an archive. `false` if it was not open.

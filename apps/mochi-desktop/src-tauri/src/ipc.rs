@@ -10,7 +10,11 @@ use ts_rs::TS;
 pub type JobId = u32;
 
 /// What the UI asks the job runner to do.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+///
+/// A request can carry a passphrase ([`Secret`]), so it is only ever
+/// *deserialized*: it has no `Serialize` (nothing can write one out), its
+/// `Debug` text redacts every secret, and it has no equality (D5).
+#[derive(Debug, Clone, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub enum JobRequest {
@@ -25,6 +29,17 @@ pub enum JobRequest {
         preset: CompressionPreset,
         /// "Readable with standard zstd + tar" (O4): fixed at creation.
         tar_compatible: bool,
+        /// D5: make the archive Encrypted (D20), wrapped under this
+        /// passphrase. It crosses IPC here, once, and goes straight into a
+        /// zeroizing type. Fixed at creation; conflicts with `tar_compatible`.
+        #[serde(default)]
+        #[ts(optional)]
+        passphrase: Option<Secret>,
+        /// D5: give the archive a recovery record of this many percent
+        /// (D21; 1 to 100). Fixed at creation.
+        #[serde(default)]
+        #[ts(optional)]
+        recovery_percent: Option<u16>,
     },
     /// D2: add the staged sources to an open archive as one new commit.
     AddToArchive { handle: ArchiveHandle },
@@ -76,6 +91,40 @@ pub enum JobRequest {
         plan: PlanId,
         accept_retention_loss: bool,
     },
+    /// D5: search the open archive's names (`mochi_core::search`, spec
+    /// §19.1); the coverage is part of the result (§19.3).
+    SearchArchive {
+        handle: ArchiveHandle,
+        /// Bytes that must occur in a stored path; empty matches every path.
+        query: String,
+        /// Fold ASCII letters only (search normalization; identity is
+        /// untouched).
+        ignore_case: bool,
+        scope: SearchScopeChoice,
+        /// Only files or only folders; `null` for both.
+        entry_kind: Option<EntryKindView>,
+    },
+    /// D5 rekey: add a passphrase to an open Encrypted archive (one commit,
+    /// `mochi rekey --add-passphrase`). The new passphrase crosses once.
+    AddPassphrase {
+        handle: ArchiveHandle,
+        passphrase: Secret,
+    },
+    /// D5 rekey: take one key envelope out of the head's set (one commit,
+    /// `mochi rekey --remove-passphrase`). **Not revocation.**
+    RemovePassphrase {
+        handle: ArchiveHandle,
+        /// 32 hexadecimal digits, from `list_envelopes`.
+        envelope_id: String,
+    },
+    /// D5 rekey: write the open Encrypted archive again as a **new file**
+    /// (the destination chosen with `choose_destination`) under a new data
+    /// key and this passphrase (`mochi rekey --reencrypt`). The source is
+    /// untouched.
+    Reencrypt {
+        handle: ArchiveHandle,
+        passphrase: Secret,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -123,6 +172,14 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         check: Option<Box<CheckResult>>,
+        /// Set by the search job (D5).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        search: Option<Box<SearchResultView>>,
+        /// Set by the rekey jobs (D5).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        rekey: Option<Box<RekeyReport>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -617,6 +674,13 @@ pub struct SubjectView {
     pub id: SubjectId,
     /// The file's name on this computer (the user's, not archive data).
     pub file_name: String,
+    /// The head commit says the archive is Encrypted (D20), so a full check
+    /// or a repair needs its passphrase (D5). Plaintext commit records say so
+    /// without a key.
+    pub encrypted: bool,
+    /// Rust holds a key that opened this archive: a check runs keyed and a
+    /// repair is possible. Never `true` for a Core archive.
+    pub unlocked: bool,
 }
 
 /// A spec §20.4 status value, spelled as in the report.
@@ -984,4 +1048,207 @@ pub enum CheckResult {
     Test { report: ReportView },
     Plan { plan: RepairPlanView },
     Repair { result: RepairResultView },
+}
+
+// ---- D5: passphrases, rekey, search -----------------------------------------
+//
+// A passphrase crosses IPC **once per use**, inside the command or job request
+// that needs it, and goes straight into a zeroizing type. It is never
+// serialized (no type here that can hold one implements `Serialize`), never
+// `Debug`-printed (the text is redacted), and never part of an error. What
+// Rust keeps afterwards is a `mochi_core::keys::KeySession` (zeroizing, in
+// Rust memory only) attached to the open archive, so the webview never has to
+// hold the passphrase again.
+
+/// A passphrase as it arrives over IPC.
+#[derive(Clone, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/", type = "string")]
+pub struct Secret(zeroize::Zeroizing<String>);
+
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(|s| Secret(zeroize::Zeroizing::new(s)))
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(<redacted>)")
+    }
+}
+
+impl Secret {
+    /// Wrap text (tests; the IPC path is `Deserialize`).
+    pub fn new(text: &str) -> Self {
+        Secret(zeroize::Zeroizing::new(text.to_owned()))
+    }
+
+    /// The passphrase as `mochi-core` takes it: NFC-normalised, 1 to 4,096
+    /// bytes (D20 item 2). The error never contains the text.
+    pub fn passphrase(&self) -> mochi_core::Result<mochi_format::secret::Passphrase> {
+        mochi_format::secret::Passphrase::new(&self.0).map_err(mochi_core::MochiError::from)
+    }
+}
+
+/// Identifies an archive that is waiting for its passphrase.
+pub type PendingId = u32;
+
+/// What `open_archive` and `unlock_archive` produce.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "status", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum OpenOutcome {
+    Opened {
+        archive: ArchiveSummary,
+    },
+    /// The archive is Encrypted (D20): names, sizes, and content stay sealed
+    /// until a passphrase opens it. Rust remembers the file; the webview
+    /// answers with `unlock_archive`.
+    NeedsPassphrase {
+        pending: PendingId,
+        /// The file's name on this computer.
+        file_name: String,
+    },
+}
+
+/// One key envelope valid at the head (`mochi rekey --list`; needs no key).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct EnvelopeView {
+    /// 32 hexadecimal digits: what `RemovePassphrase` takes.
+    pub envelope_id: String,
+    /// The commit that wrote the envelope.
+    #[ts(type = "number")]
+    pub written_by_commit: u64,
+    /// "argon2id m=64 MiB t=3 p=4".
+    pub kdf: String,
+    /// The passphrase that opened the archive in this session unlocked the
+    /// data key through this envelope.
+    pub opened_with: bool,
+}
+
+/// The head's key envelopes of an open Encrypted archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct EnvelopeList {
+    pub envelopes: Vec<EnvelopeView>,
+}
+
+/// What a rekey job did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum RekeyAction {
+    Added,
+    Removed,
+    Reencrypted,
+}
+
+/// The result of a rekey job. A rewrap is one commit (`LOCAL_COMMITTED`); a
+/// re-encryption is a new file. Neither is revocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct RekeyReport {
+    pub action: RekeyAction,
+    /// The commit of a rewrap.
+    #[ts(type = "number | null")]
+    pub seq: Option<u64>,
+    pub status: Option<String>,
+    /// The archive that was changed, or the new file.
+    pub file_name: String,
+    /// Snapshots written to the new file (a re-encryption).
+    #[ts(type = "number")]
+    pub snapshots: u64,
+    pub new_archive_id: Option<String>,
+    pub durability_note: Option<String>,
+    /// The archive as it now stands (a rewrap), `null` if it could not be
+    /// reopened with the key held; `reopen_error` says why (for example
+    /// after the passphrase in use was removed).
+    pub archive: Option<ArchiveSummary>,
+    pub reopen_error: Option<IpcError>,
+}
+
+/// Which snapshots a search covers (`SnapshotScope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum SearchScopeChoice {
+    Head,
+    Retained,
+    All,
+    Commit { seq: u32 },
+}
+
+/// A run of consecutive commit sequence numbers, inclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SeqRange {
+    #[ts(type = "number")]
+    pub from: u64,
+    #[ts(type = "number")]
+    pub to: u64,
+}
+
+/// One entry of one snapshot that matched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct HitView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    /// The stored path, escaped.
+    pub path: NameText,
+    pub kind: EntryKindView,
+    /// Decimal string.
+    pub size: String,
+}
+
+/// A requested snapshot that could not be searched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct UnavailableView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub code: String,
+    pub message: NameText,
+}
+
+/// What a search covered and what it did not (spec §19.3, §23.3 #8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SearchCoverageView {
+    /// `searched == requested` and nothing pending, failed, unsupported, or
+    /// excluded: the only state in which "no matches" means none.
+    pub complete: bool,
+    pub requested: Vec<SeqRange>,
+    pub searched: Vec<SeqRange>,
+    #[ts(type = "number")]
+    pub requested_count: u64,
+    #[ts(type = "number")]
+    pub searched_count: u64,
+    pub unavailable: Vec<UnavailableView>,
+    /// Commits whose own catalog was opened because the head's catalog was
+    /// rebuilt from a snapshot manifest.
+    pub opened_separately: Vec<SeqRange>,
+    #[ts(type = "number")]
+    pub entries_examined: u64,
+    /// The commit the catalog was opened at.
+    #[ts(type = "number")]
+    pub indexed_seq: u64,
+    /// The catalog image was damaged; a snapshot manifest stood in.
+    pub catalog_from_manifest: bool,
+    /// Always `true` in this build: file content was not searched (§19.2).
+    pub content_not_searched: bool,
+}
+
+/// A search's hits (at most [`crate::search::MAX_HITS_SHOWN`] of them) and
+/// its coverage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SearchResultView {
+    pub scope: SearchScopeChoice,
+    pub hits: Vec<HitView>,
+    /// All hits found, shown or not.
+    #[ts(type = "number")]
+    pub total_hits: u64,
+    pub coverage: SearchCoverageView,
 }

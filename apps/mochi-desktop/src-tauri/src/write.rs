@@ -32,6 +32,7 @@ use mochi_core::catalog::path::ArchivePath;
 use mochi_core::descriptor::Profile;
 use mochi_core::import::{import_into, Import, ImportOptions, SourceKind, SourceMeta, SourceTree};
 use mochi_core::job::JobContext;
+use mochi_core::keys::KeySession;
 use mochi_core::object::OsIds;
 use mochi_core::publish::{
     ArchiveWriter, CommitOutcome, PublishDurability, ReadOptions, TailRepair, Transaction,
@@ -44,7 +45,8 @@ use tauri::DragDropEvent;
 use crate::browse::{parse_key, Archives};
 use crate::ipc::{
     ArchiveHandle, CommitOperation, CommitReport, CompressionPreset, DropEvent, IpcError,
-    JobRequest, NameText, PathKey, SkippedView, StageOutcome, StagedItem, StagedKind, StagedView,
+    JobRequest, NameText, PathKey, Secret, SkippedView, StageOutcome, StagedItem, StagedKind,
+    StagedView,
 };
 
 /// Most sources one staged set holds (a folder counts once).
@@ -237,6 +239,21 @@ impl Staging {
         view_of(&set)
     }
 
+    /// The destination chosen with the save dialog, if any (D5 re-encryption
+    /// writes there too).
+    pub(crate) fn destination(&self) -> Option<PathBuf> {
+        lock(&self.inner).destination.clone()
+    }
+
+    /// Forget the destination once something was written there, if it is
+    /// still the one that was used.
+    pub(crate) fn consume_destination(&self, used: &Path) {
+        let mut set = lock(&self.inner);
+        if set.destination.as_deref() == Some(used) {
+            set.destination = None;
+        }
+    }
+
     pub fn set_destination(&self, path: PathBuf) -> StagedView {
         let mut set = lock(&self.inner);
         set.destination = Some(path);
@@ -322,6 +339,14 @@ pub struct Services {
     pub checks: Arc<crate::check::Checks>,
 }
 
+/// What a create asks for, gathered from the request.
+struct CreateChoices<'a> {
+    preset: CompressionPreset,
+    tar_compatible: bool,
+    passphrase: Option<&'a Secret>,
+    recovery_percent: Option<u16>,
+}
+
 /// What a finished job reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobDone {
@@ -331,6 +356,10 @@ pub struct JobDone {
     pub extract: Option<Box<crate::ipc::ExtractReport>>,
     /// Set by the test and repair jobs (D4).
     pub check: Option<Box<crate::ipc::CheckResult>>,
+    /// Set by the search job (D5).
+    pub search: Option<Box<crate::ipc::SearchResultView>>,
+    /// Set by the rekey jobs (D5).
+    pub rekey: Option<Box<crate::ipc::RekeyReport>>,
 }
 
 impl Services {
@@ -344,7 +373,28 @@ impl Services {
             JobRequest::TestArchive { .. }
             | JobRequest::PlanRepair { .. }
             | JobRequest::ApplyRepair { .. } => self.checks.validate(request),
-            JobRequest::CreateArchive { .. } => {
+            JobRequest::CreateArchive {
+                tar_compatible,
+                passphrase,
+                recovery_percent,
+                ..
+            } => {
+                if passphrase.is_some() && *tar_compatible {
+                    return Err(invalid(
+                        "an encrypted archive cannot also be readable with standard zstd + tar: \
+                         the sealed objects are skipped by generic decoders (spec §7.3)",
+                    ));
+                }
+                if let Some(secret) = passphrase {
+                    // Refuse an empty or oversized passphrase before anything
+                    // starts; the error never contains it.
+                    secret.passphrase()?;
+                }
+                if let Some(p) = recovery_percent {
+                    if !(1..=100).contains(p) {
+                        return Err(invalid("a recovery record takes 1 to 100 percent"));
+                    }
+                }
                 let t = self.staging.take();
                 if t.items.is_empty() {
                     return Err(invalid("nothing is staged: choose files or a folder first"));
@@ -353,6 +403,12 @@ impl Services {
                     return Err(invalid("choose where to save the new archive first"));
                 }
                 Ok(())
+            }
+            JobRequest::SearchArchive { .. } => crate::search::validate(&self.archives, request),
+            JobRequest::AddPassphrase { .. }
+            | JobRequest::RemovePassphrase { .. }
+            | JobRequest::Reencrypt { .. } => {
+                crate::rekey::validate(&self.archives, &self.staging, request)
             }
             JobRequest::AddToArchive { handle } => {
                 self.archives.path(*handle)?;
@@ -387,18 +443,45 @@ impl Services {
             JobRequest::CreateArchive {
                 preset,
                 tar_compatible,
-            } => self.create(*preset, *tar_compatible, ctx),
+                passphrase,
+                recovery_percent,
+            } => self.create(
+                CreateChoices {
+                    preset: *preset,
+                    tar_compatible: *tar_compatible,
+                    passphrase: passphrase.as_ref(),
+                    recovery_percent: *recovery_percent,
+                },
+                ctx,
+            ),
+            JobRequest::SearchArchive { .. } => crate::search::run(&self.archives, request, ctx),
+            JobRequest::AddPassphrase { .. }
+            | JobRequest::RemovePassphrase { .. }
+            | JobRequest::Reencrypt { .. } => {
+                crate::rekey::run(&self.archives, &self.staging, request, ctx)
+            }
             JobRequest::AddToArchive { handle } => self.add(*handle, ctx),
             JobRequest::DeleteFromArchive { handle, keys } => self.delete(*handle, keys, ctx),
         })
     }
 
-    fn create(
-        &self,
-        preset: CompressionPreset,
-        tar_compatible: bool,
-        ctx: &JobContext<'_>,
-    ) -> Result<JobDone> {
+    fn create(&self, choices: CreateChoices<'_>, ctx: &JobContext<'_>) -> Result<JobDone> {
+        let CreateChoices {
+            preset,
+            tar_compatible,
+            passphrase,
+            recovery_percent,
+        } = choices;
+        // The key is opened before anything is created (D20): a bad
+        // passphrase leaves no file and no partial output.
+        let read = match passphrase {
+            Some(secret) => ReadOptions {
+                keys: Some(KeySession::single(secret.passphrase()?)),
+                ..ReadOptions::default()
+            },
+            None => ReadOptions::default(),
+        };
+        let encrypted = passphrase.is_some();
         let taken = self.staging.take();
         let destination = taken
             .destination
@@ -407,12 +490,16 @@ impl Services {
         let import = gather(&taken, Transaction::new(), ctx)?;
         let (mut dir, name) = location(&destination)?;
         let opts = WriterOptions {
+            read: read.clone(),
             zstd_level: preset.zstd_level(),
             record_time: true,
-            profile: tar_compatible.then_some(Profile {
-                tar_compatible: true,
-                ..Profile::default()
-            }),
+            profile: (tar_compatible || encrypted || recovery_percent.is_some()).then_some(
+                Profile {
+                    tar_compatible,
+                    encrypted,
+                    redundancy: recovery_percent,
+                },
+            ),
             ..WriterOptions::default()
         };
         let (w, outcome) = ArchiveWriter::create_in(
@@ -426,7 +513,9 @@ impl Services {
         // The commit is published; a failure to close does not undo it.
         let _ = w.close();
         self.staging.consume(&taken, true);
-        let opened = self.archives.open(&destination, ReadOptions::default());
+        // The new archive opens with the same key session, so the user lands
+        // in it unlocked without typing the passphrase again.
+        let opened = self.archives.open(&destination, read);
         Ok(done(CommitOperation::Create, &outcome, &import, 0, opened))
     }
 
@@ -439,7 +528,8 @@ impl Services {
                 "nothing to add: the staged items contain no files or folders that are stored",
             ));
         }
-        let outcome = commit_to(&path, import.transaction.clone(), ctx)?;
+        let read = self.archives.read_options(handle)?;
+        let outcome = commit_to(&path, read, import.transaction.clone(), ctx)?;
         self.staging.consume(&taken, false);
         let opened = self.archives.reopen(handle);
         Ok(done(CommitOperation::Add, &outcome, &import, 0, opened))
@@ -461,7 +551,7 @@ impl Services {
             &mut dir,
             &name,
             Box::new(OsIds),
-            writer_options(),
+            writer_options(self.archives.read_options(handle)?),
             TailRepair::Refuse,
         )?;
         // Each named entry and everything under it, against the head the
@@ -511,8 +601,11 @@ impl Services {
     }
 }
 
-fn writer_options() -> WriterOptions {
+/// Appending options: the open archive's read options, which carry the key
+/// session of an Encrypted archive (D5). The profile is the archive's own.
+fn writer_options(read: ReadOptions) -> WriterOptions {
     WriterOptions {
+        read,
         record_time: true,
         ..WriterOptions::default()
     }
@@ -529,7 +622,7 @@ fn gather(taken: &Taken, tx: Transaction, ctx: &JobContext<'_>) -> Result<Import
 }
 
 /// The directory holding `archive` and its file name.
-fn location(archive: &Path) -> Result<(OsDir, String)> {
+pub(crate) fn location(archive: &Path) -> Result<(OsDir, String)> {
     let name = archive
         .file_name()
         .and_then(|n| n.to_str())
@@ -545,13 +638,18 @@ fn location(archive: &Path) -> Result<(OsDir, String)> {
 
 /// Append `tx` to the archive at `path` as one commit. An uncommitted tail
 /// is refused (truncating one is explicit, in the command-line tool).
-fn commit_to(path: &Path, tx: Transaction, ctx: &JobContext<'_>) -> Result<CommitOutcome> {
+fn commit_to(
+    path: &Path,
+    read: ReadOptions,
+    tx: Transaction,
+    ctx: &JobContext<'_>,
+) -> Result<CommitOutcome> {
     let (mut dir, name) = location(path)?;
     let (mut w, _) = ArchiveWriter::open_append_in(
         &mut dir,
         &name,
         Box::new(OsIds),
-        writer_options(),
+        writer_options(read),
         TailRepair::Refuse,
     )?;
     let outcome = w.commit(tx, ctx)?;
@@ -604,6 +702,8 @@ fn done(
         commit: Some(Box::new(commit)),
         extract: None,
         check: None,
+        search: None,
+        rekey: None,
     }
 }
 
@@ -674,6 +774,8 @@ mod tests {
         JobRequest::CreateArchive {
             preset: CompressionPreset::Balanced,
             tar_compatible: false,
+            passphrase: None,
+            recovery_percent: None,
         }
     }
 
@@ -943,6 +1045,8 @@ mod tests {
             &JobRequest::CreateArchive {
                 preset: CompressionPreset::Balanced,
                 tar_compatible: true,
+                passphrase: None,
+                recovery_percent: None,
             },
         )
         .unwrap();
@@ -991,6 +1095,8 @@ mod tests {
                 &JobRequest::CreateArchive {
                     preset,
                     tar_compatible: false,
+                    passphrase: None,
+                    recovery_percent: None,
                 },
             )
             .unwrap();
@@ -1183,6 +1289,8 @@ mod tests {
             &JobRequest::CreateArchive {
                 preset: CompressionPreset::Fast,
                 tar_compatible: true,
+                passphrase: None,
+                recovery_percent: None,
             },
         )
         .unwrap();

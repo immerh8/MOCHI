@@ -290,6 +290,8 @@ pub fn run(
         commit: None,
         extract: Some(Box::new(view)),
         check: None,
+        search: None,
+        rekey: None,
     })
 }
 
