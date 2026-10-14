@@ -9,3 +9,4 @@ draft_docs/
 *.pem
 __pycache__/
 *.pyc
+/apps/mochi-desktop/src-tauri/binaries/
