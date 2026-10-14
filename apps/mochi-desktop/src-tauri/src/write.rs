@@ -363,6 +363,8 @@ pub struct Services {
     /// The archive chosen for testing or repair, kept reports, and the
     /// repair's setup (D4).
     pub checks: Arc<crate::check::Checks>,
+    /// The in-app updater (T13).
+    pub updates: Arc<crate::update::Updates>,
 }
 
 /// What a create asks for, gathered from the request.
@@ -395,6 +397,7 @@ impl Services {
     pub fn validate(&self, request: &JobRequest) -> Result<()> {
         match request {
             JobRequest::SelfTest { .. } => Ok(()),
+            JobRequest::InstallUpdate { version } => self.updates.validate_install(version),
             JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
                 self.foreign.validate(&self.destination, request)
             }
@@ -465,6 +468,19 @@ impl Services {
     pub fn run(&self, request: &JobRequest, ctx: &JobContext<'_>) -> Option<Result<JobDone>> {
         Some(match request {
             JobRequest::SelfTest { .. } => return None,
+            JobRequest::InstallUpdate { version } => {
+                self.updates
+                    .run_install(version, ctx)
+                    .map(|summary| JobDone {
+                        summary,
+                        commit: None,
+                        extract: None,
+                        foreign_test: None,
+                        check: None,
+                        search: None,
+                        rekey: None,
+                    })
+            }
             JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
                 self.foreign.run(&self.destination, request, ctx)
             }

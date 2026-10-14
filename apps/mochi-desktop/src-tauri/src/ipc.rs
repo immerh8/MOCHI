@@ -22,6 +22,11 @@ pub enum JobRequest {
     /// milliseconds each, reporting progress and honouring cancellation
     /// (plan D0 exit). Limits: 1 to 1,000 steps, at most 1,000 ms each.
     SelfTest { steps: u32, step_ms: u32 },
+    /// T13: download, verify and install the update the user confirmed
+    /// (`check_for_update` returned it as an offer). `version` must be the
+    /// offered version; the webview names no URL. Download progress is
+    /// reported in bytes under the phase `update_download`.
+    InstallUpdate { version: String },
     /// D2: create a new archive at the destination the user chose
     /// (`choose_destination`) from the sources they staged (`stage_sources`,
     /// or dropped onto the window). The webview names no path.

@@ -41,6 +41,9 @@ fn main() {
         "health_report",
         "export_report",
         "repair_setup",
+        "get_update_settings",
+        "set_update_settings",
+        "check_for_update",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

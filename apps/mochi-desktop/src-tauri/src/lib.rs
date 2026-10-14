@@ -21,6 +21,7 @@ mod picker;
 pub mod rekey;
 pub mod search;
 pub mod self_test;
+pub mod update;
 pub mod write;
 
 use std::sync::Arc;
@@ -33,12 +34,14 @@ pub fn run() -> Result<(), tauri::Error> {
     let destination = Arc::new(extract::Destination::default());
     let foreign = Arc::new(foreign::Foreign::default());
     let checks = Arc::new(check::Checks::default());
+    let updates = Arc::new(update::Updates::default());
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
         archives: Arc::clone(&archives),
         staging: Arc::clone(&staging),
         destination: Arc::clone(&destination),
         foreign: Arc::clone(&foreign),
         checks: Arc::clone(&checks),
+        updates: Arc::clone(&updates),
     }));
     let launches = Arc::new(launch::Launches::new(
         Arc::clone(&archives),
@@ -50,6 +53,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let window_drops = Arc::clone(&drops);
     let second_launches = Arc::clone(&launches);
     let first_launches = Arc::clone(&launches);
+    let setup_updates = Arc::clone(&updates);
     tauri::Builder::default()
         // First, so that a second process hands over before anything else
         // starts. Its arguments are parsed and validated in Rust like the
@@ -59,6 +63,9 @@ pub fn run() -> Result<(), tauri::Error> {
             focus_main(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // The updater is driven from Rust only (`update`): the webview is not
+        // granted the plugin's permissions, so its own commands are unreachable.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(launches)
         .manage(jobs)
         .manage(archives)
@@ -67,6 +74,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(destination)
         .manage(foreign)
         .manage(checks)
+        .manage(updates)
         .on_window_event(move |_window, event| {
             // Items dragged from the file manager arrive here, in Rust.
             if let tauri::WindowEvent::DragDrop(drag) = event {
@@ -100,10 +108,21 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::choose_check_subject,
             commands::health_report,
             commands::export_report,
-            commands::repair_setup
+            commands::repair_setup,
+            commands::get_update_settings,
+            commands::set_update_settings,
+            commands::check_for_update
         ])
         .setup(move |app| {
             main_window(app)?;
+            {
+                use tauri::Manager;
+                let dir = app.path().app_config_dir()?;
+                setup_updates.configure(
+                    dir,
+                    Arc::new(update::PluginBackend::new(app.handle().clone())),
+                );
+            }
             // The shell's arguments for this first launch.
             first_launches.submit(launch::from_environment());
             Ok(())

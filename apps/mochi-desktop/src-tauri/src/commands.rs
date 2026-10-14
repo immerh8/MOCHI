@@ -20,6 +20,7 @@ use crate::ipc::{
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
+use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::write::{DropSink, DropWatch, Staging};
 
 impl DropSink for Channel<DropEvent> {
@@ -464,4 +465,36 @@ pub async fn plan_extract_foreign(
         foreign.plan(&destination, picked, handle, &keys).map(Some)
     })
     .await
+}
+
+/// T13: the update settings (the opt-in start-up check, off by default) and
+/// what this build can do with an update.
+#[tauri::command]
+pub fn get_update_settings(updates: State<'_, Arc<Updates>>) -> UpdateSettingsView {
+    updates.settings()
+}
+
+/// T13: turn the start-up check on or off.
+#[tauri::command]
+pub async fn set_update_settings(
+    check_on_start: bool,
+    updates: State<'_, Arc<Updates>>,
+) -> Result<UpdateSettingsView, IpcError> {
+    let updates = Arc::clone(&updates);
+    blocking(move || updates.set_check_on_start(check_on_start)).await
+}
+
+/// T13: ask the update server whether a newer version exists. The request is
+/// made here, in Rust, to the endpoint fixed in `tauri.conf.json`.
+/// `automatic` marks the check made when the app starts: Rust makes no
+/// request for it unless the user turned the setting on. Nothing is
+/// downloaded; the install is the `install_update` job, after the user
+/// confirms the version shown.
+#[tauri::command]
+pub async fn check_for_update(
+    automatic: bool,
+    updates: State<'_, Arc<Updates>>,
+) -> Result<UpdateCheckView, IpcError> {
+    let updates = Arc::clone(&updates);
+    blocking(move || Ok(updates.check(automatic))).await
 }

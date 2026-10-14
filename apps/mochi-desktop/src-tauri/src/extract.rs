@@ -863,6 +863,7 @@ mod tests {
             destination: Arc::clone(&f.destination),
             foreign: Arc::default(),
             checks: Arc::default(),
+            updates: Arc::default(),
         }))
     }
 
