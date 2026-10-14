@@ -16,6 +16,7 @@ import {
 } from "../ipc/foreign";
 import type { ForeignArchiveSummary, ForeignExtractPlan, ForeignRow } from "../ipc/foreign";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
+import { subscribeLaunches } from "../ipc/launch";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import type { NameText } from "../ipc/browse";
 import {
@@ -124,6 +125,42 @@ export function ForeignBrowser() {
     setSelected(null);
   };
 
+  /** Show a freshly opened archive, closing the one on screen. */
+  const show = async (summary: ForeignArchiveSummary) => {
+    const previous = shownRef.current;
+    shownRef.current = summary.handle;
+    if (previous !== null && previous !== summary.handle) {
+      await closeForeignArchive(previous).catch(() => false);
+    }
+    setAsk(null);
+    setOpen(summary);
+    setPlan(null);
+    setJob({ state: "idle" });
+    navigate([]);
+  };
+  const launchedRef = useRef<{ show: typeof show; ask: (wrong: boolean) => void } | null>(null);
+  const shownRef = useRef<number | null>(null);
+  useEffect(() => {
+    launchedRef.current = { show, ask: (wrong) => setAsk({ reason: wrong ? "wrong" : "ask" }) };
+    shownRef.current = open?.handle ?? null;
+  });
+  // The shell's "Open with MOCHI" for a ZIP, 7z, RAR, or tar. Rust opened the
+  // file through the same path as the button below, or remembers it for the
+  // password retry; no path crosses.
+  useEffect(
+    () =>
+      subscribeLaunches((event) => {
+        if (event.event === "foreign_opened") {
+          setError(null);
+          void launchedRef.current?.show(event.archive);
+        } else if (event.event === "foreign_password") {
+          setError(null);
+          launchedRef.current?.ask(event.wrong);
+        }
+      }),
+    [],
+  );
+
   /** Open: the dialog first, or (after a password prompt) the same file again. */
   const doOpen = async (retry: boolean) => {
     setError(null);
@@ -134,12 +171,7 @@ export function ForeignBrowser() {
       // The password has been sent; do not keep it in the field.
       if (passwordRef.current) passwordRef.current.value = "";
       if (summary === null) return;
-      if (open) await closeForeignArchive(open.handle).catch(() => false);
-      setAsk(null);
-      setOpen(summary);
-      setPlan(null);
-      setJob({ state: "idle" });
-      navigate([]);
+      await show(summary);
     } catch (e) {
       if (passwordRef.current) passwordRef.current.value = "";
       const kind = isIpcError(e) ? needsPassword(e.code) : null;

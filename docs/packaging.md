@@ -99,6 +99,14 @@ choice, because Windows lets only the user make an app the default. Verbs sit un
 "Show more options" on Windows 11; the top-level Windows 11 menu (`IExplorerCommand`,
 package identity) and Nautilus extensions are 1.x (O10), not built.
 
+A foreign archive that arrives from the shell (the opt-in "Open with", a double-click
+once MOCHI is the user's default, or a second launch) is opened for **browsing** in the
+foreign archive section, read-only and in foreign wording, by the same path as the in-app
+"Open archive" button there (plan D8); an encrypted one asks for its password in the
+window. "Extract here" and "Extract to folder" exist only for `.mochi`: if one reaches a
+foreign file, MOCHI extracts nothing, says so plainly, and opens the archive for
+browsing, where the Extract button shows the plan first. There are no foreign verbs.
+
 **Ubuntu (`.deb`):** the `.desktop` file (from `packaging/linux/mochi.desktop`, a
 replacement for Tauri's template so that `Exec` can end in `%f`) lists
 `application/x-mochi` first, then the foreign formats as "Open with" offers; the
@@ -234,6 +242,11 @@ and Windows 11 client machines check by hand:
 - Install interactively: the foreign-format question defaults to No; with No, a `.zip`'s
   "Open with" list does not offer MOCHI; with Yes it does, and ZIP still opens in the
   program it did before.
+- With the opt-in on, right-click a `.zip`, `.7z`, `.rar`, `.tar`, and `.tar.gz` and choose
+  "Open with" → MOCHI: each shows its entries in the foreign archive section (read-only,
+  "foreign format" label, no MOCHI health wording); an encrypted 7z or RAR asks for its
+  password in the window; a ZIP named like a hostile archive lists its names as text. Do
+  the same from a second launch while MOCHI is running (no second window).
 - Uninstall, then search the registry: no `Mochi*`, `MOCHI.Archive`, or `MOCHI.Foreign`
   key remains, and `.mochi` files show no program.
 - A path with spaces, non-ASCII letters, and a `&` opens correctly from each verb.
@@ -273,7 +286,8 @@ read with it). Record the result in the release notes.
   publishing a release without the owner's review (the workflow makes drafts only).
 - An update applied end to end on a real pair of published releases (the release checklist).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
-- Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign formats
-  opened from the shell answer "not supported yet" until plan D8 lands.
+- Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign
+  formats opened from the shell are browsed (D8, T20); there are no foreign shell verbs
+  (extract, add) and none is planned for 1.0.
 - The first CI run of `package` is the proof of the Tauri bundle itself; the build
   environment used to write this slice has no webkit2gtk.

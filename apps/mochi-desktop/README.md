@@ -328,6 +328,11 @@ attach it to an issue.
 - Passphrases cross IPC once and are never persisted unless the user opts into the OS credential store.
 - Foreign archives (D8): opened read-only, parsed in the helper process, extracted only
   through the shared restore engine, and tested with CRC wording, never MOCHI verification wording.
+  The same holds when the shell starts the app with one (T20): `launch.rs` sends a ZIP, 7z, RAR,
+  tar, or tar.gz path to the in-app open path in Rust, the window shows the foreign browser (an
+  encrypted archive asks for its password there, once), and the shell's "Extract here" /
+  "Extract to folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
+  for browsing with a plain note.
 
 ## Foreign-format helper in the installers
 

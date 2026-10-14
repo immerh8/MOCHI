@@ -17,7 +17,7 @@ import type {
   EntryRow,
   SnapshotView,
 } from "../ipc/browse";
-import { watchLaunches } from "../ipc/launch";
+import { subscribeLaunches } from "../ipc/launch";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { Name } from "./Name";
 import { Tree } from "./Tree";
@@ -315,12 +315,15 @@ export function Browser() {
     launchedRef.current = showLaunched;
     shownRef.current = open?.archive.handle ?? null;
   });
-  useEffect(() => {
-    watchLaunches((event) => {
-      if (event.event === "problem") setError(event.message);
-      else void launchedRef.current?.(event.archive, event.extract);
-    }).catch(() => undefined);
-  }, []);
+  useEffect(
+    () =>
+      subscribeLaunches((event) => {
+        if (event.event === "problem") setError(event.message);
+        else if (event.event === "opened") void launchedRef.current?.(event.archive, event.extract);
+        // Foreign archives are the foreign browser's to show.
+      }),
+    [],
+  );
 
   const doClose = async () => {
     if (!open) return;
