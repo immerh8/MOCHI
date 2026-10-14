@@ -341,6 +341,9 @@ pub struct Services {
     pub staging: Arc<Staging>,
     /// The folder the user chose to extract into (D3).
     pub destination: Arc<crate::extract::Destination>,
+    /// The archive chosen for testing or repair, kept reports, and the
+    /// repair's setup (D4).
+    pub checks: Arc<crate::check::Checks>,
 }
 
 /// What a finished job reports.
@@ -350,6 +353,8 @@ pub struct JobDone {
     pub commit: Option<Box<CommitReport>>,
     /// Set by the extract job (D3).
     pub extract: Option<Box<crate::ipc::ExtractReport>>,
+    /// Set by the test and repair jobs (D4).
+    pub check: Option<Box<crate::ipc::CheckResult>>,
 }
 
 impl Services {
@@ -360,6 +365,9 @@ impl Services {
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::validate(&self.archives, &self.destination, request)
             }
+            JobRequest::TestArchive { .. }
+            | JobRequest::PlanRepair { .. }
+            | JobRequest::ApplyRepair { .. } => self.checks.validate(request),
             JobRequest::CreateArchive { .. } => {
                 let t = self.staging.take();
                 if t.items.is_empty() {
@@ -397,6 +405,9 @@ impl Services {
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::run(&self.archives, &self.destination, request, ctx)
             }
+            JobRequest::TestArchive { .. }
+            | JobRequest::PlanRepair { .. }
+            | JobRequest::ApplyRepair { .. } => self.checks.run(request, ctx),
             JobRequest::CreateArchive {
                 preset,
                 tar_compatible,
@@ -616,6 +627,7 @@ fn done(
         ),
         commit: Some(Box::new(commit)),
         extract: None,
+        check: None,
     }
 }
 

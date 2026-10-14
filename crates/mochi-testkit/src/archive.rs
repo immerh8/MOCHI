@@ -285,3 +285,29 @@ pub fn read_state(src: &dyn ReadStorage, head: &OpenedHead) -> Result<State> {
     }
     Ok(out)
 }
+
+/// The absolute offset of the middle byte of the first chunk of the file at
+/// `p` in `head`'s snapshot: flipping that byte damages the file's stored
+/// content and nothing else (as `c8_repair.rs` does). Used by the desktop
+/// tests and the D4 E2E fixtures.
+pub fn first_chunk_middle(head: &OpenedHead, p: &str) -> Result<u64> {
+    let missing = |what: &str| MochiError::new(ErrorCode::CatalogInvalid, format!("{p}: {what}"));
+    let cat = &head.catalog;
+    let snap = cat.replay(None)?;
+    let entry = snap.get(&path(p)).ok_or_else(|| missing("no such entry"))?;
+    let (_, extents) = cat
+        .file_version(&entry.version)?
+        .ok_or_else(|| missing("no file version"))?;
+    let chunk = extents
+        .iter()
+        .find_map(|e| match e.source {
+            ExtentSource::Chunk { chunk, .. } => Some(chunk),
+            ExtentSource::Hole => None,
+        })
+        .ok_or_else(|| missing("no chunk"))?;
+    let record = cat.object(&chunk)?.ok_or_else(|| missing("no object"))?;
+    let at = cat
+        .object_location(&chunk)?
+        .ok_or_else(|| missing("no location"))?;
+    Ok(at + record.stored_len / 2)
+}

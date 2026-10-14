@@ -20,6 +20,7 @@ import { Name } from "./Name";
 import { Tree } from "./Tree";
 import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
+import { Checker } from "../check/Checker";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 
@@ -326,6 +327,7 @@ export function Browser() {
         selected={details ? { key: details.key, name: details.path } : null}
         autoPlan={autoExtract}
       />
+      <Checker archive={open?.archive ?? null} />
       {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
       {open && (
         <>
