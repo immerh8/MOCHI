@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate THIRD-PARTY-LICENSES.txt for the desktop installers (plan D7, O23).
 
-Rust: `cargo about generate --format json` over the desktop crate (policy and
-targets in packaging/about.toml; it fails on a license not accepted).
+Rust: `cargo about generate --format json` over the desktop crate and the
+foreign-format helper (T16); policy and targets in
+packaging/about.toml; it fails on a license not accepted.
 JS:   `pnpm licenses list --prod --json` in the UI (the packages that end up in
 the bundle), checked against the same accepted list, with each package's
 license file read from node_modules.
@@ -21,6 +22,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ABOUT = ROOT / "packaging" / "about.toml"
 DESKTOP_MANIFEST = ROOT / "apps" / "mochi-desktop" / "src-tauri" / "Cargo.toml"
+# The installers also ship mochi-foreign-helper (T16), a separate binary whose graph
+# (zip, tar, flate2, sevenz-rust2, unrar_sys, ...) is not the desktop crate's: the app
+# names mochi-foreign with default-features = false. Built with the default `engine` feature.
+HELPER_MANIFEST = ROOT / "crates" / "mochi-foreign" / "Cargo.toml"
 UI = ROOT / "apps" / "mochi-desktop" / "ui"
 LICENSE_FILES = ("LICENSE", "LICENCE", "LICENSE.md", "LICENSE.txt", "LICENSE-MIT", "COPYING")
 
@@ -51,15 +56,33 @@ def run(cmd, cwd=None):
 
 
 def rust_entries():
-    out = run(["cargo", "about", "generate", "--config", str(ABOUT),
-               "--manifest-path", str(DESKTOP_MANIFEST), "--format", "json", "--fail"])
-    data = json.loads(out)
-    entries = []  # (name, version, spdx, text)
-    for lic in data["licenses"]:
-        for used in lic["used_by"]:
-            c = used["crate"]
-            entries.append((c["name"], c["version"], lic["id"], lic["text"]))
+    entries, seen = [], set()  # (name, version, spdx, text); a crate in both graphs once
+    for manifest in (DESKTOP_MANIFEST, HELPER_MANIFEST):
+        out = run(["cargo", "about", "generate", "--config", str(ABOUT),
+                   "--manifest-path", str(manifest), "--format", "json", "--fail"])
+        for lic in json.loads(out)["licenses"]:
+            for used in lic["used_by"]:
+                c = used["crate"]
+                key = (c["name"], c["version"])
+                if key not in seen:
+                    seen.add(key)
+                    entries.append((c["name"], c["version"], lic["id"], lic["text"]))
     return entries
+
+
+def require_unrar_notice(rust):
+    """unrar_sys is labelled MIT/Apache but compiles RARLAB's UnRAR (freeware, with a
+    reproduce-this-paragraph condition). The notice comes from THIRD-PARTY-NOTICES.md,
+    which render() always includes; fail if the helper's graph has the crate and the
+    notice text is gone, so the condition cannot be dropped silently."""
+    if any(name == "unrar_sys" for name, *_ in rust):
+        notices = (ROOT / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8")
+        if "UnRAR source code may be used in any software" not in notices:
+            sys.exit("licenses.py: unrar_sys is in the helper's graph but THIRD-PARTY-NOTICES.md "
+                     "lacks the RARLAB UnRAR license paragraph")
+    else:
+        sys.exit("licenses.py: unrar_sys is missing from the helper's dependency graph; "
+                 "the helper was not built with the `engine` feature?")
 
 
 def js_entries(accepted):
@@ -111,6 +134,7 @@ def main():
     rust, js = rust_entries(), js_entries(accepted)
     if not rust or not js:
         sys.exit("licenses.py: empty dependency list; refusing to write a bogus file")
+    require_unrar_notice(rust)
     out = Path(sys.argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render(rust, js), encoding="utf-8")

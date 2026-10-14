@@ -227,15 +227,21 @@ there is no Windows machine in the development environment.
 
 The app finds `mochi-foreign-helper(.exe)` next to its own executable
 (`default_helper_path`). Development and the E2E job build it into the same
-`target/<profile>` directory (`cargo build -p mochi-foreign`). **The installers
-(plan D7) do not include it yet**: that needs `bundle.externalBin` and the
-helper's dependency graph (`sevenz-rust2`, UnRAR, ...) in the generated license
-list, which belongs to the packaging owner. Until then a packaged build answers
-`HELPER_SPAWN_FAILED` when a foreign archive is opened.
+`target/<profile>` directory (`cargo build -p mochi-foreign`).
+
+The installers ship it (T16). `packaging/build-installer.sh` builds the helper
+(`--release`, `engine` feature), stages it as
+`apps/mochi-desktop/src-tauri/binaries/mochi-foreign-helper-<target triple>[.exe]`
+(git-ignored) and adds `bundle.externalBin` to the overlay config, so Tauri
+installs it, without the suffix, beside the app: the NSIS install directory, or
+`/usr/bin` in the `.deb`. `packaging/licenses.py` runs `cargo about` over this
+crate's manifest as well as the desktop's and fails if the RARLAB UnRAR notice
+(`THIRD-PARTY-NOTICES.md`) is missing. The smoke scripts run the installed helper
+through `packaging/helper_probe.py` (a protocol-v2 `list` of
+`fixtures/foreign/basic_infozip.zip`) and check uninstall removes it.
 
 ## Not done
 
-* The helper is not in the installers (above).
 * Windows: the Job Object and `unrar_sys` on MSVC are built and tested by CI
   only; cross-compiling the library for `x86_64-pc-windows-gnu` type-checks.
 * No RAR writer is available, so no RAR fixture has a traversal name, a bomb,

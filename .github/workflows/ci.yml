@@ -440,7 +440,7 @@ jobs:
           exit "$status"
 
   package:
-    # Plan D7 (first slice), O11, O23: UNSIGNED installers. Windows NSIS (per-user,
+    # Plan D7 (first slice), O11, O23: UNSIGNED installers, each with the foreign-format helper (D8, T16). Windows NSIS (per-user,
     # WebView2 bootstrapper) and an Ubuntu .deb built on 22.04 (declares
     # libwebkit2gtk-4.1-0). The build generates the full third-party license list
     # and fails on a license outside packaging/about.toml. Signing and the updater
