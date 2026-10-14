@@ -49,6 +49,7 @@ pub fn run() -> Result<(), tauri::Error> {
         Arc::clone(&staging),
         Arc::clone(&destination),
         Arc::clone(&drops),
+        Arc::clone(&foreign),
     ));
     let window_staging = Arc::clone(&staging);
     let window_drops = Arc::clone(&drops);
