@@ -9,6 +9,7 @@ import type { ChildrenPage } from "./generated/ChildrenPage";
 import type { CommitView } from "./generated/CommitView";
 import type { EntryDetails } from "./generated/EntryDetails";
 import type { EntryRow } from "./generated/EntryRow";
+import type { OpenOutcome } from "./generated/OpenOutcome";
 import type { NameText } from "./generated/NameText";
 import type { SnapshotView } from "./generated/SnapshotView";
 
@@ -20,15 +21,19 @@ export type {
   EntryDetails,
   EntryRow,
   NameText,
+  OpenOutcome,
   SnapshotView,
 };
 
 /** Most entries one page may hold (`mochi_core::browse::MAX_PAGE`). */
 export const MAX_PAGE = 1000;
 
-/** Show the open dialog and open the chosen archive; `null` if cancelled. */
-export function openArchive(): Promise<ArchiveSummary | null> {
-  return invoke<ArchiveSummary | null>("open_archive");
+/**
+ * Show the open dialog and open the chosen archive; `null` if cancelled. An
+ * Encrypted archive comes back as `needs_passphrase` and waits in Rust.
+ */
+export function openArchive(): Promise<OpenOutcome | null> {
+  return invoke<OpenOutcome | null>("open_archive");
 }
 
 export function closeArchive(handle: number): Promise<boolean> {

@@ -34,9 +34,14 @@
 //!   memory and the health summary reads those records; nothing is saved and
 //!   the command-line tool's evidence log is not read, because the log lives
 //!   in `mochi-cli`, not in core (plan D4 "Gap").
-//! * **Encrypted archives (D20) without passphrase entry (D5).** A test runs
-//!   keylessly (stored integrity; never `PASS` overall); a repair needs the
-//!   key and is refused with `KEY_UNAVAILABLE` before anything is read.
+//! * **Encrypted archives (D20, D5).** The subject says whether it is
+//!   Encrypted (the head commit record, read without a key) and whether Rust
+//!   holds a key for it. The passphrase crosses IPC once, in `unlock`, and is
+//!   kept only as a zeroizing `KeySession` in the subject (or taken from the
+//!   browser's open archive, which already holds it). A test with a key runs
+//!   every level; without one it runs keylessly (stored integrity; never
+//!   `PASS` overall). A repair needs the key and is refused with
+//!   `KEY_UNAVAILABLE` before anything is read.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -48,7 +53,7 @@ use mochi_core::health::{
 };
 use mochi_core::job::JobContext;
 use mochi_core::object::{ArchiveId, OsIds};
-use mochi_core::publish::{locate_head, read_commit, ReadOptions};
+use mochi_core::publish::{locate_head, open_head, read_commit, ReadOptions};
 use mochi_core::repair::{
     self, LostSnapshot, OmittedEntry, Outcome, RepairOptions, RepairPlan, RepairReport,
     RetentionPlan,
@@ -63,6 +68,7 @@ use mochi_core::{ErrorCode, MochiError, Result};
 use serde::Serialize;
 
 use crate::browse::Archives;
+use crate::ipc::Secret;
 use crate::ipc::{
     ArchiveHandle, CheckLevel, CheckResult, CopyView, CoverageView, DimensionView, FindingView,
     HealthView, JobRequest, LadderStepView, LostSnapshotView, NameText, OmittedView, ParityView,
@@ -120,6 +126,30 @@ fn text(s: &str) -> NameText {
 struct Subject {
     id: SubjectId,
     path: PathBuf,
+    /// The head commit says Encrypted.
+    encrypted: bool,
+    /// The key session that opened it (D5), if one did. Zeroizing; never
+    /// printed (`KeySession` has no `Debug` text of its contents).
+    keys: Option<std::sync::Arc<mochi_core::keys::KeySession>>,
+}
+
+fn subject_view(s: &Subject) -> SubjectView {
+    SubjectView {
+        id: s.id,
+        file_name: file_name(&s.path),
+        encrypted: s.encrypted,
+        unlocked: s.encrypted && s.keys.is_some(),
+    }
+}
+
+impl Subject {
+    /// The read options a check or repair of this subject uses.
+    fn read(&self) -> ReadOptions {
+        ReadOptions {
+            keys: self.keys.clone(),
+            ..ReadOptions::default()
+        }
+    }
 }
 
 /// A plan the user can approve, with what it was made from.
@@ -171,9 +201,14 @@ impl Checks {
     /// Choose the archive to test, check, or repair. A new choice drops the
     /// repair's copies, new file, and plan, which belonged to the old one.
     pub fn choose_subject(&self, archives: &Archives, pick: SubjectPick) -> Result<SubjectView> {
+        let mut keys = None;
         let path = match pick {
             SubjectPick::Path(p) => p,
-            SubjectPick::OpenArchive(handle) => archives.path(handle)?,
+            SubjectPick::OpenArchive(handle) => {
+                // The browser's session already holds the key (D5).
+                keys = archives.read_options(handle)?.keys;
+                archives.path(handle)?
+            }
             SubjectPick::RepairOutput => self
                 .lock()
                 .repaired
@@ -194,22 +229,81 @@ impl Checks {
         s.copies.clear();
         s.output = None;
         s.plan = None;
-        let view = SubjectView {
+        let subject = Subject {
             id,
-            file_name: file_name(&path),
+            encrypted: crate::browse::head_encrypted(&path),
+            path,
+            keys,
         };
-        s.subject = Some(Subject { id, path });
+        let view = subject_view(&subject);
+        s.subject = Some(subject);
         Ok(view)
     }
 
-    /// The chosen archive's path, if `id` is still the chosen one.
-    fn subject(&self, id: SubjectId) -> Result<PathBuf> {
-        match &self.lock().subject {
-            Some(s) if s.id == id => Ok(s.path.clone()),
+    /// Open the chosen Encrypted archive with `passphrase` and keep the key
+    /// in Rust (D5). A wrong passphrase is `KEY_UNAVAILABLE` and changes
+    /// nothing; the archive is not described as damaged.
+    pub fn unlock_subject(&self, id: SubjectId, passphrase: &Secret) -> Result<SubjectView> {
+        let (path, encrypted) = {
+            let s = self.lock();
+            match &s.subject {
+                Some(x) if x.id == id => (x.path.clone(), x.encrypted),
+                _ => {
+                    return Err(invalid(
+                        "that archive is no longer the one chosen; choose it again",
+                    ))
+                }
+            }
+        };
+        if !encrypted {
+            return Err(invalid(
+                "this archive is not encrypted: it has no passphrase",
+            ));
+        }
+        let keys = mochi_core::keys::KeySession::single(passphrase.passphrase()?);
+        let read = ReadOptions {
+            keys: Some(keys.clone()),
+            ..ReadOptions::default()
+        };
+        let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
+        let head = open_head(&src, &read).map_err(|e| {
+            if e.code == ErrorCode::KeyUnavailable {
+                MochiError::new(ErrorCode::KeyUnavailable, crate::browse::WRONG_PASSPHRASE)
+            } else {
+                e
+            }
+        })?;
+        if head.unlocked.is_none() {
+            return Err(MochiError::new(
+                ErrorCode::KeyUnavailable,
+                crate::browse::WRONG_PASSPHRASE,
+            ));
+        }
+        let mut s = self.lock();
+        match &mut s.subject {
+            Some(x) if x.id == id => {
+                x.keys = Some(keys);
+                Ok(subject_view(x))
+            }
             _ => Err(invalid(
                 "that archive is no longer the one chosen; choose it again",
             )),
         }
+    }
+
+    /// The chosen archive, if `id` is still the chosen one.
+    fn subject_of(&self, id: SubjectId) -> Result<Subject> {
+        match &self.lock().subject {
+            Some(s) if s.id == id => Ok(s.clone()),
+            _ => Err(invalid(
+                "that archive is no longer the one chosen; choose it again",
+            )),
+        }
+    }
+
+    /// The chosen archive's path, if `id` is still the chosen one.
+    fn subject(&self, id: SubjectId) -> Result<PathBuf> {
+        self.subject_of(id).map(|s| s.path)
     }
 
     /// Change the repair's copies or new file. `picked` is what the dialog
@@ -463,13 +557,14 @@ impl Checks {
         deep: bool,
         ctx: &JobContext<'_>,
     ) -> Result<JobDone> {
-        let path = self.subject(subject)?;
+        let chosen = self.subject_of(subject)?;
+        let path = chosen.path.clone();
         let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
         let opts = VerifyOptions {
             level: verification_level(level),
-            // No key: an Encrypted archive is checked keylessly (D20 item 12)
-            // until passphrase entry exists (D5).
-            read: ReadOptions::default(),
+            // With the passphrase every level runs; without one an Encrypted
+            // archive is checked keylessly (D20 item 12).
+            read: chosen.read(),
             // The app keeps no head history yet (plan D4 "Gap").
             anchor: FreshnessAnchor::None,
             require_freshness: false,
@@ -479,7 +574,7 @@ impl Checks {
         if ctx.cancel.is_cancelled() && v.report.operational_error {
             return Err(MochiError::new(ErrorCode::Cancelled, "cancelled"));
         }
-        let keyless = head_encrypted(&src, &opts.read);
+        let keyless = head_encrypted(&src, &opts.read) && chosen.keys.is_none();
         let report = self.keep(ReportKind::Test, &path, deep, keyless, v.report.clone())?;
         if let Some(h) = v.head {
             let command = if deep {
@@ -509,6 +604,8 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Test { report })),
+            search: None,
+            rekey: None,
             foreign_test: None,
         })
     }
@@ -521,12 +618,13 @@ impl Checks {
         archive_id: Option<&str>,
         ctx: &JobContext<'_>,
     ) -> Result<JobDone> {
-        let path = self.subject(subject)?;
+        let chosen = self.subject_of(subject)?;
+        let path = chosen.path.clone();
         let salvage = salvage_options(salvage, archive_id)?;
         let copies = self.lock().copies.clone();
         let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
-        let read = ReadOptions::default();
-        refuse_encrypted(&src, &read)?;
+        let read = chosen.read();
+        require_key(&src, &read)?;
         let opened = open_copies(&copies)?;
         let plan =
             repair::plan_with_salvage(&src, &copy_sources(&opened), salvage.as_ref(), &read, ctx)?;
@@ -563,6 +661,8 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Plan { plan: view })),
+            search: None,
+            rekey: None,
             foreign_test: None,
         })
     }
@@ -575,7 +675,8 @@ impl Checks {
         accept_retention_loss: bool,
         ctx: &JobContext<'_>,
     ) -> Result<JobDone> {
-        let path = self.subject(subject)?;
+        let chosen = self.subject_of(subject)?;
+        let path = chosen.path.clone();
         let (stored, output) = {
             let s = self.lock();
             let stored = match &s.plan {
@@ -611,8 +712,8 @@ impl Checks {
         let mut dir = OsDir::containing(&output)?;
         // The source is only read: repair never writes to it (§22.2).
         let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
-        let read = ReadOptions::default();
-        refuse_encrypted(&src, &read)?;
+        let read = chosen.read();
+        require_key(&src, &read)?;
         let opened = open_copies(&stored.copies)?;
         let options = RepairOptions {
             accept_retention_loss,
@@ -650,6 +751,8 @@ impl Checks {
             commit: None,
             extract: None,
             check: Some(Box::new(CheckResult::Repair { result: view })),
+            search: None,
+            rekey: None,
             foreign_test: None,
         })
     }
@@ -751,16 +854,17 @@ fn head_encrypted(src: &OsReadStorage, read: &ReadOptions) -> bool {
         .is_some_and(|(c, _)| c.encrypted())
 }
 
-/// A repair of an Encrypted archive needs the passphrase (D20), which the app
-/// cannot take yet (D5): refuse before reading anything else. An archive whose
-/// head cannot be read is left to the repair itself.
-fn refuse_encrypted(src: &OsReadStorage, read: &ReadOptions) -> Result<()> {
-    if head_encrypted(src, read) {
+/// A repair of an Encrypted archive needs the passphrase (D20): it opens
+/// every sealed object and seals it again under the new archive's key. Refuse
+/// before reading anything else when none was entered. An archive whose head
+/// cannot be read is left to the repair itself.
+fn require_key(src: &OsReadStorage, read: &ReadOptions) -> Result<()> {
+    if read.keys.is_none() && head_encrypted(src, read) {
         return Err(MochiError::new(
             ErrorCode::KeyUnavailable,
-            "this archive is encrypted: a repair re-seals what it writes and needs the \
-             passphrase, which the desktop app cannot take yet (plan D5). The command-line \
-             tool can repair it (mochi repair plan|apply --passphrase-file)",
+            "this archive is encrypted: a repair opens every sealed object and seals it \
+             again, so it needs the passphrase. Enter the passphrase for this archive, then \
+             plan again. Nothing was read or written",
         ));
     }
     Ok(())
@@ -1391,7 +1495,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::KeyUnavailable);
         assert!(
-            e.message.contains("plan D5"),
+            e.message.contains("needs the passphrase"),
             "refused by the app first: {e:?}"
         );
     }

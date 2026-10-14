@@ -28,9 +28,11 @@ use mochi_core::{ErrorCode, MochiError, Result};
 
 use crate::ipc::{
     ArchiveHandle, ArchiveSummary, AttributesView, CatalogSourceView, ChildrenPage, CommitView,
-    EntryDetails, EntryKindView, EntryRow, IpcError, NameText, PathKey, PosixView, ProfileView,
-    SnapshotView,
+    EntryDetails, EntryKindView, EntryRow, IpcError, NameText, OpenOutcome, PathKey, PendingId,
+    PosixView, ProfileView, Secret, SnapshotView,
 };
+use mochi_core::keys::KeySession;
+use mochi_core::publish::{locate_head, read_commit};
 
 /// Archives one process keeps open at once. The UI shows one and closes it
 /// before opening the next; the margin covers a reload that lost a handle.
@@ -69,6 +71,9 @@ struct Session {
     history: Vec<HistoryEntry>,
     /// Most recently used last.
     views: VecDeque<View>,
+    /// The key envelope this session's passphrase unlocked (D5); `None` for
+    /// a Core archive.
+    unlocked_envelope: Option<[u8; 16]>,
 }
 
 impl Session {
@@ -113,7 +118,19 @@ pub struct Archives {
 struct Registry {
     last: ArchiveHandle,
     open: HashMap<ArchiveHandle, Arc<Mutex<Session>>>,
+    last_pending: PendingId,
+    /// Encrypted archives waiting for a passphrase (D5), oldest first. Only
+    /// the path is kept: the webview never names it, and nothing secret is
+    /// held before the passphrase arrives.
+    pending: VecDeque<(PendingId, PathBuf)>,
 }
+
+/// Archives that may wait for a passphrase at once (the oldest is dropped).
+pub const MAX_PENDING: usize = 4;
+
+/// The message of a passphrase that did not open an Encrypted archive. It is
+/// `KEY_UNAVAILABLE`, an operational answer: not evidence of damage (D20).
+pub const WRONG_PASSPHRASE: &str = "the passphrase did not open this archive";
 
 fn invalid(what: impl Into<String>) -> MochiError {
     MochiError::new(ErrorCode::InvalidArgument, what)
@@ -145,7 +162,31 @@ pub fn parse_key(key: &str) -> Result<ArchivePath> {
     ArchivePath::from_stored(&bytes).map_err(|_| bad())
 }
 
-fn kind(k: EntryKind) -> EntryKindView {
+/// A passphrase that opens none of the head's key envelopes is
+/// `KEY_UNAVAILABLE` with one fixed message: never a statement about damage,
+/// and never anything about the passphrase itself.
+fn wrong_passphrase(e: MochiError) -> MochiError {
+    if e.code == ErrorCode::KeyUnavailable {
+        MochiError::new(ErrorCode::KeyUnavailable, WRONG_PASSPHRASE)
+    } else {
+        e
+    }
+}
+
+/// Whether the head commit record, read without a key, says the archive is
+/// Encrypted. `false` when the head cannot be read: opening reports that.
+pub fn head_encrypted(path: &Path) -> bool {
+    let Ok(src) = OsReadStorage::open(path) else {
+        return false;
+    };
+    let read = ReadOptions::default();
+    locate_head(&src, &read.limits)
+        .ok()
+        .and_then(|loc| read_commit(&src, &loc.footer, &read).ok())
+        .is_some_and(|(c, _)| c.encrypted())
+}
+
+pub(crate) fn kind(k: EntryKind) -> EntryKindView {
     match k {
         EntryKind::File => EntryKindView::File,
         EntryKind::Directory => EntryKindView::Directory,
@@ -234,6 +275,83 @@ impl Archives {
         Ok(ArchiveSummary { handle, ..summary })
     }
 
+    /// Open the archive at `path` if it needs no passphrase; an Encrypted one
+    /// (its head commit record says so without a key) waits in Rust for
+    /// `unlock` and the webview is told only its file name (D5).
+    pub fn open_or_pend(&self, path: &Path) -> Result<OpenOutcome> {
+        if head_encrypted(path) {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let mut reg = lock(&self.inner);
+            let pending = reg.last_pending.checked_add(1).ok_or_else(|| {
+                MochiError::new(
+                    ErrorCode::LimitExceeded,
+                    "this process has opened the maximum number of archives; restart the app",
+                )
+            })?;
+            reg.last_pending = pending;
+            if reg.pending.len() >= MAX_PENDING {
+                reg.pending.pop_front();
+            }
+            reg.pending.push_back((pending, path.to_path_buf()));
+            return Ok(OpenOutcome::NeedsPassphrase { pending, file_name });
+        }
+        self.open(path, ReadOptions::default())
+            .map(|archive| OpenOutcome::Opened { archive })
+    }
+
+    /// Open the waiting archive `pending` with the passphrase. The passphrase
+    /// goes into a [`KeySession`] (zeroizing) and is not kept anywhere else.
+    /// A wrong one is `KEY_UNAVAILABLE` and the archive keeps waiting; any
+    /// other outcome ends the wait.
+    pub fn unlock(&self, pending: PendingId, passphrase: &Secret) -> Result<ArchiveSummary> {
+        let path = lock(&self.inner)
+            .pending
+            .iter()
+            .find(|(id, _)| *id == pending)
+            .map(|(_, p)| p.clone())
+            .ok_or_else(|| invalid("that archive is no longer waiting for a passphrase"))?;
+        let keys = KeySession::single(passphrase.passphrase()?);
+        let opened = self.open(
+            &path,
+            ReadOptions {
+                keys: Some(keys),
+                ..ReadOptions::default()
+            },
+        );
+        match &opened {
+            Err(e) if e.code == ErrorCode::KeyUnavailable => {}
+            _ => lock(&self.inner).pending.retain(|(id, _)| *id != pending),
+        }
+        opened
+    }
+
+    /// Stop waiting for a passphrase. `false` if it was not waiting.
+    pub fn cancel_pending(&self, pending: PendingId) -> bool {
+        let mut reg = lock(&self.inner);
+        let before = reg.pending.len();
+        reg.pending.retain(|(id, _)| *id != pending);
+        reg.pending.len() != before
+    }
+
+    /// Encrypted archives waiting for a passphrase.
+    pub fn pending_count(&self) -> usize {
+        lock(&self.inner).pending.len()
+    }
+
+    /// The read options an open archive was opened with, including the key
+    /// session of an Encrypted one: what a write job needs to append (D5).
+    pub fn read_options(&self, handle: ArchiveHandle) -> Result<ReadOptions> {
+        Ok(lock(&*self.session(handle)?).opts.clone())
+    }
+
+    /// The key envelope this session's passphrase unlocked.
+    pub fn unlocked_envelope(&self, handle: ArchiveHandle) -> Result<Option<[u8; 16]>> {
+        Ok(lock(&*self.session(handle)?).unlocked_envelope)
+    }
+
     /// The file an open archive was opened from.
     pub fn path(&self, handle: ArchiveHandle) -> Result<PathBuf> {
         Ok(lock(&*self.session(handle)?).path.clone())
@@ -286,14 +404,11 @@ impl Archives {
     fn load(path: &Path, opts: ReadOptions) -> Result<(ArchiveSummary, Session)> {
         let src = OsReadStorage::open(path).map_err(MochiError::from)?;
         let history = commit_history(&src, &opts)?;
-        let head = open_head(&src, &opts)?;
+        let head = open_head(&src, &opts).map_err(wrong_passphrase)?;
         if head.descriptor.encrypted() && head.unlocked.is_none() {
-            return Err(MochiError::new(
-                ErrorCode::KeyUnavailable,
-                "this archive is encrypted; opening encrypted archives in the desktop app \
-                 arrives with passphrase entry (plan D5). The command-line tool can open it",
-            ));
+            return Err(MochiError::new(ErrorCode::KeyUnavailable, WRONG_PASSPHRASE));
         }
+        let unlocked_envelope = head.unlocked.as_ref().map(|u| u.envelope_id);
         let retention = segment_state(&src, &head, &opts).map(|s| s.retention);
         let head_seq = head.seq();
         let roots = retention.as_ref().ok().map(|r| r.roots(head_seq));
@@ -345,6 +460,7 @@ impl Archives {
             opts,
             history,
             views,
+            unlocked_envelope,
         };
         Ok((summary, session))
     }

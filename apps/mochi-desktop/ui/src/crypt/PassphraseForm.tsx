@@ -1,0 +1,134 @@
+import { useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+
+import { errorText } from "../browser/format";
+import { isIpcError } from "../ipc/jobs";
+import {
+  DEDUP_LEAK as DEDUP,
+  LOST_PASSPHRASE as LOST,
+  WRONG_PASSPHRASE,
+  WRONG_PASSPHRASE_NOTE,
+} from "./messages";
+
+export interface PassphraseFormProps {
+  /** What the passphrase is for, e.g. "Passphrase for vault.mochi". */
+  label: string;
+  submitLabel: string;
+  /** Ask twice and require the two to match (a passphrase being created). */
+  confirm?: boolean;
+  /** Notes shown with the field. */
+  children?: ReactNode;
+  /** Called once with the text; its rejection is shown and the form stays. */
+  onSubmit: (passphrase: string) => Promise<unknown>;
+  onCancel?: () => void;
+  testId: string;
+}
+
+/**
+ * Passphrase entry. The field is uncontrolled: the text lives in the DOM
+ * input only until submit, is read once, is passed straight to `onSubmit`,
+ * and the input is emptied at once. It is never put in React state, never
+ * echoed, and never stored; the form shows only the error `onSubmit` returns.
+ */
+export function PassphraseForm(props: PassphraseFormProps) {
+  const firstRef = useRef<HTMLInputElement>(null);
+  const secondRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const clear = () => {
+    if (firstRef.current) firstRef.current.value = "";
+    if (secondRef.current) secondRef.current.value = "";
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const text = firstRef.current?.value ?? "";
+    if (text === "") {
+      setError("Enter a passphrase.");
+      return;
+    }
+    if (props.confirm && text !== (secondRef.current?.value ?? "")) {
+      setError("The two passphrases differ. Nothing was done.");
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    clear();
+    props.onSubmit(text).then(
+      () => setBusy(false),
+      (err: unknown) => {
+        setBusy(false);
+        // A wrong passphrase is an operational answer, never damage.
+        setError(
+          isIpcError(err) && err.code === "KEY_UNAVAILABLE"
+            ? `${WRONG_PASSPHRASE} ${WRONG_PASSPHRASE_NOTE}`
+            : errorText("Not done", err),
+        );
+      },
+    );
+  };
+
+  return (
+    <form onSubmit={submit} data-testid={props.testId} autoComplete="off">
+      <label>
+        {props.label}{" "}
+        <input
+          ref={firstRef}
+          type="password"
+          name="passphrase"
+          autoComplete="off"
+          data-testid={`${props.testId}-input`}
+          disabled={busy}
+          spellCheck={false}
+        />
+      </label>
+      {props.confirm && (
+        <label>
+          Repeat it{" "}
+          <input
+            ref={secondRef}
+            type="password"
+            name="passphrase-again"
+            autoComplete="off"
+            data-testid={`${props.testId}-confirm`}
+            disabled={busy}
+            spellCheck={false}
+          />
+        </label>
+      )}
+      {props.children}
+      <div className="actions">
+        <button type="submit" data-testid={`${props.testId}-submit`} disabled={busy}>
+          {props.submitLabel}
+        </button>
+        {props.onCancel && (
+          <button type="button" data-testid={`${props.testId}-cancel`} onClick={props.onCancel} disabled={busy}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="error" data-testid={`${props.testId}-error`}>
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/** The notes that go with any place a passphrase is chosen. */
+export function EncryptionNotes({ creating }: { creating: boolean }) {
+  return (
+    <>
+      <p className="warning" data-testid="lost-passphrase">
+        {LOST}
+      </p>
+      {creating && (
+        <p className="note" data-testid="dedup-leak">
+          {DEDUP}
+        </p>
+      )}
+    </>
+  );
+}

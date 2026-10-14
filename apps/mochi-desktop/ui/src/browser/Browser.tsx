@@ -21,6 +21,11 @@ import { Tree } from "./Tree";
 import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
 import { Checker } from "../check/Checker";
+import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
+import { Rekey } from "../crypt/Rekey";
+import { HIDDEN_WITH_KEY, NOT_SIGNED, VISIBLE_WITHOUT_KEY } from "../crypt/messages";
+import { Search } from "../search/Search";
+import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 
@@ -151,6 +156,7 @@ export function Browser() {
   const [counted, setCounted] = useState<{ id: string; total: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [details, setDetails] = useState<EntryDetails | null>(null);
+  const [waiting, setWaiting] = useState<{ pending: number; fileName: string } | null>(null);
   // Set when the shell asked to extract (D6): the Extractor then shows its plan.
   const [autoExtract, setAutoExtract] = useState<{ token: number; handle: number } | null>(null);
 
@@ -203,22 +209,52 @@ export function Browser() {
     [handle, seq, fail],
   );
 
+  /** Show an archive that is open in Rust, replacing the one on screen. */
+  const show = async (archive: ArchiveSummary) => {
+    if (open) await closeArchive(open.archive.handle);
+    const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
+    const snapshot = await openSnapshot(archive.handle, head);
+    setOpen({ archive, snapshot });
+    navigate([]);
+  };
+
   const doOpen = async () => {
     setError(null);
     setBusy(true);
     try {
-      const archive = await openArchive();
-      if (archive === null) return;
-      if (open) await closeArchive(open.archive.handle);
-      const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
-      const snapshot = await openSnapshot(archive.handle, head);
-      setOpen({ archive, snapshot });
-      navigate([]);
+      if (waiting) {
+        await cancelUnlock(waiting.pending).catch(() => false);
+        setWaiting(null);
+      }
+      const outcome = await openArchive();
+      if (outcome === null) return;
+      if (outcome.status === "needs_passphrase") {
+        setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
+        return;
+      }
+      await show(outcome.archive);
     } catch (e) {
       setError(errorText("Could not open the archive", e));
     } finally {
       setBusy(false);
     }
+  };
+
+  /** The passphrase goes to Rust once; a wrong one leaves the prompt up. */
+  const unlock = async (passphrase: string) => {
+    if (!waiting) return;
+    const archive = await unlockArchive(waiting.pending, passphrase);
+    setWaiting(null);
+    try {
+      await show(archive);
+    } catch (e) {
+      setError(errorText("Could not open the archive", e));
+    }
+  };
+
+  const giveUp = () => {
+    if (waiting) void cancelUnlock(waiting.pending).catch(() => false);
+    setWaiting(null);
   };
 
   /** A commit was published: show the archive as it now stands, at its head. */
@@ -315,6 +351,22 @@ export function Browser() {
           {error}
         </p>
       )}
+      {waiting && (
+        <div className="panel" role="group" aria-label="Passphrase" data-testid="unlock-panel">
+          <h3>
+            <Name name={{ text: waiting.fileName, verbatim: true }} /> is encrypted
+          </h3>
+          <PassphraseForm
+            testId="unlock"
+            label="Passphrase"
+            submitLabel="Open archive"
+            onSubmit={unlock}
+            onCancel={giveUp}
+          >
+            <EncryptionNotes creating={false} />
+          </PassphraseForm>
+        </div>
+      )}
       <Writer
         archive={open?.archive ?? null}
         viewingHead={open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1)}
@@ -327,6 +379,15 @@ export function Browser() {
         selected={details ? { key: details.key, name: details.path } : null}
         autoPlan={autoExtract}
       />
+      <Search archive={open?.archive ?? null} />
+      <Rekey
+        key={open?.archive.handle ?? "none"}
+        archive={open?.archive ?? null}
+        onChanged={(a) => {
+          if (a === null) void doClose();
+          else void adopt(a);
+        }}
+      />
       <Checker archive={open?.archive ?? null} />
       {!open && !error && <p data-testid="browse-empty">No archive is open.</p>}
       {open && (
@@ -336,6 +397,19 @@ export function Browser() {
             {open.archive.commits.length} commit{open.archive.commits.length === 1 ? "" : "s"} ·
             archive ID <span className="hash">{open.archive.archive_id}</span>
           </p>
+          {open.archive.profile.encrypted && (
+            <details className="note" data-testid="encrypted-note">
+              <summary>Encrypted archive: what is sealed and what stays visible</summary>
+              <p>{HIDDEN_WITH_KEY}</p>
+              <p>Visible to anyone who has the file, without the passphrase:</p>
+              <ul>
+                {VISIBLE_WITHOUT_KEY.map((v) => (
+                  <li key={v}>{v}</li>
+                ))}
+              </ul>
+              <p>{NOT_SIGNED}</p>
+            </details>
+          )}
           {open.archive.retention_error && (
             <p role="note" className="warning">
               Retention could not be determined ({open.archive.retention_error.code}):{" "}

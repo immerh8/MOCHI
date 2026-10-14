@@ -291,6 +291,8 @@ pub fn run(
         extract: Some(Box::new(view)),
         foreign_test: None,
         check: None,
+        search: None,
+        rekey: None,
     })
 }
 

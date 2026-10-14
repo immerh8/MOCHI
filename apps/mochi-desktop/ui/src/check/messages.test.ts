@@ -85,7 +85,7 @@ test("freshness UNKNOWN is explained as not a failure and never a pass", () => {
   expect(m.FRESHNESS_NOTE).toMatch(/UNKNOWN/);
   expect(m.FRESHNESS_NOTE).toMatch(/not a failure/);
   expect(m.FRESHNESS_NOTE).toMatch(/never shown as a pass/);
-  expect(m.KEYLESS_NOTE).toMatch(/needs its passphrase/);
+  expect(m.KEYLESS_NOTE).toMatch(/without its passphrase/);
   expect(m.KEYLESS_NOTE).toMatch(/never PASS overall/);
 });
 

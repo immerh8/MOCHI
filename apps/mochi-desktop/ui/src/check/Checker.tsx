@@ -15,6 +15,8 @@ import type {
   SubjectSource,
   SubjectView,
 } from "../ipc/check";
+import { unlockCheckSubject } from "../ipc/crypt";
+import { PassphraseForm } from "../crypt/PassphraseForm";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome, JobRequest } from "../ipc/jobs";
 import {
@@ -295,6 +297,28 @@ export function Checker({ archive }: CheckerProps) {
           "No archive chosen. Any archive can be chosen, including one too damaged to open."
         )}
       </p>
+      {subject?.encrypted && !subject.unlocked && (
+        <div className="panel" role="group" aria-label="Passphrase" data-testid="check-unlock">
+          <p>
+            This archive is encrypted. Without its passphrase a test checks stored bytes only and is never
+            PASS overall, and a repair cannot run.
+          </p>
+          <PassphraseForm
+            testId="check-unlock-form"
+            label="Passphrase"
+            submitLabel="Use this passphrase"
+            onSubmit={async (p) => {
+              setError(null);
+              setSubject(await unlockCheckSubject(subject.id, p));
+            }}
+          />
+        </div>
+      )}
+      {subject?.encrypted && subject.unlocked && (
+        <p className="note" data-testid="check-unlocked">
+          The passphrase is held in the app for this archive until you choose another one or close the app.
+        </p>
+      )}
       {error && (
         <p role="alert" className="error" data-testid="check-error">
           {error}

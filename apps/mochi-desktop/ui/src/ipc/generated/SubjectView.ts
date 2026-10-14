@@ -7,4 +7,15 @@ export type SubjectView = { id: number,
 /**
  * The file's name on this computer (the user's, not archive data).
  */
-file_name: string, };
+file_name: string, 
+/**
+ * The head commit says the archive is Encrypted (D20), so a full check
+ * or a repair needs its passphrase (D5). Plaintext commit records say so
+ * without a key.
+ */
+encrypted: boolean, 
+/**
+ * Rust holds a key that opened this archive: a check runs keyed and a
+ * repair is possible. Never `true` for a Core archive.
+ */
+unlocked: boolean, };

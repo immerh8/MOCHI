@@ -111,7 +111,7 @@ export const FRESHNESS_NOTE =
 
 /** Shown when an Encrypted archive was checked without its key. */
 export const KEYLESS_NOTE =
-  "This archive is encrypted and the check needs its passphrase, which this app cannot take yet. It was checked without the key: stored bytes, commit records, and key envelopes only. Names, content, and recoverability were not checked, and a check without the key is never PASS overall. The mochi command-line tool can check it with the passphrase.";
+  "This archive is encrypted and was checked without its passphrase: stored bytes, commit records, and key envelopes only. Names, content, and recoverability were not checked, and a check without the key is never PASS overall. Enter the passphrase above and test again for the full check.";
 
 /** Shown with every health summary (plan D4 "Gap"). */
 export const HEALTH_NOTE =
