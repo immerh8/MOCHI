@@ -5,6 +5,8 @@
 //! `mochi_core::verify` run directly, `mochi_testkit`'s model, raw file bytes,
 //! and a BLAKE3 of the file.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::path::{Path, PathBuf};
 
 use mochi_core::job::{CancellationToken, NullProgress};
@@ -977,10 +979,7 @@ fn re_encryption_writes_a_new_file_under_a_new_key_and_leaves_the_source_alone()
     );
     // It shares no sealed bytes with the source's content and verifies.
     assert!(!contains(&std::fs::read(&new).unwrap(), b"alpha content"));
-    assert_eq!(
-        verify_overall(&new, Some(OTHER)).0 == StatusView::Pass,
-        false
-    );
+    assert_ne!(verify_overall(&new, Some(OTHER)).0, StatusView::Pass);
     let checks = Checks::default();
     let id = checks
         .choose_subject(&Archives::default(), SubjectPick::Path(new))

@@ -416,7 +416,7 @@ test("the browser shows the extract buttons and 'selected' follows the details p
       case "staged_sources":
         return { items: [], destination: null };
       case "open_archive":
-        return summary();
+        return { status: "opened", archive: summary() };
       case "open_snapshot":
         return {
           seq: a.seq,

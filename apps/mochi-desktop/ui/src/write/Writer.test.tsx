@@ -101,7 +101,7 @@ function backend(opts: { destination?: string | null } = {}) {
       case "cancel_job":
         return true;
       case "open_archive":
-        return browse.archive;
+        return { status: "opened", archive: browse.archive };
       case "open_snapshot":
         return {
           seq: a.seq,
@@ -180,7 +180,7 @@ test("create: choose items, options, a location, then a job with those options",
   expect(b.request()).toEqual({ kind: "create_archive", preset: "smaller", tar_compatible: true });
 });
 
-test("the TAR option names itself and states its trade-offs; encryption and recovery are not offered yet", async () => {
+test("the TAR option names itself and states its trade-offs", async () => {
   const user = userEvent.setup();
   backend();
   renderWriter();
@@ -192,9 +192,7 @@ test("the TAR option names itself and states its trade-offs; encryption and reco
   expect(notes).toHaveTextContent("a file you delete later is still extracted");
   expect(notes).toHaveTextContent("stored again");
   expect(notes).toHaveTextContent("fixed when the archive is created");
-  expect(screen.getByTestId("encryption-unavailable")).toBeDisabled();
-  expect(screen.getByTestId("recovery-unavailable")).toBeDisabled();
-  expect(panel).toHaveTextContent("cannot be turned on yet");
+  expect(panel).not.toHaveTextContent("cannot be turned on yet");
 });
 
 test("cancelling the save dialog starts nothing", async () => {

@@ -45,7 +45,7 @@ function backend(b: Backend = {}) {
     calls.push({ cmd, args: a });
     switch (cmd) {
       case "choose_check_subject":
-        return b.subject === undefined ? { id: 5, file_name: "chosen.mochi" } : b.subject;
+        return b.subject === undefined ? { id: 5, file_name: "chosen.mochi", encrypted: false, unlocked: false } : b.subject;
       case "health_report":
         return b.health;
       case "export_report":
