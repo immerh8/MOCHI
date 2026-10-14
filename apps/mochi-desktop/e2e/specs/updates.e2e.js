@@ -6,7 +6,9 @@ import { $, expect } from "@wdio/globals";
 describe("updates (Settings)", () => {
   it("has a Check for updates button and an unchecked start-up option", async () => {
     const check = await $('[data-testid="update-check"]');
-    await check.waitForExist();
+    // The first wait of a fresh session covers the app's cold start, which on
+    // a Windows runner has taken longer than the 15 s default.
+    await check.waitForExist({ timeout: 60_000 });
     await expect(check).toBeEnabled();
     await expect(check).toHaveText("Check for updates");
     await expect($('[data-testid="update-startup"]')).not.toBeSelected();
