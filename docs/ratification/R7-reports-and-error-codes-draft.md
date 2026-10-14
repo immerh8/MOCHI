@@ -224,14 +224,17 @@ below is **[delegated 2026-10-14]**: the owner reviews this freeze at the deskto
 checkpoint, and a change asked for then is a new identifier (§ stability rule), never
 a silent edit (K11). Two questions are the owner's to decide and are written as options
 (O1, O2); neither changes a schema, a code, or an exit code, so the freeze does not
-wait for them.
+wait for them. **Both were decided by the owner on 2026-10-14** (see "Owner decisions" at
+the end of this section).
 
 **What is frozen.** This file's tables (§1 to §7), with the decisions of §8 and of this
 section, and eight JSON Schema documents in `docs/schemas/json/`: the shared
 definitions (`common`), report v1, the error line, `mochi-repair-plan-v2`, the GC plan
 (v1), health evidence (schema 1), health policy (`mochi-health-policy-v1`), and the
 local head history (`heads.json`, version 1). Eleven more schemas, one for each other
-command's `--json` output, are written and checked but not frozen (owner item O2).
+command's `--json` output, are written and checked but not frozen: each output carries an
+in-band `schema` tag (owner decision O2, 2026-10-14), and the eleven freeze at the 1.0
+flip (W20).
 `docs/schemas/json/README.md` lists all nineteen, what writes each, and what is not
 JSON.
 
@@ -297,7 +300,7 @@ confirm, O1); none renames a code or changes its meaning.
 
 | # | Where | Document | Code | Call |
 |---|---|---|---|---|
-| 1 | `KEY_UNAVAILABLE` | §6 and `report-schema-v1.md`: never a finding. Spec B.2.10 item 12: a passphrase that opens nothing "is `KEY_UNAVAILABLE` (exit 3), not a report" | `verify` and `fsck` given such a passphrase print a report: one `error` finding with this code, `operational_error` true, nothing assessed, exit 3. Every other command fails with the error line | **Code stands for the freeze; §6 now says so.** The report claims nothing about the archive and exits 3 as the spec requires; it lists what was not checked. Whether to keep it or make the two commands fail with the error line is O1 |
+| 1 | `KEY_UNAVAILABLE` | §6 and `report-schema-v1.md`: never a finding. Spec B.2.10 item 12: a passphrase that opens nothing "is `KEY_UNAVAILABLE` (exit 3), not a report" | `verify` and `fsck` given such a passphrase print a report: one `error` finding with this code, `operational_error` true, nothing assessed, exit 3. Every other command fails with the error line | **Code stands; §6 says so, and spec B.2.10 item 12 now says "not a verification result" instead of "not a report"** (owner decision O1 (a), 2026-10-14). The report claims nothing about the archive and exits 3 as the spec requires; it lists what was not checked |
 | 2 | Report `scope` | `report-schema-v1.md`: a string | `Option<String>`, set by every producer (`verify`, `fsck`, `health`) | **A non-null string in v1**, as every producer writes and the field reference says |
 | 3 | Evidence `level` | `c14-cli.md` rule 13 lists it | `Option`, always written; `health` reads `null` | **String or null**: the log is also an input, and its reader accepts null |
 | 4 | Evidence `scope` | Rule 13 lists it unconditionally | Omitted when absent, like `finding_codes` | **Optional.** Rule 13's wording is left for its owner (outside this task) |
@@ -325,21 +328,28 @@ confirm, O1); none renames a code or changes its meaning.
 **Owner decisions** (options, not guesses; the provisional state is what is in the
 tree).
 
-* **O1. `KEY_UNAVAILABLE` from `verify` and `fsck`** (item 1). (a) Keep the report and
-  amend spec B.2.10 item 12's "not a report" to "not a verification result". (b) Make
-  the two commands fail with the error line, as every other command does, and record no
-  report (a CLI and core change; the desktop app's "Test archive" would show an error
-  instead of a report). **Recommendation: (a)**: the report is honest (nothing assessed,
-  `operational_error`, exit 3) and says which checks did not run. *Provisional:* (a)'s
-  code, without the spec amendment, which is outside this task.
-* **O2. Are the eleven command-output schemas guaranteed?** (1) Freeze them now as
-  written: closed objects, a change needs a new schema file, and the outputs carry no
-  in-band tag, so a consumer cannot tell versions apart. (2) Add an in-band tag to each
-  output first (for example `"schema": "mochi-cli-list-v1"`, a CLI change), then freeze
-  them at the 1.0 flip (W20). (3) Keep them checked but not frozen until 1.0, then
-  decide. **Recommendation: (2).** *Provisional:* (3), the reversible choice: the test
-  keeps each schema equal to the code, so a change to an output must change its schema
-  in the same pull request.
+* **O1. `KEY_UNAVAILABLE` from `verify` and `fsck`** (item 1). **Decided (a)
+  [owner, 2026-10-14].** Keep the report that `verify` and `fsck` print (nothing
+  assessed, `operational_error` true, one `error` finding with this code, exit 3) and
+  amend spec B.2.10 item 12's "not a report" to say a wrong passphrase is
+  `KEY_UNAVAILABLE` (operational, exit 3) and **not a verification result**: `verify`
+  and `fsck` may print a report with no dimension assessed, and every other command
+  prints the error line. The options were (a) this, and (b) making the two commands fail
+  with the error line (a CLI and core change). This is a clarification of text to match
+  frozen behaviour: **no code, byte, exit code, or error-code meaning changes.** The
+  spec, §6, and `report-schema-v1.md` now agree.
+* **O2. Are the eleven command-output schemas guaranteed?** **Decided (2)
+  [owner, 2026-10-14].** Each of the eleven command-output documents carries an
+  in-band tag, `"schema": "mochi-cli-<name>-v1"` (`mochi-cli-commit-v1`,
+  `-maintenance-v1`, `-list-v1`, `-snapshot-list-v1`, `-search-v1`, `-dump-index-v1`,
+  `-restore-v1`, `-rewrite-v1`, `-repair-apply-v1`, `-rekey-list-v1`, `-plan-saved-v1`),
+  and its JSON Schema requires the tag as a `const`. **The eleven freeze at the 1.0 flip
+  (W20), not now:** until then a change to one is made in the same pull request as its
+  schema and the test, and at the flip each tag becomes a frozen identifier (a change
+  is then a `-v2` and a new file). The eight frozen documents are untouched: no field was
+  added to a report, the error line, either plan, the evidence line, the policy, or
+  `heads.json` (the saved-plan wrapper carries the tag; the plan inside it is the frozen
+  value, unchanged). A CLI change, no format change.
 
 **Gate G15** is met (spec Annex B.2.6): R7 is frozen, every machine-readable output has
 a JSON Schema, and real outputs are validated against them in tests.

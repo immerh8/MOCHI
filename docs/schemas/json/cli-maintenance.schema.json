@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "command",
     "archive",
     "status",
@@ -19,6 +20,9 @@
     "exit_code"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-maintenance-v1"
+    },
     "command": {
       "enum": [
         "snapshot retain",

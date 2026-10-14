@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "command",
     "seq",
     "commit_id",
@@ -20,6 +21,9 @@
     "exit_code"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-restore-v1"
+    },
     "command": {
       "enum": [
         "get",

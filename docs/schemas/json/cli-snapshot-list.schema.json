@@ -6,11 +6,15 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "archive_id",
     "retention_known",
     "commits"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-snapshot-list-v1"
+    },
     "archive_id": {
       "anyOf": [
         {

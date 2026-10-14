@@ -127,6 +127,16 @@ impl Env<'_> {
         let _ = writeln!(self.out, "{v}");
     }
 
+    /// Emit a command-output document with its in-band schema tag (R7 O2,
+    /// owner decision 2026-10-14). The tag names the document's JSON Schema
+    /// file (`cli-<name>.schema.json` carries `const "mochi-cli-<name>-v1"`).
+    fn emit_tagged(&mut self, tag: &str, mut v: Value) {
+        if let Value::Object(m) = &mut v {
+            m.insert("schema".into(), json!(tag));
+        }
+        self.emit_json(&v);
+    }
+
     fn line(&mut self, s: impl std::fmt::Display) {
         let _ = writeln!(self.out, "{s}");
     }
@@ -232,6 +242,21 @@ fn entry_kind(k: EntryKind) -> &'static str {
         EntryKind::Directory => "directory",
     }
 }
+
+// In-band schema tags of the eleven command-output documents (R7 O2, owner
+// decision 2026-10-14). Each names `docs/schemas/json/cli-<name>.schema.json`.
+// They freeze at the 1.0 flip (W20), not before.
+const SCHEMA_COMMIT: &str = "mochi-cli-commit-v1";
+const SCHEMA_MAINTENANCE: &str = "mochi-cli-maintenance-v1";
+const SCHEMA_LIST: &str = "mochi-cli-list-v1";
+const SCHEMA_SNAPSHOT_LIST: &str = "mochi-cli-snapshot-list-v1";
+const SCHEMA_SEARCH: &str = "mochi-cli-search-v1";
+const SCHEMA_DUMP_INDEX: &str = "mochi-cli-dump-index-v1";
+const SCHEMA_RESTORE: &str = "mochi-cli-restore-v1";
+const SCHEMA_REWRITE: &str = "mochi-cli-rewrite-v1";
+const SCHEMA_REPAIR_APPLY: &str = "mochi-cli-repair-apply-v1";
+const SCHEMA_REKEY_LIST: &str = "mochi-cli-rekey-list-v1";
+const SCHEMA_PLAN_SAVED: &str = "mochi-cli-plan-saved-v1";
 
 fn findings_json(f: &[Finding]) -> Value {
     serde_json::to_value(f).unwrap_or(Value::Null)
@@ -339,7 +364,7 @@ fn emit_commit(
             "truncation": truncation.map(|t| findings_json(&t.findings())),
             "exit_code": code,
         });
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_COMMIT, v);
     } else {
         if let Some(t) = truncation {
             env.line("tail truncated before appending:");
@@ -537,7 +562,7 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
                     "truncation": findings_json(&t.findings()),
                     "exit_code": exit::OK,
                 });
-                env.emit_json(&v);
+                env.emit_tagged(SCHEMA_COMMIT, v);
             } else {
                 env.line("tail truncated; nothing else to commit:");
                 print_findings(env, &t.findings());
@@ -623,7 +648,7 @@ pub fn list_cmd(env: &mut Env<'_>, a: &ListArgs) -> Result<u8> {
             "commit_id": head.commit_id.to_hex(),
             "entries": items,
         });
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_LIST, v);
     } else {
         for e in &entries {
             match e.kind {
@@ -696,15 +721,18 @@ pub fn dump_index(env: &mut Env<'_>, a: &DumpIndexArgs) -> Result<u8> {
                 )
             })
             .collect();
-        env.emit_json(&json!({
-            "archive_id": head.commit.archive_id.to_hex(),
-            "commit": {
-                "seq": head.seq(),
-                "commit_id": head.commit_id.to_hex(),
-                "catalog_source": source,
-            },
-            "tables": tables,
-        }));
+        env.emit_tagged(
+            SCHEMA_DUMP_INDEX,
+            json!({
+                "archive_id": head.commit.archive_id.to_hex(),
+                "commit": {
+                    "seq": head.seq(),
+                    "commit_id": head.commit_id.to_hex(),
+                    "catalog_source": source,
+                },
+                "tables": tables,
+            }),
+        );
         return Ok(exit::OK);
     }
     env.line(format!(
@@ -828,31 +856,34 @@ pub fn search_cmd(env: &mut Env<'_>, a: &SearchArgs) -> Result<u8> {
             SnapshotScope::All => json!("all"),
             SnapshotScope::Commit(s) => json!({ "commit": s }),
         };
-        env.emit_json(&json!({
-            "archive_id": head.commit.archive_id.to_hex(),
-            "scope": scope_v,
-            "coverage": {
-                "complete": complete,
-                "indexed_seq": c.indexed_seq,
-                "indexed_commit_id": head.commit_id.to_hex(),
-                "catalog_source": source,
-                "requested": c.requested,
-                "searched": c.searched,
-                "opened_separately": c.opened_separately,
-                "unavailable": c.unavailable.iter().map(|u| json!({
-                    "seq": u.seq,
-                    "code": u.error.code.as_str(),
-                    "message": u.error.message,
-                })).collect::<Vec<_>>(),
-                "entries_examined": c.entries_examined,
-                "pending": c.pending,
-                "failed": c.failed,
-                "unsupported": c.unsupported,
-                "excluded": c.excluded,
-                "full_text": match c.full_text { FullText::NotBuilt => "not-built" },
-            },
-            "hits": hits,
-        }));
+        env.emit_tagged(
+            SCHEMA_SEARCH,
+            json!({
+                "archive_id": head.commit.archive_id.to_hex(),
+                "scope": scope_v,
+                "coverage": {
+                    "complete": complete,
+                    "indexed_seq": c.indexed_seq,
+                    "indexed_commit_id": head.commit_id.to_hex(),
+                    "catalog_source": source,
+                    "requested": c.requested,
+                    "searched": c.searched,
+                    "opened_separately": c.opened_separately,
+                    "unavailable": c.unavailable.iter().map(|u| json!({
+                        "seq": u.seq,
+                        "code": u.error.code.as_str(),
+                        "message": u.error.message,
+                    })).collect::<Vec<_>>(),
+                    "entries_examined": c.entries_examined,
+                    "pending": c.pending,
+                    "failed": c.failed,
+                    "unsupported": c.unsupported,
+                    "excluded": c.excluded,
+                    "full_text": match c.full_text { FullText::NotBuilt => "not-built" },
+                },
+                "hits": hits,
+            }),
+        );
         return Ok(code);
     }
     for h in &r.hits {
@@ -959,11 +990,14 @@ pub fn snapshot_list(env: &mut Env<'_>, a: &SnapshotListArgs) -> Result<u8> {
             })
             .collect();
         let archive_id = history.last().map(|e| e.commit.archive_id.to_hex());
-        env.emit_json(&json!({
-            "archive_id": archive_id,
-            "retention_known": retention.is_some(),
-            "commits": items,
-        }));
+        env.emit_tagged(
+            SCHEMA_SNAPSHOT_LIST,
+            json!({
+                "archive_id": archive_id,
+                "retention_known": retention.is_some(),
+                "commits": items,
+            }),
+        );
     } else {
         for e in &history {
             let seq = e.commit.seq;
@@ -1036,7 +1070,7 @@ fn emit_restore(
             "findings": findings_json(&findings),
             "exit_code": code,
         });
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_RESTORE, v);
     } else {
         env.line(format!(
             "{}: commit {} into {}: {} file{}, {} director{}, {} bytes, every file verified \
@@ -1590,7 +1624,7 @@ fn commit_maintenance(
         exit::DEGRADED
     };
     if env.json {
-        env.emit_json(&json!({
+        env.emit_tagged(SCHEMA_MAINTENANCE, json!({
             "command": command,
             "archive": archive.display().to_string(),
             "status": outcome.status.as_str(),
@@ -1752,12 +1786,15 @@ pub fn gc_plan(env: &mut Env<'_>, a: &GcPlanArgs) -> Result<u8> {
     }
     if env.json {
         if let Some(out) = &a.output {
-            env.emit_json(&json!({
-                "command": "gc plan",
-                "plan_file": out.display().to_string(),
-                "collects_anything": p.collects_anything(),
-                "plan": value,
-            }));
+            env.emit_tagged(
+                SCHEMA_PLAN_SAVED,
+                json!({
+                    "command": "gc plan",
+                    "plan_file": out.display().to_string(),
+                    "collects_anything": p.collects_anything(),
+                    "plan": value,
+                }),
+            );
         } else {
             env.emit_json(&value);
         }
@@ -1914,7 +1951,7 @@ fn rewrite(
             m.insert("output".into(), json!(output.display().to_string()));
             m.insert("exit_code".into(), json!(code));
         }
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_REWRITE, v);
     } else {
         env.line(format!(
             "wrote {} ({} bytes, archive {}): {} commit{} reproducing source snapshot{} {}",
@@ -2362,13 +2399,16 @@ pub fn repair_plan(env: &mut Env<'_>, a: &RepairPlanArgs) -> Result<u8> {
     }
     if env.json {
         if let Some(out) = &a.output {
-            env.emit_json(&json!({
-                "command": "repair plan",
-                "plan_file": out.display().to_string(),
-                "outcome": p.outcome,
-                "exit_code": p.exit_code,
-                "plan": value,
-            }));
+            env.emit_tagged(
+                SCHEMA_PLAN_SAVED,
+                json!({
+                    "command": "repair plan",
+                    "plan_file": out.display().to_string(),
+                    "outcome": p.outcome,
+                    "exit_code": p.exit_code,
+                    "plan": value,
+                }),
+            );
         } else {
             env.emit_json(&value);
         }
@@ -2488,7 +2528,7 @@ pub fn repair_apply(env: &mut Env<'_>, a: &RepairApplyArgs) -> Result<u8> {
             m.insert("source".into(), json!(a.archive.display().to_string()));
             m.insert("output".into(), json!(a.output.display().to_string()));
         }
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_REPAIR_APPLY, v);
     } else {
         let label = match report.outcome {
             Outcome::Complete => "repaired (complete)",
@@ -2617,14 +2657,17 @@ pub fn rekey(env: &mut Env<'_>, a: &RekeyArgs) -> Result<u8> {
                     })
                 })
                 .collect();
-            env.emit_json(&json!({
-                "command": "rekey",
-                "action": "list",
-                "archive": a.archive.display().to_string(),
-                "archive_id": archive_id,
-                "envelopes": items,
-                "exit_code": exit::OK,
-            }));
+            env.emit_tagged(
+                SCHEMA_REKEY_LIST,
+                json!({
+                    "command": "rekey",
+                    "action": "list",
+                    "archive": a.archive.display().to_string(),
+                    "archive_id": archive_id,
+                    "envelopes": items,
+                    "exit_code": exit::OK,
+                }),
+            );
         } else {
             env.line(format!(
                 "{} key envelope{} valid at the head of {}:",
@@ -2748,7 +2791,7 @@ fn reencrypt_cmd(env: &mut Env<'_>, a: &RekeyArgs) -> Result<u8> {
             m.insert("revocation".into(), json!(false));
             m.insert("exit_code".into(), json!(code));
         }
-        env.emit_json(&v);
+        env.emit_tagged(SCHEMA_REWRITE, v);
     } else {
         env.line(format!(
             "wrote {} ({} bytes, archive {}): {} snapshot{} re-encrypted under a new data key \

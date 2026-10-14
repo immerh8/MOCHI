@@ -6,12 +6,16 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema",
     "archive_id",
     "scope",
     "coverage",
     "hits"
   ],
   "properties": {
+    "schema": {
+      "const": "mochi-cli-search-v1"
+    },
     "archive_id": {
       "$ref": "common.schema.json#/$defs/hex32"
     },

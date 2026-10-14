@@ -117,7 +117,7 @@ Nothing below is in the repository, and no key may be committed.
 
 | Need | Used for | Where it goes |
 |---|---|---|
-| Windows code-signing certificate (OV or EV, or a cloud signing service) | Authenticode-signing the NSIS setup and app exe; without it SmartScreen warns | CI secrets, e.g. a base64 PFX and its password; then set `bundle.windows.certificateThumbprint` or `signCommand` in an overlay config and replace the marked placeholder comment in the `package` job |
+| Windows code-signing identity: a cloud signing service (such as Azure Trusted Signing or SignPath), or an OV certificate whose private key stays in the CA's cloud key store (EV certificates are hardware-backed as well) | Authenticode-signing the NSIS setup and app exe; without it SmartScreen warns | Since the CA/B Forum baseline requirements of 2023, a code-signing private key must live in a hardware module or a cloud HSM, so it cannot be exported as a PFX into CI secrets. The credentials of the chosen service (a service principal or API token, not a key file) go in CI secrets; then set `signCommand` (or `certificateThumbprint`, for a certificate the runner can reach) in an overlay config and replace the marked placeholder comment in the `package` job. **The owner has not chosen between these options.** |
 | Tauri updater key pair (`cargo tauri signer generate`) | Signing update artifacts | Private key and password as CI secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`; the **public** key goes in `plugins.updater.pubkey` in the config |
 | Update endpoint / hosting (a URL serving the update manifest) | The updater's `endpoints` | Owner decision; none exists yet |
 | `.deb` signing (optional) | A signed APT repository or `dpkg-sig`; a loose `.deb` download needs none | Owner decision on whether to publish an APT repository |
@@ -172,14 +172,15 @@ visible), 200 % display scaling and a 1280x720 window (no horizontal scrolling o
 page), and the crash-report switches read correctly (the message option's warning is
 read with it). Record the result in the release notes.
 
-## Open question
+## Decided: MPL-2.0
 
-- **MPL-2.0** is in `about.toml`'s accepted list because Tauri's dependency tree
-  contains an MPL-2.0 crate (`dtoa-short`; file-level copyleft; shipped unmodified in binary form).
-  O23 says "MIT/Apache-compatible" and does not name it. Options: (a) keep it, as now,
-  and ship the MPL text and source links in the license list (done by the generator);
-  (b) remove it from `accepted` and fail the build, which blocks Tauri itself.
-  Recommended: (a); owner to confirm.
+- **MPL-2.0 stays accepted** in `about.toml` [owner, 2026-10-14]. Tauri's dependency tree
+  contains an MPL-2.0 crate (`dtoa-short`; file-level copyleft; shipped unmodified in
+  binary form). O23 says "MIT/Apache-compatible" and does not name it; the owner chose
+  to keep it (rather than remove it from `accepted`, which would fail the build and
+  block Tauri itself). The MPL text and source links ship in the license list, which
+  the generator writes. The crate must stay unmodified; a patched copy would need its
+  modified files published under the MPL.
 
 ## Not done
 
