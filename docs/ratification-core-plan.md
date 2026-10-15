@@ -40,7 +40,7 @@ and get CI green on Windows and Ubuntu.
 | R8 | Golden valid, corrupt, and interrupted archives | Per-phase sets `c1`–`c12`, `b2`; no whole-set R8. **Built by W16 (2026-10-13, G13): 76 cases, `fixtures/golden/r8/`** | **W16** |
 | R9 | Independent reader results | Not started; author not chosen | **W17**, **W18** (call K22) |
 | Gate 4 | Draft-to-1.0 boundary (§26) | Descriptor key 3 = draft 1; a reader refuses any other draft | **W20** (K25) |
-| G6 | Windows durability evidence | Needs physical Windows hardware | Owner-only (T33). Not planned here |
+| G6 | Windows durability evidence | **Closed as a policy disposition [owner, 2026-10-15]**: Windows reports `Unconfirmed` in 1.0; not documented durability, not a pass on physical machines. Evidence: `docs/g6-windows-crash-replay.md` | Done (T33 closed by the policy) |
 
 ---
 
@@ -86,8 +86,8 @@ and get CI green on Windows and Ubuntu.
 | K26 | **New evidence gates** | **G12** format freeze (R1–R4 frozen, draft 2), **G13** golden set (R8 complete with mechanical coverage), **G14** interoperability (R9 agrees with R8 on every case; disagreements resolved and recorded), **G15** report freeze (R7). | Each later step depends on a checkable state of the one before. Naming the gates makes "done" testable. | Spec B.2.6 |
 
 Nothing in Core or ratification scope is still waiting on a decision. The remaining
-owner-only items are **G6** (Windows hardware, T33) and the owner's review of these calls
-at the desktop checkpoint.
+owner-only item is the owner's review of these calls at the desktop checkpoint. (G6, formerly
+owner-only, was closed as a policy disposition on 2026-10-15 [owner].)
 
 ---
 
@@ -498,7 +498,7 @@ last section.
    reader. Fix each one in the text, or record it as an open item with a call. This is
    the cheapest way to cut W18's disagreements.
 6. **Annex B bookkeeping.** Move to B.1 every B.2 decision whose implementation is done
-   and whose gates pass. D13 stays in B.2 until G6. Update the B.2 status paragraph.
+   and whose gates pass. D13 stayed in B.2 until G6, which was closed as a policy disposition [owner, 2026-10-15]. Update the B.2 status paragraph.
 7. Each artifact gets a "Freeze review (date)" section and is marked **frozen
    [delegated 2026-10-12]; owner review pending at the desktop checkpoint** (K11).
    Update the ratification README, spec §28 (status sentence), B.2.6 G12 → met, and
@@ -757,7 +757,7 @@ Owner question O1: `KEY_UNAVAILABLE` as a report finding versus spec B.2.10 item
 
 ### W20 — 1.0 flip and `migrate` (M; at 1.0)
 
-**Trigger:** every §8.2 gate met except item 4, including G6 and the desktop phases.
+**Trigger:** every §8.2 gate met except item 4, and the desktop phases. G6 counts as met by its policy disposition [owner, 2026-10-15] (Windows reports `Unconfirmed` in 1.0; spec Annex B.3 item 1); it is not a claim of documented durability and not a pass on physical machines.
 
 **Work.**
 - Write `null` in descriptor key 3. A reader accepts `null`, and refuses drafts with

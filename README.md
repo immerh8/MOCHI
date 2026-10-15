@@ -86,7 +86,9 @@ integrity failures exit 1, with a documented precedence (O22, O13).
 
 Product decisions (plan §9): the desktop app is Tauri v2 with React and TypeScript
 (O1); it supports Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04 on x86-64, not macOS
-(O11); and it opens ZIP, 7z, RAR, and `.tar.gz` read-only (O9, phase D8). The
+(O11); and it opens ZIP, 7z, RAR, and `.tar.gz` read-only (O9, phase D8; RAR is read-only
+for good, and in 1.0 it has no hostile-input fixtures and no complete multi-volume
+test, [owner, 2026-10-15]). The
 project is licensed MIT OR Apache-2.0 (O23), which permits distributing UnRAR
 in the D8 helper; its notice is in `THIRD-PARTY-NOTICES.md`.
 

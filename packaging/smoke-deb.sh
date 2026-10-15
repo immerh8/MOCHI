@@ -33,10 +33,19 @@ exe=$(echo "$exes" | grep -vx "$helper" || true)
 echo "$contents" | grep -Eq ' usr/share/applications/[^ ]*\.desktop$' || fail "no .desktop entry"
 lic=usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt
 echo "$contents" | grep -q " $lic\$" || fail "third-party license list ($lic) missing"
+# F8: the user guide, at the resource path the app resolves (help.rs GUIDE_RESOURCE,
+# "guide/index.html", under Tauri's resource directory /usr/lib/<productName>/).
+guide=usr/lib/MOCHI/guide/index.html
+echo "$contents" | grep -q " $guide\$" || fail "user guide ($guide) missing from the package"
 dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
 dpkg-deb --extract "$deb" "$dir"
 grep -q "Rust crates:" "$dir/$lic" && grep -q "npm packages (UI bundle):" "$dir/$lic" \
   && grep -q "MIT License" "$dir/$lic" || fail "license list lacks an expected section"
+for page in index not-a-backup getting-started encrypted verification tar-compatible recovery-record experimental; do
+  [ -s "$dir/usr/lib/MOCHI/guide/$page.html" ] || fail "user guide page $page.html missing or empty"
+done
+grep -q "This guide is written for the mochi command line." "$dir/$guide" || fail "user guide lacks its command-line scope banner"
+if grep -Eq '<script|src=|https?://' "$dir/$guide"; then fail "user guide must be offline and static"; fi
 # The helper's own graph (T16): the RARLAB UnRAR paragraph and the crates only it links.
 grep -q "UnRAR source code may be used in any software" "$dir/$lic" || fail "license list lacks the RARLAB UnRAR notice"
 for c in unrar_sys sevenz-rust2 zip tar flate2; do
@@ -92,6 +101,8 @@ if [ "$install" = 1 ]; then
   here=$(cd "$(dirname "$0")/.." && pwd)
   python3 -I "$here/packaging/helper_probe.py" "$hbin" "$here/fixtures/foreign/basic_infozip.zip" \
     --expect a.txt --expect sub/b.txt || fail "$hbin did not list the fixture"
+  # F8: the installed guide is where the app looks for it.
+  [ -s "/$guide" ] || fail "/$guide not installed"
   # dpkg triggers (shared-mime-info, desktop-file-utils) registered the type.
   if [ -d /usr/share/mime ] && command -v update-mime-database > /dev/null; then
     grep -q 'application/x-mochi:\*\.mochi' /usr/share/mime/globs2 || fail "update-mime-database did not register *.mochi"
@@ -99,6 +110,7 @@ if [ "$install" = 1 ]; then
   sudo apt-get remove -y mochi
   [ ! -e "$bin" ] || fail "$bin still present after removal"
   [ ! -e "$hbin" ] || fail "$hbin still present after removal"
+  [ ! -e "/$guide" ] || fail "/$guide still present after removal"
   [ ! -e "/$mime" ] || fail "/$mime still present after removal"
   if [ -f /usr/share/mime/globs2 ]; then
     ! grep -q 'application/x-mochi' /usr/share/mime/globs2 || fail "*.mochi still registered after removal"

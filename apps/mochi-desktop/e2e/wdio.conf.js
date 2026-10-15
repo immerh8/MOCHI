@@ -16,6 +16,9 @@
 // paths of its dialogs from MOCHI_E2E_PICK_FILE. The D4 spec (check.e2e.js)
 // also opens damaged.mochi and compares the app's reports with
 // `mochi verify --json` (cargo build -p mochi-cli; MOCHI_CLI_BINARY overrides).
+// The F8 help spec (help.e2e.js) needs the generated user guide and records, instead of
+// launching a browser, the path the Help action opens:
+//   python3 packaging/guide.py target/guide     (MOCHI_E2E_GUIDE_DIR overrides)
 import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -56,6 +59,19 @@ process.env.MOCHI_E2E_PICK = picks.join(path.delimiter);
 process.env.MOCHI_E2E_PICK_FILE = path.join(os.tmpdir(), "mochi-e2e-picks.txt");
 process.env.MOCHI_E2E_PACE_MS = "100";
 
+// The `e2e` build resolves the guide from this directory instead of the installer's
+// resource directory, and appends the path it opens to this file instead of starting a
+// browser (src/help.rs).
+const guideDir = process.env.MOCHI_E2E_GUIDE_DIR ?? path.resolve(here, "../../../target/guide");
+if (!existsSync(path.join(guideDir, "index.html"))) {
+  console.error(
+    `missing user guide ${guideDir}: run python3 packaging/guide.py ${guideDir} from the repository root`,
+  );
+  process.exit(1);
+}
+process.env.MOCHI_E2E_GUIDE_DIR = guideDir;
+process.env.MOCHI_E2E_OPEN_LOG = path.join(os.tmpdir(), "mochi-e2e-opened.txt");
+
 let tauriDriver;
 
 export const config = {
@@ -79,6 +95,7 @@ export const config = {
   onPrepare: () => {
     // No pick left over from an earlier run.
     writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
+    writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
     // On PATH after `cargo install tauri-driver` (~/.cargo/bin).
     const bin = process.env.TAURI_DRIVER ?? "tauri-driver";
     tauriDriver = spawn(bin, driverArgs, { stdio: [null, process.stdout, process.stderr] });

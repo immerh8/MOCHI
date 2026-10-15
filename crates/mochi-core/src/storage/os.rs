@@ -45,15 +45,35 @@
 //!   Its next sentence ("Setting this value guarantees that a move performed
 //!   as a copy and delete operation is flushed to disk before the function
 //!   returns.") concerns the copy-and-delete case, which a rename within one
-//!   directory is not; this crate relies on the first sentence only, and
-//!   whether that is enough for G6 is for G6's evidence to decide.
-//!   **What is reported has not changed:** `sync_directory` reports
+//!   directory is not.
+//!
+//!   **What the evidence shows (G6b, `docs/g6-windows-crash-replay.md`, #60).**
+//!   On NTFS (Windows 11 build 26300.9457, Windows 10 22H2 build 19045.2006,
+//!   emulated disk that honours FLUSH/FUA), the first sentence alone is *not*
+//!   enough for a same-directory rename: a `MOVEFILE_WRITE_THROUGH` rename on
+//!   its own lost the new name in 3 of 3 controls and left no flush in the
+//!   block log. What makes a created archive's name survive a crash is the
+//!   directory flush that [`sync_directory`](crate::storage::Storage::sync_directory)
+//!   performs (`FlushFileBuffers` on the directory handle): with only that
+//!   step suppressed, the real publication path lost the name at the crash
+//!   point after each creation acknowledgement. **The shipped durability on
+//!   Windows therefore rests on the directory flush**, which Microsoft does not
+//!   document. This module does not rely on write-through for creation
+//!   durability.
+//!
+//!   **What is reported, and why (G6 policy B, [owner, 2026-10-15]; spec
+//!   Annex B.2.6 G6 and B.3).** `sync_directory` reports
 //!   [`DirectoryDurability::Unconfirmed`] on Windows **even when the flush
 //!   succeeds**, so the first commit of a new archive is reported as degraded
-//!   ("directory durability unconfirmed"), as D13 requires until G6 passes.
+//!   ("directory durability unconfirmed"), and truncation there needs
+//!   `--accept-unconfirmed-durability`. This is a policy disposition under
+//!   plan O12 ("claim only what the Windows APIs document"), not a claim of
+//!   documented durability and not a pass on physical machines. Changing it
+//!   needs a documented primitive or a new owner decision; the weekly
+//!   `g6-windows` workflow guards the observed behaviour as a regression test.
 //!   [`OsDir`] only records whether the last publication was a
-//!   `MoveWriteThrough` on an NTFS volume, which the later flip to
-//!   `Confirmed` will need. Appends to an existing archive are unaffected.
+//!   `MoveWriteThrough` on an NTFS volume. Appends to an existing archive are
+//!   unaffected.
 //! * Windows CI (`windows-latest`) runs the storage conformance suite and the
 //!   `windows_*` tests below: a locked temporary file is published (with the
 //!   archive's own `.mochi-lock` held and another handle open on it), an
@@ -471,8 +491,8 @@ impl OsDir {
     }
 
     /// Whether the last publication was a `MoveWriteThrough` on NTFS. Nothing
-    /// reports it yet: Windows stays `Unconfirmed` until gate G6 has its
-    /// evidence (module docs).
+    /// reports it: Windows stays `Unconfirmed` in 1.0 by the G6 policy
+    /// ([owner, 2026-10-15]; module docs).
     #[cfg_attr(not(test), allow(dead_code))]
     fn last_publish_was_ntfs_write_through(&self) -> bool {
         self.last_publish_ntfs_write_through
