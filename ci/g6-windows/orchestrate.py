@@ -410,6 +410,17 @@ def cmd_image(a):
     log("image ready", info)
 
 
+def show_serial(vm, n=60):
+    """Print the tail of a VM's serial log into the job log (artifact blobs are not always reachable)."""
+    try:
+        lines = (vm.dir / "serial.log").read_text().splitlines()
+    except OSError:
+        lines = ["(no serial log)"]
+    print(f"--- serial log of {vm.name} (last {n} of {len(lines)} lines)", flush=True)
+    for l in lines[-n:]:
+        print("    " + l[:400], flush=True)
+
+
 def keep_logs(vm, dest):
     dest = pathlib.Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -460,8 +471,11 @@ class LoggedDisk:
 # ---- run --------------------------------------------------------------------
 
 
-def payload_iso(work, name, entry, extra):
-    files = {"entry.ps1": GUEST / "payload" / entry, "common.ps1": GUEST / "payload/common.ps1"}
+def payload_iso(work, name, mode, extra):
+    mode_file = work / f"mode-{name}.txt"
+    mode_file.write_text(mode + "\n")
+    files = {"entry.ps1": GUEST / "payload/entry.ps1", "common.ps1": GUEST / "payload/common.ps1",
+             f"{mode}.ps1": GUEST / "payload" / f"{mode}.ps1", "mode.txt": mode_file}
     files.update(extra)
     iso = work / f"payload-{name}.iso"
     build_iso(iso, "G6PAYLOAD", files)
@@ -501,7 +515,7 @@ def cmd_run(a):
     if not base.exists():
         with open(base, "wb") as f:
             f.truncate(1 << 30)
-        pl = payload_iso(work, "format", "format.ps1", {})
+        pl = payload_iso(work, "format", "format", {})
         vm = vm_from_image(work, "format", image, [{"path": pl}], [{"path": base, "serial": "G6D000"}],
                            lambda l: (facts(l), vm.serial.send(f"MARKED {l[8:]}") if l.startswith("MARKREQ ") else None))
         try:
@@ -511,13 +525,14 @@ def cmd_run(a):
             vm.stop()
             keep_logs(vm, ev)
         if how != "exited" or not vm.serial.seen("FORMAT-DONE"):
+            show_serial(vm)
             raise SystemExit(f"format phase failed ({how}); see {ev}")
 
     # 2. The workload, on a logged copy.
     raw = work / f"data-{a.label}.raw"
     shutil.copyfile(base, raw)
     logfile = work / f"log-{a.label}.bin"
-    pl = payload_iso(work, "run-" + a.label, "run.ps1", exe)
+    pl = payload_iso(work, "run-" + a.label, "run", exe)
     with LoggedDisk(raw, logfile) as disk:
         def on_line(l):
             facts(l)
@@ -534,11 +549,16 @@ def cmd_run(a):
             vm.stop()
             keep_logs(vm, ev)
     if how != "exited" or not vm.serial.seen("RUN-DONE"):
+        show_serial(vm)
         raise SystemExit(f"run phase failed ({how}); see {ev}")
     if any(l.startswith(("RUN-ERROR", "WORKLOAD-RC")) and not l.startswith("WORKLOAD-RC 0") for l in vm.serial.lines):
         summary["workload_problem"] = [l for l in vm.serial.lines if l.startswith(("RUN-ERROR", "WORKLOAD-RC", "WL "))]
         write_json(ev / "summary.json", summary)
         raise SystemExit("the workload did not finish cleanly; see summary.json")
+
+    for l in vm.serial.lines:
+        if l.startswith(("WL ", "WORKLOAD-RC", "VOLUME ", "DISKINFO ", "FORMATTED ", "ENTRY")):
+            print("    guest:", l[:300], flush=True)
 
     # 3. Read the log and choose points.
     entries = lw.parse(logfile)
@@ -604,7 +624,7 @@ def cmd_run(a):
                          "acks": p.get("acks", []), "probe": p.get("probe", [])} for j, p in enumerate(batch)]
         meta = work / "points.json"
         write_json(meta, guest_points)
-        pl = payload_iso(work, "check", "check.ps1", {**exe, "points.json": meta})
+        pl = payload_iso(work, "check", "check", {**exe, "points.json": meta})
 
         def on_check(l):
             if l.startswith("RESULT "):
@@ -618,7 +638,10 @@ def cmd_run(a):
         finally:
             vm.stop()
             keep_logs(vm, ev)
-        log(f"batch {b0 // BATCH}: {how}, {sum(1 for p in batch if p['id'] in results)}/{len(batch)} results")
+        got = sum(1 for p in batch if p["id"] in results)
+        log(f"batch {b0 // BATCH}: {how}, {got}/{len(batch)} results")
+        if got < len(batch):
+            show_serial(vm)
     summary["check_minutes"] = round((time.time() - t_check) / 60, 1)
 
     # 5. Evaluate.
