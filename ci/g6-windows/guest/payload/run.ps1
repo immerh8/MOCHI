@@ -37,6 +37,45 @@ try {
     Mark "ctl:unsynced:${k}:${sha}:$($b.Length)"
   }
 
+  # Namespace controls: what do the primitives the publication step can use
+  # actually promise on this NTFS? Data is flushed first, so only the rename
+  # is in question. plain: a rename with no flush (must be droppable, or the
+  # harness cannot see a lost name); wt: MoveFileExW(MOVEFILE_WRITE_THROUGH),
+  # what the G6a publication uses (must survive); dir: a rename followed by
+  # FlushFileBuffers on the directory handle, what the link-then-unlink
+  # publication's directory flush does (recorded).
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class G6Native {
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  public static extern bool MoveFileExW(string src, string dst, uint flags);
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  public static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disp, uint flags, IntPtr tmpl);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool FlushFileBuffers(SafeFileHandle h);
+}
+"@
+  foreach ($k in 1..3) {
+    foreach ($v in 'plain', 'wt', 'dir') {
+      $src = "${root}ctl\ns_${v}_${k}.src"; $dst = "${root}ctl\ns_${v}_${k}.dst"
+      $b = New-Object byte[] 4096
+      $fs = [System.IO.File]::Open($src, 'Create', 'Write', 'None')
+      $fs.Write($b, 0, $b.Length); $fs.Flush($true); $fs.Close()
+      if ($v -eq 'plain') { [System.IO.File]::Move($src, $dst) }
+      elseif ($v -eq 'wt') {
+        if (-not [G6Native]::MoveFileExW($src, $dst, 8)) { throw "MoveFileExW failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+      } else {
+        [System.IO.File]::Move($src, $dst)
+        $h = [G6Native]::CreateFileW("${root}ctl", 0x40000000, 7, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero)
+        if ($h.IsInvalid) { throw 'cannot open the directory handle' }
+        [void][G6Native]::FlushFileBuffers($h); $h.Close()
+      }
+      Mark "ctl:ns:${v}:${k}"
+    }
+  }
+
   Mark 'workload:begin'
   & C:\g6\payload\g6_winworkload.exe workload $root '\\.\COM1' *> C:\g6\wl.out
   $rc = $LASTEXITCODE

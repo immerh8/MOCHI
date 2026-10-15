@@ -615,6 +615,13 @@ def cmd_run(a):
         if parts[0] == "ctl" and len(parts) == 5:
             _, kind, k, sha, size = parts
             ctl_sha[(kind, int(k))] = (sha, int(size), m)
+    for m in marks:
+        parts = m.label.split(":")
+        if parts[0] == "ctl" and len(parts) == 4 and parts[1] == "ns":
+            v, k = parts[2], int(parts[3])
+            b = lw.last_barrier_before(entries, m.idx)
+            points.append({"kind": f"ctl-ns-{v}", "anchor": m.idx, "limit": lw.durable_limit(b),
+                           "probe": [f"ctl\\ns_{v}_{k}.src", f"ctl\\ns_{v}_{k}.dst"]})
     for (kind, k), (sha, size, m) in sorted(ctl_sha.items(), key=lambda kv: kv[1][2].idx):
         if kind == "synced":
             probe = [f"ctl\\synced_{j}.bin" for j in range(1, k + 1)]
@@ -626,7 +633,7 @@ def cmd_run(a):
                            "probe": [f"ctl\\unsynced_{k}.bin"], "expect": {f"ctl\\unsynced_{k}.bin": (sha, size)}})
     for i, p in enumerate(points):
         p["id"] = i
-        if p["kind"] not in ("ctl-synced", "ctl-unsynced"):
+        if not p["kind"].startswith("ctl"):
             p["acks"] = [ack_line(m, a.strict_creation) for m in acks if m.idx < p.get("ack_limit", p["limit"])]
     write_json(ev / "points.json", points)
     summary["points"] = {k: sum(1 for p in points if p["kind"] == k) for k in sorted({p["kind"] for p in points})}
@@ -711,6 +718,7 @@ def evaluate(points, results, summary):
     dist, end_edge = {}, []
     verify_rc = {}
     controls = {"synced": [], "unsynced": []}
+    ns = {"plain": [], "wt": [], "dir": []}
     missing = [p["id"] for p in points if p["id"] not in results]
     if missing:
         hard.append(f"no result from the guest for points {missing}")
@@ -727,6 +735,11 @@ def evaluate(points, results, summary):
                      (r["facts"][f].get("sha256"), r["facts"][f].get("size")) == tuple(exp)
                      for f, exp in p["expect"].items())
             controls["synced"].append(ok)
+        elif p["kind"].startswith("ctl-ns-"):
+            f = r["facts"]
+            src, dst = p["probe"]
+            # True = the rename reached the device before the cut.
+            ns[p["kind"][len("ctl-ns-"):]].append(bool(f.get(dst, {}).get("exists")) and not f.get(src, {}).get("exists"))
         elif p["kind"] == "ctl-unsynced":
             (f, exp), = p["expect"].items()
             fact = r["facts"].get(f, {})
@@ -752,14 +765,22 @@ def evaluate(points, results, summary):
             if r.get("chkdsk_rc") not in (0, None):
                 soft.append(f"{tag}: chkdsk /scan exited {r['chkdsk_rc']}: {r.get('chkdsk_tail')}")
     c_ok = bool(controls["synced"]) and all(controls["synced"]) and any(controls["unsynced"])
+    # Namespace controls: an unflushed rename must be droppable (else the harness
+    # cannot see a lost name) and a write-through rename must survive.
+    ns_ok = bool(ns["plain"]) and not all(ns["plain"]) and bool(ns["wt"]) and all(ns["wt"])
+    c_ok = c_ok and ns_ok
     summary["controls"] = {
         "synced_data_survived": f"{sum(controls['synced'])}/{len(controls['synced'])}",
         "unsynced_data_droppable": f"{sum(controls['unsynced'])}/{len(controls['unsynced'])} (at least one required)",
+        "rename_without_flush_survived": f"{sum(ns['plain'])}/{len(ns['plain'])} (at least one must be lost)",
+        "rename_write_through_survived": f"{sum(ns['wt'])}/{len(ns['wt'])} (all must survive)",
+        "rename_then_directory_flush_survived": f"{sum(ns['dir'])}/{len(ns['dir'])} (recorded)",
         "valid": c_ok,
     }
     if not c_ok:
         hard.append("controls failed: the logged device does not behave as the method requires "
-                    "(synced data must survive every replay; unsynced data must be droppable)")
+                    "(synced data must survive every replay; unsynced data and an unflushed rename must be droppable; "
+                    "a write-through rename must survive)")
     judged = [p for p in points if p["kind"] in ("flush", "between", "edge", "ack-cut")]
     summary["judged_points"] = len(judged)
     summary["archive_verdicts_over_all_points"] = dist

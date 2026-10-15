@@ -28,6 +28,18 @@ def ok(i, **kw):
     return dict(id=i, mount="ok", judge_rc=0, verify={"a0.mochi": {"rc": 0}}, chkdsk_rc=0, **kw)
 
 
+def ns_points(first_id, plain, wt, d):
+    """Namespace control points with the given survival facts (True = the rename reached the device)."""
+    pts, res, i = [], {}, first_id
+    for variant, outcomes in (("plain", plain), ("wt", wt), ("dir", d)):
+        for n, survived in enumerate(outcomes, 1):
+            src, dst = f"ctl\\ns_{variant}_{n}.src", f"ctl\\ns_{variant}_{n}.dst"
+            pts.append(pt(i, f"ctl-ns-{variant}", 5, probe=[src, dst]))
+            res[i] = dict(id=i, mount="ok", facts={src: {"exists": not survived}, dst: {"exists": survived}})
+            i += 1
+    return pts, res
+
+
 def run(points, results):
     s = {}
     return o.evaluate(points, results, s), s
@@ -46,8 +58,18 @@ def main():
         2: ok(2, judge=judge(["absent", "seq-0"])),
         3: ok(3, judge=judge(["seq-2"] * 4)),
     }
+    nsp, nsr = ns_points(10, [False, True, False], [True] * 3, [True, True, True])
+    points, good = points + nsp, {**good, **nsr}
     passed, s = run(points, good)
     assert passed and s["verdict"] == "PASS", s
+    assert s["controls"]["rename_without_flush_survived"].startswith("1/3"), s["controls"]
+
+    # Namespace controls decide validity: an unflushed rename that is never lost
+    # (harness blind to metadata loss), or a write-through rename that is lost.
+    for plain, wt in (([True] * 3, [True] * 3), ([False] * 3, [True, True, False])):
+        nsp2, nsr2 = ns_points(10, plain, wt, [True] * 3)
+        passed, s = run(points[:4] + nsp2, {**good, **nsr2})
+        assert not passed and any("controls failed" in h for h in s["hard_failures"]), s
 
     vac = {**good, 2: ok(2, judge=judge(["absent"] * 4)), 3: ok(3, judge=judge(["absent"] * 4))}
     passed, s = run(points, vac)
