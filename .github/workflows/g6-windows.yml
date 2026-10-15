@@ -1,22 +1,23 @@
 name: g6-windows
 
 # Gate G6 (spec Annex B.2.6, G6: Windows durability), hardware-free: block-level
-# crash replay of a real Windows 11 Enterprise (evaluation) build in a QEMU/KVM
-# VM, the CrashMonkey / dm-log-writes method. Method, limits and evidence:
+# crash replay of real Windows client builds (Windows 11 and Windows 10 22H2
+# Enterprise evaluation media) in QEMU/KVM VMs, the CrashMonkey / dm-log-writes
+# method. Method, limits and evidence:
 # docs/g6-windows-crash-replay.md. Counterpart of the `powercut` job in ci.yml
 # (G7, Linux).
 #
-# Slow (the image build alone can take an hour), so it never runs on pull
-# requests; it runs on demand and weekly.
+# Slow (about 45 minutes per guest OS, the OSes in parallel), so it never runs on
+# pull requests; it runs on demand and weekly.
 #
 #   gh workflow run g6-windows.yml -f ref=<branch or sha under test>
 #
 # `ref` is the code whose Windows storage code is tested (for example a branch
 # under review); `baseline_ref` is the reference run (default: main just before
-# G6a, 9b3a3a7, the link-then-unlink publication). The harness itself (this workflow, ci/g6-windows*,
-# and the g6_winworkload example) always comes from the commit the workflow runs
-# at and is overlaid on the tested tree, so a ref older than the harness can be
-# tested too.
+# G6a, 9b3a3a7, the link-then-unlink publication). The harness itself (this
+# workflow, ci/g6-windows*, and the g6_winworkload example) always comes from the
+# commit the workflow runs at and is overlaid on the tested tree, so a ref older
+# than the harness can be tested too.
 
 on:
   workflow_dispatch:
@@ -41,23 +42,20 @@ on:
         description: "Judge creation as durable even where acknowledged DirectoryUnconfirmed (does the name survive a crash right after the acknowledgement?). Applies to both runs; the baseline is expected to show the gap."
         type: boolean
         default: true
+      windows_10:
+        description: "Also run Windows 10 22H2 (evaluation ISO from Microsoft's download link, whose Evaluation Center page is retired)"
+        type: boolean
+        default: true
       image_only:
         description: "Build the Windows image, then stop"
         type: boolean
         default: false
   schedule:
     - cron: "41 3 * * 1"
-  # TEMPORARY (G6b development): remove before merge.
-  pull_request:
-    paths:
-      - .github/workflows/g6-windows.yml
-      - ci/g6-windows-crashreplay.sh
-      - ci/g6-windows/**
-      - crates/mochi-testkit/examples/g6_winworkload.rs
 
 concurrency:
-  group: g6-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: g6-windows-${{ github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -70,6 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      oses: ${{ steps.plan.outputs.oses }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,6 +78,7 @@ jobs:
           INPUT_REF: ${{ inputs.ref }}
           EVENT: ${{ github.event_name }}
           INPUT_BASELINE: ${{ inputs.baseline_ref }}
+          INPUT_WINDOWS_10: ${{ inputs.windows_10 }}
         run: |
           resolve() {
             git rev-parse --verify --quiet "origin/$1^{commit}" || git rev-parse --verify --quiet "$1^{commit}" || {
@@ -100,6 +100,8 @@ jobs:
             fi
           fi
           echo "matrix=[$items]" | tee -a "$GITHUB_OUTPUT"
+          if [ "$INPUT_WINDOWS_10" = false ]; then oses='["windows-11"]'; else oses='["windows-11","windows-10"]'; fi
+          echo "oses=$oses" | tee -a "$GITHUB_OUTPUT"
 
   build-windows:
     # The guest runs Windows client binaries built natively here. The harness
@@ -162,7 +164,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-11, windows-10]
+        os: ${{ fromJSON(needs.plan.outputs.oses) }}
     env:
       G6_WORK: /var/tmp/g6
       G6_EVIDENCE: /var/tmp/g6/evidence
