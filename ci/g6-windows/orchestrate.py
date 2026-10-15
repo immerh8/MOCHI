@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -387,7 +388,23 @@ def build_iso(out_iso, label, files):
 # ---- image ------------------------------------------------------------------
 
 
+INSTALL_ATTEMPTS = 3
+STALL_TICKS = 4  # OCR ticks are 5 minutes apart: a screen unchanged for 15 minutes is a hang
+
+
+def screen_words(text):
+    """The words on a screen, without the spinner glyphs OCR turns into stray characters."""
+    return frozenset(re.findall(r"[A-Za-z0-9%]{3,}", text))
+
+
 def cmd_image(a):
+    """Unattended install, retried when Windows Setup freezes.
+
+    Setup occasionally stops dead in the VM (observed at "Installing Windows 11,
+    52% complete" for the full hour, in about one install in three). A healthy
+    install takes 10-15 minutes, so a screen that has not changed for 15 minutes
+    is abandoned and the install started again, up to INSTALL_ATTEMPTS times.
+    """
     work = pathlib.Path(a.work)
     img = work / "image"
     if img.exists():
@@ -395,36 +412,51 @@ def cmd_image(a):
     img.mkdir(parents=True)
     iso_info = json.loads((work / "win.iso.json").read_text())
     sysdisk = work / "sys.qcow2"
-    run(["qemu-img", "create", "-f", "qcow2", sysdisk, "80G"])
     unattend = work / "unattend.iso"
     build_iso(unattend, "G6UNATTEND", {
         "autounattend.xml": GUEST / "image/autounattend.xml",
         "provision.ps1": GUEST / "image/provision.ps1",
         "agent.ps1": GUEST / "image/agent.ps1",
     })
-    info = {}
+    t_all = time.time()
+    for attempt in range(1, INSTALL_ATTEMPTS + 1):
+        sysdisk.unlink(missing_ok=True)
+        run(["qemu-img", "create", "-f", "qcow2", sysdisk, "80G"])
+        info = {}
 
-    def on_line(l):
-        if l.startswith("BUILD "):
-            info.update(json.loads(l[6:]))
+        def on_line(l, info=info):
+            if l.startswith("BUILD "):
+                info.update(json.loads(l[6:]))
 
-    vm = Vm(work, "install", sys_disk=sysdisk, vars_src=OVMF_VARS, tpm_src=None,
-            cds=[{"path": work / "win.iso", "boot": True}, {"path": unattend}], on_line=on_line)
-    t0 = time.time()
-    try:
-        vm.start()
-        how = vm.wait(a.timeout * 60, spam_keys=180, shot_every=300,
-                      tick=lambda t: (log(f"install: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}"),
-                                      print("    screen:", vm.ocr(), flush=True)))
-        log("install finished:", how, f"after {(time.time() - t0) / 60:.1f} min")
-        if how != "exited":
-            print("    final screen:", vm.ocr(), flush=True)
-    finally:
-        vm.stop()
-        keep_logs(vm, work / "evidence-image")
-    if not vm.serial.seen("PROVISIONED"):
-        show_serial(vm, 80)
-        raise SystemExit("image build failed: the guest never reported PROVISIONED (see evidence-image/)")
+        vm = Vm(work, f"install{attempt}", sys_disk=sysdisk, vars_src=OVMF_VARS, tpm_src=None,
+                cds=[{"path": work / "win.iso", "boot": True}, {"path": unattend}], on_line=on_line)
+        screens = []
+
+        def tick(t, vm=vm, screens=screens):
+            text = vm.ocr()
+            screens.append(screen_words(text))
+            log(f"install attempt {attempt}: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}")
+            print("    screen:", text, flush=True)
+
+        def frozen(screens=screens):
+            return len(screens) >= STALL_TICKS and len(set(screens[-STALL_TICKS:])) == 1
+
+        t0 = time.time()
+        try:
+            vm.start()
+            how = vm.wait(a.timeout * 60, until=frozen, spam_keys=180, shot_every=300, tick=tick)
+            log(f"install attempt {attempt} finished:", how, f"after {(time.time() - t0) / 60:.1f} min")
+            if how not in ("exited",):
+                print("    final screen:", vm.ocr(), flush=True)
+        finally:
+            vm.stop()
+            keep_logs(vm, work / "evidence-image")
+        if vm.serial.seen("PROVISIONED"):
+            break
+        show_serial(vm, 40)
+        log(f"install attempt {attempt} did not reach PROVISIONED ({how})")
+    else:
+        raise SystemExit(f"image build failed after {INSTALL_ATTEMPTS} attempts (see evidence-image/)")
     # The installed disk is the base image as it is: compressing it (6 min) buys
     # nothing, because the image is not cached (12.2 GB archive; the repository
     # limit is 10 GB, docs/g6-windows-crash-replay.md).
@@ -434,9 +466,10 @@ def cmd_image(a):
     info["iso"] = iso_info
     info["built"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     info["install_minutes"] = round((time.time() - t0) / 60, 1)
+    info["install_attempts"] = attempt
     write_json(img / "build-info.json", info)
     run(["chmod", "-R", "a+rX", img])
-    log("image ready", info)
+    log("image ready", info, f"(total {(time.time() - t_all) / 60:.1f} min)")
 
 
 def show_serial(vm, n=60):

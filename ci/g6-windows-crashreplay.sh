@@ -92,7 +92,7 @@ free_disk() {
 # media Microsoft publishes, so a Windows 10 row without a live ISO is a gap.
 win10_probe() {
     local out="$G6_EVIDENCE/win10-probe.txt"
-    mkdir -p "$G6_EVIDENCE"
+    as_root mkdir -p "$G6_EVIDENCE"
     {
         echo "# Windows 10 evaluation availability, $(date -u +%FT%TZ) (HEAD requests; ISO bodies are not fetched)"
         for page in download-windows-10-enterprise evaluate-windows-10-enterprise \
@@ -105,7 +105,7 @@ win10_probe() {
             curl -sIL -m 30 "https://go.microsoft.com/fwlink/p/?LinkID=$id&clcid=0x409&culture=en-us&country=US" \
                 | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8 || echo "(no answer)"
         done
-    } | tee "$out"
+    } | as_root tee "$out"
 }
 
 case "${1:-}" in

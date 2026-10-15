@@ -120,6 +120,16 @@ def main():
     soft = {**good, 2: ok(2, judge=judge(["absent", "seq-0"], soft=["a0.mochi: absent after acknowledged seq 1; creation was DirectoryUnconfirmed"]))}
     passed, s = run(points, soft)
     assert passed and s["absent_after_unconfirmed_ack"] == 1, s
+    # Install stall detection: a frozen Setup screen (spinner glyphs change under
+    # OCR, the words do not) is told apart from real progress.
+    frame = "Installing Windows 11 | Your PC will restart several times. | {} {} complete | ves No."
+    frozen = [o.screen_words(frame.format(g, "52%")) for g in "*»~‘CY"]
+    moving = [o.screen_words(frame.format("*", p)) for p in ("52%", "57%", "63%", "71%")]
+
+    def is_frozen(screens):
+        return len(screens) >= o.STALL_TICKS and len(set(screens[-o.STALL_TICKS:])) == 1
+
+    assert is_frozen(frozen) and not is_frozen(moving) and not is_frozen(frozen[:o.STALL_TICKS - 1])
     print("evaluate self-test ok")
 
 
