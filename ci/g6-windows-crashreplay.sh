@@ -8,7 +8,7 @@
 #
 #   setup      packages, KVM access, dm-log-writes, replay-log (exits 3 without KVM)
 #   free-disk  remove preinstalled toolchains the runner does not need here
-#   selftest   unit-test the log reader against the real replay-log
+#   selftest   unit-test the log reader (against the real replay-log) and the verdict logic
 #   iso-info   resolve the Microsoft evaluation ISO (name, size)
 #   iso        download it and record its SHA-256
 #   image      unattended Windows install into $G6_WORK/image (cache this directory)
@@ -89,7 +89,8 @@ case "${1:-}" in
     setup) setup ;;
     free-disk) free_disk ;;
     selftest)
-        REPLAY_LOG=${REPLAY_LOG:-$(command -v replay-log)} python3 -I "$HERE/g6-windows/test_logwrites.py" ;;
+        REPLAY_LOG=${REPLAY_LOG:-$(command -v replay-log)} python3 -I "$HERE/g6-windows/test_logwrites.py"
+        python3 -I "$HERE/g6-windows/test_evaluate.py" ;;
     iso-info | iso | image)
         cmd=$1; shift
         as_root python3 -I "$ORCH" --work "$G6_WORK" "$cmd" "$@" ;;

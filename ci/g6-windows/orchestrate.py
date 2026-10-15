@@ -674,12 +674,22 @@ def cmd_run(a):
     (ev / "summary.md").write_text(render_md(summary))
     for f in (logfile,):
         f.unlink(missing_ok=True)
+    print((ev / "summary.md").read_text(), flush=True)
+    print("    summary:", json.dumps({k: summary.get(k) for k in (
+        "controls", "judged_points", "archive_verdicts_over_all_points", "end_of_workload_verdicts",
+        "verify_exit_codes", "chkdsk_nonzero", "absent_after_unconfirmed_ack", "check_minutes")}, sort_keys=True), flush=True)
+    for h in summary["hard_failures"][:20]:
+        print("    HARD:", h[:400], flush=True)
+    for h in summary["soft_observations"][:12]:
+        print("    soft:", h[:300], flush=True)
     log("RESULT", a.label, "PASS" if verdict else "FAIL")
     sys.exit(0 if verdict else 1)
 
 
 def evaluate(points, results, summary):
     hard, soft = [], []
+    dist, end_edge = {}, []
+    verify_rc = {}
     controls = {"synced": [], "unsynced": []}
     missing = [p["id"] for p in points if p["id"] not in results]
     if missing:
@@ -709,7 +719,12 @@ def evaluate(points, results, summary):
             if r.get("judge_rc") != 0 or judge.get("result") != "pass":
                 hard.extend(f"{tag}: {h}" for h in (judge.get("hard") or [f"judge failed: {r.get('judge')!r}"]))
             soft.extend(f"{tag}: {s}" for s in judge.get("soft", []))
+            for a in judge.get("archives", []):
+                dist[a["verdict"]] = dist.get(a["verdict"], 0) + 1
+            if p["kind"] == "edge" and p["anchor"] == max(q["anchor"] for q in points if q["kind"] == "edge"):
+                end_edge = [a["verdict"] for a in judge.get("archives", [])]
             for name, v in (r.get("verify") or {}).items():
+                verify_rc[str(v.get("rc"))] = verify_rc.get(str(v.get("rc")), 0) + 1
                 if v.get("rc") in (1, 3):
                     hard.append(f"{tag}: mochi verify {name} exited {v['rc']}: {v.get('out')}")
                 elif v.get("rc") != 0:
@@ -727,6 +742,15 @@ def evaluate(points, results, summary):
                     "(synced data must survive every replay; unsynced data must be droppable)")
     judged = [p for p in points if p["kind"] in ("flush", "between", "edge")]
     summary["judged_points"] = len(judged)
+    summary["archive_verdicts_over_all_points"] = dist
+    summary["verify_exit_codes"] = verify_rc
+    summary["end_of_workload_verdicts"] = end_edge
+    summary["chkdsk_nonzero"] = sum(1 for x in soft if "chkdsk" in x)
+    # Non-vacuity: a run in which no replayed state ever held a complete archive
+    # (or in which the end of the workload holds none) proves nothing.
+    if not any(k.startswith("seq-") for k in dist) or not any(v == "seq-2" for v in end_edge):
+        hard.append("vacuous run: no replayed state at the end of the workload holds a complete archive "
+                    f"(verdicts {dist}, end of workload {end_edge})")
     summary["absent_after_unconfirmed_ack"] = sum(1 for x in soft if "absent after acknowledged" in x)
     summary["hard_failures"] = hard
     summary["soft_observations"] = soft

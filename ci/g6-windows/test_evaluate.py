@@ -1,0 +1,84 @@
+"""Self-test for orchestrate.evaluate(): the verdict logic, on synthetic guest results.
+
+    python3 -I ci/g6-windows/test_evaluate.py
+
+Covers a good run and the ways a run must fail: a vacuous run (no complete
+archive ever seen), a judge violation, broken controls (synced data missing,
+unsynced data not droppable), a missing result, and a volume that does not mount.
+"""
+
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import orchestrate as o  # noqa: E402
+
+
+def judge(verdicts, hard=(), soft=()):
+    return json.dumps({"result": "fail" if hard else "pass", "hard": list(hard), "soft": list(soft),
+                       "archives": [{"verdict": v} for v in verdicts]})
+
+
+def pt(i, kind, anchor, **kw):
+    return dict(id=i, kind=kind, anchor=anchor, limit=anchor + 1, **kw)
+
+
+def ok(i, **kw):
+    return dict(id=i, mount="ok", judge_rc=0, verify={"a0.mochi": {"rc": 0}}, chkdsk_rc=0, **kw)
+
+
+def run(points, results):
+    s = {}
+    return o.evaluate(points, results, s), s
+
+
+def main():
+    points = [
+        pt(0, "ctl-synced", 1, probe=["ctl\\synced_1.bin"], expect={"ctl\\synced_1.bin": ("aa", 4)}),
+        pt(1, "ctl-unsynced", 2, probe=["ctl\\unsynced_1.bin"], expect={"ctl\\unsynced_1.bin": ("aa", 4)}),
+        pt(2, "flush", 10),
+        pt(3, "edge", 20),
+    ]
+    good = {
+        0: dict(id=0, mount="ok", facts={"ctl\\synced_1.bin": {"exists": True, "size": 4, "sha256": "aa"}}),
+        1: dict(id=1, mount="ok", facts={"ctl\\unsynced_1.bin": {"exists": False}}),
+        2: ok(2, judge=judge(["absent", "seq-0"])),
+        3: ok(3, judge=judge(["seq-2"] * 4)),
+    }
+    passed, s = run(points, good)
+    assert passed and s["verdict"] == "PASS", s
+
+    vac = {**good, 2: ok(2, judge=judge(["absent"] * 4)), 3: ok(3, judge=judge(["absent"] * 4))}
+    passed, s = run(points, vac)
+    assert not passed and any("vacuous" in h for h in s["hard_failures"]), s
+
+    bad2 = ok(2, judge=judge(["unopenable"], hard=["a0.mochi exists but does not open"]))
+    bad2["judge_rc"] = 1
+    passed, s = run(points, {**good, 2: bad2})
+    assert not passed and any("does not open" in h for h in s["hard_failures"]), s
+
+    broken = dict(id=0, mount="ok", facts={"ctl\\synced_1.bin": {"exists": False}})
+    passed, s = run(points, {**good, 0: broken})
+    assert not passed and any("controls failed" in h for h in s["hard_failures"]), s
+
+    full = dict(id=1, mount="ok", facts={"ctl\\unsynced_1.bin": {"exists": True, "size": 4, "sha256": "aa"}})
+    passed, s = run(points, {**good, 1: full})
+    assert not passed, s
+
+    missing = {k: v for k, v in good.items() if k != 2}
+    passed, s = run(points, missing)
+    assert not passed and any("no result" in h for h in s["hard_failures"]), s
+
+    nomount = {**good, 2: {"id": 2, "mount": "failed", "error": "volume did not mount as NTFS"}}
+    passed, s = run(points, nomount)
+    assert not passed and any("NTFS recovery" in h for h in s["hard_failures"]), s
+
+    # An Unconfirmed creation whose name is absent is allowed, and counted.
+    soft = {**good, 2: ok(2, judge=judge(["absent", "seq-0"], soft=["a0.mochi: absent after acknowledged seq 1; creation was DirectoryUnconfirmed"]))}
+    passed, s = run(points, soft)
+    assert passed and s["absent_after_unconfirmed_ack"] == 1, s
+    print("evaluate self-test ok")
+
+
+main()
