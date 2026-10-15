@@ -207,7 +207,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xdotool x11-utils dbus-x11 dbus \
-            desktop-file-utils libglib2.0-bin shared-mime-info xdg-utils
+            desktop-file-utils libglib2.0-bin shared-mime-info xdg-utils file-roller
       - name: Install from a path, register, start from the launcher, open a hard path, remove
         run: packaging/smoke-deb-desktop.sh "$(ls installer/*.deb)" "$RUNNER_TEMP/deb-results.json"
       - name: Summary

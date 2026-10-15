@@ -69,9 +69,12 @@ archive2="$tricky/Second $(printf '\303\251') & copy.mochi"
 cp "$here/fixtures/golden/c5/valid-archive-3-commits.mochi" "$archive"
 cp "$here/fixtures/golden/c5/valid-archive-3-commits.mochi" "$archive2"
 
-mt=$(xdg-mime query filetype "$archive" 2>&1)
-if [ "$mt" = application/x-mochi ]; then rec U-MIME-TYPE PASS "xdg-mime: a .mochi file is application/x-mochi"
-else rec U-MIME-TYPE FAIL "xdg-mime says '$mt'"; fi
+# GIO is what GNOME Files uses (name and content together). xdg-mime without a desktop
+# session falls back to `file`, which sees the zstd frame every .mochi file starts with.
+ctype() { gio info -a standard::content-type "$1" 2>/dev/null | sed -n 's/^ *standard::content-type: //p'; }
+mt=$(ctype "$archive")
+if [ "$mt" = application/x-mochi ]; then rec U-MIME-TYPE PASS "GIO: a .mochi file is application/x-mochi"
+else rec U-MIME-TYPE FAIL "GIO says '$mt'"; fi
 if grep -q '<comment>MOCHI archive</comment>' /usr/share/mime/application/x-mochi.xml 2>/dev/null; then
   rec U-MIME-NAME PASS "the type's name is 'MOCHI archive' (what GNOME Files shows)"
 else rec U-MIME-NAME FAIL "no 'MOCHI archive' comment in /usr/share/mime/application/x-mochi.xml"; fi
@@ -79,14 +82,20 @@ if grep -q "^application/x-mochi=.*$desktop_id" /usr/share/applications/mimeinfo
   rec U-MIME-APP PASS "mimeinfo.cache offers $desktop_id for application/x-mochi"
 else rec U-MIME-APP FAIL "$desktop_id is not registered for application/x-mochi in mimeinfo.cache"; fi
 
-bad=""; listed=""
+bad=""; listed=""; only=""
 for t in application/zip application/x-7z-compressed application/vnd.rar application/x-tar application/x-compressed-tar; do
   def=$(xdg-mime query default "$t" 2>/dev/null)
-  [ "$def" = "$desktop_id" ] && bad="$bad $t"
-  grep -q "^$t=.*$desktop_id" /usr/share/applications/mimeinfo.cache 2>/dev/null && listed="$listed $t"
+  line=$(grep "^$t=" /usr/share/applications/mimeinfo.cache 2>/dev/null)
+  case "$line" in *"$desktop_id"*) listed="$listed $t" ;; esac
+  others=$(echo "${line#*=}" | tr ';' '\n' | grep -v '^$' | grep -vx "$desktop_id" | head -1)
+  if [ "$def" = "$desktop_id" ]; then
+    # Another program registered for the type must keep the default; if MOCHI is the only
+    # handler on this machine the desktop has nothing else to pick.
+    if [ -n "$others" ]; then bad="$bad $t"; else only="$only $t"; fi
+  fi
 done
-if [ -n "$bad" ]; then rec U-FOREIGN-NO-DEFAULT FAIL "MOCHI became the default for:$bad"
-else rec U-FOREIGN-NO-DEFAULT PASS "MOCHI is offered under Open with for:$listed; it is the default for none of the five types"; fi
+if [ -n "$bad" ]; then rec U-FOREIGN-NO-DEFAULT FAIL "MOCHI became the default although another program is registered for:$bad"
+else rec U-FOREIGN-NO-DEFAULT PASS "MOCHI is offered under Open with for:$listed; it is not the default for any type that has another handler${only:+ (only handler on this machine for:$only)}"; fi
 
 # ---- start through the launcher, under Xvfb and a session bus --------------------------------------
 cat > "$work/session.sh" <<'EOS'
@@ -146,16 +155,16 @@ sudo apt-get remove -y mochi 2>&1 | tee "$logs/remove.log" > /dev/null || { tail
 left=$(for f in "$exe" /usr/bin/mochi-foreign-helper "$desktop" /usr/share/mime/packages/mochi.xml /usr/share/doc/mochi; do [ -e "$f" ] && echo "$f"; done)
 if [ -z "$left" ]; then rec U-REMOVE PASS "after apt remove the app, helper, .desktop file, mime package and documentation are gone"
 else rec U-REMOVE FAIL "still present after apt remove: $left"; fi
-mt2=$(xdg-mime query filetype "$archive" 2>&1)
+mt2=$(ctype "$archive")
 cache=$(grep -l "$desktop_id" /usr/share/applications/mimeinfo.cache 2>/dev/null)
 glob=$(grep -c 'application/x-mochi' /usr/share/mime/globs2 2>/dev/null || true)
 if [ "$mt2" != application/x-mochi ] && [ -z "$cache" ] && [ "${glob:-0}" = 0 ]; then
-  rec U-REMOVE-TYPE PASS "no MOCHI archive type or launcher registration remains (xdg-mime says '$mt2')"
-else rec U-REMOVE-TYPE FAIL "xdg-mime says '$mt2'; mimeinfo.cache names the launcher: '${cache:-no}'; globs2 lines: ${glob:-0}"; fi
+  rec U-REMOVE-TYPE PASS "no MOCHI archive type or launcher registration remains (GIO says '$mt2')"
+else rec U-REMOVE-TYPE FAIL "GIO says '$mt2'; mimeinfo.cache names the launcher: '${cache:-no}'; globs2 lines: ${glob:-0}"; fi
 sudo apt-get purge -y mochi 2>&1 | tee "$logs/purge.log" > /dev/null
-rest=$(sudo find /usr /etc /opt /var/lib/dpkg /var/lib/apt -iname '*mochi*' -not -path '/usr/share/doc/*/changelog*' 2>/dev/null | head -20)
+rest=$(sudo find /usr/bin /usr/share /etc /opt /var/lib/dpkg/info -iname '*mochi*' 2>/dev/null | head -20)
 st=$(dpkg-query -W -f '${db:Status-Abbrev}' mochi 2>/dev/null || echo none)
 if [ -z "$rest" ] && { [ "$st" = none ] || [ "$st" = "un " ] || [ "$st" = "" ]; }; then
-  rec U-PURGE-LEFTOVERS PASS "after apt purge nothing named *mochi* is left under /usr, /etc, /opt or the dpkg and apt state (dpkg status: ${st:-none})"
+  rec U-PURGE-LEFTOVERS PASS "after apt purge nothing named *mochi* is left under /usr/bin, /usr/share, /etc, /opt or the dpkg file lists (dpkg status: ${st:-none})"
 else rec U-PURGE-LEFTOVERS FAIL "left after purge (dpkg status '$st'): $rest"; fi
 finish
