@@ -8,6 +8,8 @@ ubuntu runner with /dev/kvm):
     iso                 download it and record its SHA-256
     image               unattended install into a qcow2 image (cached by the workflow)
     run                 format, run the workload on a logged disk, replay, judge
+    smoke               install the CI-built NSIS setup in the guest, check it, uninstall
+                        (docs/release-runbook.md "Automated"; no crash replay involved)
 
 Nothing here is Windows-specific logic that decides a verdict: the guest
 reports facts over COM1 and the judge is `g6_winworkload check` plus the
@@ -183,6 +185,7 @@ class Serial:
 
 class Qmp:
     def __init__(self, path, timeout=60):
+        self.lock = threading.Lock()  # screendumps are requested from the serial reader thread too
         end = time.time() + timeout
         while True:
             try:
@@ -199,17 +202,18 @@ class Qmp:
         self.cmd("qmp_capabilities")
 
     def cmd(self, name, **args):
-        self.f.write(json.dumps({"execute": name, "arguments": args}) + "\n")
-        self.f.flush()
-        while True:
-            line = self.f.readline()
-            if not line:
-                raise OSError("qmp closed")
-            r = json.loads(line)
-            if "return" in r:
-                return r["return"]
-            if "error" in r:
-                raise RuntimeError(r["error"])
+        with self.lock:
+            self.f.write(json.dumps({"execute": name, "arguments": args}) + "\n")
+            self.f.flush()
+            while True:
+                line = self.f.readline()
+                if not line:
+                    raise OSError("qmp closed")
+                r = json.loads(line)
+                if "return" in r:
+                    return r["return"]
+                if "error" in r:
+                    raise RuntimeError(r["error"])
 
     def key(self, qcode):
         self.cmd("send-key", keys=[{"type": "qcode", "data": qcode}], **{"hold-time": 150})
@@ -218,13 +222,13 @@ class Qmp:
 class Vm:
     """One QEMU guest: OVMF Secure Boot, swtpm TPM 2.0, SATA disks, COM1 socket."""
 
-    def __init__(self, work, name, *, sys_disk, vars_src, tpm_src, cds=(), data=(), on_line=None, sys_format="qcow2"):
+    def __init__(self, work, name, *, sys_disk, vars_src, tpm_src, cds=(), data=(), on_line=None, sys_format="qcow2", net=False):
         self.dir = pathlib.Path(work) / "vm" / name
         if self.dir.exists():
             shutil.rmtree(self.dir)
         self.dir.mkdir(parents=True)
         self.name = name
-        self.sys_disk, self.sys_format = sys_disk, sys_format
+        self.sys_disk, self.sys_format, self.net = sys_disk, sys_format, net
         self.cds, self.data = list(cds), list(data)
         self.vars = self.dir / "OVMF_VARS.fd"
         shutil.copy(vars_src, self.vars)
@@ -252,7 +256,7 @@ class Vm:
             "-chardev", f"socket,id=chrtpm,path={self.tpm}/sock",
             "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
             "-device", "tpm-crb,tpmdev=tpm0",
-            "-display", "none", "-vga", "std", "-nic", "none",
+            "-display", "none", "-vga", "std",
             "-rtc", "base=utc",
             "-chardev", f"socket,id=ser0,path={d}/serial.sock,server=on,wait=off",
             "-serial", "chardev:ser0",
@@ -260,6 +264,14 @@ class Vm:
             "-drive", f"if=none,id=sys,file={self.sys_disk},format={self.sys_format},cache=unsafe",
             "-device", "ide-hd,drive=sys,bus=ide.0,bootindex=2,serial=G6SYS",
         ]
+        # The crash-replay runs have no network (nothing may touch the logged disk
+        # but the workload). The installer smoke test gets a user-mode (NAT)
+        # adapter, an Intel e1000e that Windows drives with an inbox driver, so
+        # that the WebView2 bootstrapper can download.
+        if self.net:
+            a += ["-netdev", "user,id=n0", "-device", "e1000e,netdev=n0"]
+        else:
+            a += ["-nic", "none"]
         for i, cd in enumerate(self.cds):
             a += [
                 "-drive", f"if=none,id=cd{i},file={cd['path']},media=cdrom,readonly=on,format=raw",
@@ -544,13 +556,13 @@ def payload_iso(work, name, mode, extra):
     return iso
 
 
-def vm_from_image(work, name, image, cds, data, on_line):
+def vm_from_image(work, name, image, cds, data, on_line, net=False):
     overlay = work / "vm" / f"{name}.overlay.qcow2"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.unlink(missing_ok=True)
     run(["qemu-img", "create", "-f", "qcow2", "-b", image / "base.qcow2", "-F", "qcow2", overlay])
     return Vm(work, name, sys_disk=overlay, vars_src=image / "OVMF_VARS.fd", tpm_src=image / "tpm",
-              cds=cds, data=data, on_line=on_line)
+              cds=cds, data=data, on_line=on_line, net=net)
 
 
 def cmd_run(a):
@@ -748,6 +760,155 @@ def cmd_run(a):
     sys.exit(0 if verdict else 1)
 
 
+# ---- installer smoke test ---------------------------------------------------
+
+
+# Checks that must report a result. A check that never ran (the guest script
+# stopped early) is a failure, not an absence.
+SMOKE_REQUIRED = [
+    "W-ENV",
+    "A-CLEAN-START", "A-INSTALL", "A-FILES", "A-UNINSTALL-ENTRY", "A-START-MENU", "A-ASSOC-VERBS",
+    "A-FOREIGN-OFF", "A-WEBVIEW2", "A-UNINSTALL", "A-LEFTOVERS", "A-INSTALL-KEY",
+    "B-INSTALL", "B-ASSOC-VERBS", "B-FOREIGN-ON", "B-OPENWITH-ZIP", "B-LAUNCH", "B-DOUBLE-CLICK",
+    "B-SINGLE-INSTANCE", "B-VERB-OPEN", "B-VERB-EXTRACT-HERE", "B-VERB-EXTRACT-TO-FOLDER",
+    "B-VERB-ADD-FILE", "B-VERB-ADD-FOLDER", "B-VERB-ADD-MULTI",
+    "B-FOREIGN-OPEN-ZIP", "B-FOREIGN-OPEN-7Z", "B-FOREIGN-OPEN-TAR", "B-FOREIGN-OPEN-TARGZ",
+    "B-UNINSTALL", "B-LEFTOVERS", "B-INSTALL-KEY",
+]
+
+
+def evaluate_smoke(results, done, aborts):
+    """Verdict of an installer smoke run.
+
+    `results`: the guest's records (id, status, title, detail). Statuses: PASS,
+    FAIL (an assertion did not hold), ERROR (the guest script broke), INFO (an
+    observation, never gates), NOT-RUN (could not be judged; reported loudly,
+    never counted as a pass), KNOWN-GAP (a real failure of a checklist item that
+    is already written down as a finding and is reported by its own check; it
+    does not fail the run and is never shown as a pass). Returns (verdict,
+    problems): FAIL when any check failed or errored, a required check is
+    missing, or the guest did not finish; otherwise INCOMPLETE when something was
+    NOT-RUN, FINDINGS when a KNOWN-GAP was reported, else PASS.
+    """
+    problems = []
+    by_id = {r["id"]: r for r in results}
+    for r in results:
+        if r["status"] in ("FAIL", "ERROR"):
+            problems.append(f"{r['id']} {r['status']}: {r['detail']}")
+    for i in SMOKE_REQUIRED:
+        if i not in by_id:
+            problems.append(f"{i} MISSING: the guest never reported it")
+    if not done:
+        problems.append("the guest did not finish: " + ("; ".join(aborts) if aborts else "no SMOKE-DONE line"))
+    elif aborts:
+        problems.extend(f"guest reported: {a}" for a in aborts)
+    if problems:
+        return "FAIL", problems
+    if any(r["status"] == "NOT-RUN" for r in results):
+        return "INCOMPLETE", []
+    gaps = [f"{r['id']}: {r['detail']}" for r in results if r["status"] == "KNOWN-GAP"]
+    if gaps:
+        return "FINDINGS", gaps
+    return "PASS", []
+
+
+def render_smoke_md(s):
+    w = s.get("windows", {})
+    lines = [
+        f"# Installer smoke, {s['label']}: {s['verdict']}", "",
+        f"* Guest: {w.get('Family')} {w.get('EditionID')} {w.get('DisplayVersion')}, build {w.get('CurrentBuild')}.{w.get('UBR')}",
+        f"* Installer: {s.get('installer')}",
+        f"* Subject build: {s.get('subject_build', 'n/a')}",
+        f"* Guest facts: {s.get('facts')}",
+        f"* Counts: {s.get('counts')}", "",
+    ]
+    if s.get("problems"):
+        lines += ["## Problems" if s["verdict"] == "FAIL" else "## Findings (reported, not passes)", ""] + [f"- {p}" for p in s["problems"]] + [""]
+    lines += ["| Check | Result | What was seen |", "|---|---|---|"]
+    for r in s["results"]:
+        d = str(r["detail"]).replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| `{r['id']}` {r['title']} | {r['status']} | {d[:900]} |")
+    return "\n".join(lines) + "\n"
+
+
+def cmd_smoke(a):
+    work = pathlib.Path(a.work)
+    image = work / "image"
+    ev = pathlib.Path(a.evidence) / a.label
+    ev.mkdir(parents=True, exist_ok=True)
+    (ev / "screens").mkdir(exist_ok=True)
+    setup = pathlib.Path(a.setup)
+    fx = pathlib.Path(a.fixtures)
+    extra = {"mochi-setup.exe": setup, "smokelib.ps1": GUEST / "payload/smokelib.ps1",
+             "user.ps1": GUEST / "payload/user.ps1"}
+    # Fixtures: a valid archive for the Explorer verbs, and one of each foreign
+    # format for the opt-in handler. Whatever is missing is reported NOT-RUN by the guest.
+    for name, rel in (("fx-valid.mochi", "golden/c5/valid-archive-3-commits.mochi"),
+                      ("fx-basic.zip", "foreign/basic_infozip.zip"), ("fx-basic.7z", "foreign/7z/basic.7z"),
+                      ("fx-basic.tar", "foreign/basic.tar"), ("fx-basic.tar.gz", "foreign/basic.tar.gz")):
+        if (fx / rel).exists():
+            extra[name] = fx / rel
+    opts = work / f"options-{a.label}.json"
+    opts.write_text(json.dumps({"remove_webview2": a.remove_webview2}) + "\n")
+    extra["options.json"] = opts
+    pl = payload_iso(work, "smoke-" + a.label, "smoke", extra)
+
+    summary = {"label": a.label, "os": a.os, "installer": setup.name, "remove_webview2": a.remove_webview2,
+               "started": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    if a.subject:
+        summary["subject_build"] = a.subject
+    bi = json.loads((image / "build-info.json").read_text())
+    bi["Family"] = "Windows 11" if int(bi.get("CurrentBuild", 0)) >= 22000 else "Windows 10"
+    summary["windows"] = bi
+    results, facts, aborts = [], {}, []
+
+    def on_line(l):
+        if l.startswith("SMOKE-RESULT "):
+            results.append(json.loads(l[len("SMOKE-RESULT "):]))
+        elif l.startswith("SMOKE-FACT "):
+            f = json.loads(l[len("SMOKE-FACT "):])
+            facts[f["k"]] = f["v"]
+        elif l.startswith("SMOKE-ABORT"):
+            aborts.append(l)
+        elif l.startswith("SHOTREQ "):
+            label = l[len("SHOTREQ "):]
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", label)
+            try:
+                vm.qmp.cmd("screendump", filename=str(ev / "screens" / f"{name}.png"), format="png")
+            except Exception as e:
+                log("screendump failed:", e)
+            vm.serial.send(f"SHOTTED {label}")
+
+    vm = vm_from_image(work, "smoke-" + a.label, image, [{"path": pl}], [], on_line, net=True)
+    t0 = time.time()
+    try:
+        vm.start()
+        how = vm.wait(a.timeout * 60, shot_every=600,
+                      tick=lambda t: log(f"smoke {t / 60:.0f} min, serial lines so far {len(vm.serial.lines)}"))
+    finally:
+        vm.stop()
+        keep_logs(vm, ev)
+    log(f"smoke VM finished: {how} after {(time.time() - t0) / 60:.1f} min")
+    done = vm.serial.seen("SMOKE-DONE")
+    for l in vm.serial.lines:
+        if l.startswith(("USER ", "USERLOG ", "SMOKE-", "ENTRY", "PSERR")) and not l.startswith("SMOKE-RESULT"):
+            print("    guest:", l[:300], flush=True)
+    if not done:
+        show_serial(vm, 80)
+    verdict, problems = evaluate_smoke(results, done, aborts)
+    counts = {}
+    for r in results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    summary.update({"verdict": verdict, "problems": problems, "results": results, "facts": facts, "counts": counts,
+                    "vm_exit": how, "minutes": round((time.time() - t0) / 60, 1),
+                    "finished": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    write_json(ev / "summary.json", summary)
+    (ev / "summary.md").write_text(render_smoke_md(summary))
+    print((ev / "summary.md").read_text(), flush=True)
+    log("RESULT", a.label, verdict)
+    sys.exit(0 if verdict in ("PASS", "INCOMPLETE", "FINDINGS") else 1)
+
+
 def ack_line(m, strict_creation):
     """`name seq D|U` for an acknowledgement mark. With --strict-creation a creation
     acknowledged DirectoryUnconfirmed is judged as if it had said Durable: the
@@ -888,6 +1049,16 @@ def main():
     p.add_argument("--run-timeout", type=int, default=40, help="minutes")
     p.add_argument("--check-timeout", type=int, default=30, help="minutes per batch")
     p.set_defaults(f=cmd_run)
+    p = sub.add_parser("smoke")
+    p.add_argument("--label", required=True)
+    p.add_argument("--setup", required=True, help="the NSIS setup .exe under test")
+    p.add_argument("--fixtures", required=True, help="the repository's fixtures/ directory")
+    p.add_argument("--subject", default="", help="what is being tested, for the report (ref, sha)")
+    p.add_argument("--evidence", default=os.environ.get("G6_EVIDENCE", "/var/tmp/g6/evidence"))
+    p.add_argument("--remove-webview2", action="store_true",
+                   help="uninstall the WebView2 runtime first (if present) so the installer's bootstrapper has to run")
+    p.add_argument("--timeout", type=int, default=60, help="minutes")
+    p.set_defaults(f=cmd_smoke)
     a = ap.parse_args()
     global ISO_URL
     ISO_URL = ISOS[a.os]
