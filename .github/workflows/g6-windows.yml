@@ -1,48 +1,233 @@
 name: g6-windows
 
-# TEMPORARY probe (G6b step 1). Replaced by the real workflow once KVM and the
-# evaluation media are confirmed.
+# Gate G6 (spec Annex B.2.6, G6: Windows durability), hardware-free: block-level
+# crash replay of a real Windows 11 Enterprise (evaluation) build in a QEMU/KVM
+# VM, the CrashMonkey / dm-log-writes method. Method, limits and evidence:
+# docs/g6-windows-crash-replay.md. Counterpart of the `powercut` job in ci.yml
+# (G7, Linux).
+#
+# Slow (the image build alone can take an hour), so it never runs on pull
+# requests; it runs on demand and weekly.
+#
+#   gh workflow run g6-windows.yml -f ref=<branch or sha under test>
+#
+# `ref` is the code whose Windows storage code is tested (for example the G6a
+# branch); `baseline_ref` is the reference run (default main: the current
+# link-then-unlink publication). The harness itself (this workflow, ci/g6-windows*,
+# and the g6_winworkload example) always comes from the commit the workflow runs
+# at and is overlaid on the tested tree, so a ref older than the harness can be
+# tested too.
+
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref whose Windows storage code is tested (default: the commit this workflow runs at)"
+        required: false
+        default: ""
+      baseline_ref:
+        description: "Reference run for comparison (empty: skip)"
+        required: false
+        default: "main"
+      max_flush_points:
+        description: "Upper bound on FLUSH/FUA replay points"
+        required: false
+        default: "72"
+      between_points:
+        description: "Replay points between flushes (unflushed writes dropped)"
+        required: false
+        default: "24"
+      image_only:
+        description: "Build (and cache) the Windows image, then stop"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 3 * * 1"
+  # TEMPORARY (G6b development): remove before merge.
   pull_request:
     paths:
       - .github/workflows/g6-windows.yml
       - ci/g6-windows-crashreplay.sh
+      - ci/g6-windows/**
+      - crates/mochi-testkit/examples/g6_winworkload.rs
+
+concurrency:
+  group: g6-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  probe:
+  plan:
     runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - name: Host
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.baseline_ref || 'main' }}
         run: |
-          uname -r; nproc; free -g; df -h /; lscpu | grep -i -E 'model name|virtualization|hypervisor'
-          ls -l /dev/kvm || echo "no /dev/kvm"
-      - name: Enable KVM via udev
+          resolve() {
+            git rev-parse --verify --quiet "origin/$1^{commit}" || git rev-parse --verify --quiet "$1^{commit}" || {
+              echo "::error::cannot resolve ref '$1'"; exit 1; }
+          }
+          cand_ref=${INPUT_REF:-${GITHUB_SHA}}
+          cand=$(resolve "$cand_ref")
+          items="{\"label\":\"candidate\",\"ref\":\"$cand_ref\",\"sha\":\"$cand\"}"
+          if [ -n "$INPUT_BASELINE" ]; then
+            base=$(resolve "$INPUT_BASELINE")
+            if [ "$base" != "$cand" ]; then
+              items="$items,{\"label\":\"baseline\",\"ref\":\"$INPUT_BASELINE\",\"sha\":\"$base\"}"
+            else
+              echo "baseline is the same commit as the candidate; one run covers both"
+            fi
+          fi
+          echo "matrix=[$items]" | tee -a "$GITHUB_OUTPUT"
+
+  build-windows:
+    # The guest runs Windows client binaries built natively here. The harness
+    # example is overlaid on the tested tree; crt-static so the VM needs no
+    # Visual C++ redistributable.
+    needs: plan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: subject
+      - name: Overlay the harness example on the tested tree
+        shell: bash
+        run: cp harness/crates/mochi-testkit/examples/g6_winworkload.rs subject/crates/mochi-testkit/examples/g6_winworkload.rs
+      - name: Install pinned toolchain
+        shell: bash
+        working-directory: subject
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: subject
+          key: g6-${{ matrix.label }}
+      - name: Build
+        shell: bash
+        working-directory: subject
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -l /dev/kvm || echo "still no /dev/kvm"
-          test -w /dev/kvm && echo "KVM USABLE" || echo "KVM NOT USABLE"
-      - name: QEMU, OVMF, swtpm
+          cargo build --release --locked -p mochi-cli --bin mochi
+          cargo build --release --locked -p mochi-testkit --example g6_winworkload
+          mkdir ../bins
+          cp target/release/mochi.exe target/release/examples/g6_winworkload.exe ../bins/
+          {
+            echo "label=${{ matrix.label }} ref=${{ matrix.ref }} sha=${{ matrix.sha }}"
+            echo "harness=$GITHUB_SHA"
+            rustc -Vv | sed -n '1p;2p;5p'
+          } | tee ../bins/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: g6-bins-${{ matrix.label }}
+          path: bins/
+          retention-days: 14
+
+  replay:
+    needs: [plan, build-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      G6_WORK: /var/tmp/g6
+      G6_EVIDENCE: /var/tmp/g6/evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: g6-bins-*
+          path: bins
+      - name: Free disk space
+        run: bash ci/g6-windows-crashreplay.sh free-disk
+      - name: Host setup (KVM, QEMU, OVMF, swtpm, dm-log-writes, replay-log)
+        run: bash ci/g6-windows-crashreplay.sh setup
+      - name: Log reader self-test (against the real replay-log)
+        run: bash ci/g6-windows-crashreplay.sh selftest
+      - name: Resolve the Microsoft evaluation ISO
+        id: iso
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools libdevmapper-dev dmsetup build-essential git
-          qemu-system-x86_64 --version; swtpm --version
-          ls /usr/share/OVMF/ /usr/share/ovmf 2>&1 | head -30
-      - name: Build replay-log (xfstests src/log-writes)
+          bash ci/g6-windows-crashreplay.sh iso-info
+          echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - name: Restore the installed Windows image
+        id: img
+        uses: actions/cache/restore@v4
+        with:
+          path: /var/tmp/g6/image
+          # ISO name carries the Windows build; the month bucket keeps a cached
+          # image well inside the evaluation's 90-day term.
+          key: g6-win-image-v1-${{ hashFiles('ci/g6-windows/guest/image/**') }}-${{ steps.iso.outputs.iso_name }}-${{ steps.iso.outputs.month }}
+      - name: Download the evaluation ISO
+        if: steps.img.outputs.cache-hit != 'true'
+        run: bash ci/g6-windows-crashreplay.sh iso
+      - name: Unattended Windows install
+        if: steps.img.outputs.cache-hit != 'true'
         run: |
-          sudo modprobe dm-log-writes && echo "dm-log-writes loaded"
-          git clone --depth 1 https://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git /tmp/xfstests || git clone --depth 1 https://github.com/kdave/xfstests /tmp/xfstests
-          git -C /tmp/xfstests rev-parse HEAD
-          ls /tmp/xfstests/src/log-writes
-          cd /tmp/xfstests/src/log-writes && gcc -O2 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I. -o replay-log replay-log.c log-writes.c -ldevmapper 2>&1 | tail -20
-          ls -l /tmp/xfstests/src/log-writes/replay-log
-      - name: Microsoft evaluation media reachability
+          bash ci/g6-windows-crashreplay.sh image
+          sudo chmod -R a+rX /var/tmp/g6/image
+      - name: Save the installed Windows image
+        if: steps.img.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: /var/tmp/g6/image
+          key: ${{ steps.img.outputs.cache-primary-key }}
+      - name: Crash replay, candidate
+        id: candidate
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) }}
+        continue-on-error: true
         run: |
-          for id in 2382600 2289029; do
-            echo "== linkid=$id"
-            curl -sIL -m 30 "https://go.microsoft.com/fwlink/?linkid=$id&clcid=0x409&culture=en-us&country=us" | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8
+          bash ci/g6-windows-crashreplay.sh run candidate bins/g6-bins-candidate \
+            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}"
+      - name: Crash replay, baseline
+        id: baseline
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) && hashFiles('bins/g6-bins-baseline/**') != '' }}
+        continue-on-error: true
+        run: |
+          bash ci/g6-windows-crashreplay.sh run baseline bins/g6-bins-baseline \
+            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}"
+      - name: Summary
+        if: always()
+        run: |
+          sudo chmod -R a+rX /var/tmp/g6 || true
+          for l in candidate baseline; do
+            f=/var/tmp/g6/evidence/$l/summary.md
+            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
           done
-          echo "== windows 10 eval page"
-          curl -sI -m 30 https://www.microsoft.com/en-us/evalcenter/download-windows-10-enterprise | grep -i -E '^(HTTP|location)'
+          cat /var/tmp/g6/tools.json >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: g6-evidence
+          path: |
+            /var/tmp/g6/evidence
+            /var/tmp/g6/evidence-image
+            /var/tmp/g6/tools.json
+            /var/tmp/g6/win.iso.json
+            /var/tmp/g6/image/build-info.json
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Verdict
+        # The candidate decides the job. The baseline is the reference run:
+        # its outcome is reported in the summary and the evidence only.
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) }}
+        run: |
+          echo "candidate: ${{ steps.candidate.outcome }}; baseline: ${{ steps.baseline.outcome }}"
+          [ "${{ steps.candidate.outcome }}" = success ]
