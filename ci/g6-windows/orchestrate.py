@@ -266,9 +266,23 @@ class Vm:
         return a
 
     def start(self):
-        run(["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={self.tpm}",
-             "--ctrl", f"type=unixio,path={self.tpm}/sock", "--log", f"file={self.tpm}/swtpm.log",
-             "--pid", f"file={self.tpm}/swtpm.pid", "--daemon"])
+        # Not --daemon: a failure must be visible. Ubuntu confines swtpm with
+        # AppArmor; setup disables that profile, and stderr is kept regardless.
+        self.swtpm = subprocess.Popen(
+            ["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={self.tpm}",
+             "--ctrl", f"type=unixio,path={self.tpm}/sock", "--log", f"file={self.tpm}/swtpm.log,level=5"],
+            stdout=open(self.tpm / "swtpm.out", "w"), stderr=subprocess.STDOUT)
+        for _ in range(100):
+            if (self.tpm / "sock").exists():
+                break
+            if self.swtpm.poll() is not None:
+                break
+            time.sleep(0.1)
+        if not (self.tpm / "sock").exists():
+            for n in ("swtpm.out", "swtpm.log"):
+                f = self.tpm / n
+                print(f"--- {n}", f.read_text() if f.exists() else "(missing)", flush=True)
+            raise SystemExit(f"swtpm did not start (exit {self.swtpm.poll()})")
         args = self._args()
         (self.dir / "cmdline").write_text(" ".join(args) + "\n")
         log("+", " ".join(args))
@@ -327,9 +341,13 @@ class Vm:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait()
-        pid = self.tpm / "swtpm.pid"
-        if pid.exists():
-            subprocess.run(["kill", pid.read_text().strip()], check=False)
+        sw = getattr(self, "swtpm", None)
+        if sw and sw.poll() is None:
+            sw.terminate()
+            try:
+                sw.wait(10)
+            except subprocess.TimeoutExpired:
+                sw.kill()
 
 
 def build_iso(out_iso, label, files):
@@ -382,7 +400,7 @@ def cmd_image(a):
         raise SystemExit("image build failed: the guest never reported PROVISIONED (see evidence-image/)")
     run(["qemu-img", "convert", "-O", "qcow2", "-c", sysdisk, img / "base.qcow2"])
     shutil.copy(vm.vars, img / "OVMF_VARS.fd")
-    shutil.copytree(vm.tpm, img / "tpm", ignore=shutil.ignore_patterns("sock", "*.pid", "*.log"))
+    shutil.copytree(vm.tpm, img / "tpm", ignore=shutil.ignore_patterns("sock", "*.pid", "*.log", "*.out"))
     info["iso"] = iso_info
     info["built"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     info["install_minutes"] = round((time.time() - t0) / 60, 1)
@@ -398,6 +416,9 @@ def keep_logs(vm, dest):
     for n in ("serial.log", "qemu.out", "cmdline"):
         if (vm.dir / n).exists():
             shutil.copy(vm.dir / n, dest / f"{vm.name}.{n}")
+    for n in ("swtpm.out", "swtpm.log"):
+        if (vm.tpm / n).exists():
+            shutil.copy(vm.tpm / n, dest / f"{vm.name}.{n}")
     if (vm.dir / "shots").exists():
         shutil.copytree(vm.dir / "shots", dest / f"{vm.name}.shots", dirs_exist_ok=True)
 

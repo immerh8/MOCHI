@@ -43,12 +43,22 @@ setup() {
     echo "KVM usable: $(ls -l /dev/kvm)"
     as_root apt-get update -qq
     as_root apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm \
-        xorriso libdevmapper-dev dmsetup build-essential git curl python3
+        xorriso libdevmapper-dev dmsetup build-essential git curl python3 apparmor-utils
     as_root modprobe dm-log-writes || {
         as_root apt-get install -y "linux-modules-extra-$(uname -r)"
         as_root modprobe dm-log-writes
     }
     as_root modprobe loop || true
+    # Ubuntu confines swtpm (and QEMU) with AppArmor profiles that do not expect
+    # state under /var/tmp; this is a throwaway CI host.
+    if command -v aa-disable >/dev/null 2>&1; then
+        as_root aa-disable /usr/bin/swtpm 2>&1 || true
+    fi
+    if [ -d /etc/apparmor.d ] && [ -e /etc/apparmor.d/usr.bin.swtpm ]; then
+        as_root mkdir -p /etc/apparmor.d/disable
+        as_root ln -sf /etc/apparmor.d/usr.bin.swtpm /etc/apparmor.d/disable/ || true
+        as_root apparmor_parser -R /etc/apparmor.d/usr.bin.swtpm 2>&1 || true
+    fi
     # replay-log is not packaged; xfstests' src/log-writes builds with plain gcc.
     local src=/tmp/xfstests rev=""
     rm -rf "$src"
