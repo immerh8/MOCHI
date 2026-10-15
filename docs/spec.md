@@ -1069,7 +1069,7 @@ The following is a real report of schema version 1, abridged only in its two wal
 {
   "schema_version": 1,
   "archive_id": "031d11be423d1e3fcbbf47098791541cbdc98abe3dc6a77726d38b31d43ff9e1",
-  "checked_commit": "c2de8b0bd51c7715d4771dacdda7aaf6232b665337f2bc050b50857c0ab98b55",
+  "checked_commit": "ebbd1cb928a2817b48048bc7695174d13bc9e6265fc66e91d4f9b1ce7f3b5298",
   "expected_head": null,
   "freshness_anchor": "none",
   "tool": {
@@ -1077,7 +1077,7 @@ The following is a real report of schema version 1, abridged only in its two wal
     "version": "0.1.0",
     "spec_revision": "2.0",
     "wire_generation": 2,
-    "format_status": "experimental / draft-compatible"
+    "format_status": "1.0 (ratified format)"
   },
   "started_at": "2026-10-14T09:00:00.000000000Z",
   "completed_at": "2026-10-14T09:00:00.250000000Z",

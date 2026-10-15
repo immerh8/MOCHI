@@ -86,14 +86,15 @@ fn no_arguments_is_an_invocation_error() {
 }
 
 #[test]
-fn help_and_version_succeed_and_carry_the_draft_label() {
+fn help_and_version_succeed_and_carry_the_format_status() {
     let (code, out, _) = go(&["--help"]);
     assert_eq!(code, exit::OK);
     assert!(out.contains("not a backup tool"));
 
     let (code, out, _) = go(&["--version"]);
     assert_eq!(code, exit::OK);
-    assert!(out.contains("experimental / draft-compatible"), "{out}");
+    assert!(out.contains("1.0 (ratified format)"), "{out}");
+    assert!(!out.contains("draft-compatible"), "{out}");
     assert!(out.contains("not a backup"), "{out}");
 }
 

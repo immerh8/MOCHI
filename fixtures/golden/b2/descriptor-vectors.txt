@@ -6,7 +6,7 @@ valid-descriptor-minimal valid
 valid-descriptor-declared-limits valid
 reject-descriptor-schema-version rejects UNSUPPORTED_FEATURE
 reject-descriptor-generation rejects UNSUPPORTED_FEATURE
-reject-descriptor-draft-null rejects UNSUPPORTED_FEATURE
+reject-descriptor-draft-2 rejects UNSUPPORTED_FEATURE
 reject-descriptor-draft-1 rejects UNSUPPORTED_FEATURE
 reject-descriptor-draft-3 rejects UNSUPPORTED_FEATURE
 reject-descriptor-draft-type rejects DESCRIPTOR_INVALID

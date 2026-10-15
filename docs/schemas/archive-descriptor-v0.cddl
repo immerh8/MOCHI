@@ -14,9 +14,10 @@
 ;   * features are strictly increasing (ENVELOPE_INVALID) and every entry is
 ;     known (UNSUPPORTED_FEATURE); the Encrypted feature (1) cannot be
 ;     combined with the TAR-compatible constraint (DESCRIPTOR_INVALID);
-;   * the draft identifier is the one this build reads (a different number,
-;     or null, is refused as a draft from another batch or a ratified
-;     archive), and the wire generation is 2;
+;   * the draft identifier is null (a ratified 1.0 archive). A number is a
+;     pre-1.0 draft: every command but `migrate` refuses it
+;     (UNSUPPORTED_FEATURE), `migrate` reads draft 2 only, and no build reads
+;     another number. The wire generation is 2;
 ;   * the redundancy suite is known (UNSUPPORTED_FEATURE).
 ;
 ; The descriptor holds only creation-time facts. It never locates key
@@ -34,9 +35,11 @@ descriptor = {
   ? 6: declared-limits,       ; present ONLY when the writer opted into limits above reader defaults (D10.8)
 }
 
-; Pre-1.0 draft identifier. 2 = the layout frozen at G12 (1 was the pre-freeze batch and is refused). Null only in a
-; ratified 1.0 archive. Archives from before this batch carry no
-; descriptor and are rejected as legacy drafts (§26).
+; Draft identifier. Null = a ratified 1.0 archive, which is all a 1.0 writer
+; writes. A number is a pre-1.0 draft: 2 = the layout frozen at G12 (1 was the
+; pre-freeze batch). The two layouts differ in this value alone (and what
+; hashes it). Archives from before the batches carry no descriptor and are
+; rejected as legacy drafts (§26).
 draft = uint / null
 
 constraints = {

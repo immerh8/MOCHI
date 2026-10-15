@@ -59,7 +59,7 @@ pub struct ToolInfo {
     pub version: String,
     pub spec_revision: String,
     pub wire_generation: u32,
-    /// Always the draft label until the §28 gates pass.
+    /// The support level (spec §28): `mochi_format::version::FORMAT_STATUS`.
     pub format_status: String,
 }
 
@@ -489,9 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_info_carries_the_draft_label() {
+    fn tool_info_carries_the_format_status() {
         let t = ToolInfo::current();
-        assert_eq!(t.format_status, "experimental / draft-compatible");
+        assert_eq!(t.format_status, "1.0 (ratified format)");
         assert_eq!(t.spec_revision, "2.0");
     }
 

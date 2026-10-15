@@ -668,17 +668,17 @@ const REJECTS: &[(&str, Rec, Defect)] = &[
     (
         "b2/reject-descriptor-draft-1.bin",
         Rec::Descriptor,
-        Semantic("the draft identifier is the build's own (D24); 1 is the pre-freeze draft"),
+        Semantic("a draft identifier is refused by a 1.0 build (D24); 1 is the pre-freeze draft"),
+    ),
+    (
+        "b2/reject-descriptor-draft-2.bin",
+        Rec::Descriptor,
+        Semantic("a draft identifier is refused by a 1.0 build (D24); only `migrate` reads 2"),
     ),
     (
         "b2/reject-descriptor-draft-3.bin",
         Rec::Descriptor,
-        Semantic("the draft identifier is the build's own (D24)"),
-    ),
-    (
-        "b2/reject-descriptor-draft-null.bin",
-        Rec::Descriptor,
-        Semantic("null is a ratified archive; this build reads drafts"),
+        Semantic("a draft identifier is refused by a 1.0 build (D24)"),
     ),
     (
         "b2/reject-descriptor-draft-type.bin",
@@ -1460,9 +1460,10 @@ fn refresh_commit_id(v: &mut Value) {
 fn expected_structural_gap(kind: Rec, what: &str) -> Option<&'static str> {
     match (kind, what) {
         // `draft = uint / null`: null is the ratified archive's identifier
-        // (D24), which this pre-1.0 build refuses by policy.
-        (Rec::Descriptor, "retype to null at /3") => {
-            Some("a null draft identifier is a ratified archive; this build reads drafts")
+        // (D24); a number is a draft, which a 1.0 build refuses (only
+        // `migrate` reads draft 2).
+        (Rec::Descriptor, "retype to uint at /3") => {
+            Some("a number is a draft identifier; a 1.0 build refuses it")
         }
         _ => None,
     }
@@ -1487,7 +1488,7 @@ fn expected_value_gap(kind: Rec, what: &str) -> Option<&'static str> {
         }
     }
     match (kind, pos.as_str()) {
-        (Rec::Descriptor, "/3") => Some("the draft identifier is the build's own"),
+        (Rec::Descriptor, "/3") => Some("a 1.0 archive's draft identifier is null (D24)"),
         (Rec::Descriptor, "/4/[0]") => Some("a required feature is known"),
         (Rec::Descriptor, "/5/1/0") => Some("the redundancy suite is known"),
         (Rec::Commit, "/10/0") => Some("the descriptor is referenced at offset 0"),

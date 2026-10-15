@@ -2,7 +2,7 @@
 //!
 //! * Built: `create`, `append`, `list`, `get`, `snapshot list`, `snapshot
 //!   retain`/`expire`/`release`, `search`, `verify`, `fsck`, `restore-test`,
-//!   `checkpoint`, `compact`, `gc plan`, `gc apply`, `repair plan`,
+//!   `checkpoint`, `compact`, `migrate`, `gc plan`, `gc apply`, `repair plan`,
 //!   `repair apply`, `rekey`, `dump-index`, `health`.
 //! * In 1.0 scope but not built yet: exit 3 with `NOT_IMPLEMENTED` (a
 //!   development-build condition, never a success). Their arguments are
@@ -20,7 +20,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "mochi",
     version,
-    about = "MOCHI archiver (experimental / draft-compatible; not a backup tool)",
+    about = "MOCHI archiver (not a backup tool)",
     arg_required_else_help = true,
     disable_help_subcommand = true
 )]
@@ -391,6 +391,16 @@ pub struct CompactArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct MigrateArgs {
+    /// The draft archive to convert (the last draft only). It is opened
+    /// read-only and never written or removed.
+    pub archive: PathBuf,
+    /// The new 1.0 archive. It must not exist; nothing is ever replaced.
+    #[arg(long, short = 'o', value_name = "NEW_ARCHIVE")]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
 pub struct GcPlanArgs {
     pub archive: PathBuf,
     /// Write the plan (JSON) to this file, which must not exist. Without
@@ -556,6 +566,8 @@ pub enum Command {
     Checkpoint(CheckpointArgs),
     /// Create a compacted representation (a new archive; the source is kept).
     Compact(CompactArgs),
+    /// Convert a draft-2 archive into a new 1.0 archive (the source is kept).
+    Migrate(MigrateArgs),
     /// Plan or apply garbage collection.
     #[command(subcommand)]
     Gc(GcCommand),
@@ -607,6 +619,7 @@ impl Command {
             Command::Repair(RepairCommand::Apply(_)) => "repair apply",
             Command::Checkpoint(_) => "checkpoint",
             Command::Compact(_) => "compact",
+            Command::Migrate(_) => "migrate",
             Command::Gc(GcCommand::Plan(_)) => "gc plan",
             Command::Gc(GcCommand::Apply(_)) => "gc apply",
             Command::Rekey(_) => "rekey",
@@ -646,6 +659,7 @@ impl Command {
             | Command::RestoreTest(_)
             | Command::Checkpoint(_)
             | Command::Compact(_)
+            | Command::Migrate(_)
             | Command::Gc(_)
             | Command::Rekey(_)
             | Command::Repair(_) => Scope::Built,

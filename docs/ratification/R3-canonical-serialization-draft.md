@@ -449,7 +449,7 @@ be refused.
 | Schema | Rule | Checked in | Vector |
 |---|---|---|---|
 | all | features strictly increasing, and every entry known | `envelope::check_required_features` | `c5/reject-commit-features-not-increasing.bin`, `c5/reject-commit-required-feature.bin` |
-| descriptor | the draft identifier is the build's own (null is a ratified archive) | `descriptor.rs` | `b2/reject-descriptor-draft-1.bin`, `b2/reject-descriptor-draft-3.bin`, `b2/reject-descriptor-draft-null.bin` |
+| descriptor | the draft identifier is null (a ratified 1.0 archive); a number is a draft, refused by every command but `migrate`, which reads draft 2 only (D24) | `descriptor.rs` | `b2/reject-descriptor-draft-1.bin`, `b2/reject-descriptor-draft-2.bin`, `b2/reject-descriptor-draft-3.bin` |
 | descriptor | the redundancy suite is known | `descriptor.rs` | gap |
 | descriptor | the Encrypted feature cannot be combined with the TAR-compatible constraint | `descriptor.rs` | gap |
 | commit | parent sequence = sequence − 1 | `commit.rs` `check_structure` | `c5/reject-commit-parent-seq-gap.bin` |
@@ -630,7 +630,7 @@ Fixed at the freeze; each was a guess a reader would have had to make.
    a byte string made longer or shorter. Wherever the code accepts a mutant, the schema
    accepts it (the schema is never stricter than the code); wherever the mutation is
    structural and the code refuses it, the schema refuses it too. The one exception, a
-   null draft identifier, is named in the test with its reason. Where only the *value*
+   number as the draft identifier (a draft; null is the ratified archive), is named in the test with its reason. Where only the *value*
    differs and the code refuses it, the schema may be looser only at the positions
    `expected_value_gap` lists, each with the §7.1 rule that refuses it.
 5. **The bounded values** are walked on both sides of each edge, in every manifest
@@ -739,7 +739,7 @@ confirmed at the freeze (table after item 9). No byte changed.
 | 2. Provenance reason 0 | **Code stands**; the narrowed `? 3: 1` is an erratum to the partly frozen R5 schema (no archive ever written carries an explicit 0, which the code has always refused). | Spec B.2.10 item 10 says reason 0 is the absence of key 3. |
 | 3. Descriptor key 5.1 | **Added** to B.2.2. | Spec B.2.2. |
 | 4. KDF lower bounds | **Keep at use, not at decode** (no code change in a format freeze). It is now a rule (§7.3), because a keyless reader is a conformance case. | §7.3. |
-| 5. Wire generation and draft identifier | **Decided with D24:** both are schema-valid and refused as `UNSUPPORTED_FEATURE`; the draft identifier is 2. | R1 §1. |
+| 5. Wire generation and draft identifier | **Decided with D24:** both are schema-valid and refused as `UNSUPPORTED_FEATURE`; the draft identifier is 2. *At the 1.0 flip (W20):* a 1.0 writer writes null; draft 2 is refused by every command but `migrate`. | R1 §1; spec B.2.14. |
 | 6. `CborLimits` comment | **Fixed** (comment only). | `cbor.rs`. |
 | 7. Missing reject vectors | **W16** (G1 audit). Kept as gaps in §7.2. | — |
 | 8. No rewritten Encrypted archive | **W16.** | — |

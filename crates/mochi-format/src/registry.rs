@@ -1,9 +1,9 @@
 //! Frame registry constants (spec §8.2, §8.4).
 //!
 //! **This is the only module allowed to contain frame magic literals.**
-//! `ci/check-invariants.sh` enforces that. The values are *proposed* for spec
-//! revision 2.0 and become authoritative only when ratification artifact R1
-//! is published (docs/ratification/).
+//! `ci/check-invariants.sh` enforces that. The values are those of spec
+//! revision 2.0, frozen with ratification artifact R1 (docs/ratification/) at
+//! the format freeze and ratified at 1.0.
 
 /// Standard Zstandard data frame magic.
 pub const ZSTD_DATA_FRAME: u32 = 0xFD2F_B528;

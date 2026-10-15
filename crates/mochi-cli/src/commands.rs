@@ -12,7 +12,7 @@ use mochi_core::catalog::namespace::FileVersionId;
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::compact::{self, CompactOptions, Keep};
 use mochi_core::copies::CopySource;
-use mochi_core::descriptor::Profile;
+use mochi_core::descriptor::{DraftPolicy, Profile};
 use mochi_core::exit;
 use mochi_core::gc::{self, GcPlan, PlanHead};
 use mochi_core::health::{
@@ -21,6 +21,7 @@ use mochi_core::health::{
 };
 use mochi_core::import::{import_into, ImportOptions, SourceKind, DEFAULT_MAX_TOTAL_BYTES};
 use mochi_core::job::{CancellationToken, JobContext, NullProgress};
+use mochi_core::migrate::{self, MigrateOptions};
 use mochi_core::object::{ArchiveId, OsIds};
 use mochi_core::publish::CatalogSource;
 use mochi_core::publish::{
@@ -46,7 +47,7 @@ use serde_json::{json, Value};
 
 use crate::cli::{
     AppendArgs, CheckpointArgs, CompactArgs, CreateArgs, DumpIndexArgs, ExpireArgs, GcApplyArgs,
-    GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, RekeyArgs, ReleaseArgs,
+    GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, MigrateArgs, RekeyArgs, ReleaseArgs,
     RepairApplyArgs, RepairPlanArgs, RestoreTestArgs, RetainArgs, SearchArgs, SearchSnapshots,
     SnapshotListArgs, VerifyArgs,
 };
@@ -254,6 +255,7 @@ const SCHEMA_SEARCH: &str = "mochi-cli-search-v1";
 const SCHEMA_DUMP_INDEX: &str = "mochi-cli-dump-index-v1";
 const SCHEMA_RESTORE: &str = "mochi-cli-restore-v1";
 const SCHEMA_REWRITE: &str = "mochi-cli-rewrite-v1";
+const SCHEMA_MIGRATE: &str = "mochi-cli-migrate-v1";
 const SCHEMA_REPAIR_APPLY: &str = "mochi-cli-repair-apply-v1";
 const SCHEMA_REKEY_LIST: &str = "mochi-cli-rekey-list-v1";
 const SCHEMA_PLAN_SAVED: &str = "mochi-cli-plan-saved-v1";
@@ -945,6 +947,9 @@ pub fn snapshot_list(env: &mut Env<'_>, a: &SnapshotListArgs) -> Result<u8> {
     let retention =
         match open_head(&src, &env.read).and_then(|h| segment_state(&src, &h, &env.read)) {
             Ok(s) => Some(s.retention),
+            // A refusal (a draft archive, an unknown feature) is not damage:
+            // the archive is not listed at all, as every other command.
+            Err(e) if e.code == ErrorCode::UnsupportedFeature => return Err(e),
             Err(e) => {
                 env.warn(format!("retention is unknown: {e}"));
                 None
@@ -2005,6 +2010,122 @@ fn rewrite(
              its first verification has no freshness anchor. Remove the source yourself only \
              once you no longer need it",
             archive.display()
+        ));
+    }
+    Ok(code)
+}
+
+/// `mochi migrate SRC --output DST` (spec §26, B.2.14; plan K25): the one
+/// command that reads the last draft. The source is opened read-only, takes
+/// no lock, and is never written; an Encrypted source needs its passphrase
+/// before anything is created (the new archive is sealed under a new data key).
+pub fn migrate_cmd(env: &mut Env<'_>, a: &MigrateArgs) -> Result<u8> {
+    let (progress, cancel) = job();
+    let ctx = JobContext {
+        progress: &progress,
+        cancel: &cancel,
+    };
+    // The one reader of the last draft; every other command keeps the default
+    // and refuses a draft archive.
+    env.read.drafts = DraftPolicy::AllowLastDraft;
+    env.unlock(&a.archive, Need::Required)?;
+    // Checked first, so that naming the source itself reads as what it is.
+    // Publication refuses an existing name again, without a race (D13).
+    if std::fs::symlink_metadata(&a.output).is_ok() {
+        return Err(MochiError::new(
+            ErrorCode::DestinationExists,
+            format!(
+                "{} exists; a new archive never replaces anything. Nothing was written",
+                a.output.display()
+            ),
+        ));
+    }
+    let (mut out_dir, out_name) = location(&a.output)?;
+    let src = open_archive(&a.archive)?;
+    let options = MigrateOptions {
+        read: env.read.clone(),
+        ..MigrateOptions::default()
+    };
+    let report = migrate::migrate(
+        &src,
+        &mut out_dir,
+        &out_name,
+        Box::new(OsIds),
+        &options,
+        &ctx,
+    )?;
+    // Remember the new archive's head: a later verify of it then has an
+    // anchor (D8).
+    match open_archive(&a.output).and_then(|s| open_head(&s, &env.read)) {
+        Ok(h) => env.remember(h.commit.archive_id, h.seq(), h.commit_id),
+        Err(e) => env.warn(format!("the new archive's head was not recorded: {e}")),
+    }
+    let code = if report.durability_unconfirmed.is_none() {
+        exit::OK
+    } else {
+        exit::DEGRADED
+    };
+    if env.json {
+        let mut v = serde_json::to_value(&report).map_err(|e| {
+            MochiError::new(ErrorCode::IoError, format!("encoding the report: {e}"))
+        })?;
+        if let Value::Object(m) = &mut v {
+            m.insert("command".into(), json!("migrate"));
+            m.insert("source".into(), json!(a.archive.display().to_string()));
+            m.insert("output".into(), json!(a.output.display().to_string()));
+            m.insert("exit_code".into(), json!(code));
+        }
+        env.emit_tagged(SCHEMA_MIGRATE, v);
+    } else {
+        let n = report.commits.len();
+        env.line(format!(
+            "wrote {} ({} bytes, archive {}): a 1.0 archive reproducing the draft {} archive {}",
+            a.output.display(),
+            report.new_len,
+            report.new_archive_id,
+            report.source_draft,
+            report.source_archive_id,
+        ));
+        env.line(format!(
+            "{n} commit{} reproduced one for one; {} chunks ({} stored bytes) {}; {} file versions",
+            if n == 1 { "" } else { "s" },
+            report.chunks_copied,
+            report.stored_bytes_copied,
+            if report.resealed {
+                "opened and sealed again under the new archive's key"
+            } else {
+                "copied byte for byte"
+            },
+            report.file_versions,
+        ));
+        let c = &report.comparison;
+        env.line(format!(
+            "compared with the source: {} snapshot namespaces, {} file versions (record, hash, \
+             extents), {} attribute sets, retention state identical; {} file versions read back \
+             and hash-verified",
+            c.snapshots_compared,
+            c.file_versions_compared,
+            c.attributes_compared,
+            c.versions_read_back,
+        ));
+        env.line(format!(
+            "the source verified at the {} level before conversion (exit {}), and the new \
+             archive at the {} level before it was published (exit {})",
+            report.source_verification.level,
+            report.source_verification.exit_code,
+            report.new_verification.level,
+            report.new_verification.exit_code,
+        ));
+        if let Some(why) = &report.durability_unconfirmed {
+            env.line(format!(
+                "degraded: the new file's directory entry is not confirmed durable ({why})"
+            ));
+        }
+        env.line(format!(
+            "the source {} is unchanged and kept; the new archive has a new archive ID, so its \
+             first verification has no freshness anchor. {}",
+            a.archive.display(),
+            report.not_done
         ));
     }
     Ok(code)

@@ -24,8 +24,8 @@ use cli::{Cli, Command, GcCommand, RepairCommand, Scope, SnapshotCommand};
 
 fn long_version() -> String {
     format!(
-        "{}\nformat: {} (spec revision {}, wire generation {} proposed)\n\
-         A .mochi file is not a backup. Do not use pre-1.0 builds as your only copy.",
+        "{}\nformat: {} (spec revision {}, wire generation {})\n\
+         A .mochi file is not a backup. Keep independent copies of anything you cannot recreate.",
         env!("CARGO_PKG_VERSION"),
         mochi_format::version::FORMAT_STATUS,
         mochi_format::version::SPEC_REVISION,
@@ -217,6 +217,7 @@ where
         Command::Checkpoint(a) => commands::checkpoint(&mut env, a),
         Command::Rekey(a) => commands::rekey(&mut env, a),
         Command::Compact(a) => commands::compact_cmd(&mut env, a),
+        Command::Migrate(a) => commands::migrate_cmd(&mut env, a),
         Command::Gc(GcCommand::Plan(a)) => commands::gc_plan(&mut env, a),
         Command::Gc(GcCommand::Apply(a)) => commands::gc_apply(&mut env, a),
         Command::Repair(RepairCommand::Plan(a)) => commands::repair_plan(&mut env, a),

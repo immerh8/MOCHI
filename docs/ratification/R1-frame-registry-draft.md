@@ -27,15 +27,21 @@ Spec §1.2 and §26 keep these distinct. *(checked)*
 | Specification revision | `2.0` | `version::SPEC_REVISION` |
 | Wire generation | `2` | `version::WIRE_GENERATION`; descriptor key 2 |
 | Footer magic | `MOCHI2` ‖ `00 00` | `registry::FOOTER_MAGIC` |
-| Draft identifier | `2` | `descriptor::DRAFT_ID`; descriptor key 3 (null only in a ratified archive) |
-| Format status | `experimental / draft-compatible` | `version::FORMAT_STATUS`; every report's `tool.format_status` |
+| Draft identifier | `2` | `descriptor::DRAFT_ID`, the **last draft** (read only by `mochi migrate`); descriptor key 3, which a 1.0 writer writes as **null** (a ratified archive) |
+| Format status | `1.0 (ratified format)` | `version::FORMAT_STATUS`; every report's `tool.format_status` (before the 1.0 flip: `experimental / draft-compatible`) |
 
 **D1 (decided):** the wire generation stays 2, independent of the product version.
-**D24 (decided, implemented at the freeze):** the draft identifier is 2 and names the
-layout frozen here and in R2 to R4. Draft 1, the pre-freeze batch (R4 `user_version`
-0), is refused as `UNSUPPORTED_FEATURE` (exit 4) with a message naming draft 1, as is
-any other value but 2 and `null` (a ratified archive, which a draft build also
-refuses). `fixtures/golden/b2/reject-archive-draft-1.mochi` is such an archive.
+**D24 (decided, implemented at the freeze; flipped at 1.0, W20):** the draft identifier
+2 names the layout frozen here and in R2 to R4. **At 1.0 the layout is ratified and
+a 1.0 writer writes `null` in descriptor key 3** (the only byte of the descriptor that
+differs, and through the descriptor's stored-object hash in each commit, key 10, every
+byte that hashes it). A 1.0 reader accepts `null`. A number is a draft: every command
+but `mochi migrate` refuses it as `UNSUPPORTED_FEATURE` (exit 4) with a message naming
+the draft; for draft 2 only, the message suggests `mochi migrate`, which reads draft 2
+and no other. Draft 1, the pre-freeze batch (R4 `user_version` 0), is refused with a
+message naming draft 1 and no hint, as is any other number.
+`fixtures/golden/b2/reject-archive-draft-1.mochi` is a draft-1 archive;
+`fixtures/golden/r8/legacy/` holds three draft-2 archives.
 The product version (`mochi --version`, `tool.version` in reports) is unrelated to
 any of the values above.
 
