@@ -24,15 +24,23 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm || echo "still no /dev/kvm"
           test -w /dev/kvm && echo "KVM USABLE" || echo "KVM NOT USABLE"
-      - name: dm-log-writes
+      - name: QEMU, OVMF, swtpm
         run: |
-          sudo modprobe dm-log-writes && echo "dm-log-writes loaded" || { sudo apt-get update; sudo apt-get install -y linux-modules-extra-$(uname -r); sudo modprobe dm-log-writes && echo "dm-log-writes loaded after extra modules"; }
-          sudo modprobe loop; sudo apt-get install -y qemu-system-x86 ovmf swtpm xfstests 2>&1 | tail -3 || true
-          which replay-log || find / -name 'replay-log*' 2>/dev/null | head
-          qemu-system-x86_64 --version
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools libdevmapper-dev dmsetup build-essential git
+          qemu-system-x86_64 --version; swtpm --version
+          ls /usr/share/OVMF/ /usr/share/ovmf 2>&1 | head -30
+      - name: Build replay-log (xfstests src/log-writes)
+        run: |
+          sudo modprobe dm-log-writes && echo "dm-log-writes loaded"
+          git clone --depth 1 https://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git /tmp/xfstests || git clone --depth 1 https://github.com/kdave/xfstests /tmp/xfstests
+          git -C /tmp/xfstests rev-parse HEAD
+          ls /tmp/xfstests/src/log-writes
+          make -C /tmp/xfstests/src/log-writes 2>&1 | tail -15
+          ls -l /tmp/xfstests/src/log-writes/replay-log
       - name: Microsoft evaluation media reachability
         run: |
-          for id in 2289031 2195404 2195280 2334167 2195167; do
+          for id in 2289031 2195404 2195280 2334167 2195167 2195041; do
             echo "== linkid=$id"
             curl -sIL -m 30 "https://go.microsoft.com/fwlink/?linkid=$id" | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8
           done
