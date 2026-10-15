@@ -32,6 +32,9 @@ setup() {
         | as_root tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
     as_root udevadm control --reload-rules
     as_root udevadm trigger --name-match=kvm || true
+    as_root udevadm settle || true
+    # The trigger is asynchronous: give the new mode a moment to apply.
+    for _ in $(seq 1 20); do [ -r /dev/kvm ] && [ -w /dev/kvm ] && break; sleep 0.5; done
     if [ ! -w /dev/kvm ]; then
         echo "::error::/dev/kvm is not usable on this runner. The harness does not fall back to TCG emulation (G6b)."
         ls -l /dev/kvm || true
