@@ -307,9 +307,9 @@ class Vm:
         except Exception as e:
             log("screendump failed:", e)
 
-    def wait(self, timeout, until=None, spam_keys=0, shot_every=240):
+    def wait(self, timeout, until=None, spam_keys=0, shot_every=240, tick=None):
         t0 = time.time()
-        last_shot, last_key = 0.0, 0.0
+        last_shot, last_key, last_tick = 0.0, 0.0, 0.0
         while True:
             t = time.time() - t0
             if self.proc.poll() is not None:
@@ -318,6 +318,9 @@ class Vm:
                 return "until"
             if t > timeout:
                 return "timeout"
+            if tick and t - last_tick >= 300:
+                tick(t)
+                last_tick = t
             try:
                 if spam_keys and t < spam_keys and t - last_key >= 2:
                     self.qmp.key("ret")
@@ -391,12 +394,14 @@ def cmd_image(a):
     t0 = time.time()
     try:
         vm.start()
-        how = vm.wait(a.timeout * 60, spam_keys=75, shot_every=300)
+        how = vm.wait(a.timeout * 60, spam_keys=75, shot_every=300,
+                      tick=lambda t: log(f"install: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}"))
         log("install finished:", how, f"after {(time.time() - t0) / 60:.1f} min")
     finally:
         vm.stop()
         keep_logs(vm, work / "evidence-image")
     if not vm.serial.seen("PROVISIONED"):
+        show_serial(vm, 80)
         raise SystemExit("image build failed: the guest never reported PROVISIONED (see evidence-image/)")
     run(["qemu-img", "convert", "-O", "qcow2", "-c", sysdisk, img / "base.qcow2"])
     shutil.copy(vm.vars, img / "OVMF_VARS.fd")
@@ -734,7 +739,7 @@ def main():
     sub.add_parser("iso-info").set_defaults(f=cmd_iso_info)
     sub.add_parser("iso").set_defaults(f=cmd_iso)
     p = sub.add_parser("image")
-    p.add_argument("--timeout", type=int, default=150, help="minutes")
+    p.add_argument("--timeout", type=int, default=60, help="minutes")
     p.set_defaults(f=cmd_image)
     p = sub.add_parser("run")
     p.add_argument("--label", required=True)
