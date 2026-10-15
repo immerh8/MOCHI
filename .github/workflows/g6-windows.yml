@@ -218,7 +218,7 @@ jobs:
         continue-on-error: true
         run: |
           bash ci/g6-windows-crashreplay.sh run candidate-nodirsync bins/g6-bins-candidate \
-            --workload-args "--no-dir-sync" \
+            --workload-args=--no-dir-sync \
             --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}" \
             --strict-creation
       - name: Summary
