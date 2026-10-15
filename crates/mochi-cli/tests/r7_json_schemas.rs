@@ -2105,7 +2105,7 @@ fn targeted() -> Vec<(&'static str, &'static str, Value, &'static str, Pick)> {
             "cli-migrate.schema.json",
             "/exit_code",
             json!(2),
-            "exit 2 only with an unconfirmed directory entry",
+            "unconfirmed without a note",
             |v| v["durability_unconfirmed"].is_null(),
         ),
     ]
