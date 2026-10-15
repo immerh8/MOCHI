@@ -397,6 +397,10 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
     It covers updater, WebView2 bootstrap, shell integration, and screen readers, and
     Windows Server CI cannot reproduce any of them (AGENTS.md "Tests required").
     **Next step:** owner run on client hardware, recorded in the release notes.
+    The step-by-step runbook (VM setup, a results table, a throwaway updater test release
+    pair) is `docs/release-runbook.md`; the part that needs no human eyes runs in the manual
+    `installer-smoke` workflow. Neither is a result: this finding stays open until the owner's
+    run is recorded here.
 11. **F11 — should-fix.** Gate evidence G1–G9 rests on CI runs from `Sepiolina/MOCHI`
     PRs (#2–#5) and early `immerh8` runs. The tests still pass today (run 38551536791),
     but the checklist's "Gates" section does not say so. **Next step:** append the
