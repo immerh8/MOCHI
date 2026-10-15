@@ -394,7 +394,7 @@ def cmd_image(a):
     t0 = time.time()
     try:
         vm.start()
-        how = vm.wait(a.timeout * 60, spam_keys=75, shot_every=300,
+        how = vm.wait(a.timeout * 60, spam_keys=120, shot_every=300,
                       tick=lambda t: log(f"install: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}"))
         log("install finished:", how, f"after {(time.time() - t0) / 60:.1f} min")
     finally:
@@ -403,14 +403,16 @@ def cmd_image(a):
     if not vm.serial.seen("PROVISIONED"):
         show_serial(vm, 80)
         raise SystemExit("image build failed: the guest never reported PROVISIONED (see evidence-image/)")
-    run(["qemu-img", "convert", "-O", "qcow2", "-c", sysdisk, img / "base.qcow2"])
+    # The installed disk is the base image as it is: compressing it (6 min) buys
+    # nothing, because the image is not cached (12.2 GB archive; the repository
+    # limit is 10 GB, docs/g6-windows-crash-replay.md).
+    os.replace(sysdisk, img / "base.qcow2")
     shutil.copy(vm.vars, img / "OVMF_VARS.fd")
     shutil.copytree(vm.tpm, img / "tpm", ignore=shutil.ignore_patterns("sock", "*.pid", "*.log", "*.out"))
     info["iso"] = iso_info
     info["built"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     info["install_minutes"] = round((time.time() - t0) / 60, 1)
     write_json(img / "build-info.json", info)
-    sysdisk.unlink()
     run(["chmod", "-R", "a+rX", img])
     log("image ready", info)
 

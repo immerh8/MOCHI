@@ -38,7 +38,7 @@ on:
         required: false
         default: "24"
       image_only:
-        description: "Build (and cache) the Windows image, then stop"
+        description: "Build the Windows image, then stop"
         type: boolean
         default: false
   schedule:
@@ -167,33 +167,15 @@ jobs:
       - name: Log reader self-test (against the real replay-log)
         run: bash ci/g6-windows-crashreplay.sh selftest
       - name: Resolve the Microsoft evaluation ISO
-        id: iso
-        run: |
-          bash ci/g6-windows-crashreplay.sh iso-info
-          echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
-      - name: Restore the installed Windows image
-        id: img
-        uses: actions/cache/restore@v4
-        with:
-          path: /var/tmp/g6/image
-          # ISO name carries the Windows build; the month bucket keeps a cached
-          # image well inside the evaluation's 90-day term.
-          key: g6-win-image-v1-${{ hashFiles('ci/g6-windows/guest/image/**') }}-${{ steps.iso.outputs.iso_name }}-${{ steps.iso.outputs.month }}
+        run: bash ci/g6-windows-crashreplay.sh iso-info
       - name: Download the evaluation ISO
-        if: steps.img.outputs.cache-hit != 'true'
         run: bash ci/g6-windows-crashreplay.sh iso
       - name: Unattended Windows install
-        if: steps.img.outputs.cache-hit != 'true'
-        run: |
-          bash ci/g6-windows-crashreplay.sh image
-          sudo chmod -R a+rX /var/tmp/g6/image
-      - name: Save the installed Windows image
-        if: steps.img.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: /var/tmp/g6/image
-          key: ${{ steps.img.outputs.cache-primary-key }}
+        # Not cached: the installed image archives to 12.2 GB, above the 10 GB
+        # repository cache limit (measured, run 38685623011), and a cache that
+        # size would evict the repository's other caches. A fresh install also
+        # keeps the 90-day evaluation image young.
+        run: bash ci/g6-windows-crashreplay.sh image
       - name: Crash replay, candidate
         id: candidate
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) }}
