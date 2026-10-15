@@ -36,6 +36,10 @@ on:
         description: "Also run the Ubuntu 22.04 and 24.04 .deb checks"
         type: boolean
         default: true
+  # TEMPORARY, removed before review: a new workflow file cannot be dispatched from
+  # a branch until it exists on the default branch, so the runs are by push.
+  push:
+    branches: [claude/release-runbook-f10]
 
 concurrency:
   group: installer-smoke-${{ github.run_id }}

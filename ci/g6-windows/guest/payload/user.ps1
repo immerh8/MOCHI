@@ -302,7 +302,14 @@ function Uninstall-Mochi {
   $p = Start-Process -FilePath $u -ArgumentList '/S' -PassThru
   [void]$p.WaitForExit(120000)
   for ($i = 0; $i -lt 90 -and (Test-Path $InstallDir); $i++) { Start-Sleep 2 }
-  Start-Sleep 3
+  # The folder can go before the uninstaller has finished with shortcuts and registry
+  # keys: wait for its temp copy (%TEMP%\~nsu*.tmp\Au_.exe) to exit.
+  for ($i = 0; $i -lt 60; $i++) {
+    $left = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like '*\~nsu*' })
+    if ($left.Count -eq 0) { break }
+    Start-Sleep 2
+  }
+  Start-Sleep 5
   "uninstaller exit $($p.ExitCode); $InstallDir " + $(if (Test-Path $InstallDir) { 'STILL EXISTS: ' + ((Get-ChildItem $InstallDir -Recurse -Force | ForEach-Object { $_.FullName }) -join '; ') } else { 'gone' })
 }
 
