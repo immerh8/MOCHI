@@ -1,6 +1,7 @@
 //! [`OsRestoreDir`] on Windows (plan C6): restoration through **pinned
 //! directory handles**, with `std` only and no `unsafe` (`mochi-core`
-//! forbids it; T21's decision). The Linux counterpart is
+//! forbids it; the creation path's `unsafe` lives in `mochi-sys`, which
+//! restoration does not need). The Linux counterpart is
 //! `restore_linux.rs`. What this guarantees, what it concedes, and how a
 //! stronger implementation would replace it: `docs/c6-restore-platforms.md`.
 //!
@@ -21,7 +22,9 @@
 //! * **Exclusive creation, no-replace publication.** Files are created with
 //!   `CREATE_NEW` (an existing name, including a planted link, is a
 //!   collision) and published by hard link then unlink, which never
-//!   replaces ([`OsDir`]'s mechanism).
+//!   replaces. (Archive *creation* moved to `MoveFileExW` with write-through
+//!   on 2026-10-15, see [`OsDir`]; restored files are not archives and G6
+//!   does not concern them.)
 //! * **Attributes** are applied through a handle opened with attribute
 //!   access only and `FILE_FLAG_OPEN_REPARSE_POINT`, after checking on that
 //!   handle that it is not a reparse point.

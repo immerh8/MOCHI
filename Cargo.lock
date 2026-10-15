@@ -2958,6 +2958,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
  "mochi-format",
+ "mochi-sys",
  "proptest",
  "rusqlite",
  "rustix",
@@ -3016,6 +3017,14 @@ dependencies = [
  "unicode-normalization",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "mochi-sys"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
