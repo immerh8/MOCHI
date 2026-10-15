@@ -727,6 +727,7 @@ def evaluate(points, results, summary):
                     "(synced data must survive every replay; unsynced data must be droppable)")
     judged = [p for p in points if p["kind"] in ("flush", "between", "edge")]
     summary["judged_points"] = len(judged)
+    summary["absent_after_unconfirmed_ack"] = sum(1 for x in soft if "absent after acknowledged" in x)
     summary["hard_failures"] = hard
     summary["soft_observations"] = soft
     summary["verdict"] = "PASS" if not hard else "FAIL"
@@ -741,7 +742,8 @@ def render_md(s):
         f"* ISO: `{w.get('iso', {}).get('name')}` sha256 `{w.get('iso', {}).get('sha256')}`",
         f"* Subject: {s.get('subject_build', 'n/a')}",
         f"* Log: {s.get('log')}", f"* Points: {s.get('points')}", f"* Controls: {s.get('controls')}",
-        f"* Hard failures: {len(s['hard_failures'])}; soft observations: {len(s['soft_observations'])}", "",
+        f"* Hard failures: {len(s['hard_failures'])}; soft observations: {len(s['soft_observations'])} "
+        f"(of which a name absent after an acknowledged-but-`DirectoryUnconfirmed` creation: {s.get('absent_after_unconfirmed_ack')})", "",
     ]
     lines += [f"- HARD {h}" for h in s["hard_failures"][:50]]
     lines += [f"- soft {h}" for h in s["soft_observations"][:50]]

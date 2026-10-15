@@ -3,7 +3,9 @@
 # recovery as it mounts), judge it, and take it offline again: the copies
 # share a GPT disk GUID, so only one may be online at a time.
 . C:\g6\payload\common.ps1
-$points = @(Get-Content C:\g6\payload\points.json -Raw | ConvertFrom-Json)
+# Windows PowerShell 5.1 emits a JSON array as ONE object; the ForEach-Object
+# unrolls it into one object per point.
+$points = @(Get-Content C:\g6\payload\points.json -Raw | ConvertFrom-Json | ForEach-Object { $_ })
 Say "CHECK-START $($points.Count)"
 foreach ($pt in $points) {
   $res = [ordered]@{ id = $pt.id; serial = $pt.serial; kind = $pt.kind }
