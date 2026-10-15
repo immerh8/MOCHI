@@ -48,15 +48,24 @@ cargo build --release --locked -p mochi-foreign --features engine --bin mochi-fo
 mkdir -p apps/mochi-desktop/src-tauri/binaries
 cp "target/release/mochi-foreign-helper$ext" "apps/mochi-desktop/src-tauri/binaries/mochi-foreign-helper-$triple$ext"
 
-# 4. Overlay config: ship the list and the helper inside the installer (merged over tauri.conf.json).
-python3 - "$kind" "$licenses" <<'PY'
+# 3b. The user guide (audit F8): docs/user converted to static, offline HTML. It is installed as
+# the resource `guide/` (NSIS: <install dir>\guide\; deb: /usr/lib/MOCHI/guide/), which is where
+# Help, User guide looks (apps/mochi-desktop/src-tauri/src/help.rs, GUIDE_RESOURCE). The smoke
+# checks assert the file at that path.
+guide=target/packaging/guide
+rm -rf "$guide"
+python3 -I packaging/guide.py "$guide"
+
+# 4. Overlay config: ship the list, the guide and the helper inside the installer (merged over tauri.conf.json).
+python3 - "$kind" "$licenses" "$guide" <<'PY'
 import json, os, sys
-kind, lic = sys.argv[1], sys.argv[2]
+kind, lic, guide = sys.argv[1], sys.argv[2], sys.argv[3]
 rel = os.path.relpath(lic, "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
+guide_rel = os.path.relpath(guide, "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
 if kind == "nsis":  # next to the exe: <install dir>\licenses\
-    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt"}}
+    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt", guide_rel: "guide"}}
 else:  # Debian convention
-    bundle = {"linux": {"deb": {"files": {"/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt": rel}}}}
+    bundle = {"resources": {guide_rel: "guide"}, "linux": {"deb": {"files": {"/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt": rel}}}}
 bundle["externalBin"] = ["binaries/mochi-foreign-helper"]
 # Release builds only: write the updater's `.sig` files (needs the signing key in the environment).
 if os.environ.get("MOCHI_UPDATER_ARTIFACTS") == "1":
