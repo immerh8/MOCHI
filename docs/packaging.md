@@ -205,7 +205,7 @@ It never publishes and never pushes a tag.
    if you like, and publish it. Publishing makes `latest.json` visible to installed apps
    (`releases/latest` is the newest *published, non-draft, non-prerelease* release).
 5. Do the release checklist below, including updating from the previous release.
-   `docs/release-runbook.md` is the step-by-step version, with the owner's VM setup and a
+   `docs/release-runbook.md` is the step-by-step version, with the owner's notebook steps and a
    throwaway **0.9.0 / 0.9.1 test release pair** for the updater check, so that no real
    version number is spent on it.
 
