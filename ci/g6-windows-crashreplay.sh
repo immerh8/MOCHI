@@ -16,7 +16,8 @@
 #   run        <label> <bin dir> [orchestrate.py run options]
 #              format, workload on a dm-log-writes disk, replay, judge
 #
-# Environment: G6_WORK (default /var/tmp/g6), G6_EVIDENCE (default $G6_WORK/evidence).
+# Environment: G6_WORK (default /var/tmp/g6), G6_EVIDENCE (default $G6_WORK/evidence),
+# G6_OS (windows-11, the default, or windows-10: which Microsoft evaluation ISO).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)

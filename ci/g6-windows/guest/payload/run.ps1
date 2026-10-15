@@ -77,7 +77,11 @@ public static class G6Native {
   }
 
   Mark 'workload:begin'
-  & C:\g6\payload\g6_winworkload.exe workload $root '\\.\COM1' *> C:\g6\wl.out
+  $wlArgs = @()
+  if (Test-Path C:\g6\payload\wl-args.txt) {
+    $wlArgs = @((Get-Content C:\g6\payload\wl-args.txt -Raw) -split '\s+' | Where-Object { $_ })
+  }
+  & C:\g6\payload\g6_winworkload.exe workload $root '\\.\COM1' @wlArgs *> C:\g6\wl.out
   $rc = $LASTEXITCODE
   Mark 'workload:end'
   Say "WORKLOAD-RC $rc"

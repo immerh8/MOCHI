@@ -58,18 +58,23 @@ def main():
         2: ok(2, judge=judge(["absent", "seq-0"])),
         3: ok(3, judge=judge(["seq-2"] * 4)),
     }
-    nsp, nsr = ns_points(10, [False, True, False], [True] * 3, [True, True, True])
+    nsp, nsr = ns_points(10, [False, True, False], [False] * 3, [True, True, True])
     points, good = points + nsp, {**good, **nsr}
     passed, s = run(points, good)
     assert passed and s["verdict"] == "PASS", s
     assert s["controls"]["rename_without_flush_survived"].startswith("1/3"), s["controls"]
 
     # Namespace controls decide validity: an unflushed rename that is never lost
-    # (harness blind to metadata loss), or a write-through rename that is lost.
-    for plain, wt in (([True] * 3, [True] * 3), ([False] * 3, [True, True, False])):
-        nsp2, nsr2 = ns_points(10, plain, wt, [True] * 3)
+    # (harness blind to metadata loss), or a flushed rename that is lost.
+    for plain, d in (([True] * 3, [True] * 3), ([False] * 3, [True, True, False])):
+        nsp2, nsr2 = ns_points(10, plain, [True] * 3, d)
         passed, s = run(points[:4] + nsp2, {**good, **nsr2})
         assert not passed and any("controls failed" in h for h in s["hard_failures"]), s
+
+    # A write-through rename that is lost is a finding, not an invalid harness.
+    nsp3, nsr3 = ns_points(10, [False] * 3, [False] * 3, [True] * 3)
+    passed, s = run(points[:4] + nsp3, {**good, **nsr3})
+    assert passed and s["controls"]["rename_move_write_through_survived"].startswith("0/3"), s
 
     vac = {**good, 2: ok(2, judge=judge(["absent"] * 4)), 3: ok(3, judge=judge(["absent"] * 4))}
     passed, s = run(points, vac)

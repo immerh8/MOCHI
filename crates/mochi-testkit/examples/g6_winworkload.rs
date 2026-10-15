@@ -3,7 +3,7 @@
 //! (`ci/g6-windows-crashreplay.sh`, `docs/g6-windows-crash-replay.md`).
 //!
 //! ```text
-//! g6_winworkload workload <dir> <port|none>   # create archives, append commits, ack each
+//! g6_winworkload workload <dir> <port|none> [--no-dir-sync]  # create archives, append commits, ack each
 //! g6_winworkload check <dir> <acks-file>      # judge what a replayed disk holds
 //! ```
 //!
@@ -34,6 +34,12 @@
 //!   directory and the volume's own `$`-entries aside).
 //!
 //! One JSON line is printed; the exit status is 0 on pass and 1 on fail.
+//! `--no-dir-sync` is a diagnostic variant: the directory is wrapped so that
+//! `sync_directory` flushes nothing and reports `Unconfirmed`, everything else
+//! being the real `OsDir`. It isolates what the publication primitive alone
+//! (rename, or `MoveFileExW` write-through) makes durable, without the
+//! best-effort directory flush that normally follows it.
+//!
 //! With `port` = `none` the workload prints its acknowledgements and does
 //! not wait, for running it outside the VM.
 
@@ -45,8 +51,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use mochi_core::publish::{open_head, ArchiveWriter, PublishDurability, ReadOptions};
-use mochi_core::storage::os::{OsDir, OsReadStorage, LOCK_FILE_SUFFIX};
-use mochi_core::storage::{RemoveOutcome, StorageDir};
+use mochi_core::storage::os::{OsDir, OsReadStorage, OsStorage, LOCK_FILE_SUFFIX};
+use mochi_core::storage::{
+    DirectoryDurability, ReadStorage, RemoveOutcome, Storage, StorageDir, StorageError,
+};
 use mochi_testkit::archive::{read_state, scripted_history, test_options, Job};
 use mochi_testkit::SeqIds;
 use serde_json::json;
@@ -118,11 +126,106 @@ fn code(d: &PublishDurability) -> &'static str {
     }
 }
 
-fn workload(dir: &Path, port: &str) {
-    let mut port = Port::open(port);
+/// A file whose directory flush does nothing (the `--no-dir-sync` variant).
+struct NoDirSyncFile(OsStorage);
+
+impl ReadStorage for NoDirSyncFile {
+    fn size(&self) -> Result<u64, StorageError> {
+        self.0.size()
+    }
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, StorageError> {
+        self.0.read_at(offset, buf)
+    }
+}
+
+const SUPPRESSED: &str = "directory flush suppressed by the harness (--no-dir-sync)";
+
+impl Storage for NoDirSyncFile {
+    fn append(&mut self, data: &[u8]) -> Result<u64, StorageError> {
+        self.0.append(data)
+    }
+    fn sync_data(&mut self) -> Result<(), StorageError> {
+        self.0.sync_data()
+    }
+    fn sync_directory(&mut self) -> Result<DirectoryDurability, StorageError> {
+        Ok(DirectoryDurability::Unconfirmed(SUPPRESSED.into()))
+    }
+    fn try_lock_exclusive(&mut self) -> Result<(), StorageError> {
+        self.0.try_lock_exclusive()
+    }
+    fn unlock(&mut self) -> Result<(), StorageError> {
+        self.0.unlock()
+    }
+    fn truncate(&mut self, new_len: u64) -> Result<(), StorageError> {
+        self.0.truncate(new_len)
+    }
+}
+
+/// The real `OsDir`, except that `sync_directory` flushes nothing.
+struct NoDirSyncDir(OsDir);
+
+impl StorageDir for NoDirSyncDir {
+    type File = NoDirSyncFile;
+    fn open(&mut self, name: &str) -> Result<NoDirSyncFile, StorageError> {
+        self.0.open(name).map(NoDirSyncFile)
+    }
+    fn create_exclusive(&mut self, name: &str) -> Result<NoDirSyncFile, StorageError> {
+        self.0.create_exclusive(name).map(NoDirSyncFile)
+    }
+    fn publish_no_replace(&mut self, from: &str, to: &str) -> Result<(), StorageError> {
+        self.0.publish_no_replace(from, to)
+    }
+    fn publish_archive(
+        &mut self,
+        file: &mut NoDirSyncFile,
+        from: &str,
+        to: &str,
+    ) -> Result<(), StorageError> {
+        self.0.publish_archive(&mut file.0, from, to)
+    }
+    fn discard(&mut self, file: NoDirSyncFile, name: &str) -> Result<(), StorageError> {
+        self.0.discard(file.0, name)
+    }
+    fn remove_if_unlocked(&mut self, name: &str) -> Result<RemoveOutcome, StorageError> {
+        self.0.remove_if_unlocked(name)
+    }
+    fn sync_directory(&mut self) -> Result<DirectoryDurability, StorageError> {
+        Ok(DirectoryDurability::Unconfirmed(SUPPRESSED.into()))
+    }
+}
+
+/// What the workload needs of a directory, so one body serves both variants.
+trait Publisher {
+    fn mechanism(&self) -> String;
+}
+
+impl Publisher for OsDir {
+    fn mechanism(&self) -> String {
+        format!("{:?}", self.last_publish())
+    }
+}
+
+impl Publisher for NoDirSyncDir {
+    fn mechanism(&self) -> String {
+        format!("{:?}", self.0.last_publish())
+    }
+}
+
+fn workload(dir: &Path, port: &str, no_dir_sync: bool) {
+    let port = Port::open(port);
+    if no_dir_sync {
+        run_workload(NoDirSyncDir(OsDir::open(dir).unwrap()), port);
+    } else {
+        run_workload(OsDir::open(dir).unwrap(), port);
+    }
+}
+
+fn run_workload<D: StorageDir + Publisher>(mut d: D, mut port: Port)
+where
+    D::File: Storage,
+{
     let history = scripted_history();
     let job = Job::new();
-    let mut d = OsDir::open(dir).unwrap();
     for i in 0..ARCHIVES {
         let name = name_of(i);
         let (mut w, outcome) = ArchiveWriter::create_in(
@@ -136,7 +239,7 @@ fn workload(dir: &Path, port: &str) {
         .unwrap_or_else(|e| panic!("create {name}: {e}"));
         assert_eq!(outcome.seq, 0);
         // Evidence of what was exercised: the mechanism of the publication.
-        println!("publish mechanism {name}: {:?}", d.last_publish());
+        println!("publish mechanism {name}: {}", d.mechanism());
         port.mark(&format!("ack:{name}:0:{}", code(&outcome.durability)));
         for (seq, step) in history.iter().enumerate().skip(1) {
             let outcome = w
@@ -312,10 +415,14 @@ fn check(dir: &Path, acks_file: &Path) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: g6_winworkload workload <dir> <port|none> | check <dir> <acks-file>";
+    let usage = "usage: g6_winworkload workload <dir> <port|none> [--no-dir-sync] | check <dir> <acks-file>";
     let dir = Path::new(args.get(2).expect(usage));
     match args.get(1).map(String::as_str) {
-        Some("workload") => workload(dir, args.get(3).expect(usage)),
+        Some("workload") => workload(
+            dir,
+            args.get(3).expect(usage),
+            args.get(4).map(String::as_str) == Some("--no-dir-sync"),
+        ),
         Some("check") => {
             if !check(dir, Path::new(args.get(3).expect(usage))) {
                 std::process::exit(1);

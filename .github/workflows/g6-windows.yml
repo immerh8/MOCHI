@@ -152,12 +152,21 @@ jobs:
           retention-days: 14
 
   replay:
+    # One runner per guest OS, in parallel. Windows 10 22H2 (plan O11) comes from
+    # the evaluation ISO Microsoft's own download link still serves; see
+    # docs/g6-windows-crash-replay.md for its status.
+    name: replay (${{ matrix.os }})
     needs: [plan, build-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-11, windows-10]
     env:
       G6_WORK: /var/tmp/g6
       G6_EVIDENCE: /var/tmp/g6/evidence
+      G6_OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -173,6 +182,7 @@ jobs:
       - name: Resolve the Microsoft evaluation ISO
         run: bash ci/g6-windows-crashreplay.sh iso-info
       - name: Is any Windows 10 evaluation image still offered? (informational)
+        if: matrix.os == 'windows-11'
         continue-on-error: true
         run: bash ci/g6-windows-crashreplay.sh win10-probe
       - name: Download the evaluation ISO
@@ -199,11 +209,24 @@ jobs:
           bash ci/g6-windows-crashreplay.sh run baseline bins/g6-bins-baseline \
             --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}" \
             ${{ (github.event_name != 'workflow_dispatch' || inputs.strict_creation) && '--strict-creation' || '' }}
+      - name: Crash replay, candidate with the directory flush suppressed (informational)
+        # Isolates what the publication primitive alone makes durable: the real
+        # OsDir, except that sync_directory flushes nothing. Expected to show the
+        # gap where the primitive is not enough; its outcome never fails the job.
+        id: nodirsync
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) }}
+        continue-on-error: true
+        run: |
+          bash ci/g6-windows-crashreplay.sh run candidate-nodirsync bins/g6-bins-candidate \
+            --workload-args "--no-dir-sync" \
+            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}" \
+            --strict-creation
       - name: Summary
         if: always()
         run: |
           sudo chmod -R a+rX /var/tmp/g6 || true
-          for l in candidate baseline; do
+          echo "## ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+          for l in candidate baseline candidate-nodirsync; do
             f=/var/tmp/g6/evidence/$l/summary.md
             [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
           done
@@ -211,7 +234,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: g6-evidence
+          name: g6-evidence-${{ matrix.os }}
           path: |
             /var/tmp/g6/evidence
             /var/tmp/g6/evidence-image
@@ -225,5 +248,5 @@ jobs:
         # its outcome is reported in the summary and the evidence only.
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) }}
         run: |
-          echo "candidate: ${{ steps.candidate.outcome }}; baseline: ${{ steps.baseline.outcome }}"
+          echo "${{ matrix.os }}: candidate: ${{ steps.candidate.outcome }}; baseline: ${{ steps.baseline.outcome }}; candidate without directory flush: ${{ steps.nodirsync.outcome }}"
           [ "${{ steps.candidate.outcome }}" = success ]

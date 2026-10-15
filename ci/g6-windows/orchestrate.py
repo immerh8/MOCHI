@@ -35,7 +35,15 @@ import logwrites as lw  # noqa: E402
 # Microsoft Evaluation Center, "Windows 11 Enterprise" 64-bit en-US ISO
 # (fwlink resolved on 2026-10-15). The target moves with each release; the
 # resolved file name carries the build and is recorded as evidence.
-ISO_URL = "https://go.microsoft.com/fwlink/?linkid=2382600&clcid=0x409&culture=en-us&country=us"
+ISOS = {
+    # Windows 11 Enterprise evaluation (Evaluation Center page, linkid resolved 2026-10-15).
+    "windows-11": "https://go.microsoft.com/fwlink/?linkid=2382600&clcid=0x409&culture=en-us&country=us",
+    # Windows 10 Enterprise 22H2 evaluation. The Evaluation Center page for it now
+    # answers with a redirect to an end-of-support notice, but Microsoft's own
+    # download link still serves the ISO from Microsoft's CDN (docs/g6-windows-crash-replay.md).
+    "windows-10": "https://go.microsoft.com/fwlink/p/?LinkID=2208844&clcid=0x409&culture=en-us&country=US",
+}
+ISO_URL = ISOS["windows-11"]  # set from --os in main()
 OVMF_CODE = "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"
 OVMF_VARS = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
 GUEST = HERE / "guest"
@@ -521,10 +529,12 @@ def cmd_run(a):
     exe = {"g6_winworkload.exe": bins / "g6_winworkload.exe", "mochi.exe": bins / "mochi.exe"}
     summary = {"label": a.label, "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                "seed": a.seed, "max_flush_points": a.max_flush, "between_points": a.between,
-               "strict_creation": a.strict_creation}
+               "strict_creation": a.strict_creation, "workload_args": a.workload_args, "os": a.os}
     if (bins / "BUILD.txt").exists():
         summary["subject_build"] = (bins / "BUILD.txt").read_text().strip()
     summary["windows"] = json.loads((image / "build-info.json").read_text())
+    # The registry's ProductName still says "Windows 10" on Windows 11 builds; the build number decides.
+    summary["windows"]["Family"] = "Windows 11" if int(summary["windows"].get("CurrentBuild", 0)) >= 22000 else "Windows 10"
     guest_facts = {}
 
     def facts(l):
@@ -554,7 +564,9 @@ def cmd_run(a):
     raw = work / f"data-{a.label}.raw"
     shutil.copyfile(base, raw)
     logfile = work / f"log-{a.label}.bin"
-    pl = payload_iso(work, "run-" + a.label, "run", exe)
+    wl_args = work / f"wl-args-{a.label}.txt"
+    wl_args.write_text(a.workload_args + "\n")
+    pl = payload_iso(work, "run-" + a.label, "run", {**exe, "wl-args.txt": wl_args})
     with LoggedDisk(raw, logfile) as disk:
         def on_line(l):
             facts(l)
@@ -765,22 +777,25 @@ def evaluate(points, results, summary):
             if r.get("chkdsk_rc") not in (0, None):
                 soft.append(f"{tag}: chkdsk /scan exited {r['chkdsk_rc']}: {r.get('chkdsk_tail')}")
     c_ok = bool(controls["synced"]) and all(controls["synced"]) and any(controls["unsynced"])
-    # Namespace controls: an unflushed rename must be droppable (else the harness
-    # cannot see a lost name) and a write-through rename must survive.
-    ns_ok = bool(ns["plain"]) and not all(ns["plain"]) and bool(ns["wt"]) and all(ns["wt"])
+    # Namespace controls decide validity: an unflushed rename must be droppable (else
+    # the harness cannot see a lost name) and a rename followed by a flush must
+    # survive (else a barrier after a namespace change is not replayed). Whether a
+    # MOVEFILE_WRITE_THROUGH rename survives on its own is the property under
+    # test, so it is recorded, not required.
+    ns_ok = bool(ns["plain"]) and not all(ns["plain"]) and bool(ns["dir"]) and all(ns["dir"])
     c_ok = c_ok and ns_ok
     summary["controls"] = {
         "synced_data_survived": f"{sum(controls['synced'])}/{len(controls['synced'])}",
         "unsynced_data_droppable": f"{sum(controls['unsynced'])}/{len(controls['unsynced'])} (at least one required)",
         "rename_without_flush_survived": f"{sum(ns['plain'])}/{len(ns['plain'])} (at least one must be lost)",
-        "rename_write_through_survived": f"{sum(ns['wt'])}/{len(ns['wt'])} (all must survive)",
-        "rename_then_directory_flush_survived": f"{sum(ns['dir'])}/{len(ns['dir'])} (recorded)",
+        "rename_then_directory_flush_survived": f"{sum(ns['dir'])}/{len(ns['dir'])} (all must survive)",
+        "rename_move_write_through_survived": f"{sum(ns['wt'])}/{len(ns['wt'])} (finding: recorded, not required)",
         "valid": c_ok,
     }
     if not c_ok:
         hard.append("controls failed: the logged device does not behave as the method requires "
                     "(synced data must survive every replay; unsynced data and an unflushed rename must be droppable; "
-                    "a write-through rename must survive)")
+                    "a rename followed by a directory flush must survive)")
     judged = [p for p in points if p["kind"] in ("flush", "between", "edge", "ack-cut")]
     summary["judged_points"] = len(judged)
     summary["archive_verdicts_over_all_points"] = dist
@@ -803,9 +818,10 @@ def render_md(s):
     w = s.get("windows", {})
     lines = [
         f"# G6 crash replay: {s['label']} ({s['verdict']})", "",
-        f"* Windows: {w.get('ProductName')} {w.get('DisplayVersion')} build {w.get('CurrentBuild')}.{w.get('UBR')} ({w.get('EditionID')})",
+        f"* Windows: {w.get('Family')} {w.get('EditionID')}, {w.get('DisplayVersion')}, build {w.get('CurrentBuild')}.{w.get('UBR')} (registry ProductName: {w.get('ProductName')!r})",
         f"* ISO: `{w.get('iso', {}).get('name')}` sha256 `{w.get('iso', {}).get('sha256')}`",
         f"* Subject: {s.get('subject_build', 'n/a')}",
+        f"* Workload: {s.get('workload_args') or 'normal publication'}",
         f"* Creation judged as: {'Durable even where acknowledged DirectoryUnconfirmed (--strict-creation)' if s.get('strict_creation') else 'as acknowledged'}",
         f"* Log: {s.get('log')}", f"* Points: {s.get('points')}", f"* Controls: {s.get('controls')}",
         f"* Hard failures: {len(s['hard_failures'])}; soft observations: {len(s['soft_observations'])} "
@@ -819,6 +835,7 @@ def render_md(s):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", default=os.environ.get("G6_WORK", "/var/tmp/g6"))
+    ap.add_argument("--os", default=os.environ.get("G6_OS", "windows-11"), choices=sorted(ISOS))
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("iso-info").set_defaults(f=cmd_iso_info)
     sub.add_parser("iso").set_defaults(f=cmd_iso)
@@ -832,12 +849,15 @@ def main():
     p.add_argument("--max-flush", type=int, default=72)
     p.add_argument("--between", type=int, default=24)
     p.add_argument("--seed", type=int, default=20261015)
+    p.add_argument("--workload-args", default="", help="extra arguments for `g6_winworkload workload` (e.g. --no-dir-sync)")
     p.add_argument("--strict-creation", action="store_true",
                    help="judge a creation acknowledged DirectoryUnconfirmed as if Durable (does the name survive anyway?)")
     p.add_argument("--run-timeout", type=int, default=40, help="minutes")
     p.add_argument("--check-timeout", type=int, default=30, help="minutes per batch")
     p.set_defaults(f=cmd_run)
     a = ap.parse_args()
+    global ISO_URL
+    ISO_URL = ISOS[a.os]
     a.f(a)
 
 
