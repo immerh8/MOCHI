@@ -1,6 +1,6 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 to D6, D8, and two slices of D7 built** (plan §7): the shell, the job runner, typed IPC, E2E tests,
+**Phases D0 to D6 and D8 built, and D7 in slices** (plan §7; the in-app updater, T13, and the bundled user guide, audit F8, are part of D7; the owner-held release checklist has not been run): the shell, the job runner, typed IPC, E2E tests,
 the archive browser (snapshot timeline, folder tree, virtualized list, details),
 create, add, and remove (D2), extract (D3), test, health, and repair (D4), encryption and
 search (D5), shell integration (D6), foreign formats (D8), packaging (D7 slice 1), and
@@ -20,6 +20,12 @@ apps/mochi-desktop/
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── crashlog.rs # D7: the opt-in local crash log (panic hook, settings, rotation)
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
+│       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar read-only through the isolated helper
+│       ├── help.rs     # Help, User guide: opens the bundled guide offline (F8)
+│       ├── launch.rs   # D6: the shell's open, extract, and add verbs, parsed in Rust
+│       ├── rekey.rs    # D5: key envelopes and passphrase changes
+│       ├── search.rs   # D5: name search
+│       ├── update.rs   # T13: the in-app updater, driven from Rust
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
 │       ├── picker.rs   # D1/D2: the native open, choose, and save dialogs, shown from Rust

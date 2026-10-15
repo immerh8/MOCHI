@@ -73,6 +73,17 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   foreach ($c in "unrar_sys", "sevenz-rust2", "zip", "tar", "flate2") {
     if ($text -notmatch "Used by:[^\r\n]*(^|[ ,])$([regex]::Escape($c)) \d") { Fail "license list does not cover the helper's dependency $c" }
   }
+  # F8: the user guide sits at the resource path the app resolves (help.rs GUIDE_RESOURCE,
+  # "guide/index.html" under the install directory), with every page, offline and static.
+  $guideIndex = Join-Path $dir "guide\index.html"
+  if (-not (Test-Path $guideIndex)) { Fail "user guide missing at $guideIndex" }
+  foreach ($page in "index", "not-a-backup", "getting-started", "encrypted", "verification", "tar-compatible", "recovery-record", "experimental") {
+    $f = Join-Path $dir "guide\$page.html"
+    if (-not (Test-Path $f) -or (Get-Item $f).Length -eq 0) { Fail "user guide page $page.html missing or empty" }
+  }
+  $guideText = Get-Content $guideIndex -Raw
+  if (-not $guideText.Contains("This guide is written for the mochi command line.")) { Fail "user guide lacks its command-line scope banner" }
+  if ($guideText -match "<script|src=|https?://") { Fail "user guide must be offline and static" }
   # D8 (T16): the foreign-format helper sits next to the app (where the app looks for it),
   # runs, and answers a protocol-v2 list of a real fixture.
   $helper = Join-Path $dir "mochi-foreign-helper.exe"
@@ -126,6 +137,7 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if ($u.ExitCode -ne 0) { Fail "uninstaller exit code $($u.ExitCode)" }
   if (Test-Path (Join-Path $dir $exe.Name)) { Fail "app exe still present after uninstall" }
   if (Test-Path $helper) { Fail "mochi-foreign-helper.exe still present after uninstall" }
+  if (Test-Path $guideIndex) { Fail "user guide still present after uninstall" }
   Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
   # Uninstall removes every key and association it added (plan D6).
   Assert-NothingRegistered "after uninstall"

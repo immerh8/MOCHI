@@ -3,8 +3,10 @@
 Read-only access to **foreign archive formats** for the MOCHI desktop app (plan
 phase D8, decision O9): browse, test, and stream entries out of **ZIP**,
 **7z** (including AES-256, encrypted names, and split `.7z.001…` volumes),
-**RAR 4 and RAR 5** (including encrypted headers and multi-volume sets),
-**tar**, and **tar.gz / .tgz**.
+**RAR 4 and RAR 5** (read-only, always; including encrypted headers; multi-volume
+sets are read but, in 1.0, not tested as a complete set, and RAR has no
+hostile-input fixtures: see "Not done" below), **tar**, and
+**tar.gz / .tgz**.
 
 These formats are outside the MOCHI specification. Nothing here touches the
 `.mochi` wire format.
@@ -187,7 +189,9 @@ functions in `mochi_foreign::fuzz`).
   and asks, through the callback, when it is missing; that is reported
   (`MISSING_VOLUME` for an unusable start, otherwise the listing is incomplete
   and the affected entry is `read error: volume … is missing`). Opening a
-  volume that is not the first says so.
+  volume that is not the first says so. **Tested only with a missing volume
+  and a later volume, never with a complete set** (a 1.0 limit [owner,
+  2026-10-15]).
 * A name that fills UnRAR's header buffer (1023 characters) is not carried
   (it would be a cut, wrong name); a dictionary over 1 GiB is refused.
 * After a limit breach in the middle of an entry the operation stops
@@ -246,8 +250,9 @@ through `packaging/helper_probe.py` (a protocol-v2 `list` of
   only; cross-compiling the library for `x86_64-pc-windows-gnu` type-checks.
 * No RAR writer is available, so no RAR fixture has a traversal name, a bomb,
   a BLAKE2sp hash, or a RAR 5 symlink; RAR BLAKE2sp reporting is covered by the
-  wire and wording tests only. The WinRAR half of the pinned corpus is real
-  archives written by RARLAB's `rar` (versions not recorded in the files),
+  wire and wording tests only. The RAR part of the pinned corpus is real
+  archives written by RARLAB's `rar` (versions not recorded in the files; no
+  WinRAR claim is made [owner, 2026-10-15]),
   compared with the expectations their authors wrote down, not with a second
   RAR decoder (Debian's 7-Zip omits the non-free one).
 * Encrypted entries larger than 512 MiB (7z, RAR) are refused, not streamed;

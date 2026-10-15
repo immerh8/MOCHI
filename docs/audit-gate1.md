@@ -21,12 +21,27 @@ the release-blocking fault matrix (spec §24.2).
 * **Scope of this PR:** this file, plus the doc-drift fixes listed in §8.1. No
   production code, wire-format, ratification-artifact, or fixture change.
 
+## Owner decisions of 2026-10-15
+
+Recorded in spec Annex B.3, the plan, and below. Each is marked "[owner, 2026-10-15]". The findings further down keep their original text; each decided finding carries a "Decided" line.
+
+| Finding | Decision [owner, 2026-10-15] |
+|---|---|
+| G6 | **Policy B.** Windows reports `Unconfirmed` for creation in 1.0. G6 is closed as a **policy disposition**, not as documented durability and not as a pass on physical machines. The Windows 10 test leg stays enabled |
+| F2 | (a) Symbolic links deferred to 1.x. No format byte changes |
+| F3 | Gate 6: updates signed with minisign; installers unsigned (no Authenticode) |
+| F4 | (a) "Interrupted indexing visible" does not apply in 1.0 (no index); met as the K17-style option |
+| F5 | (a) The desktop gap is accepted for 1.0 (freshness `UNKNOWN`), to revisit in 1.x |
+| F7 | (a) RAR claims narrowed: no "WinRAR" corpus claim, multi-volume read but not tested as a complete set; two gaps recorded |
+| F8 | Bundle `docs/user/` in both installers; Help, User guide opens it offline; scope stated as command-line |
+| F11–F15 | Non-semantic cleanup only; behaviour-changing parts are proposed, not done (see the PR) |
+
 ## Summary
 
 * **Not yet 1.0-ready.** The 1.0 flip (W20) is owner-held by design, and its trigger
   ("every §8.2 gate met except item 4, including G6", ratification-core-plan W20) does
   not hold. Gates 1, 5, and 6 are not met, G6 is not started, and gate 6's text
-  contradicts an owner decision.
+  contradicts an owner decision. *(Update, 2026-10-15: G6 is closed as a policy disposition and gate 6's text is amended; see "Owner decisions of 2026-10-15" above.)*
 * **Blockers for 1.0** (§9):
   * **F16 (fixed in #57):** a real bug that makes `main` CI red. A 358-byte 7z hangs the 7z
     listing (found by the `foreign_sevenz` fuzz smoke on `main`; reproduced here).
@@ -121,7 +136,7 @@ test in CI, on Windows and Ubuntu (release gate 1). Unless a row says otherwise:
 | Digests | **met** | `mochi-format/src/digest.rs` tests: `chunk_content_hash_is_exact_decoded_bytes`, `stored_object_hash_is_exact_stored_bytes_and_streams`, `dictionary_hash_is_exact_dictionary_bytes`, `file_content_hash_is_b3sum_compatible`, `same_bytes_differ_across_every_scope`, `separators_are_prefix_free_nul_terminated_and_distinct`, `commit_id_is_the_separated_canonical_body`, `footer_digest_is_blake3_of_the_spec_concatenation`; `c2_objects.rs` property `encode_store_load_decode_round_trips_and_every_digest_matches`; 5 `compile_fail` doctests in `repr.rs`, codes checked by the nightly job | — |
 | Catalog & namespace | **met** | `c3_catalog.rs`: property `replay_matches_the_reference_model_everywhere`, `valid_extent_lists_are_accepted_and_each_defect_class_is_rejected`, `published_image_needs_no_wal_or_journal_file`; `t11_t12_replay.rs` `every_commit_opens_to_its_model_state_under_every_policy` | — |
 | Recovery manifests | **met** | `c4_recovery.rs` `destroyed_catalog_is_rebuilt_from_manifests_at_every_commit`; `c5_publication.rs` `a_destroyed_catalog_is_recovered_through_the_footer_verified_head`; `t16_baseline_recovery.rs` `t16_recovers_with_everything_before_b_destroyed`; R8 cases | — |
-| Publication | **met** | `c5_publication.rs`: `termination_at_each_publication_stage_never_mixes_commits`, `torn_writes_at_every_append_never_mix_commits`, `truncation_at_every_byte_accepts_no_invalid_commit`, `a_failed_sync_is_never_acknowledged`, `a_lying_sync_degrades_only_to_never_mixed`, `directory_durability_is_reported_never_assumed`, `sync_order_follows_spec_12_2`; `t22_creation.rs`; CI `power loss` × 2 | Windows directory durability stays `Unconfirmed` until G6 (owner-held, §6) |
+| Publication | **met** | `c5_publication.rs`: `termination_at_each_publication_stage_never_mixes_commits`, `torn_writes_at_every_append_never_mix_commits`, `truncation_at_every_byte_accepts_no_invalid_commit`, `a_failed_sync_is_never_acknowledged`, `a_lying_sync_degrades_only_to_never_mixed`, `directory_durability_is_reported_never_assumed`, `sync_order_follows_spec_12_2`; `t22_creation.rs`; CI `power loss` × 2 | Windows directory durability stays `Unconfirmed` in 1.0 by the G6 policy disposition [owner, 2026-10-15] |
 | Read & extract | **met** | traversal: `catalog/mod.rs` `relationship_and_mochi_rule_violations_are_refused` (cannot be encoded); collisions: `c6_restore.rs` `c6_case_insensitive_collisions_never_overwrite_or_merge`, `c6_preflight_*`, `c6_unsupported_names_are_reported_not_renamed`; `c6_restore_races.rs`; `c6_restore_windows.rs`; CI `casefold` × 2; benchmarks `docs/benchmarks/c6-read.md` | Benchmarks are published but run by hand on one VM (host cache not controlled); CI does not re-run them. The row asks only that they be published |
 | Verification | **met** | `c7_verify.rs`: `c7_verification_is_read_only` (storage trace and file hash), `c7_healthy_archive_at_every_level`, `c7_a_damaged_data_object_fails`; exit codes and precedence: R7 §5, `docs/c14-cli.md`, `t26_t27_reports.rs` `g9_mixed_outcome_matrix`, `exit_codes.rs`; desktop `check.e2e.js` hashes the archive before and after | — |
 | Freshness | **met** | `c7_verify.rs` `c7_an_older_archive_is_never_fresh`, `c7_freshness_against_a_user_supplied_head`; `r7_json_schemas.rs` targeted mutation "freshness `PASS` without an anchor" rejected | Desktop has no anchor (F5); it shows `UNKNOWN`, never `PASS`, so the row still holds |
@@ -184,7 +199,7 @@ exists.**
 | G3 Scaling | **met** | `docs/benchmarks/t32-scaling.md` (run 37298828576). Measured on draft 1; the freeze changed only descriptor key 3 and `user_version` (K13), so the costs carry over |
 | G4 Limits | **met** (opt-in item moved to 1.x, D16) | `mochi-format/tests/limits.rs`, T5 property, `b2_image_budget.rs`, `docs/benchmarks/t32-capacity-memory.md`; `exit_codes.rs` `exceed_default_limits_is_refused_by_name` |
 | G5 Capacity | **met** | `docs/benchmarks/t32-capacity-memory.md`; B.2.4 replaced by measurements |
-| G6 Windows durability | **owner-held; not started; creation mechanism fixed (G6a, 2026-10-15), evidence pending** | Creation on Windows now publishes with `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` and no `REPLACE_EXISTING` (`mochi-sys`; owner decision 2026-10-15, superseding T21/Q63), the call whose documentation ("The function does not return until the file is actually moved on the disk.") G6 can cite. That is a mechanism, not evidence: nothing reports `Confirmed`, and the flip waits for the VM crash-replay evidence and a G6 record. T33 needs physical Windows 10 22H2 and 11 hardware. Until then Windows reports `Unconfirmed` and truncation needs `--accept-unconfirmed-durability` (`t24_quarantine.rs`) |
+| G6 Windows durability | **closed as a policy disposition [owner, 2026-10-15]: Windows reports `Unconfirmed` in 1.0; not documented durability, not a pass on physical machines** | Creation on Windows now publishes with `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` and no `REPLACE_EXISTING` (`mochi-sys`; owner decision 2026-10-15, superseding T21/Q63), the call whose documentation ("The function does not return until the file is actually moved on the disk.") G6 can cite. That is a mechanism, not evidence: nothing reports `Confirmed`. The crash-replay evidence (`docs/g6-windows-crash-replay.md`, #60; Windows 11 26300.9457 and Windows 10 19045.2006) shows that on NTFS the created name is made durable by the directory flush, which Microsoft does not document, and that write-through alone lost it 3 of 3. Plan O12 says to claim only what the Windows APIs document, so by policy [owner, 2026-10-15] Windows reports `Unconfirmed` and truncation needs `--accept-unconfirmed-durability` (`t24_quarantine.rs`). The weekly `g6-windows` workflow (Windows 10 leg enabled) guards the observed behaviour. Changing the rule needs a documented primitive or a new owner decision. T33 (physical hardware) is no longer required for 1.0 |
 | G7 Creation | **met** | `t22_creation.rs`, `t19_storage_dir.rs`; CI `power loss (ubuntu-22.04|24.04, dm-flakey)`. The `link` fallback is exercised by injected errno, not on a filesystem that rejects the flag (recorded caveat, Q52) |
 | G8 Truncation | **met** | `t23_eligibility.rs`, `t24_quarantine.rs`, `c14_commands.rs` `c14_append_truncates_an_eligible_tail_only_on_request` (both waivers recorded); Windows refusal without the override |
 | G9 Reports | **met** | `t26_t27_reports.rs` `g9_mixed_outcome_matrix`, timestamp property (T28); the CLI takes its exit code from `Report::conclude` (`c14-cli.md` rule 9, `r7_json_schemas.rs` checks `exit_code` equals the process exit) |
@@ -236,7 +251,7 @@ exists.**
 
 ## 7. Owner-held items
 
-1. **G6** (T33): Windows durability on physical Windows 10 22H2 and 11 hardware.
+1. ~~**G6** (T33): Windows durability on physical Windows 10 22H2 and 11 hardware.~~ Closed as a policy disposition [owner, 2026-10-15].
 2. **W20**: the 1.0 flip (descriptor key 3 `null`, `mochi migrate`, R8 regenerated in
    the 1.0 format, R9 rerun). It also freezes the 11 command-output schemas (R7 O2).
    Its trigger requires every other §8.2 gate to be met first.
@@ -244,12 +259,11 @@ exists.**
    * the R1–R4 freeze (G12), R7 (G15), R8 (G13), and R9 (G14);
    * Annex B D10–D12, D14, D15, and D24 (still in B.2);
    * the delegated calls K10–K26.
-4. **Release gate 6** text, or the decision behind it (F3).
+4. ~~**Release gate 6** text, or the decision behind it (F3).~~ Amended [owner, 2026-10-15].
 5. **The release checklist** in `docs/packaging.md` on client hardware: updater between
    two published releases, WebView2 bootstrap, shell integration, NVDA/Orca, contrast
    themes. Also the first `release.yml` draft release with the owner's secrets.
-6. **Decisions this audit found open** (each written as options in §9): F2 (symbolic
-   links), F4 (interrupted indexing), F5 (desktop evidence and head history).
+6. ~~**Decisions this audit found open**: F2, F4, F5.~~ Decided [owner, 2026-10-15]; see above.
 
 ## 8. Documents that disagree with the code or with each other
 
@@ -318,6 +332,8 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
      R3 and R8 regenerated, R9 rerun.
 
    (a) is cheaper and honest. (b) matches what WinRAR users expect. The owner decides.
+
+   **Decided [owner, 2026-10-15]: (a).** Symbolic links are deferred to 1.x (spec D6, plan O6). No format byte, draft 2, or ratification artifact is touched.
 3. **F3 — blocker (owner-held).** Release gate 6 requires "signed installers … for
    Windows and Ubuntu". The owner decided no Authenticode and no `.deb` signing for
    1.0 (`docs/packaging.md`, plan D7). The gate was never amended, so as written it can
@@ -325,6 +341,8 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    (minisign, `requireSignedVersion`); installers unsigned by decision [owner,
    2026-10-14]". Then the evidence is the first draft release from `release.yml` with
    the owner's key, plus the release-checklist update run.
+
+   **Decided [owner, 2026-10-15]:** updates are signed with minisign; installers are unsigned (no Authenticode). Plan §8.2 gate 6 is amended.
 4. **F4 — blocker (spec gap).** §8.1 Search and §24.2 "Interrupted indexing": 1.0 builds
    no search index (full-text is optional, §19.2), so there is nothing to interrupt.
    Plan C13 leaves it "waiting for an index". Options:
@@ -335,6 +353,8 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    * **(b)** build an index before 1.0.
 
    (a) is recommended.
+
+   **Decided [owner, 2026-10-15]: (a).** Plan C13 and §8.1 are updated.
 5. **F5 — should-fix (owner decision).** The desktop app keeps no local head history and
    no evidence log (spec B.1 D8: "the client keeps the last-seen head per archive ID
    locally"):
@@ -345,10 +365,12 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    Plan D4 wrote options A (move `HeadStore` into core), B (a shared `mochi-state`
    crate), and C (rejected). No decision is recorded. **Next step:** the owner picks A or
    B, or accepts the gap for 1.0 in D8's text.
+
+   **Decided [owner, 2026-10-15]: (a), the gap is accepted for 1.0.** Recorded in spec D8 and plan D4; to revisit in 1.x.
 6. **F6 — should-fix.** `main` is not green at the audited head. The run for #54
    (38558591812) failed on F16. The run for #55 (38561036215) was still running when
    this was written. The last fully green `main` run is 38551536791 at `db611b3`.
-   **Next step:** fix F16, then record a green `main` run id here and in the plan.
+   **Next step:** fix F16, then record a green `main` run id here and in the plan. **Done 2026-10-15:** F16 is fixed (#57); the green `main` run 38684857303 (head `67fd924`, #61) is recorded here and in the plan (D4 status); run 38777749682 (head `ee52008`, #60) was still in progress.
 7. **F7 — should-fix.** The D8 hostile corpus has no RAR case:
    * no traversal, bomb, ratio, or BLAKE2sp fixture;
    * multi-volume RAR (D8 rule 8) is never read as a complete set;
@@ -358,6 +380,8 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    **Next step:** obtain RAR fixtures under a compatible license, or written by the owner
    with a licensed `rar` (reading only; MOCHI never writes RAR), or drop "WinRAR" and
    "multi-volume RAR" from the D8 claims for 1.0.
+
+   **Decided [owner, 2026-10-15]: (a), narrow the claims.** RAR stays read-only; "WinRAR" is dropped as a corpus claim; multi-volume RAR is read but not tested as a complete set. Both gaps stay recorded: no hostile-input RAR fixtures, no complete multi-volume set test. User-facing text was checked and narrowed (README, `crates/mochi-foreign/README.md`).
 8. **F8 — should-fix.** Release gate 5 is not met as its own status line defines it.
    `docs/user/` is CLI-oriented and is not shipped: the installers bundle no user
    documentation, and the app links to none. The app's own text covers parts of the four
@@ -365,6 +389,8 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    both installers and add a Help entry, with a line on the Test screen that a passing
    test does not make the file a backup. Alternatively, the owner records that the
    in-app text plus the published guide meet gate 5.
+
+   **Decided [owner, 2026-10-15]:** bundle the guide in both installers and add Help, User guide, which opens the bundled copy offline (`help.rs`, `packaging/guide.py`). The guide's CLI-focused scope is stated in the button label and in a banner on every page. Verified: package smoke checks on both OSes assert the file at the resolved path; Rust, vitest and E2E tests show the Help action opens that path (OS open mocked). **Not done, proposed:** the Test-screen line "a passing test does not make it a backup".
 9. **F9 — should-fix.** The owner's review (K11) of the delegated freezes and calls is
    still pending (G12–G15, D10–D15, D24, K10–K26). It is a precondition of W20.
 10. **F10 — should-fix.** The release checklist (`docs/packaging.md`) has never been run.
@@ -379,22 +405,22 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
     PRs (#2–#5) and early `immerh8` runs. The tests still pass today (run 38551536791),
     but the checklist's "Gates" section does not say so. **Next step:** append the
     current run id to `docs/b2-implementation-checklist.md` "CI evidence" at the next
-    status update.
+    status update. **Done 2026-10-15:** green `main` run 38684857303 (head `67fd924`, #61) appended to the checklist.
 12. **F12 — nit.** The TAR "pinned tool/version matrix" (§8.1) is not pinned: CI uses the
     runner image's tools and prints their versions. **Next step:** make
     `ci/tar-interop.sh` (or the workflow) fail when a printed version is not in
-    `docs/c10-tar-compat.md`'s table, so the claim and CI cannot drift silently.
+    `docs/c10-tar-compat.md`'s table, so the claim and CI cannot drift silently. **Not done, proposed:** it changes CI gating.
 13. **F13 — nit.** §23.3 #8 (partial coverage shown as incomplete) has no Windows UI run:
     the vitest job is Ubuntu-only, and the E2E covers only complete coverage. **Next
     step:** an E2E case over an archive with a damaged image (`c13`'s fixture shape), or
-    run `pnpm test` on `windows-latest` too.
+    run `pnpm test` on `windows-latest` too. **Done 2026-10-15 (the second option):** a new CI job `desktop ui tests (windows-latest)` runs `pnpm test` on Windows. No product change.
 14. **F14 — nit.** "Stale writer resumes" and "key service unavailable" have no 1.0 entry
     point that could return `UNSUPPORTED`. The plan's sentence "that behaviour is itself
     tested" holds only for inventory and disaster recovery. **Next step:** say so in
-    plan §8.1.
+    plan §8.1. **Done 2026-10-15:** plan §8.1 says so.
 15. **F15 — nit.** Spec §10.4.1 is still marked "(Proposed, open)". `AGENTS.md` and
     `apps/mochi-desktop/README.md` status lines lag (§8.2). The D6 forwarded `argv`
-    loses unpaired surrogates on a second launch (recorded in D6; Windows-only, rare).
+    loses unpaired surrogates on a second launch (recorded in D6; Windows-only, rare). **Done 2026-10-15:** the `AGENTS.md` and `apps/mochi-desktop/README.md` status lines are updated. **Not done, proposed:** changing §10.4.1's "(Proposed, open)" status is a spec claim.
 16. **F16 — blocker (real bug; makes `main` CI red). Fixed in #57.** A crafted 358-byte 7z makes the
     listing loop without end:
     * **Where:** in `sevenz_rust2` 0.20,

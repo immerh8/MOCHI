@@ -13,7 +13,10 @@
 //!   performed as a copy and delete operation is flushed to disk before the
 //!   function returns.") is about the copy-and-delete case; a same-directory
 //!   rename is not that case, so this crate claims only the first sentence.
-//!   Whether it is enough for gate G6 is for G6's evidence to decide.
+//!   The G6b crash-replay evidence (`docs/g6-windows-crash-replay.md`) shows
+//!   that on NTFS that sentence alone does not make the new name durable; the
+//!   directory flush in `mochi-core` does, and Windows still reports
+//!   `Unconfirmed` by the G6 policy ([owner, 2026-10-15]; spec Annex B.3).
 //! * [`volume_filesystem_name`]: `GetVolumeInformationByHandleW` on a handle
 //!   to a directory, e.g. `"NTFS"`.
 //!

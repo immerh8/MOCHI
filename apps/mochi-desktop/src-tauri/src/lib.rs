@@ -15,6 +15,7 @@ pub mod crashlog;
 mod d5_tests;
 pub mod extract;
 pub mod foreign;
+pub mod help;
 pub mod ipc;
 pub mod jobs;
 pub mod launch;
@@ -118,7 +119,8 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::set_crash_settings,
             commands::read_crash_log,
             commands::export_crash_log,
-            commands::clear_crash_log
+            commands::clear_crash_log,
+            commands::open_user_guide
         ])
         .setup(move |app| {
             // The opt-in crash log (D7): off until the user turns it on.

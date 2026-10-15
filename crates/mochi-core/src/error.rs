@@ -114,7 +114,8 @@ pub enum ErrorCode {
     /// Exit 3. Added in B.2.
     QuarantineFailed,
     /// Directory durability is not `Confirmed`, so truncation is blocked
-    /// unless explicitly waived (D14; Windows until gate G6). Exit 3.
+    /// unless explicitly waived (D14; always so on Windows in 1.0, by the G6
+    /// policy). Exit 3.
     /// Added in B.2.
     DurabilityUnconfirmed,
     /// An in-place change to a creation-time constraint was requested,
