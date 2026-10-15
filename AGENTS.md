@@ -12,7 +12,7 @@ MOCHI is an archive format and archiver, shipped like WinRAR: a format library p
 - `crates/mochi-testkit` — fault-injecting storage and fixture builders.
 - `apps/mochi-desktop` — Tauri v2 application (`src-tauri/` Rust backend, `ui/` frontend).
 
-The product is **pre-1.0 and the wire format is not ratified**. The layout is frozen as **draft 2** (R1–R6, gate G12): a change to any byte or rule in `docs/ratification/` is a new draft identifier (`descriptor::DRAFT_ID`) with an Annex B entry, never an edit. Every build before 1.0 is "experimental / draft-compatible" (spec §28).
+The format is **ratified at 1.0** (the flip, W20, 2026-10-15; spec B.2.14). The layout frozen as **draft 2** (R1–R6, gate G12) is the 1.0 layout; a 1.0 archive carries `null` in descriptor key 3. A change to any byte or rule in `docs/ratification/` is a new format identifier with an Annex B entry, never an edit. Every command but `mochi migrate` refuses a draft archive (`UNSUPPORTED_FEATURE`, exit 4); `migrate` reads draft 2 only (`descriptor::DraftPolicy`, `DRAFT_ID`). 1.0 does not claim preservation readiness (spec §28).
 
 ## Sources of truth, in order
 
@@ -27,7 +27,7 @@ If the spec does not answer a question, **do not invent an answer.** Stop, state
 
 ## Commands
 
-Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–7, and C14 implemented, `docs/c14-cli.md`):
+Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–7, and C14 implemented, `docs/c14-cli.md`; W20 `migrate`):
 
 ```bash
 cargo fmt --all --check
@@ -36,7 +36,7 @@ cargo test --workspace
 ci/check-invariants.sh                       # mechanical checks for rules clippy can't express
 ci/tar-interop.sh "$PWD/target/debug/mochi" zstd tar bsdtar   # C10: real zstd, GNU tar, bsdtar over a TAR-compatible archive
 cargo test -p mochi-testkit --test r3_cddl      # R3: docs/schemas/*.cddl against the golden bytes (cddl crate, dev-dependency of mochi-testkit only)
-cargo test -p mochi-testkit --test r8_golden     # R8: 76 whole-archive cases, their summaries, coverage, the G1 audit vectors, the 12 MiB budget (fixtures/golden/r8; frozen when written)
+cargo test -p mochi-testkit --test r8_golden     # R8: 76 whole-archive cases + the `legacy/` draft-2 migrate cases, their summaries, coverage, the G1 audit vectors, the 12 MiB budget (fixtures/golden/r8; frozen when written)
 cargo run -p mochi-cli -- --help
 cargo run --release -p mochi-testkit --example c5_append_bench   # §27 append benchmark (C5)
 cargo run --release -p mochi-testkit --example c12_parity_bench   # §27 recovery-record benchmark (C12, R6); --quick skips 512 MiB

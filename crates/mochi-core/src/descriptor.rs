@@ -1,5 +1,5 @@
 //! Archive descriptor (spec Annex B.2 D12; schema
-//! `docs/schemas/archive-descriptor-v0.cddl`). **DRAFT** (R1, R2).
+//! `docs/schemas/archive-descriptor-v0.cddl`). Ratified at 1.0 (R1, R2; D24).
 //!
 //! One frame of kind `ARCHIVE_DESCRIPTOR` at offset 0, written once at
 //! creation and never rewritten. It holds creation-time facts only and never
@@ -52,11 +52,52 @@ use crate::object::ArchiveId;
 /// Descriptor schema version (key 0).
 pub const SCHEMA_VERSION: u64 = 0;
 
-/// Draft identifier this build writes and reads (key 3): 2 = the layout
-/// frozen at the format freeze (gate G12; R1 to R4; plan K13). Draft 1 was the
-/// Annex B.2 wire batch before the freeze (R4 `user_version` 0) and is refused.
-/// A ratified archive carries null.
+/// The last pre-1.0 draft identifier (key 3): 2 = the layout frozen at the
+/// format freeze (gate G12; R1 to R4; plan K13). This build never writes it:
+/// a 1.0 writer writes null (a ratified archive, spec B.2.14 item 2). Only
+/// `mochi migrate` reads it ([`DraftPolicy::AllowLastDraft`]); every other
+/// command refuses it with `UNSUPPORTED_FEATURE`. Draft 1 was the Annex B.2
+/// wire batch before the freeze (R4 `user_version` 0) and is refused without
+/// the migrate hint (K25).
 pub const DRAFT_ID: u64 = 2;
+
+#[cfg(any(test, feature = "test-controls"))]
+thread_local! {
+    static LEGACY_DRAFT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Test control: archives **created on this thread** carry `draft` in
+/// descriptor key 3 instead of null, until it is set back to `None`. It
+/// builds the draft-2 sources `mochi migrate` is tested on; nothing else
+/// about the layout differs between draft 2 and a ratified archive (spec
+/// B.2.14). Returns the previous value. Production code cannot call this.
+#[cfg(any(test, feature = "test-controls"))]
+pub fn set_legacy_draft_for_tests(draft: Option<u64>) -> Option<u64> {
+    LEGACY_DRAFT.with(|c| c.replace(draft))
+}
+
+/// The draft a new descriptor is stamped with: always null in production.
+pub(crate) fn new_archive_draft() -> Option<u64> {
+    #[cfg(any(test, feature = "test-controls"))]
+    {
+        LEGACY_DRAFT.with(std::cell::Cell::get)
+    }
+    #[cfg(not(any(test, feature = "test-controls")))]
+    {
+        None
+    }
+}
+
+/// Whether a read accepts the last draft (spec B.2.14). Ratified archives
+/// (key 3 = null) are always accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DraftPolicy {
+    /// Every command but `migrate`: a draft archive is refused, naming it.
+    #[default]
+    RatifiedOnly,
+    /// `migrate`: draft [`DRAFT_ID`] is read too. Other drafts stay refused.
+    AllowLastDraft,
+}
 
 /// Required features this build understands: the Encrypted profile's
 /// identifier (Annex B.2.10 D20 item 4, suite 1). Anything else fails closed.
@@ -92,8 +133,8 @@ pub struct Redundancy {
     pub percent: u16,
 }
 
-/// A decoded descriptor. Generation and draft identifier are not fields:
-/// this build accepts exactly one value of each and refuses the rest.
+/// A decoded descriptor. The wire generation is not a field: this build
+/// accepts exactly one value and refuses the rest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Descriptor {
     pub archive_id: ArchiveId,
@@ -104,6 +145,10 @@ pub struct Descriptor {
     pub redundancy: Option<Redundancy>,
     /// Present only when the writer opted into larger limits (key 6).
     pub declared_limits: Option<DeclaredLimits>,
+    /// Key 3: `None` is a ratified archive (null); `Some(DRAFT_ID)` is the
+    /// last draft, readable only under [`DraftPolicy::AllowLastDraft`].
+    /// Always `None` on a descriptor this build writes.
+    pub draft: Option<u64>,
 }
 
 fn invalid(msg: impl Into<String>) -> MochiError {
@@ -132,6 +177,7 @@ impl Descriptor {
             tar_compatible,
             redundancy: None,
             declared_limits: None,
+            draft: None,
         }
     }
 
@@ -145,6 +191,7 @@ impl Descriptor {
             tar_compatible: false,
             redundancy: None,
             declared_limits: None,
+            draft: None,
         }
     }
 
@@ -184,7 +231,7 @@ impl Descriptor {
             (0, Value::Uint(SCHEMA_VERSION)),
             (1, Value::Bytes(self.archive_id.as_bytes().to_vec())),
             (2, Value::Uint(u64::from(WIRE_GENERATION))),
-            (3, Value::Uint(DRAFT_ID)),
+            (3, self.draft.map_or(Value::Null, Value::Uint)),
             (
                 4,
                 Value::Array(
@@ -241,10 +288,25 @@ impl Descriptor {
 
     /// Decode a descriptor payload (canonical CBOR, closed schema).
     pub fn decode(payload: &[u8], limits: &Limits, cbor_limits: &CborLimits) -> Result<Self> {
-        Self::decode_inner(payload, limits, cbor_limits).map_err(classify)
+        Self::decode_with(payload, limits, cbor_limits, DraftPolicy::RatifiedOnly)
     }
 
-    fn decode_inner(payload: &[u8], limits: &Limits, cbor_limits: &CborLimits) -> Result<Self> {
+    /// [`Descriptor::decode`] under an explicit [`DraftPolicy`].
+    pub fn decode_with(
+        payload: &[u8],
+        limits: &Limits,
+        cbor_limits: &CborLimits,
+        drafts: DraftPolicy,
+    ) -> Result<Self> {
+        Self::decode_inner(payload, limits, cbor_limits, drafts).map_err(classify)
+    }
+
+    fn decode_inner(
+        payload: &[u8],
+        limits: &Limits,
+        cbor_limits: &CborLimits,
+        drafts: DraftPolicy,
+    ) -> Result<Self> {
         let v = cbor::decode(payload, cbor_limits)?;
         let mut f = Fields::of(&v, "archive descriptor")?;
 
@@ -262,24 +324,34 @@ impl Descriptor {
                  generation {WIRE_GENERATION} (MOCHI2)"
             )));
         }
-        match f.req(3)? {
-            Value::Uint(DRAFT_ID) => {}
-            Value::Uint(other) => {
+        let draft = match f.req(3)? {
+            Value::Null => None,
+            Value::Uint(DRAFT_ID) if drafts == DraftPolicy::AllowLastDraft => Some(DRAFT_ID),
+            Value::Uint(DRAFT_ID) => {
                 return Err(refuse(format!(
-                    "archive was written under draft {other}; this build reads draft {DRAFT_ID}"
+                    "archive was written under draft {DRAFT_ID}, a pre-1.0 layout; this build \
+                     reads ratified archives only. Convert it with `mochi migrate SRC --output \
+                     DST`"
                 )))
             }
-            Value::Null => {
-                return Err(refuse(
-                    "archive declares a ratified format; this is a pre-1.0 draft build",
-                ))
+            Value::Uint(other) => {
+                return Err(refuse(match drafts {
+                    DraftPolicy::RatifiedOnly => format!(
+                        "archive was written under draft {other}, a pre-1.0 layout; this build \
+                         reads ratified archives only"
+                    ),
+                    DraftPolicy::AllowLastDraft => format!(
+                        "archive was written under draft {other}; migration reads only draft \
+                         {DRAFT_ID}"
+                    ),
+                }))
             }
             _ => {
                 return Err(MochiError::from(mochi_format::FormatError::Schema(
                     "draft identifier: expected an unsigned integer or null".into(),
                 )))
             }
-        }
+        };
         let required_features = f
             .req(4)?
             .array("required features")?
@@ -357,6 +429,7 @@ impl Descriptor {
             tar_compatible,
             redundancy,
             declared_limits,
+            draft,
         })
     }
 
@@ -369,6 +442,23 @@ impl Descriptor {
         offset: u64,
         limits: &Limits,
         cbor_limits: &CborLimits,
+    ) -> Result<Self> {
+        Self::from_stored_with(
+            bytes,
+            offset,
+            limits,
+            cbor_limits,
+            DraftPolicy::RatifiedOnly,
+        )
+    }
+
+    /// [`Descriptor::from_stored`] under an explicit [`DraftPolicy`].
+    pub fn from_stored_with(
+        bytes: &[u8],
+        offset: u64,
+        limits: &Limits,
+        cbor_limits: &CborLimits,
+        drafts: DraftPolicy,
     ) -> Result<Self> {
         if offset != DESCRIPTOR_OFFSET {
             return Err(invalid(format!(
@@ -385,7 +475,7 @@ impl Descriptor {
         let payload = bytes
             .get(SKIPPABLE_HEADER_LEN..)
             .ok_or_else(|| invalid("descriptor payload out of range"))?;
-        Self::decode(payload, limits, cbor_limits)
+        Self::decode_with(payload, limits, cbor_limits, drafts)
     }
 
     /// D12 "mismatched": the descriptor must name the archive of the commit
@@ -437,11 +527,51 @@ mod tests {
         want.extend([7u8; 32]);
         want.extend([
             0x02, 0x02, // 2: 2
-            0x03, 0x02, // 3: 2 (draft 2, the frozen layout)
+            0x03, 0xF6, // 3: null (a ratified archive, B.2.14)
             0x04, 0x80, // 4: []
             0x05, 0xA1, 0x00, 0xF4, // 5: {0: false}
         ]);
         assert_eq!(&s.as_bytes()[8..], &want[..]);
+    }
+
+    /// B.2.14: key 3 = 2 (the last draft) is refused with the migrate hint
+    /// unless the read is `migrate`'s; any other draft is refused without it.
+    #[test]
+    fn drafts_are_refused_and_only_the_last_one_has_the_migrate_hint() {
+        let l = Limits::default();
+        let c = CborLimits::default();
+        let with = |draft: Value, policy| {
+            let mut v = d().to_value();
+            if let Value::Map(m) = &mut v {
+                m[3].1 = draft;
+            }
+            let payload = cbor::encode(&v).unwrap();
+            Descriptor::decode_with(&payload, &l, &c, policy)
+        };
+        let e = with(Value::Uint(2), DraftPolicy::RatifiedOnly).unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnsupportedFeature);
+        assert!(e.message.contains("draft 2") && e.message.contains("mochi migrate"));
+        let ok = with(Value::Uint(2), DraftPolicy::AllowLastDraft).unwrap();
+        assert_eq!(ok.draft, Some(2));
+        for n in [1u64, 3] {
+            for p in [DraftPolicy::RatifiedOnly, DraftPolicy::AllowLastDraft] {
+                let e = with(Value::Uint(n), p).unwrap_err();
+                assert_eq!(e.code, ErrorCode::UnsupportedFeature);
+                assert!(e.message.contains(&format!("draft {n}")));
+            }
+            let e = with(Value::Uint(n), DraftPolicy::RatifiedOnly).unwrap_err();
+            assert!(!e.message.contains("migrate"), "{}", e.message);
+        }
+        assert_eq!(
+            with(Value::Null, DraftPolicy::RatifiedOnly).unwrap().draft,
+            None
+        );
+        assert_eq!(
+            with(Value::Bool(true), DraftPolicy::AllowLastDraft)
+                .unwrap_err()
+                .code,
+            ErrorCode::DescriptorInvalid
+        );
     }
 
     /// D21: constraint 1 carries the suite and percentage; an unknown suite

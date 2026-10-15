@@ -713,5 +713,5 @@ pub fn read_descriptor_raw(src: &dyn ReadStorage, opts: &ReadOptions) -> Option<
     let span = walk_frame(&r, 0, &opts.limits).ok()?;
     let mut buf = vec![0u8; usize::try_from(span.len).ok()?];
     src.read_exact_at(0, &mut buf).ok()?;
-    Descriptor::from_stored(&buf, 0, &opts.limits, &opts.cbor).ok()
+    Descriptor::from_stored_with(&buf, 0, &opts.limits, &opts.cbor, opts.drafts).ok()
 }

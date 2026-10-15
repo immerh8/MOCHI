@@ -54,6 +54,7 @@ const SCHEMAS: &[&str] = &[
     "cli-repair-apply.schema.json",
     "cli-rekey-list.schema.json",
     "cli-plan-saved.schema.json",
+    "cli-migrate.schema.json",
 ];
 
 /// The R8 case spec §20.6's example is generated from.
@@ -452,7 +453,7 @@ fn command_output_schemas_require_their_in_band_tag() {
         }
         seen += 1;
     }
-    assert_eq!(seen, 11, "the eleven command-output schemas");
+    assert_eq!(seen, 12, "the twelve command-output schemas");
 }
 
 // ---- enumerations ------------------------------------------------------------------
@@ -1143,6 +1144,32 @@ fn corpus() -> Vec<(&'static str, Value)> {
     );
     assert_eq!(v["action"], "reencrypt");
     keep("cli-rewrite.schema.json", v);
+
+    // `migrate`: the three draft-2 archives kept in R8's `legacy/` (Core,
+    // Encrypted, and with a recovery record).
+    for (file, pass) in [
+        ("draft2-core-history.mochi", None),
+        ("draft2-enc-history.mochi", Some("r8 golden passphrase")),
+        ("draft2-red-5pct.mochi", None),
+    ] {
+        let from = r8().join("legacy").join(file);
+        let mut args = vec![
+            "migrate".to_owned(),
+            s(&from),
+            "--output".into(),
+            a.s(&format!("migrated-{file}")),
+        ];
+        if let Some(p) = pass {
+            args.push("--passphrase-file".into());
+            args.push(passphrase_file(&a.p(""), "legacy-pass", p));
+        }
+        let (_, v) = ok(
+            "cli-migrate.schema.json",
+            &a.g(&args.iter().map(String::as_str).collect::<Vec<_>>()),
+        );
+        assert_eq!(v["resealed"], pass.is_some());
+        keep("cli-migrate.schema.json", v);
+    }
 
     // Evidence lines and the local head history.
     for e in fs::read_dir(a.p("state/evidence")).unwrap() {
@@ -2010,6 +2037,76 @@ fn targeted() -> Vec<(&'static str, &'static str, Value, &'static str, Pick)> {
             json!("mochi-cli-plan-saved-v2"),
             "another version of the same document",
             any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/schema",
+            json!("mochi-cli-rewrite-v1"),
+            "another document's tag",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/schema",
+            json!("mochi-cli-migrate-v2"),
+            "another version of the same document",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/source_draft",
+            json!(1),
+            "only the last draft is read",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/new_ratified",
+            json!(false),
+            "a migration writes a ratified archive",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/source_kept",
+            json!(false),
+            "the source is never removed",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/comparison/retention_equal",
+            json!(false),
+            "a retention difference is a failure, not a report",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/source_verification/exit_code",
+            json!(1),
+            "a source that does not verify is not converted",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/new_verification/exit_code",
+            json!(1),
+            "a new archive that does not verify is not published",
+            any,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/resealed",
+            json!(true),
+            "resealed exactly when the profile is Encrypted",
+            |v| v["profile"]["encrypted"] == false,
+        ),
+        (
+            "cli-migrate.schema.json",
+            "/exit_code",
+            json!(2),
+            "unconfirmed without a note",
+            |v| v["durability_unconfirmed"].is_null(),
         ),
     ]
 }

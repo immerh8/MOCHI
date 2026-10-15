@@ -782,7 +782,7 @@
       "verify_exit": 1,
       "verify_level": "restoration"
     },
-    "expected_head": "c2de8b0bd51c7715d4771dacdda7aaf6232b665337f2bc050b50857c0ab98b55",
+    "expected_head": "ebbd1cb928a2817b48048bc7695174d13bc9e6265fc66e91d4f9b1ce7f3b5298",
     "fault": "An older valid state of the archive substituted for the current one.",
     "fault_matrix_row": "Older valid archive substituted",
     "name": "core-corrupt-older-archive",

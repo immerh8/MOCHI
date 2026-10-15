@@ -210,6 +210,7 @@ fn the_index_lists_exactly_the_specified_cases_and_files() {
     }
     files.insert("cases.json".into());
     files.insert("g1".into());
+    files.insert("legacy".into());
     let on_disk: BTreeSet<String> = std::fs::read_dir(dir())
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -751,5 +752,51 @@ fn write_r8_golden_files() {
         );
     } else {
         std::fs::write(&path, text).unwrap();
+    }
+}
+
+// ---- legacy: draft-2 migrate cases (W20) -------------------------------------------
+
+/// `legacy/` holds three archives written under draft 2 (descriptor key 3 =
+/// 2), kept as `mochi migrate` cases. The writer's test control for the last
+/// draft rebuilds them: the Core and Redundancy archives byte for byte from
+/// their recipes (so the control stamps exactly what draft 2 had and nothing
+/// else), the Encrypted one up to its random nonces and salts (its descriptor
+/// frame and length are equal).
+#[test]
+fn the_legacy_control_rebuilds_the_checked_in_draft_2_archives() {
+    use mochi_core::descriptor::set_legacy_draft_for_tests;
+    let cases: Value =
+        serde_json::from_slice(&std::fs::read(dir().join("legacy/cases.json")).unwrap()).unwrap();
+    let previous = set_legacy_draft_for_tests(Some(2));
+    let mut cx = Ctx::new();
+    let built: Vec<(String, Vec<u8>, Vec<u8>, bool)> = cases
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            let twin = c["equal_in_content_to"].as_str().unwrap();
+            let main = recipes::build(&mut cx, twin).main;
+            let kept =
+                std::fs::read(dir().join("legacy").join(c["file"].as_str().unwrap())).unwrap();
+            (
+                c["name"].as_str().unwrap().to_owned(),
+                main,
+                kept,
+                c["profile"] == "enc",
+            )
+        })
+        .collect();
+    set_legacy_draft_for_tests(previous);
+    assert_eq!(built.len(), 3);
+    for (name, main, kept, sealed) in built {
+        // The descriptor is the first frame: 8 header bytes and its payload.
+        let n = 8 + u32::from_le_bytes(kept[4..8].try_into().unwrap()) as usize;
+        assert_eq!(main[..n], kept[..n], "{name}: the descriptor frame");
+        if sealed {
+            assert_eq!(main.len(), kept.len(), "{name}");
+        } else {
+            assert!(main == kept, "{name}: byte for byte");
+        }
     }
 }

@@ -8,7 +8,7 @@ from .errors import MochiError
 from .schema import Schema, check_features
 
 KNOWN_FEATURES = {1}
-DRAFT_ID = 2
+RATIFIED = None  # descriptor key 3 of a ratified 1.0 archive is null (B.2.14, D24)
 
 
 @dataclass
@@ -18,7 +18,7 @@ class Descriptor:
     tar_compatible: bool
     recovery: tuple | None            # (suite, percent)
     declared_limits: dict | None
-    draft: int | None = DRAFT_ID
+    draft: int | None = RATIFIED
 
     @property
     def encrypted(self) -> bool:
@@ -80,8 +80,9 @@ def decode_object(data: bytes) -> Descriptor:
     # refusals and value rules, after the closed schema
     if gen != 2:
         raise MochiError("UNSUPPORTED_FEATURE", f"wire generation {gen}")
-    if draft != DRAFT_ID:
-        raise MochiError("UNSUPPORTED_FEATURE", f"draft identifier {draft!r} (this verifier reads draft {DRAFT_ID})")
+    if draft is not None:
+        raise MochiError("UNSUPPORTED_FEATURE",
+                         f"draft identifier {draft} (a pre-1.0 draft archive; this verifier reads only ratified 1.0 archives)")
     for f in feats:
         if f not in KNOWN_FEATURES:
             raise MochiError("UNSUPPORTED_FEATURE", f"unknown required feature {f}")

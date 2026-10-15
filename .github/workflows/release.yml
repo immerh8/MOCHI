@@ -194,7 +194,7 @@ jobs:
           if [ -f "docs/release-notes/$TAG.txt" ]; then
             cp "docs/release-notes/$TAG.txt" notes.txt
           else
-            printf 'MOCHI %s (pre-1.0: experimental, draft-compatible archive format).\nSee the release page for details.\n' "$VERSION" > notes.txt
+            printf 'MOCHI %s (1.0 ratified format; an archive is not a backup).\nSee the release page for details.\n' "$VERSION" > notes.txt
           fi
           python3 -I packaging/latest_json.py make --version "$VERSION" --tag "$TAG" \
             --repo "$GITHUB_REPOSITORY" --notes notes.txt --out assets/latest.json \
@@ -213,7 +213,7 @@ jobs:
             exit 1
           fi
           cat > body.md <<EOF
-          MOCHI $VERSION. Pre-1.0: experimental, draft-compatible archive format. An archive is not a backup.
+          MOCHI $VERSION. Ratified 1.0 format; archives from pre-1.0 builds are converted with \`mochi migrate\`. An archive is not a backup.
 
           **The installers are not code-signed.** Windows SmartScreen shows "unknown publisher": choose More info, then Run anyway. The in-app updater authenticates updates with its own signature (the .sig files), which the app checks before it installs anything.
 

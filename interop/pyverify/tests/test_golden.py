@@ -1,5 +1,6 @@
 """Per-phase golden vectors (fixtures/golden/{c1,c2,c3,c4,c5,b2,c10,c11,c12}): each gives the
 verdict its vectors.txt (or README) lists.  Verdicts are compared as stable error codes."""
+import json
 import pathlib
 
 import pytest
@@ -334,3 +335,43 @@ def test_c12_damage_beyond_capacity_is_reported_and_left_alone():
     assert ("PARITY_CAPACITY_EXCEEDED", None) in res.findings
     assert res.parity["beyond_capacity"] == 1 and res.parity["rebuilt"] == 0
     assert res.healed == damaged                          # nothing in the group is rewritten
+
+
+# ------------------------------------------------------------------------------ r8 and the 1.0 boundary (B.2.14, D24)
+R8 = GOLDEN / "r8"
+
+
+def test_r8_golden_set_matches_every_reference_summary_exactly():
+    import subprocess, sys
+    tool = pathlib.Path(__file__).resolve().parents[1] / "tools" / "compare_r8.py"
+    p = subprocess.run([sys.executable, str(tool), str(R8)], capture_output=True, text=True)
+    cases = json.loads((R8 / "cases.json").read_text())
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert f"{len(cases)} cases compared, 0 differ" in p.stdout
+
+
+LEGACY = sorted((R8 / "legacy").glob("*.mochi"))
+
+
+def test_legacy_directory_is_not_empty():
+    assert len(LEGACY) == 3
+
+
+@pytest.mark.parametrize("path", LEGACY, ids=lambda p: p.name)
+def test_legacy_draft_2_archives_are_refused_naming_the_draft(path):
+    res = archive.verify(read(path))
+    assert res.head_status == "refused" and res.head_code == "UNSUPPORTED_FEATURE", res.head_message
+    assert "draft identifier 2" in res.head_message
+
+
+@pytest.mark.parametrize("name,draft", [("reject-descriptor-draft-1", 1), ("reject-descriptor-draft-2", 2),
+                                        ("reject-descriptor-draft-3", 3)])
+def test_descriptor_draft_is_refused_naming_it(name, draft):
+    with pytest.raises(MochiError) as ei:
+        descriptor.decode_object(read(GOLDEN / "b2" / f"{name}.bin"))
+    assert ei.value.code == "UNSUPPORTED_FEATURE" and f"draft identifier {draft}" in ei.value.message
+
+
+def test_ratified_descriptor_has_null_draft():
+    d = descriptor.decode_object(read(GOLDEN / "b2" / "valid-descriptor-minimal.bin"))
+    assert d.draft is None

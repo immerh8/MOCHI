@@ -4,8 +4,8 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "1b8641ba385378c09c3b1de0b27496a50aa5e1d3de997bbc38c34e17f6ea193a",
-      "footer_offset": 50052,
+      "commit_id": "8331658278d0ff3992d51443f6c607d3c3dd6eab633e415153b5ed57454a3cf1",
+      "footer_offset": 50053,
       "seq": 0
     }
   ],
@@ -46,7 +46,7 @@
             "uid": 1420,
             "windows": null
           },
-          "content_hash": "280ae090321555218ba2637e04ab78af1da14a4dd60ccce3a11c5e9b3e89a463",
+          "content_hash": "e7eabdc2dd284d1ce47053eaf0730200d24476cfbd942d45a42c5897a421fbe8",
           "kind": "file",
           "path": "73656c662f636f70792e6d6f636869",
           "size": 47176,

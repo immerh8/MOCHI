@@ -4,13 +4,13 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "c9861007e0b467e15ea0b10e7a1b366280397687680acc46da835f0c160ddffb",
+      "commit_id": "31762985e8f5e3edc970b81385cb78837cb9937aa6f8ad428efa34884a950b97",
       "footer_offset": 63903,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "b1ca0689344d79865f83d4e957909978bdbfdbf72181bf17f7e9abc472582329",
+      "commit_id": "8dcfeb090447154cafee8d3756028483e957497acbbaa3770dd25dd40d010b20",
       "footer_offset": 65063,
       "seq": 1
     }

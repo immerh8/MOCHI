@@ -238,6 +238,28 @@ test("a cancelled dialog changes nothing; a refused archive shows its code", asy
   expect(screen.getByTestId("open-archive")).toBeEnabled();
 });
 
+test("a draft-2 archive is refused as text, naming the draft and pointing to mochi migrate", async () => {
+  const user = userEvent.setup();
+  const message =
+    "archive was written under draft 2, a pre-1.0 layout; this build reads ratified archives only. " +
+    "Convert it with `mochi migrate SRC --output DST`";
+  fakeBackend({
+    open: () => {
+      throw { code: "UNSUPPORTED_FEATURE", message };
+    },
+  });
+  render(<Browser />);
+  await user.click(screen.getByTestId("open-archive"));
+  const alert = await screen.findByTestId("browse-error");
+  expect(alert).toHaveTextContent(`Could not open the archive (UNSUPPORTED_FEATURE): ${message}`);
+  expect(alert).toHaveTextContent("draft 2");
+  expect(alert).toHaveTextContent("mochi migrate");
+  // Plain text in an alert: no markup, no success styling, no archive listing.
+  expect(alert.querySelector("a, button, img, script")).toBeNull();
+  expect(screen.queryByTestId("tree")).toBeNull();
+  expect(screen.getByTestId("open-archive")).toBeEnabled();
+});
+
 test("sizes and modes format exactly", () => {
   expect(formatSize("0")).toBe("0 bytes");
   expect(formatSize("1")).toBe("1 byte");

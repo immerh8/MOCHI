@@ -3,9 +3,9 @@
 An archive format and archiver, shipped the way WinRAR is: a format library plus an
 end-user application.
 
-> **Experimental. The format will change. Do not use this as your only copy.**
-> A `.mochi` file is not a backup (spec §1.1). Every pre-1.0 build is
-> "experimental / draft-compatible" (spec §28).
+> **A `.mochi` file is not a backup** (spec §1.1). Keep independent copies of anything
+> you cannot recreate. The format is ratified at 1.0 (spec §28, Annex B.2.14); archives
+> written by a pre-1.0 build (draft 2) are converted with `mochi migrate`.
 
 ## Where to read first
 

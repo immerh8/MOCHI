@@ -2068,7 +2068,7 @@ fn b2_descriptor_entries() -> Vec<(u64, Value)> {
         (0, Value::Uint(0)),
         (1, Value::Bytes(vec![0xA1; 32])),
         (2, Value::Uint(2)),
-        (3, Value::Uint(mochi_core::descriptor::DRAFT_ID)),
+        (3, Value::Null),
         (4, Value::Array(vec![])),
         (5, Value::Map(vec![(0, Value::Bool(false))])),
     ]
@@ -2115,7 +2115,7 @@ pub fn b2_descriptor_vectors() -> Vec<DescriptorVector> {
     let ok = b2_descriptor();
     push(
         "valid-descriptor-minimal",
-        "schema 0, generation 2, draft 2, no features, not TAR-compatible",
+        "schema 0, generation 2, ratified (key 3 = null), no features, not TAR-compatible",
         ok.to_stored().expect("fixture").as_bytes().to_vec(),
         Ok(ok.clone()),
     );
@@ -2147,20 +2147,21 @@ pub fn b2_descriptor_vectors() -> Vec<DescriptorVector> {
         Err(u),
     );
     push(
-        "reject-descriptor-draft-null",
-        "key 3 = null: a ratified archive, read by a draft build",
-        descriptor_frame_of(edit(3, Some(Value::Null))),
+        "reject-descriptor-draft-2",
+        "key 3 = 2: the last draft (the layout frozen at G12): refused by every command but \
+         `migrate`, with the migrate hint (B.2.14)",
+        descriptor_frame_of(edit(3, Some(Value::Uint(2)))),
         Err(u),
     );
     push(
         "reject-descriptor-draft-1",
-        "key 3 = 1: the pre-freeze draft (R4 user_version 0), refused since draft 2 (K13)",
+        "key 3 = 1: the pre-freeze draft (R4 user_version 0), refused without the migrate hint",
         descriptor_frame_of(edit(3, Some(Value::Uint(1)))),
         Err(u),
     );
     push(
         "reject-descriptor-draft-3",
-        "key 3 = 3: a later draft",
+        "key 3 = 3: a draft that does not exist, refused without the migrate hint",
         descriptor_frame_of(edit(3, Some(Value::Uint(3)))),
         Err(u),
     );

@@ -1,6 +1,6 @@
 # MOCHI 1.0 Specification
 
-**Status:** Design specification. The wire layouts R1–R4 and the suites R5 and R6 are **frozen as draft 2** (format freeze, gate G12, 2026-10-12; Annex B.2.6, B.2.14); the format is not yet declared interoperable. Until the gates in Section 28 pass, implementations MUST describe support as experimental or draft-compatible.
+**Status:** Design specification, **ratified at 1.0** (the 1.0 flip, plan W20, 2026-10-15; Annex B.2.14). The wire layouts R1–R4 and the suites R5 and R6 were frozen as draft 2 (format freeze, gate G12, 2026-10-12) and are the 1.0 format: a 1.0 archive differs from a draft-2 archive only in descriptor key 3, which is null. The interoperability gates of Section 28 have passed. Implementations MUST NOT claim preservation readiness until the Preservation gates of Section 28 pass (the Preservation profile is not in 1.0).
 **Specification revision:** 2.0 (the "MOCHI Design Document v2.0" refinement, integrated for the MOCHI 1.0 product release)
 **Supersedes:** MOCHI design documentation v1.2, and the unified "v1.2 + extended capabilities" draft built on it.
 **Product release targeted:** MOCHI 1.0 — `mochi-core` library, `mochi` CLI, and the MOCHI desktop application (Tauri v2).
@@ -350,7 +350,7 @@ The following values are the frozen registry of draft 2 (ratification artifact R
 
 Frame IDs alone do not establish that an arbitrary Zstandard stream is a MOCHI archive. Readers MUST validate the MOCHI descriptor and versioned record envelopes before interpreting any record. **[Amendment, ratification R1 decision of 2026-10-11 (delegated)]** "Before interpreting" is the scope of this rule: head discovery, footer and commit validation, the structural walk, and stored-integrity checks remain permitted with a missing or damaged descriptor, as Annex B.2 D12 says. A frame that no verified record references is walked and never interpreted; 1.0 readers do not report unreferenced frames of kinds 1.0 does not write (they are outside every committed hash, so a report about them would be a claim about bytes no commit vouches for).
 
-**[1.0 integration]** *Relationship to earlier drafts.* This registry replaces the placeholder allocations in the unified-draft Appendix B. Notable changes: `0x184D2A56` is now the commit footer (v1.2 had no framed footer); `0x184D2A57`/`58`/`59` are new (descriptor, recovery manifest, encrypted object envelope); `0x184D2A53` (previously proposed for range-reservation records) is reserved with no Core interpretation, because shared-file range reservation is no longer part of Core (Section 12.5); `0x184D2A5E` is now an optional *accelerator* rather than a recovery authority (Section 22). The registry was frozen with R1 at the format freeze (draft 2, gate G12); the format as a whole is not yet declared interoperable (Section 28).
+**[1.0 integration]** *Relationship to earlier drafts.* This registry replaces the placeholder allocations in the unified-draft Appendix B. Notable changes: `0x184D2A56` is now the commit footer (v1.2 had no framed footer); `0x184D2A57`/`58`/`59` are new (descriptor, recovery manifest, encrypted object envelope); `0x184D2A53` (previously proposed for range-reservation records) is reserved with no Core interpretation, because shared-file range reservation is no longer part of Core (Section 12.5); `0x184D2A5E` is now an optional *accelerator* rather than a recovery authority (Section 22). The registry was frozen with R1 at the format freeze (draft 2, gate G12); the format is ratified at 1.0 (Section 28, B.2.14).
 
 ### 8.3 Record envelopes
 
@@ -1069,7 +1069,7 @@ The following is a real report of schema version 1, abridged only in its two wal
 {
   "schema_version": 1,
   "archive_id": "031d11be423d1e3fcbbf47098791541cbdc98abe3dc6a77726d38b31d43ff9e1",
-  "checked_commit": "c2de8b0bd51c7715d4771dacdda7aaf6232b665337f2bc050b50857c0ab98b55",
+  "checked_commit": "ebbd1cb928a2817b48048bc7695174d13bc9e6265fc66e91d4f9b1ce7f3b5298",
   "expected_head": null,
   "freshness_anchor": "none",
   "tool": {
@@ -1077,7 +1077,7 @@ The following is a real report of schema version 1, abridged only in its two wal
     "version": "0.1.0",
     "spec_revision": "2.0",
     "wire_generation": 2,
-    "format_status": "experimental / draft-compatible"
+    "format_status": "1.0 (ratified format)"
   },
   "started_at": "2026-10-14T09:00:00.000000000Z",
   "completed_at": "2026-10-14T09:00:00.250000000Z",
@@ -1201,7 +1201,7 @@ A successful partial salvage MUST NOT be labeled a successful complete restorati
 
 ## 23. CLI Design
 
-The following command interface is proposed; it does not claim existing implementation support.
+The following command interface is the 1.0 command surface; the scope of each command is stated under 23.2.
 
 | Command | Purpose |
 |---|---|
@@ -1220,6 +1220,7 @@ The following command interface is proposed; it does not claim existing implemen
 | `mochi repair apply` | Apply an explicitly approved repair |
 | `mochi checkpoint` | Create a verified metadata checkpoint |
 | `mochi compact` | Create a compacted representation |
+| `mochi migrate` | Convert a draft-2 archive into a new 1.0 archive (Section 26, B.2.14) |
 | `mochi gc plan` | Identify collection candidates |
 | `mochi gc apply` | Apply an approved collection plan |
 | `mochi rekey` | Rotate or rewrap keys under explicit semantics |
@@ -1251,7 +1252,7 @@ mochi repair plan archive.mochi --output repair-plan.json
 
 When multiple conditions occur, the JSON report is authoritative. Exit-code precedence MUST be documented in the CLI specification.
 
-**[1.0 integration]** *1.0 command scope.* In 1.0: `create`, `append`, `get`, `list`, `snapshot`, `search`, `verify`, `fsck`, `health` (local evidence only), `restore-test`, `repair plan`, `repair apply`, `checkpoint`, `compact`, `gc plan`, `gc apply`, `rekey` (with the Encrypted profile), and `dump-index`. Post-1.0: `inventory reconcile` (Preservation profile), `split` / `join` (Segmented profile), and `mount`. A 1.0 build invoked with a post-1.0 command MUST exit with code 4, not 3. The v1.2 form `mochi verify --repair` is removed; verification and repair are separate operations (Sections 20.2, 22.2).
+**[1.0 integration]** *1.0 command scope.* In 1.0: `create`, `append`, `get`, `list`, `snapshot`, `search`, `verify`, `fsck`, `health` (local evidence only), `restore-test`, `repair plan`, `repair apply`, `checkpoint`, `compact`, `migrate`, `gc plan`, `gc apply`, `rekey` (with the Encrypted profile), and `dump-index`. Post-1.0: `inventory reconcile` (Preservation profile), `split` / `join` (Segmented profile), and `mount`. A 1.0 build invoked with a post-1.0 command MUST exit with code 4, not 3. The v1.2 form `mochi verify --repair` is removed; verification and repair are separate operations (Sections 20.2, 22.2).
 
 **[1.0 integration]** *Health from local evidence [delegated 2026-10-08; plan K5, W4].* `mochi health` runs no check. It summarizes the evidence this client recorded when it last ran `verify`, `fsck`, `restore-test`, and a complete `repair apply`, judged against a policy for the archive's current head, and reports the Section 20.4 values per dimension. The policy file is JSON (`mochi-health-policy-v1`: the required dimensions and a maximum age in days per kind of evidence, `verify` and `restore_test`); the `.yaml` file in the Section 23.1 example is illustrative, not normative. Per dimension and kind of evidence: no evidence is `UNKNOWN`; a recorded `FAIL` stays `FAIL` (an append-only archive does not heal damaged bytes, and no policy hides a failure); evidence about an earlier head is `UNKNOWN`; evidence older than the policy permits is `OVERDUE`; otherwise the recorded status. Freshness is judged as `verify` judges it. Durability, key availability, searchability, and retention compliance are not established by local evidence and are never `PASS` in 1.0. Evidence that cannot be read prevents any `PASS`. The rules and the log format are in `docs/c14-cli.md`, rule 13.
 
@@ -1381,6 +1382,8 @@ Migration from v1.2 SHOULD:
 
 Ambiguous legacy deletion or version semantics MUST be reported. Migration MUST NOT invent historical certainty.
 
+**[1.0 integration]** *The draft-to-1.0 boundary (Annex B.2.14, D24).* The archives of the pre-1.0 drafts are the only legacy this release meets. A 1.0 build writes a ratified archive (descriptor key 3 null), refuses a draft archive in every command but `mochi migrate`, and migrates only the last draft (draft 2) to a new 1.0 archive through steps 1–6 and 8 above; steps 7 and 9 stay with the user, and the source is always kept. Older drafts are refused without a conversion path.
+
 ## 27. Performance Claims
 
 Performance documentation MUST separate:
@@ -1425,9 +1428,9 @@ Before claiming preservation readiness, demonstrate:
 - Safe compaction and collection under fault injection.
 - Required recovery-copy and retention enforcement.
 
-Until these gates pass, implementations MUST describe support as experimental or draft-compatible.
+Until the interoperability gates pass, implementations MUST describe support as experimental or draft-compatible. Until the preservation gates pass, they MUST NOT claim preservation readiness.
 
-**Status 2026-10-12.** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 are frozen together as **draft 2** (G12; each artifact ends with its freeze review). The golden set R8 is built (G13 met 2026-10-13). The independent results R9 (G14) are met (2026-10-13). R7 is frozen (G15 met 2026-10-14). The 1.0 flip (W20, D24) has not been made, so the description above still applies.
+**Status 2026-10-15 (the 1.0 flip).** R5 and R6 are frozen (G10, G11). R1, R2, R3, and R4 were frozen together as draft 2 (G12). The golden set R8 (G13), the independent results R9 (G14), and R7 (G15) are met. The 1.0 flip (W20, D24) is made: a 1.0 writer writes null in descriptor key 3, every command but `migrate` refuses a draft archive, and R8 is regenerated in the 1.0 format. A 1.0 build therefore describes its format as ratified (`FORMAT_STATUS`: `1.0 (ratified format)`). It still does not claim preservation readiness: the Preservation profile is not in 1.0, and no 1.0 build reports `PRESERVED`.
 
 ## 29. Summary of Changes from v1.2
 
@@ -1508,7 +1511,7 @@ The unified v1.2 draft contained detailed extension sections (its §11–§20). 
 
 ## Annex B. Open Decisions for MOCHI 1.0 **[1.0 integration]**
 
-Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10, D11, D12, D14, and D15 moved to B.1 on the owner's review [owner, 2026-10-15] (B.3 item 8); their text stays in B.2.1. D13, D16, and D24 stay in B.2: D13's Windows durability is settled by the G6 policy (B.3 item 1), D16 is out of 1.0, and D24 is half implemented (B.2.14).
+Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10, D11, D12, D14, and D15 moved to B.1 on the owner's review [owner, 2026-10-15] (B.3 item 8); their text stays in B.2.1. D13, D16, and D24 stay in B.2: D13's Windows durability is settled by the G6 policy (B.3 item 1), D16 is out of 1.0, and D24 is implemented at the 1.0 flip (B.2.14).
 
 | ID | Decision | Options | Blocks |
 |---|---|---|---|
@@ -1536,7 +1539,7 @@ Each decision blocks the listed work until recorded in this annex. D1–D9 and D
 | D20 | **Decided [delegated 2026-10-09]; wire format: key envelope v0, sealed object v0, commit record schema 2, recovery-manifest schema 3, required feature 1.** The Encrypted profile (spec 7.3, 14) seals data chunks, catalog images, and manifests with XChaCha20-Poly1305 under one random data key per archive, wrapped per passphrase (Argon2id) in key envelopes that every commit record lists. See B.2.10 | — | C11 and `rekey`; R5; desktop passphrase flows |
 | D22 | **Decided [delegated 2026-10-12]; no wire change.** Ladder step 5 (§22): repair takes verified frames from **byte copies of the same archive** given explicitly (`--copy`). Trust comes from the source and bytes may come from a copy: a frame is donated only inside the commits the copy agrees on with the source, only where the source's frame fails its check and the copy's passes, and the survey verifies it again. See B.2.12 | — | C8 step 5; repair plan v2 |
 | D23 | **Decided [delegated 2026-10-12], implemented (W12); no wire change; new error code `ARCHIVE_ID_AMBIGUOUS`, new limit `max-salvage-candidates`.** Ladder step 7 (§22): an explicit, bounded salvage scan. Scanned commits are used only when publication is confirmed; contradictory or self-inconsistent candidates are refused; any repair using it is partial. See B.2.13 | — | C8 step 7; D12 "explicit salvage" |
-| D24 | **Decided [delegated 2026-10-12].** The draft-to-1.0 boundary (§26; plan release gate 4): the draft identifier becomes 2 at the format freeze (gate G12). 1.0 writes `null`, refuses drafts with exit 4, and migrates only the last draft through `mochi migrate`. See B.2.14 | — | Format freeze; 1.0 release |
+| D24 | **Decided [delegated 2026-10-12]; implemented at the 1.0 flip (W20, 2026-10-15).** The draft-to-1.0 boundary (§26; plan release gate 4): the draft identifier becomes 2 at the format freeze (gate G12). 1.0 writes `null`, refuses drafts with exit 4, and migrates only the last draft through `mochi migrate`. See B.2.14 | — | Format freeze; 1.0 release |
 
 Status of the open questions from the original v1.2 review: chunk-hash ordering — resolved (9.2); concurrent writers — resolved for Core (12.5); `content_index` schema — superseded, DDL is a ratification artifact (10.1); version-byte mapping — reframed by Section 26 and D1; Windows attribute defaults — D6.
 
@@ -1759,7 +1762,7 @@ No object contains the ID of the commit that references it. The commit ID covers
 | 0 | Schema version = 0 |
 | 1 | Archive ID |
 | 2 | Wire generation = 2 (`MOCHI2`) |
-| 3 | Draft identifier: 2 (the layout frozen at G12, D24); null only in a ratified archive. Draft 1, the pre-freeze batch, is refused (`UNSUPPORTED_FEATURE`, exit 4) |
+| 3 | Draft identifier: **null** in a ratified 1.0 archive, which is all a 1.0 writer writes. A number is a pre-1.0 draft: 2 is the layout frozen at G12 (D24), read only by `mochi migrate`; every other command refuses it, and any other number, with `UNSUPPORTED_FEATURE` (exit 4), naming the draft. Draft 1, the pre-freeze batch, is refused without the migrate hint |
 | 4 | Required features |
 | 5 | Constraints `{0: TAR-compatible, ? 1: {suite, percentage}}`; key 1 is the Redundancy profile (D21, B.2.11) and is absent otherwise |
 | 6 (optional) | Declared limits; present only on opt-in (B.2.3) |
@@ -2150,12 +2153,12 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 
 #### B.2.14 Draft-to-1.0 boundary (D24; decided by delegation 2026-10-12, plan K13, K25)
 
-**Status: item 1 implemented at the format freeze (W15, 2026-10-12); items 2 to 4 decided, not implemented** (plan W20).
+**Status: item 1 implemented at the format freeze (W15, 2026-10-12); items 2 to 4 implemented at the 1.0 flip (W20, 2026-10-15; the owner approved D24 and plan K25 on 2026-10-15).**
 
 1. **Draft identifier.** Descriptor key 3 becomes **2** in the change that freezes R1–R4 (gate G12), together with R4 `user_version` 1. Draft 2 names the frozen layout. Any later wire change before 1.0 increments it again, with an Annex B entry. A build refuses every draft other than its own (`UNSUPPORTED_FEATURE`, exit 4), naming the draft.
-2. **1.0.** A 1.0 writer writes `null` (a ratified archive). Every 1.0 command except `migrate` refuses a draft archive with exit 4, naming the draft.
-3. **Migration (§26).** `mochi migrate SRC --output DST` reads **only the last draft** and writes a new 1.0 archive through the rewrite path. It verifies the new archive at restoration level, compares restored file hashes and retained namespaces, and reports the mapping. The source is never modified. Older drafts are refused.
-4. **Golden set.** R8 is regenerated in the 1.0 format at the flip, R9 is run on it again, and draft-2 archives are kept as migration cases.
+2. **1.0.** A 1.0 writer writes `null` (a ratified archive), and a reader accepts `null`. Every 1.0 command except `migrate` refuses a draft archive (`UNSUPPORTED_FEATURE`, exit 4), naming the draft. Only for the last draft (draft 2) does the message suggest `mochi migrate`; an older draft, such as draft 1, is refused without the suggestion. `repair plan` is a refusal in its existing form (nothing recoverable, each snapshot lost as `UNSUPPORTED_FEATURE` naming the draft, exit 1) and `health`, which reads no stored byte, does not read the descriptor; neither converts anything.
+3. **Migration (§26).** `mochi migrate SRC --output DST [--passphrase-file F]` reads **only the last draft** and writes a new 1.0 archive through the rewrite path (`compact::Copier`: one commit per source snapshot, identifiers, attributes, retention and stored chunks preserved; the profile is kept; an Encrypted archive is sealed again under a new archive ID and data key, so it needs the passphrase, never as an argument). The source is opened read-only and never modified; an existing output is refused (`DESTINATION_EXISTS`). Steps of §26 performed: 1 (preserve), 2 (the source must verify at the restoration level, deep; one that does not is refused whole with the code of its first finding and nothing written, never converted partially), 3–5 (rewrite), 6 (restored file hashes, per-snapshot namespaces, file-version records and extents, promised attributes and retention are compared with the source before publication, and the new archive must itself verify at the restoration level), 8 (the report `mochi-cli-migrate-v1` records the source-to-new commit mapping and the evidence). Steps 7 and 9 are the user's and the report says so (`not_done`). No provenance record is written (a new rewrite reason would be a wire change). A wrong passphrase is `KEY_UNAVAILABLE` (exit 3). A ratified source is refused (`INVALID_ARGUMENT`: nothing to migrate). Older drafts are refused (`UNSUPPORTED_FEATURE`, exit 4). It is a job: it reports progress by phase (`migrate-verify-source`, `migrate-copy`, `migrate-verify`) and honours cancellation, which leaves nothing at the destination.
+4. **Golden set.** R8 is regenerated in the 1.0 format at the flip, R9 is run on it again, and draft-2 archives are kept as migration cases: `fixtures/golden/r8/legacy/` holds three (Core, Encrypted, and Core with a recovery record). The regeneration changes no byte but descriptor key 3 (0x02 to 0xF6) and what hashes it; sizes are unchanged except `core-valid-self-containing`, which embeds an archive as file content (one byte longer after compression).
 
 ### B.3 Owner decisions of 2026-10-15
 

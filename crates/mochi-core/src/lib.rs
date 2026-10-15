@@ -39,6 +39,7 @@ pub mod import;
 pub mod job;
 pub mod keys;
 pub mod manifest;
+pub mod migrate;
 pub mod object;
 pub mod parity;
 pub mod publish;

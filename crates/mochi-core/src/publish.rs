@@ -127,7 +127,7 @@ use crate::catalog::namespace::{EntryKind, FileVersionId, NamespaceOp, Snapshot}
 use crate::catalog::path::ArchivePath;
 use crate::catalog::{Catalog, CatalogLimits, Commit, FileVersion, SegmentApplier};
 use crate::commit::{uuid_v4, CommitLink, CommitParent, CommitRecord, Metadata, ObjectRef};
-use crate::descriptor::{Descriptor, Profile};
+use crate::descriptor::{Descriptor, DraftPolicy, Profile};
 use crate::error::{ErrorCode, MochiError, Result};
 use crate::image::{decode_image_payload, decode_image_record, encode_image_record, image_payload};
 use crate::job::JobContext;
@@ -178,6 +178,10 @@ pub struct ReadOptions {
     /// have opened (Annex B.2.10 D20). `None` reads such an archive keylessly:
     /// structure, hashes, and key envelopes, never names or content.
     pub keys: Option<std::sync::Arc<crate::keys::KeySession>>,
+    /// Whether the last pre-1.0 draft is readable (spec B.2.14). Only
+    /// `migrate` sets [`DraftPolicy::AllowLastDraft`]; everything else
+    /// refuses a draft archive with `UNSUPPORTED_FEATURE`.
+    pub drafts: DraftPolicy,
 }
 
 /// Writer configuration. `None` parameters mean "the archive's recorded
@@ -1154,11 +1158,12 @@ pub(crate) fn read_descriptor(
         "archive descriptor",
     )
     .map_err(as_invalid)?;
-    let d = Descriptor::from_stored(
+    let d = Descriptor::from_stored_with(
         stored.as_bytes(),
         commit.descriptor.offset,
         &opts.limits,
         &opts.cbor,
+        opts.drafts,
     )?;
     d.check_archive_id(&commit.archive_id)?;
     Ok(d)
@@ -2988,14 +2993,21 @@ impl<S: Storage> ArchiveWriter<S> {
             // The default profile is not TAR-compatible (spec D4); choosing
             // it is explicit and fixed at creation (D12). The Encrypted
             // profile is the required feature of D20 item 4.
-            new_descriptor: Some(Descriptor::for_profile(
-                archive_id,
-                Profile {
-                    tar_compatible: tar,
-                    encrypted: crypto.is_some(),
-                    redundancy,
-                },
-            )),
+            new_descriptor: Some({
+                let mut d = Descriptor::for_profile(
+                    archive_id,
+                    Profile {
+                        tar_compatible: tar,
+                        encrypted: crypto.is_some(),
+                        redundancy,
+                    },
+                );
+                // A 1.0 writer writes null (a ratified archive, B.2.14); only
+                // a test control writes the last draft, to build migration
+                // sources.
+                d.draft = crate::descriptor::new_archive_draft();
+                d
+            }),
             policy,
             checkpoint_requested: false,
             #[cfg(any(test, feature = "test-controls"))]

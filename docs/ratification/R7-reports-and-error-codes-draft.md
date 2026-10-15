@@ -232,10 +232,12 @@ section, and eight JSON Schema documents in `docs/schemas/json/`: the shared
 definitions (`common`), report v1, the error line, `mochi-repair-plan-v2`, the GC plan
 (v1), health evidence (schema 1), health policy (`mochi-health-policy-v1`), and the
 local head history (`heads.json`, version 1). Eleven more schemas, one for each other
-command's `--json` output, are written and checked but not frozen: each output carries an
-in-band `schema` tag (owner decision O2, 2026-10-14), and the eleven freeze at the 1.0
-flip (W20).
-`docs/schemas/json/README.md` lists all nineteen, what writes each, and what is not
+command's `--json` output, were written and checked but not frozen: each output carries an
+in-band `schema` tag (owner decision O2, 2026-10-14). **They froze at the 1.0 flip
+(W20, 2026-10-15)**, together with a twelfth, `cli-migrate.schema.json`
+(`mochi-cli-migrate-v1`, for the new command `mochi migrate`): twenty documents, twenty
+frozen. A later change to one is a `-v2` tag and a new file.
+`docs/schemas/json/README.md` lists all twenty, what writes each, and what is not
 JSON.
 
 **Checked.**
@@ -344,7 +346,7 @@ tree).
   `-maintenance-v1`, `-list-v1`, `-snapshot-list-v1`, `-search-v1`, `-dump-index-v1`,
   `-restore-v1`, `-rewrite-v1`, `-repair-apply-v1`, `-rekey-list-v1`, `-plan-saved-v1`),
   and its JSON Schema requires the tag as a `const`. **The eleven freeze at the 1.0 flip
-  (W20), not now:** until then a change to one is made in the same pull request as its
+  (W20), not now (done 2026-10-15, with `mochi-cli-migrate-v1` as the twelfth):** until then a change to one is made in the same pull request as its
   schema and the test, and at the flip each tag becomes a frozen identifier (a change
   is then a `-v2` and a new file). The eight frozen documents are untouched: no field was
   added to a report, the error line, either plan, the evidence line, the policy, or
