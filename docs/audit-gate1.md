@@ -393,6 +393,11 @@ explicitly accept before 1.0; **nit** = wording or tidiness.
    **Decided [owner, 2026-10-15]:** bundle the guide in both installers and add Help, User guide, which opens the bundled copy offline (`help.rs`, `packaging/guide.py`). The guide's CLI-focused scope is stated in the button label and in a banner on every page. Verified: package smoke checks on both OSes assert the file at the resolved path; Rust, vitest and E2E tests show the Help action opens that path (OS open mocked). **Not done, proposed:** the Test-screen line "a passing test does not make it a backup".
 9. **F9 — should-fix.** The owner's review (K11) of the delegated freezes and calls is
    still pending (G12–G15, D10–D15, D24, K10–K26). It is a precondition of W20.
+
+   **Resolved [owner, 2026-10-15]:** the owner approved all of them (spec Annex B.3 item 8).
+   D10, D11, D12, D14, and D15 moved to B.1. Notes: R9's independence is procedural, not
+   organizational (D7); the D10 capacity ceiling is now in the user guide
+   (`docs/user/getting-started.md`).
 10. **F10 — should-fix.** The release checklist (`docs/packaging.md`) has never been run.
     It covers updater, WebView2 bootstrap, shell integration, and screen readers, and
     Windows Server CI cannot reproduce any of them (AGENTS.md "Tests required").

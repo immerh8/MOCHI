@@ -95,6 +95,22 @@ mochi snapshot expire photos.mochi 0 --confirm           # irreversible (no un-e
   that recovered only part is labelled `PARTIAL` and exits 2.
 * `gc apply` refuses a plan that no longer matches the archive.
 
+## How much one archive can hold (spec D10, B.2.4)
+
+An archive in 1.0 has a fixed ceiling on how many files it can track. Each commit
+writes the whole archive state as one bounded record, and that record has a size limit
+(measured, gate G5, `docs/benchmarks/t32-capacity-memory.md`):
+
+* about **342,391** files when each file is a single chunk;
+* fewer when files are large: each extra chunk of a file costs about as much as half a
+  small file.
+
+At the ceiling, reading, listing, checking, and restoring keep working. A commit that
+would grow the state further is refused with `CAPACITY_EXCEEDED` (exit 3), and the
+archive stays as it was; commits that remove files still succeed. Raising the ceiling
+needs a new format version. If you expect more files than this, split them across
+several archives.
+
 ## Exit codes (spec §23.2)
 
 | Code | Meaning |
