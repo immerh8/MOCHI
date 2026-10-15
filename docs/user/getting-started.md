@@ -3,7 +3,7 @@
 Sources: `docs/c14-cli.md`, spec §23. Every example below was run against a temporary
 directory with a build of this repository.
 
-> Experimental. Do not use it as your only copy ([experimental.md](experimental.md)).
+> A `.mochi` file is not a backup; archives from before 1.0 need `mochi migrate` ([experimental.md](experimental.md)).
 
 ## Build
 
@@ -82,6 +82,7 @@ These are fixed when the archive is created; nothing converts an archive in plac
 ```bash
 mochi checkpoint photos.mochi                            # one commit, namespace unchanged
 mochi compact photos.mochi --output photos-compact.mochi # every snapshot, new archive
+mochi migrate old.mochi --output new.mochi                # a pre-1.0 (draft 2) archive into a 1.0 archive
 mochi gc plan photos.mochi --output gc.plan              # read-only plan
 mochi gc apply photos.mochi --plan gc.plan --output photos-gc.mochi
 mochi repair plan photos.mochi --output repair.plan      # read-only; see below

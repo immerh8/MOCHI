@@ -5,9 +5,9 @@ command line tool. Every statement here comes from the specification (`docs/spec
 a frozen ratification artifact (`docs/ratification/`), the CLI reference
 (`docs/c14-cli.md`), or the behaviour of the code, and each page says which.
 
-> **Experimental. The format will change.** Every build before 1.0 is
-> "experimental / draft-compatible" (spec §28). Do not use it as your only copy.
-> See [experimental.md](experimental.md).
+> **A `.mochi` file is not a backup.** The format is ratified at 1.0 (spec §28). Archives
+> written by a pre-1.0 build must be converted with `mochi migrate`
+> (see [format status](experimental.md)).
 
 Read these first, in this order:
 
@@ -19,7 +19,7 @@ Read these first, in this order:
 | [What the checks prove](verification.md) | `verify`, `fsck`, `restore-test`, `health`, and the status values |
 | [TAR-compatible archives](tar-compatible.md) | The tested commands and tools, and why generic tools show history |
 | [Recovery record](recovery-record.md) | Parity as a repair aid, with its stated capacity |
-| [Experimental status](experimental.md) | What "experimental / draft-compatible" means for you |
+| [Format status and old archives](experimental.md) | What "1.0" does and does not promise, and `mochi migrate` for archives from before 1.0 |
 
 The desktop application is a client of the same library (spec §23.3). Its "Test archive"
 command is `verify`; this guide documents the command line.
