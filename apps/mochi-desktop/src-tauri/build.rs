@@ -49,6 +49,7 @@ fn main() {
         "read_crash_log",
         "export_crash_log",
         "clear_crash_log",
+        "open_user_guide",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

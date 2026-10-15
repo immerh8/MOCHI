@@ -1508,7 +1508,7 @@ The unified v1.2 draft contained detailed extension sections (its §11–§20). 
 
 ## Annex B. Open Decisions for MOCHI 1.0 **[1.0 integration]**
 
-Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10–D16 and D24 stay in B.2: D10, D11, D12, D14, and D15 wait only for the owner's review (their G1 audit evidence, R8, is complete as of 2026-10-13), D13 awaits G6, D16 is out of 1.0, and D24 is half implemented (B.2.14).
+Each decision blocks the listed work until recorded in this annex. D1–D9 and D17–D23 are recorded in B.1 (D17–D23 moved there at the format freeze, 2026-10-12, because each is implemented and its gates in B.2.6 pass or it has none). D10–D16 and D24 stay in B.2: D10, D11, D12, D14, and D15 wait only for the owner's review (their G1 audit evidence, R8, is complete as of 2026-10-13), D13's Windows durability is settled by the G6 policy (B.3 item 1), D16 is out of 1.0, and D24 is half implemented (B.2.14).
 
 | ID | Decision | Options | Blocks |
 |---|---|---|---|
@@ -1551,10 +1551,10 @@ Each entry below closes the decision above with the same ID. Rationale and conse
 | D3 | **One suite for the first Encrypted-profile identifier: XChaCha20-Poly1305 with independently random 192-bit nonces; Argon2id for passphrase key derivation, with its parameters recorded per key envelope. 1.0 unlocks by passphrase only.** Random 192-bit nonces satisfy Section 14.2 across retries, interrupted writes, restored backups, and concurrent writers without counter state. Key files and public-key recipients are post-1.0 and would use new profile or envelope identifiers. |
 | D4 | **TAR compatibility is opt-in, per archive, fixed at creation.** The default profile keeps dedup, dictionaries, and fragmentation. |
 | D5 | **Split volumes stay in 1.x.** The Segmented profile and R10 are not part of 1.0. |
-| D6 | **Section 10.4.1, made concrete.** POSIX: permission bits, numeric uid/gid, mtime with nanoseconds; setuid/setgid restored only on explicit request; uid/gid restored only with privilege, otherwise reported as an exception. Windows: `READONLY`, `HIDDEN`, `SYSTEM`, `ARCHIVE` attributes and mtime. Entry types: regular file, directory, symbolic link (target stored as bytes; restored as a link, never written through; reported as an exception where the platform cannot create it). Hard links are stored as separate files. Not promised: extended attributes, ACLs, alternate data streams, owner names, atime, ctime, creation time. |
+| D6 | **Section 10.4.1, made concrete.** POSIX: permission bits, numeric uid/gid, mtime with nanoseconds; setuid/setgid restored only on explicit request; uid/gid restored only with privilege, otherwise reported as an exception. Windows: `READONLY`, `HIDDEN`, `SYSTEM`, `ARCHIVE` attributes and mtime. Entry types: regular file, directory. **Symbolic links are deferred to 1.x [owner, 2026-10-15]** (B.3 item 2): the frozen draft-2 format reserves manifest kind 2 and refuses it, the 1.0 writer skips links and reports each skip (exit 2), and no format byte changes. The earlier design for links (target stored as bytes; restored as a link, never written through; reported as an exception where the platform cannot create it) stays the design for 1.x. Hard links are stored as separate files. Not promised: extended attributes, ACLs, alternate data streams, owner names, atime, ctime, creation time. |
 | D7 | **A read-only verifier in Python, written from this specification alone**, sharing no code with the reference implementation. Section 28's interoperability claim for 1.0 is scoped to the profiles 1.0 ships (Core, TAR-compatibility, Encrypted, Redundancy). **[Amendment, delegated 2026-10-12, plan K22, K23]** It is written by a session started cold on a checkout that does not contain the Rust code (`docs/`, `fixtures/golden/`, `interop/` only), reading only this specification, the ratification artifacts, the schemas, and vectors and fixtures as data. It lives in `interop/pyverify/`. Agreement with the reference implementation is exact equality of an interop summary over the R8 golden set (gate G14). |
-| D8 | **Layered, and the source is always reported.** With no anchor, freshness is `UNKNOWN`. A user-supplied expected head gives `PASS`/`FAIL`. Otherwise a client MAY keep the last-seen head per archive ID as a local anchor, giving `FAIL` on rollback or substitution. First sight is `UNKNOWN`, never `PASS`. The report names the anchor used. |
-| D9 | **The desktop application reads ZIP, 7z, RAR, and `.tar.gz`/`.tar` (browse, extract, test) and never writes them.** Outside this specification; see the plan, phase D8. |
+| D8 | **Layered, and the source is always reported.** With no anchor, freshness is `UNKNOWN`. A user-supplied expected head gives `PASS`/`FAIL`. Otherwise a client MAY keep the last-seen head per archive ID as a local anchor, giving `FAIL` on rollback or substitution. First sight is `UNKNOWN`, never `PASS`. The report names the anchor used. **In the 1.0 desktop application the client keeps no head history, no evidence log, and offers no restore-test, so its freshness is always `UNKNOWN`, never `PASS` [owner, 2026-10-15]** (B.3 item 5); the CLI keeps the local history. |
+| D9 | **The desktop application reads ZIP, 7z, RAR, and `.tar.gz`/`.tar` (browse, extract, test) and never writes them.** Outside this specification; see the plan, phase D8. The 1.0 RAR claim is narrowed **[owner, 2026-10-15]** (B.3 item 6): RAR is read-only, has no hostile-input fixtures yet, and multi-volume RAR is read but not tested as a complete set. |
 | D17 | **Writer lock** (not wire format): an OS lock on a separate lock file; details in B.2.7. Moved here at the format freeze. |
 | D18 | **Retention, collection, and compaction** (recovery-manifest schema 2): details in B.2.8. Moved here at the format freeze. |
 | D19 | **TAR-stream compatibility profile** (no wire change): stream-only chunks; details in B.2.9. Moved here at the format freeze. |
@@ -1567,7 +1567,7 @@ Each entry below closes the decision above with the same ID. Rationale and conse
 
 **Status.** This annex separates three things, and the text below never treats one as another:
 - **Semantic decisions** (B.2.1) and **wire layouts** (B.2.2) are *decided*. Their schemas are frozen with R3 as part of draft 2 (G12, 2026-10-12).
-- **Implementation** is tracked task by task in `docs/b2-implementation-checklist.md`. The wire batch (D10 to D15) is implemented; D13 awaits G6, and D16's opt-in path is out of 1.0.
+- **Implementation** is tracked task by task in `docs/b2-implementation-checklist.md`. The wire batch (D10 to D15) is implemented; D13's Windows durability report is fixed at `Unconfirmed` by the G6 policy (B.3 item 1), and D16's opt-in path is out of 1.0.
 - **Evidence and release gates** (B.2.6): G10, G11, and G12 are met; the others are pending.
 
 An entry moves to B.1 only when its implementation tasks are complete and its gates pass. Writing a decision here is not evidence that it is implemented or tested.
@@ -1662,7 +1662,7 @@ No object contains the ID of the commit that references it. The commit ID covers
 - **Cleanup** removes only temporary files whose lock it can acquire.
 - **Durability claims are limited to documented mechanisms.**
   - *Linux (local ext4):* confirmed when both the file fsync and the directory fsync succeed.
-  - *Windows:* directory durability stays `Unconfirmed` until gate G6 passes.
+  - *Windows:* the creating commit's directory durability is reported `Unconfirmed` in 1.0, by policy **[owner, 2026-10-15]**. The shipped mechanism is documented only in part, and what makes the created name survive a crash on NTFS (the flush of the directory handle) is not documented by Microsoft. Gate G6 (B.2.6) records the policy and the evidence; B.3 item 1.
   - *Other filesystems:* unconfirmed.
 - **Outcomes.** A published archive whose directory flush is `Unconfirmed` reports `LOCAL_COMMITTED` with durability `DEGRADED`. A directory-flush *error* reports `COMMIT_UNCONFIRMED` and poisons the writer; the file is left in place.
 
@@ -1675,7 +1675,7 @@ No object contains the ID of the commit that references it. The commit ID covers
   - it contains no unrecognised bytes.
 - **Eligibility is a conservative screen, not proof that the tail is uncommitted.** A single corruption event can destroy both footer markers, which lie within the footer's first 16 bytes. The term is "eligible for truncation".
 - **Quarantine first, by default.** The tail is first copied, exactly, into a no-clobber sidecar file (B.2.2) with identifying metadata. The sidecar is re-read, its hash compared with the tail's, and the sidecar and directory synced.
-- **What blocks truncation.** Any quarantine failure blocks truncation unless the user passes `--no-quarantine`. A directory flush that is not `Confirmed` (which on Windows is always the case before G6) blocks truncation unless the user passes `--accept-unconfirmed-durability`.
+- **What blocks truncation.** Any quarantine failure blocks truncation unless the user passes `--no-quarantine`. A directory flush that is not `Confirmed` (which on Windows is always the case in 1.0, by the G6 policy **[owner, 2026-10-15]**) blocks truncation unless the user passes `--accept-unconfirmed-durability`.
 - **With `--accept-unconfirmed-durability`,** the sidecar is still written, verified, and synced, so all available protection is kept. Only the confirmation requirement is waived.
 - **Recording waivers.** Every waiver is recorded as a report finding.
 - **Audit record.** The audit record goes to the caller and the external report (§20.5). Nothing is written into the archive.
@@ -1883,7 +1883,11 @@ These are pending. None is satisfied by this text. Every gate's tests must pass 
   - The opt-in path produces its warning and descriptor declaration.
   - Memory per decoded item and catalog memory are measured.
 - **G5 Capacity.** The B.2.4 estimates are replaced by measurements from the MOCHI writer.
-- **G6 Windows durability.** Documented evidence matching the guarantee to NTFS on the supported versions, plus release-checklist results. Until G6 passes, Windows reports `Unconfirmed`, and truncation there requires `--accept-unconfirmed-durability`.
+- **G6 Windows durability.** Closed as a **policy disposition [owner, 2026-10-15]**, not as documented evidence and not as a pass on physical machines.
+  - **The 1.0 rule.** Windows reports the creating commit's directory durability as `Unconfirmed`, and truncation there requires `--accept-unconfirmed-durability`. This replaces "until G6 passes".
+  - **Why.** Plan O12 says to claim only what the Windows APIs document. The crash-replay evidence (`docs/g6-windows-crash-replay.md`, merged as #60) shows that on NTFS (Windows 11 build 26300.9457 and Windows 10 build 19045.2006, emulated disk that honours FLUSH/FUA) a new archive's name is made durable by the directory flush (`FlushFileBuffers` on the directory handle), which Microsoft does not document; `MOVEFILE_WRITE_THROUGH` alone lost the name in 3 of 3 controls. Observed behaviour of an undocumented step is not a documented guarantee.
+  - **Regression guard.** The weekly `g6-windows` workflow (`.github/workflows/g6-windows.yml`) re-runs that evidence. It guards the observed behaviour; it does not change what Windows reports.
+  - **Changing it** needs a documented primitive for the guarantee, or a new owner decision.
 - **G7 Creation.**
   - Process-crash tests cover every creation step.
   - Two concurrent creators: exactly one wins, and neither deletes the other's temporary file.
@@ -2147,6 +2151,18 @@ The profile is writer-side only. It adds no frame kind, no schema, no record fie
 2. **1.0.** A 1.0 writer writes `null` (a ratified archive). Every 1.0 command except `migrate` refuses a draft archive with exit 4, naming the draft.
 3. **Migration (§26).** `mochi migrate SRC --output DST` reads **only the last draft** and writes a new 1.0 archive through the rewrite path. It verifies the new archive at restoration level, compares restored file hashes and retained namespaces, and reports the mapping. The source is never modified. Older drafts are refused.
 4. **Golden set.** R8 is regenerated in the 1.0 format at the flip, R9 is run on it again, and draft-2 archives are kept as migration cases.
+
+### B.3 Owner decisions of 2026-10-15
+
+Each item answers a finding of the gate-1 audit (`docs/audit-gate1.md`) or the G6 evidence (`docs/g6-windows-crash-replay.md`). None changes a format byte, draft 2, or an artifact in `docs/ratification/`.
+
+1. **G6 Windows durability: policy B [owner, 2026-10-15].** Windows keeps reporting the creating commit's directory durability as `Unconfirmed` in 1.0, by policy. G6 is closed as an explicit **policy disposition**: it is not a claim of documented durability and not a pass on physical machines. The text is in B.2.6 (G6) and D13. The `g6-windows` crash-replay workflow, including its Windows 10 22H2 leg, stays enabled weekly as a regression guard. Changing the rule needs a documented primitive or a new owner decision.
+2. **Symbolic links: deferred to 1.x [owner, 2026-10-15]** (audit F2, option a). D6 no longer lists links as a 1.0 entry type. Kind 2 stays reserved and refused; the writer keeps skipping links and reporting each skip.
+3. **Release gate 6 [owner, 2026-10-15]** (audit F3). Updates are signed with minisign (`requireSignedVersion`). Installers are unsigned by owner decision: no Authenticode, no `.deb` or APT signing. Plan §8.2 gate 6 is amended to match.
+4. **Search and interrupted indexing [owner, 2026-10-15]** (audit F4, option a). In 1.0 the §8.1 Search row's "interrupted indexing visible" and the §24.2 row *Interrupted indexing* do not apply, because search scans the catalog directly and builds no index. The row is met as the K17-style option: searchability is `UNSUPPORTED` in `verify` and content search is refused (tested: `c7_unsupported_levels_exit_4`, `c14_search_refuses_content_search_and_bad_arguments`). The requirement returns when an index exists.
+5. **Desktop freshness and evidence [owner, 2026-10-15]** (audit F5, option a). The 1.0 desktop application keeps no head history, no evidence log, and offers no restore-test. Its freshness stays `UNKNOWN`, never `PASS`. To be revisited in 1.x.
+6. **RAR claims narrowed [owner, 2026-10-15]** (audit F7, option a). RAR stays read-only; MOCHI never writes RAR. "WinRAR" is dropped as a corpus claim. Multi-volume RAR is read but not tested as a complete set. Two gaps are recorded: no hostile-input RAR fixtures (traversal, bomb, ratio, BLAKE2sp; 8 mutation survivors), and no complete multi-volume set test.
+7. **User guide in the installers [owner, 2026-10-15]** (audit F8). `docs/user/` is bundled in both installers as static HTML, and the desktop app's Help, User guide opens that copy offline. The guide is written for the `mochi` command line and says so in its menu label and in a banner on every page, with pointers to the desktop equivalents.
 
 ## Annex C. Document Lineage **[1.0 integration]**
 

@@ -4,6 +4,7 @@ import { useJobFocus } from "./a11y/focus";
 import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
+import { Help } from "./help/Help";
 import { Updates } from "./update/Updates";
 import { t } from "./i18n";
 import { CrashReports } from "./settings/CrashReports";
@@ -56,6 +57,7 @@ const SECTIONS: { id: string; name: () => string }[] = [
   { id: "foreign-heading", name: () => t("app.sectionForeign") },
   { id: "self-test-heading", name: () => t("app.sectionSelfTest") },
   { id: "settings-heading", name: () => t("app.sectionSettings") },
+  { id: "help-heading", name: () => t("app.sectionHelp") },
 ];
 
 /**
@@ -200,6 +202,7 @@ export function App() {
       <CrashReports>
         <Updates />
       </CrashReports>
+      <Help />
     </main>
   );
 }

@@ -121,6 +121,14 @@ on with the switch, every key gone after uninstall, twice), `smoke-deb.sh` (`Exe
 the Rust tests of the argument parser and the routing, a UI test per launch event, and
 the `launch.e2e.js` spec (a second process routes to the running window).
 
+## The user guide (audit F8)
+
+**[owner, 2026-10-15]** Both installers bundle `docs/user/` as static, offline HTML: `packaging/guide.py` converts the Markdown (standard library only; every source character is escaped; no script, no remote content, links only between the bundled pages) and `build-installer.sh` adds the result as the resource `guide/`. It lands at `<install dir>\guide\index.html` (NSIS) and `/usr/lib/MOCHI/guide/index.html` (`.deb`), where **Help, User guide** looks (`src-tauri/src/help.rs`, `GUIDE_RESOURCE`).
+
+- **Scope.** The guide is written for the `mochi` command line. The button says "User guide (command line)", and every page opens with a banner saying so, naming the desktop screens that match each command and saying the desktop app has no head history, evidence log, or restore-test.
+- **Offline, least privilege.** The webview calls `open_user_guide` with no argument; Rust resolves the bundled file, checks it exists, and opens it with the operating system's handler for `.html` (the `open` crate, MIT). The webview gets no filesystem, shell, or opener permission; the one new permission is `allow-open-user-guide`, for that command. The CSP is unchanged.
+- **Checked in CI.** `smoke-nsis.ps1` (silent install on `windows-latest`) and `smoke-deb.sh` (the `package` jobs and `package smoke (ubuntu-24.04)`) assert every guide page at the path above, the banner, no script or remote reference, and its removal on uninstall. Rust tests (`help.rs`) and a vitest test show the Help action calls the open command with the bundled path (the OS open is mocked); the E2E spec `help.e2e.js` (both OSes, `e2e` build records the path instead of starting a browser) reads the file the action opened. What CI does not do: start a real browser on the installed app. That is on the release checklist below.
+
 ## Signing and the updater
 
 **[owner, 2026-10-14]** Decisions: no Windows Authenticode code signing for 1.0; the updater
@@ -247,6 +255,7 @@ and Windows 11 client machines check by hand:
   "foreign format" label, no MOCHI health wording); an encrypted 7z or RAR asks for its
   password in the window; a ZIP named like a hostile archive lists its names as text. Do
   the same from a second launch while MOCHI is running (no second window).
+- Help → User guide: the bundled guide opens in the default browser, with no network, and its banner says it is written for the command line.
 - Uninstall, then search the registry: no `Mochi*`, `MOCHI.Archive`, or `MOCHI.Foreign`
   key remains, and `.mochi` files show no program.
 - A path with spaces, non-ASCII letters, and a `&` opens correctly from each verb.
@@ -255,7 +264,7 @@ On Ubuntu 22.04 and 24.04 desktops (GNOME Files): after install, double-clicking
 `.mochi` file opens MOCHI and its icon type reads "MOCHI archive"; "Open with" on a
 `.zip`, `.7z`, `.rar`, and `.tar.gz` lists MOCHI but the default stays Archive Manager;
 with MOCHI running, opening a second `.mochi` goes to the same window; `apt remove`
-leaves no "MOCHI archive" type.
+leaves no "MOCHI archive" type; Help → User guide opens the installed guide in the default browser.
 
 **Accessibility (D7).** Machines can check names, structure, tab order, and contrast
 (CI: `pnpm test`, the keyboard E2E spec); they cannot hear a screen reader or see a

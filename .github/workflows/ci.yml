@@ -102,6 +102,27 @@ jobs:
       - name: Build
         run: pnpm build
 
+  ui-windows:
+    # Audit F13: the UI unit tests (including the partial-coverage case of spec
+    # §23.3 #8) also run on Windows. A separate job, so the name of the
+    # `desktop ui` check above does not change. Tests only; no product change.
+    name: desktop ui tests (windows-latest)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/mochi-desktop/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm (corepack, the version in package.json)
+        run: corepack enable
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm test
+
   e2e:
     # Plan D0 exit: the built app streams a sample job's progress and cancels
     # it cleanly; plan D1 exit: it browses snapshots, hostile names stay text,
@@ -126,6 +147,9 @@ jobs:
           node-version: 24
       - name: Enable pnpm (corepack, the version in package.json)
         run: corepack enable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Desktop app and WebDriver dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -158,6 +182,9 @@ jobs:
         run: cargo build --locked -p mochi-foreign
       - name: Build the command-line tool (the D4 spec's oracle)
         run: cargo build --locked -p mochi-cli
+      - name: Build the user guide the F8 help spec opens
+        shell: bash
+        run: python3 -I packaging/guide.py target/guide
       - name: Write the archives the D1 browse spec opens
         shell: bash
         run: cargo run --locked --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures

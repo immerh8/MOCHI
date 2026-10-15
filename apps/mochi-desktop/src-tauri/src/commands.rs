@@ -587,3 +587,15 @@ pub async fn clear_crash_log(log: State<'_, Arc<CrashLog>>) -> Result<CrashSetti
     })
     .await
 }
+
+/// Help, User guide (audit F8): open the bundled guide with the operating system's handler.
+/// The webview names no path: Rust resolves the installed resource (`help`).
+#[tauri::command]
+pub async fn open_user_guide(app: AppHandle) -> Result<(), IpcError> {
+    tauri::async_runtime::spawn_blocking(move || crate::help::open_user_guide_for(&app))
+        .await
+        .map_err(|_| IpcError {
+            code: mochi_core::ErrorCode::Cancelled.as_str().to_owned(),
+            message: "the operation stopped before it finished".to_owned(),
+        })?
+}

@@ -12,6 +12,7 @@ export const app = {
   "app.sectionForeign": "Other archive formats",
   "app.sectionSelfTest": "Job runner self-test",
   "app.sectionSettings": "Settings",
+  "app.sectionHelp": "Help",
   "selfTest.heading": "Job runner self-test",
   "selfTest.intro":
     "A sample job that reads and writes nothing. It reports progress and can be cancelled, which is how every long operation in this app will behave.",
