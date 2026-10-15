@@ -139,16 +139,15 @@ scratch folder. Install the **0.9.0** setup from its published release.
 ### W-04. Start menu and first start
 
 1. Start → `MOCHI`; open it.
-- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds with the **Sections** links *Archive*, *Create and add*, *Extract*, *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Job runner self-test*, *Settings*; no error text.
+- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds with the **Sections** links *Archive*, *Create and add*, *Extract*, *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Help*, *Job runner self-test*, *Settings* (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
 - **Fail:** no entry, a blank window after 30 s, a missing-web-view message, a crash.
 2. Settings → Apps → Installed apps → **MOCHI**: **Pass:** version 0.9.0, publisher *The MOCHI Project contributors*.
 
-### W-05. Help → User guide, offline (F8; another worker is adding it)
+### W-05. Help → User guide (command line), offline (F8)
 
-1. Turn the network **off** (1.3). In MOCHI: **Help → User guide**.
-- **Pass:** the guide opens with no network; its first page is readable and matches `docs/user/` (*Getting started*, *An archive is not a backup* reachable); nothing tries to open a website. It says an archive is not a backup and that a passing test does not make the file one.
-- **Fail:** a browser to a web address, "file not found", a blank page, no menu entry.
-- If this build has no such menu entry yet: `NOT PRESENT` (not FAIL); gate 5 is not released on that row.
+1. Turn the network **off** (1.3). In the MOCHI window find the **Help** section (use the **Sections** links if it is not in view) and press **User guide (command line)**. Its note says the guide is written for the `mochi` command line, opens the copy installed with MOCHI in your default web browser, and needs no network.
+- **Pass:** your default browser opens a **local file** (the address starts `file:///` and ends in the install folder's `guide/index.html`), the first page is readable, its links to the other topics work (*Getting started*, *An archive is not a backup*, ...), and nothing tries to reach a website. The guide says an archive is not a backup and that a passing test does not make the file one. MOCHI shows "The user guide was handed to your default program for web pages."
+- **Fail:** a web address (`https://...`), "file not found" or a blank page, an error line "Could not open the user guide", or no button.
 2. Network back on.
 
 ### W-06. Explorer verbs (the menu display is yours; the verbs themselves are Automated)
@@ -273,7 +272,7 @@ Done by <you> on <date>
 |---|---|---|---|---|
 | W-01 start state, W-02 SmartScreen, W-03 wizard question defaults to No |  | not run on client hardware for 1.0 | N/A | N/A |
 | W-04 Start menu, first start, Apps entry |  | AUTO (run link) | N/A | N/A |
-| W-05 Help → User guide offline |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
+| W-05 Help → User guide (command line), offline |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | W-06 right-click verbs, awkward path |  | AUTO | N/A | N/A |
 | W-07 foreign opt-in, each format, passwords, hostile names, `.zip` default unchanged |  | AUTO | N/A | N/A |
 | W-08 NVDA N-1 to N-5 |  | not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 |
