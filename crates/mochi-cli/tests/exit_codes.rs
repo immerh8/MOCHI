@@ -254,7 +254,7 @@ fn no_one_dot_zero_command_is_not_implemented() {
         .step_by(2)
         .map(str::to_owned)
         .collect();
-    assert_eq!(commands.len(), 18, "{commands:?}");
+    assert_eq!(commands.len(), 19, "{commands:?}");
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.mochi").display().to_string();
     let out_dir = dir.path().join("out").display().to_string();
@@ -276,6 +276,7 @@ fn no_one_dot_zero_command_is_not_implemented() {
             "repair apply" => vec!["repair", "apply", m, "--plan", &plan, "--output", &out_dir],
             "checkpoint" => vec!["checkpoint", m],
             "compact" => vec!["compact", m, "--output", &out_dir],
+            "migrate" => vec!["migrate", m, "--output", &out_dir],
             "gc plan" => vec!["gc", "plan", m],
             "gc apply" => vec!["gc", "apply", m, "--plan", &plan, "--output", &out_dir],
             "rekey" => vec!["rekey", m, "--list"],
