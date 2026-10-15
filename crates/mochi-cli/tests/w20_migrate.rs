@@ -15,6 +15,15 @@ use serde_json::Value;
 
 const PASSPHRASE: &str = "r8 golden passphrase";
 
+/// Exit code of a command that creates a new file: Windows reports its
+/// directory entry as not confirmed durable until gate G6 (plan O12), which
+/// is `DEGRADED`.
+const CREATED: u8 = if cfg!(windows) {
+    exit::DEGRADED
+} else {
+    exit::OK
+};
+
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -220,7 +229,7 @@ fn migrate_converts_each_legacy_archive_and_leaves_the_source_alone() {
             cmd.push(passphrase_file(tmp.path(), p));
         }
         let o = mochi(&cmd);
-        assert_eq!(o.code, exit::OK, "{file}: {}", o.all());
+        assert_eq!(o.code, CREATED, "{file}: {}", o.all());
         assert_eq!(o.out.lines().count(), 1, "one JSON value");
         let v: Value = serde_json::from_str(o.out.trim()).unwrap();
         assert_eq!(v["schema"], "mochi-cli-migrate-v1");
@@ -262,7 +271,7 @@ fn migrate_converts_each_legacy_archive_and_leaves_the_source_alone() {
             cmd.push(passphrase_file(tmp.path(), p));
         }
         let o = mochi(&cmd);
-        assert_eq!(o.code, exit::OK, "{}", o.all());
+        assert_eq!(o.code, CREATED, "{}", o.all());
         for w in ["backed up", "backup is", "safe", "preserved", "secure"] {
             assert!(!o.out.to_lowercase().contains(w), "{w:?}: {}", o.out);
         }
