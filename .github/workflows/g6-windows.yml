@@ -36,11 +36,13 @@ jobs:
           git clone --depth 1 https://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git /tmp/xfstests || git clone --depth 1 https://github.com/kdave/xfstests /tmp/xfstests
           git -C /tmp/xfstests rev-parse HEAD
           ls /tmp/xfstests/src/log-writes
-          make -C /tmp/xfstests/src/log-writes 2>&1 | tail -15
+          cd /tmp/xfstests/src/log-writes && gcc -O2 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I. -o replay-log replay-log.c log-writes.c -ldevmapper 2>&1 | tail -20
           ls -l /tmp/xfstests/src/log-writes/replay-log
       - name: Microsoft evaluation media reachability
         run: |
-          for id in 2289031 2195404 2195280 2334167 2195167 2195041; do
+          for id in 2382600 2289029; do
             echo "== linkid=$id"
-            curl -sIL -m 30 "https://go.microsoft.com/fwlink/?linkid=$id" | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8
+            curl -sIL -m 30 "https://go.microsoft.com/fwlink/?linkid=$id&clcid=0x409&culture=en-us&country=us" | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8
           done
+          echo "== windows 10 eval page"
+          curl -sI -m 30 https://www.microsoft.com/en-us/evalcenter/download-windows-10-enterprise | grep -i -E '^(HTTP|location)'
