@@ -52,6 +52,10 @@ is prepended.
 - Both installers and the license list are uploaded as workflow artifacts
   (`mochi-installer-*-unsigned`). Nothing is published; releases come from `release.yml`
   (below).
+- `installer-smoke` (`.github/workflows/installer-smoke.yml`, **manual**, never on pull
+  requests): the part of the release checklist that needs no human eyes. It installs the
+  CI-built setup in real Windows 11 and Windows 10 22H2 *client* VMs and the `.deb` on
+  Ubuntu 22.04 and 24.04; see "Release checklist" below and `docs/release-runbook.md`.
 
 ## Shell integration (plan D6, decision O10)
 
@@ -199,7 +203,8 @@ It never publishes and never pushes a tag.
    release made, because apps already installed trust only the old public key. Without the secrets the workflow stops in `preflight`
    with an error naming the missing secret, and builds nothing.
 2. Set the version in `src-tauri/tauri.conf.json` and `[workspace.package]` in
-   `Cargo.toml` (they must match) and merge it. Optionally write plain-text release notes
+   `Cargo.toml` (they must match), run `cargo update --workspace` so `Cargo.lock` carries
+   the same version (the installer is built with `--locked`), and merge it. Optionally write plain-text release notes
    in `docs/release-notes/v<version>.txt`; the app shows them as text.
 3. Push the tag `v<version>` on that commit (or run the workflow by hand from the Actions
    tab; the tag is then created only when you publish the draft).
@@ -208,6 +213,9 @@ It never publishes and never pushes a tag.
    if you like, and publish it. Publishing makes `latest.json` visible to installed apps
    (`releases/latest` is the newest *published, non-draft, non-prerelease* release).
 5. Do the release checklist below, including updating from the previous release.
+   `docs/release-runbook.md` is the step-by-step version, with the owner's notebook steps and a
+   throwaway **0.9.0 / 0.9.1 test release pair** for the updater check, so that no real
+   version number is spent on it.
 
 Never reuse a version: an app compares versions, and a `latest.json` for a lower or equal
 version offers nothing. To withdraw a bad release, delete or unpublish it (`releases/latest`
@@ -219,6 +227,14 @@ and checks that each `.sig` names the app version. `packaging/test_latest_json.p
 manifest generator.
 
 ## Release checklist (not reproducible on CI)
+
+**Run it from `docs/release-runbook.md`**: every item below is there as numbered steps
+with what a pass and a fail look like and a results table, and the results go into the
+release notes and the audit F10 row. The `installer-smoke` workflow (manual) already does
+what needs no eyes in Windows 11 and Windows 10 22H2 client VMs (silent install, Start
+menu, association and verbs, launch, uninstall leaving nothing) and on Ubuntu 22.04 and
+24.04; the runbook's section 1 says which items that covers. The text below is the
+definition of the checklist.
 
 **Updater (T13).** With the previous release installed on a Windows 10 22H2 and a Windows
 11 client machine and on Ubuntu 22.04 and 24.04 desktops: Settings → Check for updates shows
@@ -293,7 +309,8 @@ read with it). Record the result in the release notes.
 
 - Windows Authenticode signing (decided against for 1.0), `.deb` or APT signing, and
   publishing a release without the owner's review (the workflow makes drafts only).
-- An update applied end to end on a real pair of published releases (the release checklist).
+- An update applied end to end on a real pair of published releases (the release checklist;
+  `docs/release-runbook.md` section 7 sets up a test pair, 0.9.0 and 0.9.1, for it).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
 - Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign
   formats opened from the shell are browsed (D8, T20; fixes `docs/audit-gate1.md` F1);
