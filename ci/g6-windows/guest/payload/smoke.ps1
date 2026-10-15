@@ -134,9 +134,9 @@ while ((Get-Date) -lt $deadline -and -not (Test-Path "$GuestState\user-done")) {
   Start-Sleep 5
 }
 if (Test-Path "$GuestState\results.jsonl") {
-  foreach ($l in @(Get-Content "$GuestState\results.jsonl")) { if ($l) { Say ('SMOKE-RESULT ' + $l) } }
+  foreach ($l in @(Get-Content "$GuestState\results.jsonl")) { if ($l) { Send-Serial ('SMOKE-RESULT ' + $l) } }
 }
 if (Test-Path "$GuestState\user.log") {
-  foreach ($l in @(Get-Content "$GuestState\user.log" | Select-Object -Last 60)) { Say ('USERLOG ' + $l) }
+  foreach ($l in @(Get-Content "$GuestState\user.log" | Select-Object -Last 60)) { Send-Serial ('USERLOG ' + $l) }
 }
 if (Test-Path "$GuestState\user-done") { Say 'SMOKE-DONE' } else { Say 'SMOKE-ABORT user.ps1 did not finish' }

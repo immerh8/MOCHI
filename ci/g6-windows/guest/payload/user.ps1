@@ -219,7 +219,7 @@ function Wait-AppWindow([int]$seconds) {
   }
   return $null
 }
-function Get-UiaText([int]$hwnd, [int]$timeoutSec = 90) {
+function Get-UiaText([int]$hwnd, [int]$timeoutSec = 60) {
   $job = Start-Job -ArgumentList $hwnd -ScriptBlock {
     param($h)
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
