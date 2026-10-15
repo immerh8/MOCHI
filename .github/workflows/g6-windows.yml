@@ -1,0 +1,38 @@
+name: g6-windows
+
+# TEMPORARY probe (G6b step 1). Replaced by the real workflow once KVM and the
+# evaluation media are confirmed.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/g6-windows.yml
+      - ci/g6-windows-crashreplay.sh
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Host
+        run: |
+          uname -r; nproc; free -g; df -h /; lscpu | grep -i -E 'model name|virtualization|hypervisor'
+          ls -l /dev/kvm || echo "no /dev/kvm"
+      - name: Enable KVM via udev
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "still no /dev/kvm"
+          test -w /dev/kvm && echo "KVM USABLE" || echo "KVM NOT USABLE"
+      - name: dm-log-writes
+        run: |
+          sudo modprobe dm-log-writes && echo "dm-log-writes loaded" || { sudo apt-get update; sudo apt-get install -y linux-modules-extra-$(uname -r); sudo modprobe dm-log-writes && echo "dm-log-writes loaded after extra modules"; }
+          sudo modprobe loop; sudo apt-get install -y qemu-system-x86 ovmf swtpm xfstests 2>&1 | tail -3 || true
+          which replay-log || find / -name 'replay-log*' 2>/dev/null | head
+          qemu-system-x86_64 --version
+      - name: Microsoft evaluation media reachability
+        run: |
+          for id in 2289031 2195404 2195280 2334167 2195167; do
+            echo "== linkid=$id"
+            curl -sIL -m 30 "https://go.microsoft.com/fwlink/?linkid=$id" | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8
+          done
