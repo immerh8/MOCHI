@@ -117,7 +117,7 @@ def test_r5_commit_layout(r5):
         assert (ref.offset, ref.length) == (o["offset"], o["length"])
         assert ref.hash == digest.stored_object(B(o["frame"]))
     # The layout vector's descriptor still says draft identifier 1 (the vectors were generated before
-    # the draft-2 freeze, see READING-LOG.md): a draft-2 reader must refuse it as a draft, and the
+    # the draft-2 freeze, see READING-LOG.md): a 1.0 reader (ratified archives only) must refuse it as a draft, and the
     # record is otherwise a valid descriptor listing the Encrypted feature.
     with pytest.raises(MochiError) as ei:
         descriptor.decode_object(B(objs["descriptor"]["frame"]))

@@ -340,3 +340,28 @@ into the specification or the ratification artifact first, and the verifier foll
   view, so the verifier makes two passes.
 * **Comparator.** `tools/compare_r8.py` read a passphrase and an anchor from sibling files that W16 does not
   write; it now reads them from `cases.json`, and a missing case, summary or directory fails.
+
+## W20: the 1.0 flip (branch `claude/w20-1.0-flip`)
+
+**Read for this change:** `docs/spec.md`: the status line, Annex B.2.14 (items 1 to 4), the descriptor key table
+of B.2.2 (key 3), D24 in B.2, section 26 (the migration boundary paragraph) and section 28 (status 2026-10-15).
+Also `fixtures/golden/r8/` (`cases.json`, `legacy/cases.json`, the summaries) and `fixtures/golden/b2/`
+descriptor vectors, as data. No Rust source and no `gen_vectors.py`.
+
+**Decisions:**
+
+1. *Key 3 `null` is accepted; every number is refused.* B.2.2 key 3: "null in a ratified 1.0 archive ...
+   A number is a pre-1.0 draft ... every other command refuses it ... with `UNSUPPORTED_FEATURE` (exit 4),
+   naming the draft." The verifier is a read-only command other than `migrate`, so draft 2, draft 1, draft 3 and
+   any other number all get `UNSUPPORTED_FEATURE`, with `draft identifier N` in the message. A non-integer,
+   non-null key 3 stays `DESCRIPTOR_INVALID` (closed schema, `reject-descriptor-draft-type`).
+2. *No `migrate` hint.* B.2.14 item 2 says only draft 2's message suggests `mochi migrate`. The verifier has no
+   migrate command, and the refusal code is all agreement tests, so the message names the draft and nothing more.
+3. *Ambiguity, strictest reading.* B.2.14 item 1 says "a build refuses every draft other than its own"; item 2
+   says a 1.0 build refuses every draft. The 1.0 build has no draft of its own, so none is accepted.
+4. *Refusal comes after the closed schema check,* as before: a malformed descriptor is `DESCRIPTOR_INVALID`
+   before its draft is considered. Wire generation is still checked first (`gen != 2` is `UNSUPPORTED_FEATURE`).
+5. *Legacy cases.* `r8/legacy/*.mochi` are not in `cases.json` or the summaries; the tests assert each is
+   refused at the head with `UNSUPPORTED_FEATURE` naming draft 2, and that the R8 comparison (exact equality,
+   D7, G14) covers every case of `r8/cases.json`.
+6. The R5 layout vector's descriptor (draft identifier 1) remains refused; the test comment now says "1.0 reader".
