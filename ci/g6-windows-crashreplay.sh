@@ -15,8 +15,12 @@
 #   image      unattended Windows install into $G6_WORK/image (cache this directory)
 #   run        <label> <bin dir> [orchestrate.py run options]
 #              format, workload on a dm-log-writes disk, replay, judge
+#   smoke      <label> <setup.exe> [orchestrate.py smoke options]
+#              install the CI-built NSIS setup in the image, check it, uninstall
+#              (docs/release-runbook.md "Automated"; not a crash-replay run)
 #
-# Environment: G6_WORK (default /var/tmp/g6), G6_EVIDENCE (default $G6_WORK/evidence),
+# Environment: G6_SKIP_LOGWRITES=1 makes `setup` skip dm-log-writes and replay-log (smoke only),
+# G6_WORK (default /var/tmp/g6), G6_EVIDENCE (default $G6_WORK/evidence),
 # G6_OS (windows-11, the default, or windows-10: which Microsoft evaluation ISO).
 set -euo pipefail
 
@@ -46,11 +50,6 @@ setup() {
     as_root apt-get update -qq
     as_root apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm \
         xorriso libdevmapper-dev dmsetup build-essential git curl python3 apparmor-utils tesseract-ocr
-    as_root modprobe dm-log-writes || {
-        as_root apt-get install -y "linux-modules-extra-$(uname -r)"
-        as_root modprobe dm-log-writes
-    }
-    as_root modprobe loop || true
     # Ubuntu confines swtpm (and QEMU) with AppArmor profiles that do not expect
     # state under /var/tmp; this is a throwaway CI host.
     if command -v aa-disable >/dev/null 2>&1; then
@@ -61,18 +60,26 @@ setup() {
         as_root ln -sf /etc/apparmor.d/usr.bin.swtpm /etc/apparmor.d/disable/ || true
         as_root apparmor_parser -R /etc/apparmor.d/usr.bin.swtpm 2>&1 || true
     fi
-    # replay-log is not packaged; xfstests' src/log-writes builds with plain gcc.
     local src=/tmp/xfstests rev=""
-    rm -rf "$src"
-    for u in "${XFSTESTS_URLS[@]}"; do
-        git clone --depth 1 "$u" "$src" && break
-    done
-    rev=$(git -C "$src" rev-parse HEAD)
-    (cd "$src/src/log-writes" && gcc -O2 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I. \
-        -o replay-log replay-log.c log-writes.c -ldevmapper)
-    as_root install -m 0755 "$src/src/log-writes/replay-log" /usr/local/bin/replay-log
+    # The installer smoke test (G6_SKIP_LOGWRITES=1) replays nothing: no dm-log-writes, no replay-log.
+    if [ -z "${G6_SKIP_LOGWRITES:-}" ]; then
+        as_root modprobe dm-log-writes || {
+            as_root apt-get install -y "linux-modules-extra-$(uname -r)"
+            as_root modprobe dm-log-writes
+        }
+        as_root modprobe loop || true
+        # replay-log is not packaged; xfstests' src/log-writes builds with plain gcc.
+        rm -rf "$src"
+        for u in "${XFSTESTS_URLS[@]}"; do
+            git clone --depth 1 "$u" "$src" && break
+        done
+        rev=$(git -C "$src" rev-parse HEAD)
+        (cd "$src/src/log-writes" && gcc -O2 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I. \
+            -o replay-log replay-log.c log-writes.c -ldevmapper)
+        as_root install -m 0755 "$src/src/log-writes/replay-log" /usr/local/bin/replay-log
+    fi
     {
-        echo "{\"xfstests_rev\": \"$rev\","
+        echo "{\"xfstests_rev\": \"${rev:-not built}\","
         echo " \"qemu\": \"$(qemu-system-x86_64 --version | head -1)\","
         echo " \"swtpm\": \"$(swtpm --version | head -1)\","
         echo " \"kernel\": \"$(uname -r)\","
@@ -114,7 +121,8 @@ case "${1:-}" in
     free-disk) free_disk ;;
     selftest)
         REPLAY_LOG=${REPLAY_LOG:-$(command -v replay-log)} python3 -I "$HERE/g6-windows/test_logwrites.py"
-        python3 -I "$HERE/g6-windows/test_evaluate.py" ;;
+        python3 -I "$HERE/g6-windows/test_evaluate.py"
+        python3 -I "$HERE/g6-windows/test_smoke.py" ;;
     iso-info | iso | image)
         cmd=$1; shift
         as_root python3 -I "$ORCH" --work "$G6_WORK" "$cmd" "$@" ;;
@@ -123,5 +131,11 @@ case "${1:-}" in
         label=${1:?usage: run <label> <bin dir> [options]}; bins=${2:?usage: run <label> <bin dir> [options]}; shift 2
         as_root python3 -I "$ORCH" --work "$G6_WORK" run --label "$label" --bins "$bins" --evidence "$G6_EVIDENCE" "$@"
         ;;
-    *) sed -n '2,20p' "$0"; exit 2 ;;
+    smoke)
+        shift
+        label=${1:?usage: smoke <label> <setup.exe> [options]}; setup=${2:?usage: smoke <label> <setup.exe> [options]}; shift 2
+        as_root python3 -I "$ORCH" --work "$G6_WORK" smoke --label "$label" --setup "$setup" \
+            --fixtures "$HERE/../fixtures" --evidence "$G6_EVIDENCE" "$@"
+        ;;
+    *) sed -n '2,24p' "$0"; exit 2 ;;
 esac
