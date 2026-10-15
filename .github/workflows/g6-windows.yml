@@ -172,6 +172,9 @@ jobs:
         run: bash ci/g6-windows-crashreplay.sh selftest
       - name: Resolve the Microsoft evaluation ISO
         run: bash ci/g6-windows-crashreplay.sh iso-info
+      - name: Is any Windows 10 evaluation image still offered? (informational)
+        continue-on-error: true
+        run: bash ci/g6-windows-crashreplay.sh win10-probe
       - name: Download the evaluation ISO
         run: bash ci/g6-windows-crashreplay.sh iso
       - name: Unattended Windows install

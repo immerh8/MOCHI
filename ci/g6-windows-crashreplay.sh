@@ -8,6 +8,7 @@
 #
 #   setup      packages, KVM access, dm-log-writes, replay-log (exits 3 without KVM)
 #   free-disk  remove preinstalled toolchains the runner does not need here
+#   win10-probe  record whether any Windows 10 evaluation image is still offered
 #   selftest   unit-test the log reader (against the real replay-log) and the verdict logic
 #   iso-info   resolve the Microsoft evaluation ISO (name, size)
 #   iso        download it and record its SHA-256
@@ -85,7 +86,29 @@ free_disk() {
     df -h / | tail -1
 }
 
+# Is any Windows 10 evaluation image still offered? Informational: HEAD requests
+# only (no media is downloaded), recorded as evidence. The harness runs only on
+# media Microsoft publishes, so a Windows 10 row without a live ISO is a gap.
+win10_probe() {
+    local out="$G6_EVIDENCE/win10-probe.txt"
+    mkdir -p "$G6_EVIDENCE"
+    {
+        echo "# Windows 10 evaluation availability, $(date -u +%FT%TZ) (HEAD requests; ISO bodies are not fetched)"
+        for page in download-windows-10-enterprise evaluate-windows-10-enterprise \
+                    download-windows-10-enterprise-ltsc-2021 evaluate-windows-10-enterprise-ltsc-2021; do
+            echo "== https://www.microsoft.com/en-us/evalcenter/$page"
+            curl -sI -m 30 "https://www.microsoft.com/en-us/evalcenter/$page" | grep -i -E '^(HTTP|location)' || echo "(no answer)"
+        done
+        for id in 2208844 2195404 2195167 2195280; do
+            echo "== fwlink LinkID=$id (candidate: Windows 10 Enterprise 22H2 / LTSC en-US x64)"
+            curl -sIL -m 30 "https://go.microsoft.com/fwlink/p/?LinkID=$id&clcid=0x409&culture=en-us&country=US" \
+                | grep -i -E '^(HTTP|location|content-length|content-disposition)' | head -8 || echo "(no answer)"
+        done
+    } | tee "$out"
+}
+
 case "${1:-}" in
+    win10-probe) win10_probe ;;
     setup) setup ;;
     free-disk) free_disk ;;
     selftest)
