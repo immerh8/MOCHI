@@ -195,7 +195,9 @@ function Scan-Registry {
 function Get-LiveAssoc {
   if (-not $haveAssoc) { return $null }
   $q = [G6Assoc]::Query('.mochi', 2, 'open')
-  if ($q -and (Test-Path -LiteralPath $q)) { return $q }
+  # Without an association Windows answers with its generic "Open with" program
+  # (OpenWith.exe); only a MOCHI program that still exists is a leftover.
+  if ($q -and $q -match 'mochi' -and (Test-Path -LiteralPath $q)) { return $q }
   return $null
 }
 function Get-InstallKeyLeft {

@@ -82,20 +82,33 @@ if grep -q "^application/x-mochi=.*$desktop_id" /usr/share/applications/mimeinfo
   rec U-MIME-APP PASS "mimeinfo.cache offers $desktop_id for application/x-mochi"
 else rec U-MIME-APP FAIL "$desktop_id is not registered for application/x-mochi in mimeinfo.cache"; fi
 
-bad=""; listed=""; only=""
+# "Open with" must not turn MOCHI into the default program for ZIP, 7z, RAR or tar. What the
+# package controls: it ships no defaults list (smoke-deb.sh). What decides the default: the
+# desktop's own defaults list when it names one, otherwise the first handler in mimeinfo.cache
+# (sorted by file name; "MOCHI.desktop" sorts before "org.gnome.FileRoller.desktop").
+explicit_default() { # type -> the program an explicit defaults list names, if any
+  grep -h "^$1=" /usr/share/applications/*mimeapps.list /usr/local/share/applications/*mimeapps.list \
+    /etc/xdg/*mimeapps.list "$HOME/.config/mimeapps.list" 2>/dev/null | head -1 | cut -d= -f2 | cut -d';' -f1
+}
+bad=""; listed=""; only=""; byorder=""
 for t in application/zip application/x-7z-compressed application/vnd.rar application/x-tar application/x-compressed-tar; do
   def=$(xdg-mime query default "$t" 2>/dev/null)
   line=$(grep "^$t=" /usr/share/applications/mimeinfo.cache 2>/dev/null)
   case "$line" in *"$desktop_id"*) listed="$listed $t" ;; esac
   others=$(echo "${line#*=}" | tr ';' '\n' | grep -v '^$' | grep -vx "$desktop_id" | head -1)
+  expl=$(explicit_default "$t")
   if [ "$def" = "$desktop_id" ]; then
-    # Another program registered for the type must keep the default; if MOCHI is the only
-    # handler on this machine the desktop has nothing else to pick.
-    if [ -n "$others" ]; then bad="$bad $t"; else only="$only $t"; fi
+    if [ -z "$others" ]; then only="$only $t"
+    elif [ -z "$expl" ]; then byorder="$byorder $t"
+    else bad="$bad $t"; fi
   fi
 done
-if [ -n "$bad" ]; then rec U-FOREIGN-NO-DEFAULT FAIL "MOCHI became the default although another program is registered for:$bad"
-else rec U-FOREIGN-NO-DEFAULT PASS "MOCHI is offered under Open with for:$listed; it is not the default for any type that has another handler${only:+ (only handler on this machine for:$only)}"; fi
+if [ -n "$bad" ]; then rec U-FOREIGN-NO-DEFAULT FAIL "MOCHI is the default although a defaults list names another program for:$bad"
+else rec U-FOREIGN-NO-DEFAULT PASS "MOCHI is offered under Open with for:$listed; the package sets no default, and MOCHI is not the default for any type whose defaults list names another program"; fi
+if [ -n "$byorder" ]; then
+  rec U-DEFAULT-BY-ORDER INFO "no desktop defaults list names a program for:$byorder, so this machine falls back to the first handler in mimeinfo.cache, and that is MOCHI.desktop (capital M sorts first). On a real Ubuntu desktop its own defaults list decides: check it in Files (runbook U-04), and see the proposal to name the launcher in lower case."
+fi
+[ -n "$only" ] && rec U-DEFAULT-ONLY INFO "MOCHI is the only registered handler here for:$only"
 
 # ---- start through the launcher, under Xvfb and a session bus --------------------------------------
 cat > "$work/session.sh" <<'EOS'
