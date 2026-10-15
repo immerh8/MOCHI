@@ -203,7 +203,7 @@ class Qmp:
                 raise RuntimeError(r["error"])
 
     def key(self, qcode):
-        self.cmd("send-key", keys=[{"type": "qcode", "data": qcode}])
+        self.cmd("send-key", keys=[{"type": "qcode", "data": qcode}], **{"hold-time": 150})
 
 
 class Vm:
@@ -307,6 +307,17 @@ class Vm:
         except Exception as e:
             log("screendump failed:", e)
 
+    def ocr(self):
+        """Text on the guest's screen, via tesseract, so a stalled install can be read from the job log."""
+        p = self.dir / "ocr.png"
+        try:
+            self.qmp.cmd("screendump", filename=str(p), format="png")
+            r = subprocess.run(["tesseract", str(p), "-", "--psm", "6"], capture_output=True, text=True, timeout=120)
+            text = " | ".join(l.strip() for l in r.stdout.splitlines() if l.strip())
+            return text[:1500] or "(screen shows no recognisable text)"
+        except Exception as e:
+            return f"(ocr failed: {e})"
+
     def wait(self, timeout, until=None, spam_keys=0, shot_every=240, tick=None):
         t0 = time.time()
         last_shot, last_key, last_tick = 0.0, 0.0, 0.0
@@ -322,7 +333,7 @@ class Vm:
                 tick(t)
                 last_tick = t
             try:
-                if spam_keys and t < spam_keys and t - last_key >= 2:
+                if spam_keys and t < spam_keys and t - last_key >= 1:
                     self.qmp.key("ret")
                     last_key = t
                 if shot_every and t - last_shot >= shot_every:
@@ -394,9 +405,12 @@ def cmd_image(a):
     t0 = time.time()
     try:
         vm.start()
-        how = vm.wait(a.timeout * 60, spam_keys=120, shot_every=300,
-                      tick=lambda t: log(f"install: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}"))
+        how = vm.wait(a.timeout * 60, spam_keys=180, shot_every=300,
+                      tick=lambda t: (log(f"install: {t / 60:.0f} min, serial lines so far: {len(vm.serial.lines)}"),
+                                      print("    screen:", vm.ocr(), flush=True)))
         log("install finished:", how, f"after {(time.time() - t0) / 60:.1f} min")
+        if how != "exited":
+            print("    final screen:", vm.ocr(), flush=True)
     finally:
         vm.stop()
         keep_logs(vm, work / "evidence-image")

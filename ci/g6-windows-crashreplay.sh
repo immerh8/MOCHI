@@ -43,7 +43,7 @@ setup() {
     echo "KVM usable: $(ls -l /dev/kvm)"
     as_root apt-get update -qq
     as_root apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm \
-        xorriso libdevmapper-dev dmsetup build-essential git curl python3 apparmor-utils
+        xorriso libdevmapper-dev dmsetup build-essential git curl python3 apparmor-utils tesseract-ocr
     as_root modprobe dm-log-writes || {
         as_root apt-get install -y "linux-modules-extra-$(uname -r)"
         as_root modprobe dm-log-writes
