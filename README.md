@@ -131,17 +131,19 @@ deterministic CBOR (D2); encryption is XChaCha20-Poly1305, passphrase-only in
   since the last one reach α·max(*B*, *F*). Measured to 10,000 commits in
   `docs/benchmarks/t32-scaling.md` (gate G3).
 
-**Annex B.2 batch in progress** (`docs/b2-implementation-checklist.md`,
-which tracks every task, decision, CI run, and gate). Archives written today
+**Annex B.2 batch, now the 1.0 layout** (`docs/b2-implementation-checklist.md`
+tracks every task, decision, CI run, and gate). Archives written today
 carry the archive descriptor at offset 0, v1 commit records, and delta
 manifests with checkpoints; pre-batch drafts (no descriptor, v0 commits or
 manifests) are refused as legacy (§26). Gates G1 (conformance), G3
 (scaling), G5 (capacity), and G7 (creation, including power loss on ext4
 over dm-flakey) have passed, and G9's (reports) criteria are met at
-library level. Still open: the CLI flags for
-truncation and limits (T29, with C14), native
-Windows durability evidence (T33, gate G6). The GC hold test (G2's last
-item) is implemented with C9 and awaits CI.
+library level. G2 (replay and recovery, including the GC hold test) and G8
+(truncation, through `mochi append --truncate-tail`) have passed; G4 has
+passed except its opt-in item, which moved to 1.x with
+`create --exceed-default-limits` (D16). G6 (Windows durability) is closed as
+a policy disposition, not as documented durability: Windows reports a new
+archive's directory entry as `Unconfirmed` in 1.0 (spec B.2.6, B.3 item 1).
 
 **C9 (retention, GC, compaction, dedup) is implemented in the library:**
 in-archive deduplication on the write path; retention by expiry and legal

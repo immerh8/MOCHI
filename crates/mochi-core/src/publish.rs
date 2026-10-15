@@ -2166,8 +2166,8 @@ pub struct TruncationWaivers {
     /// `--no-quarantine`: truncate without a sidecar copy.
     pub no_quarantine: bool,
     /// `--accept-unconfirmed-durability`: truncate although the sidecar's
-    /// directory flush was not confirmed (always the case on Windows before
-    /// G6). The sidecar is still written, verified, and synced.
+    /// directory flush was not confirmed (always the case on Windows in
+    /// 1.0, G6 policy B). The sidecar is still written, verified, and synced.
     pub accept_unconfirmed_durability: bool,
 }
 

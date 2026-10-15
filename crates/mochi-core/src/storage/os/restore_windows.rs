@@ -39,7 +39,7 @@
 //!   restored directory could swap a temporary file before it is
 //!   published. Restore into a directory only you can write (the default
 //!   for folders in your profile).
-//! * Directory durability is `Unconfirmed` (plan O12, until G6).
+//! * Directory durability is `Unconfirmed` (plan O12; G6 policy B).
 //! * Hidden and system attributes are reported, not set (no `std` API).
 
 use std::ffi::OsString;

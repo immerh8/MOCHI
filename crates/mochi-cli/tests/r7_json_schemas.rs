@@ -842,7 +842,7 @@ fn corpus() -> Vec<(&'static str, Value)> {
             "append",
             &torn,
             "--truncate-tail",
-            // Windows cannot confirm directory durability before gate G6.
+            // Windows cannot confirm directory durability (G6 policy B).
             "--accept-unconfirmed-durability",
         ]),
     );
@@ -857,7 +857,7 @@ fn corpus() -> Vec<(&'static str, Value)> {
             &torn2,
             &a.s("more.txt"),
             "--truncate-tail",
-            // Windows cannot confirm directory durability before gate G6.
+            // Windows cannot confirm directory durability (G6 policy B).
             "--accept-unconfirmed-durability",
         ]),
     );
@@ -2175,7 +2175,7 @@ fn mutated_outputs_fail() {
             .find(|(s, v)| *s == schema && v.pointer(pointer).is_some() && pick(v))
         else {
             // Only where the platform gives no such instance: a durable
-            // directory entry is unconfirmed on Windows until gate G6.
+            // directory entry is unconfirmed on Windows (G6 policy B).
             assert!(
                 cfg!(windows) && why == "unconfirmed without a note",
                 "no {schema} instance for {pointer}"

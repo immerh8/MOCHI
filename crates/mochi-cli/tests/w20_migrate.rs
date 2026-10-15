@@ -16,7 +16,7 @@ use serde_json::Value;
 const PASSPHRASE: &str = "r8 golden passphrase";
 
 /// Exit code of a command that creates a new file: Windows reports its
-/// directory entry as not confirmed durable until gate G6 (plan O12), which
+/// directory entry as not confirmed durable in 1.0 (plan O12, G6 policy B), which
 /// is `DEGRADED`.
 const CREATED: u8 = if cfg!(windows) {
     exit::DEGRADED
