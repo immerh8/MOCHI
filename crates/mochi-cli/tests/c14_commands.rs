@@ -21,7 +21,7 @@ const HOSTILE: &str = if cfg!(windows) {
 };
 
 /// `create`'s exit code on success. Windows reports the new file's
-/// directory entry as not confirmed durable until gate G6 (plan O12, T21),
+/// directory entry as not confirmed durable in 1.0 (plan O12, G6 policy B, T21),
 /// which is `DEGRADED`, exit 2; never `PASS`-like there.
 const CREATED: u8 = if cfg!(windows) {
     exit::DEGRADED
@@ -476,7 +476,7 @@ fn c14_append_truncates_an_eligible_tail_only_on_request() {
     assert_eq!(v["error"]["code"], "UNCOMMITTED_TAIL");
     assert_eq!(fs::read(&archive).unwrap(), torn);
 
-    // Windows cannot confirm the sidecar's directory entry (before G6), so
+    // Windows cannot confirm the sidecar's directory entry (G6 policy B), so
     // truncation there needs the second, recorded waiver.
     let mut args = vec!["append", archive.as_str(), "--truncate-tail"];
     if cfg!(windows) {

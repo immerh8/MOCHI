@@ -14,7 +14,7 @@ use mochi_testkit::forge::{put_with_dependency, DictionaryDependency};
 use serde_json::Value;
 
 /// `create` exit code: Windows reports a new directory entry as not
-/// confirmed durable until gate G6 (plan O12).
+/// confirmed durable in 1.0 (plan O12, G6 policy B).
 const CREATED: u8 = if cfg!(windows) {
     exit::DEGRADED
 } else {

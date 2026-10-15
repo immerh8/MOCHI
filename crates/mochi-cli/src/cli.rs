@@ -142,7 +142,7 @@ pub struct AppendArgs {
     #[arg(long, requires = "truncate_tail")]
     pub no_quarantine: bool,
     /// Waiver: truncate although the sidecar's directory entry is not
-    /// confirmed durable (always so on Windows before gate G6). Recorded.
+    /// confirmed durable (always so on Windows in 1.0, G6 policy B). Recorded.
     #[arg(long, requires = "truncate_tail")]
     pub accept_unconfirmed_durability: bool,
 }

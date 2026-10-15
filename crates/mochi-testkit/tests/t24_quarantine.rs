@@ -311,8 +311,8 @@ fn t25_accept_unconfirmed_durability_waiver() {
 }
 
 /// **T25 DoD.** On the real OS: on Linux the flush is confirmed and the
-/// truncation proceeds; on Windows (directory flush always unconfirmed until
-/// G6) truncation without the override is refused with
+/// truncation proceeds; on Windows (directory flush always unconfirmed in 1.0,
+/// G6 policy B) truncation without the override is refused with
 /// `DURABILITY_UNCONFIRMED`, and with it proceeds.
 #[test]
 fn t25_os_durability_rule() {

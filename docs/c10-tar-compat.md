@@ -85,7 +85,7 @@ and it does not cover any tool or version not listed. The list is what the CI jo
 Versions are those printed by the `tar interop` jobs of the PR that introduced the
 profile (run 37886040933, all six cells passed); the runner images move, so a later run
 may print newer ones, and only a run that prints a version supports a claim for it.
-On Windows `mochi create` exits 2 (directory entry not confirmed durable, until gate G6),
+On Windows `mochi create` exits 2 (directory entry not confirmed durable in 1.0, G6 policy B),
 which `ci/tar-interop.sh` accepts; everything else in the script is checked.
 
 Notes on tools:
