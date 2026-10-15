@@ -520,7 +520,8 @@ def cmd_run(a):
     bins = pathlib.Path(a.bins)
     exe = {"g6_winworkload.exe": bins / "g6_winworkload.exe", "mochi.exe": bins / "mochi.exe"}
     summary = {"label": a.label, "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-               "seed": a.seed, "max_flush_points": a.max_flush, "between_points": a.between}
+               "seed": a.seed, "max_flush_points": a.max_flush, "between_points": a.between,
+               "strict_creation": a.strict_creation}
     if (bins / "BUILD.txt").exists():
         summary["subject_build"] = (bins / "BUILD.txt").read_text().strip()
     summary["windows"] = json.loads((image / "build-info.json").read_text())
@@ -596,6 +597,15 @@ def cmd_run(a):
         "acks": len(acks),
     }
     points = lw.select_points(entries, begin.idx, end.idx, acks, a.max_flush, a.between, a.seed)
+    # Crash right after each acknowledgement, with every write not yet flushed
+    # dropped: what is persisted is the log up to the last barrier before the
+    # acknowledgement, and the acknowledgement itself counts. This is G7's
+    # post-acknowledgement cut. (Barrier points alone never show it: a barrier
+    # is always preceded by the writes it flushes.)
+    for m in acks:
+        b = lw.last_barrier_before(entries, m.idx)
+        if b is not None:
+            points.append({"kind": "ack-cut", "anchor": m.idx, "limit": lw.durable_limit(b), "ack_limit": m.idx + 1})
     points.append({"kind": "edge", "anchor": begin.idx, "limit": begin.idx + 1})
     points.append({"kind": "edge", "anchor": end.idx, "limit": end.idx + 1})
 
@@ -617,7 +627,7 @@ def cmd_run(a):
     for i, p in enumerate(points):
         p["id"] = i
         if p["kind"] not in ("ctl-synced", "ctl-unsynced"):
-            p["acks"] = [" ".join(m.label.split(":")[1:]) for m in acks if m.idx < p["limit"]]
+            p["acks"] = [ack_line(m, a.strict_creation) for m in acks if m.idx < p.get("ack_limit", p["limit"])]
     write_json(ev / "points.json", points)
     summary["points"] = {k: sum(1 for p in points if p["kind"] == k) for k in sorted({p["kind"] for p in points})}
     log("points:", summary["points"])
@@ -686,6 +696,16 @@ def cmd_run(a):
     sys.exit(0 if verdict else 1)
 
 
+def ack_line(m, strict_creation):
+    """`name seq D|U` for an acknowledgement mark. With --strict-creation a creation
+    acknowledged DirectoryUnconfirmed is judged as if it had said Durable: the
+    question then is whether the name survives anyway."""
+    name, seq, dur = m.label.split(":")[1:]
+    if strict_creation and seq == "0":
+        dur = "D"
+    return f"{name} {seq} {dur}"
+
+
 def evaluate(points, results, summary):
     hard, soft = [], []
     dist, end_edge = {}, []
@@ -740,7 +760,7 @@ def evaluate(points, results, summary):
     if not c_ok:
         hard.append("controls failed: the logged device does not behave as the method requires "
                     "(synced data must survive every replay; unsynced data must be droppable)")
-    judged = [p for p in points if p["kind"] in ("flush", "between", "edge")]
+    judged = [p for p in points if p["kind"] in ("flush", "between", "edge", "ack-cut")]
     summary["judged_points"] = len(judged)
     summary["archive_verdicts_over_all_points"] = dist
     summary["verify_exit_codes"] = verify_rc
@@ -765,6 +785,7 @@ def render_md(s):
         f"* Windows: {w.get('ProductName')} {w.get('DisplayVersion')} build {w.get('CurrentBuild')}.{w.get('UBR')} ({w.get('EditionID')})",
         f"* ISO: `{w.get('iso', {}).get('name')}` sha256 `{w.get('iso', {}).get('sha256')}`",
         f"* Subject: {s.get('subject_build', 'n/a')}",
+        f"* Creation judged as: {'Durable even where acknowledged DirectoryUnconfirmed (--strict-creation)' if s.get('strict_creation') else 'as acknowledged'}",
         f"* Log: {s.get('log')}", f"* Points: {s.get('points')}", f"* Controls: {s.get('controls')}",
         f"* Hard failures: {len(s['hard_failures'])}; soft observations: {len(s['soft_observations'])} "
         f"(of which a name absent after an acknowledged-but-`DirectoryUnconfirmed` creation: {s.get('absent_after_unconfirmed_ack')})", "",
@@ -790,6 +811,8 @@ def main():
     p.add_argument("--max-flush", type=int, default=72)
     p.add_argument("--between", type=int, default=24)
     p.add_argument("--seed", type=int, default=20261015)
+    p.add_argument("--strict-creation", action="store_true",
+                   help="judge a creation acknowledged DirectoryUnconfirmed as if Durable (does the name survive anyway?)")
     p.add_argument("--run-timeout", type=int, default=40, help="minutes")
     p.add_argument("--check-timeout", type=int, default=30, help="minutes per batch")
     p.set_defaults(f=cmd_run)

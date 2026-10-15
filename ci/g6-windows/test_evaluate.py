@@ -74,6 +74,21 @@ def main():
     passed, s = run(points, nomount)
     assert not passed and any("NTFS recovery" in h for h in s["hard_failures"]), s
 
+    # ack-cut points are judged like any other.
+    cut = points + [pt(4, "ack-cut", 15, ack_limit=16)]
+    cut_bad = {**good, 4: ok(4, judge=judge(["absent"], hard=["a0.mochi: durable creation acknowledged, name is gone"]))}
+    cut_bad[4]["judge_rc"] = 1
+    passed, s = run(cut, cut_bad)
+    assert not passed and s["judged_points"] == 3, s
+
+    # ack_line: --strict-creation turns a creation's U into D, and only that.
+    class M:
+        def __init__(self, label):
+            self.label = label
+    assert o.ack_line(M("ack:a0.mochi:0:U"), False) == "a0.mochi 0 U"
+    assert o.ack_line(M("ack:a0.mochi:0:U"), True) == "a0.mochi 0 D"
+    assert o.ack_line(M("ack:a0.mochi:1:U"), True) == "a0.mochi 1 U"
+
     # An Unconfirmed creation whose name is absent is allowed, and counted.
     soft = {**good, 2: ok(2, judge=judge(["absent", "seq-0"], soft=["a0.mochi: absent after acknowledged seq 1; creation was DirectoryUnconfirmed"]))}
     passed, s = run(points, soft)

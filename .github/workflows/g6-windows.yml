@@ -37,6 +37,10 @@ on:
         description: "Replay points between flushes (unflushed writes dropped)"
         required: false
         default: "24"
+      strict_creation:
+        description: "Judge creation as durable even where acknowledged DirectoryUnconfirmed (does the name survive a crash right after the acknowledgement?). Applies to both runs; the baseline is expected to show the gap."
+        type: boolean
+        default: true
       image_only:
         description: "Build the Windows image, then stop"
         type: boolean
@@ -182,14 +186,16 @@ jobs:
         continue-on-error: true
         run: |
           bash ci/g6-windows-crashreplay.sh run candidate bins/g6-bins-candidate \
-            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}"
+            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}" \
+            ${{ (github.event_name != 'workflow_dispatch' || inputs.strict_creation) && '--strict-creation' || '' }}
       - name: Crash replay, baseline
         id: baseline
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_only) && hashFiles('bins/g6-bins-baseline/**') != '' }}
         continue-on-error: true
         run: |
           bash ci/g6-windows-crashreplay.sh run baseline bins/g6-bins-baseline \
-            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}"
+            --max-flush "${{ inputs.max_flush_points || '72' }}" --between "${{ inputs.between_points || '24' }}" \
+            ${{ (github.event_name != 'workflow_dispatch' || inputs.strict_creation) && '--strict-creation' || '' }}
       - name: Summary
         if: always()
         run: |
