@@ -11,9 +11,9 @@ name: g6-windows
 #
 #   gh workflow run g6-windows.yml -f ref=<branch or sha under test>
 #
-# `ref` is the code whose Windows storage code is tested (for example the G6a
-# branch); `baseline_ref` is the reference run (default main: the current
-# link-then-unlink publication). The harness itself (this workflow, ci/g6-windows*,
+# `ref` is the code whose Windows storage code is tested (for example a branch
+# under review); `baseline_ref` is the reference run (default: main just before
+# G6a, 9b3a3a7, the link-then-unlink publication). The harness itself (this workflow, ci/g6-windows*,
 # and the g6_winworkload example) always comes from the commit the workflow runs
 # at and is overlaid on the tested tree, so a ref older than the harness can be
 # tested too.
@@ -26,9 +26,9 @@ on:
         required: false
         default: ""
       baseline_ref:
-        description: "Reference run for comparison (empty: skip)"
+        description: "Reference run for comparison (empty: skip). Default: main just before G6a, the link-then-unlink publication"
         required: false
-        default: "main"
+        default: "9b3a3a72eee51d7064ab290db98fd8ab641b7678"
       max_flush_points:
         description: "Upper bound on FLUSH/FUA replay points"
         required: false
@@ -73,12 +73,17 @@ jobs:
       - id: plan
         env:
           INPUT_REF: ${{ inputs.ref }}
-          INPUT_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.baseline_ref || 'main' }}
+          EVENT: ${{ github.event_name }}
+          INPUT_BASELINE: ${{ inputs.baseline_ref }}
         run: |
           resolve() {
             git rev-parse --verify --quiet "origin/$1^{commit}" || git rev-parse --verify --quiet "$1^{commit}" || {
               echo "::error::cannot resolve ref '$1'"; exit 1; }
           }
+          # Baseline: main as it was just before G6a (MoveFileExW write-through,
+          # #61) switched Windows creation away from link-then-unlink. Only a
+          # manual run can skip it (empty input).
+          if [ "$EVENT" != workflow_dispatch ]; then INPUT_BASELINE=9b3a3a72eee51d7064ab290db98fd8ab641b7678; fi
           cand_ref=${INPUT_REF:-${GITHUB_SHA}}
           cand=$(resolve "$cand_ref")
           items="{\"label\":\"candidate\",\"ref\":\"$cand_ref\",\"sha\":\"$cand\"}"

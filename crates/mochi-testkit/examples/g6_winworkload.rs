@@ -135,6 +135,8 @@ fn workload(dir: &Path, port: &str) {
         )
         .unwrap_or_else(|e| panic!("create {name}: {e}"));
         assert_eq!(outcome.seq, 0);
+        // Evidence of what was exercised: the mechanism of the publication.
+        println!("publish mechanism {name}: {:?}", d.last_publish());
         port.mark(&format!("ack:{name}:0:{}", code(&outcome.durability)));
         for (seq, step) in history.iter().enumerate().skip(1) {
             let outcome = w
