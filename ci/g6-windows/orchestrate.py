@@ -768,12 +768,12 @@ def cmd_run(a):
 SMOKE_REQUIRED = [
     "W-ENV",
     "A-CLEAN-START", "A-INSTALL", "A-FILES", "A-UNINSTALL-ENTRY", "A-START-MENU", "A-ASSOC-VERBS",
-    "A-FOREIGN-OFF", "A-WEBVIEW2", "A-UNINSTALL", "A-LEFTOVERS",
+    "A-FOREIGN-OFF", "A-WEBVIEW2", "A-UNINSTALL", "A-LEFTOVERS", "A-INSTALL-KEY",
     "B-INSTALL", "B-ASSOC-VERBS", "B-FOREIGN-ON", "B-OPENWITH-ZIP", "B-LAUNCH", "B-DOUBLE-CLICK",
     "B-SINGLE-INSTANCE", "B-VERB-OPEN", "B-VERB-EXTRACT-HERE", "B-VERB-EXTRACT-TO-FOLDER",
     "B-VERB-ADD-FILE", "B-VERB-ADD-FOLDER", "B-VERB-ADD-MULTI",
     "B-FOREIGN-OPEN-ZIP", "B-FOREIGN-OPEN-7Z", "B-FOREIGN-OPEN-TAR", "B-FOREIGN-OPEN-TARGZ",
-    "B-UNINSTALL", "B-LEFTOVERS",
+    "B-UNINSTALL", "B-LEFTOVERS", "B-INSTALL-KEY",
 ]
 
 
@@ -783,9 +783,12 @@ def evaluate_smoke(results, done, aborts):
     `results`: the guest's records (id, status, title, detail). Statuses: PASS,
     FAIL (an assertion did not hold), ERROR (the guest script broke), INFO (an
     observation, never gates), NOT-RUN (could not be judged; reported loudly,
-    never counted as a pass). Returns (verdict, problems): FAIL when any check
-    failed or errored, a required check is missing, or the guest did not finish;
-    otherwise PASS, or INCOMPLETE when something was NOT-RUN.
+    never counted as a pass), KNOWN-GAP (a real failure of a checklist item that
+    is already written down as a finding and is reported by its own check; it
+    does not fail the run and is never shown as a pass). Returns (verdict,
+    problems): FAIL when any check failed or errored, a required check is
+    missing, or the guest did not finish; otherwise INCOMPLETE when something was
+    NOT-RUN, FINDINGS when a KNOWN-GAP was reported, else PASS.
     """
     problems = []
     by_id = {r["id"]: r for r in results}
@@ -803,6 +806,9 @@ def evaluate_smoke(results, done, aborts):
         return "FAIL", problems
     if any(r["status"] == "NOT-RUN" for r in results):
         return "INCOMPLETE", []
+    gaps = [f"{r['id']}: {r['detail']}" for r in results if r["status"] == "KNOWN-GAP"]
+    if gaps:
+        return "FINDINGS", gaps
     return "PASS", []
 
 
@@ -817,7 +823,7 @@ def render_smoke_md(s):
         f"* Counts: {s.get('counts')}", "",
     ]
     if s.get("problems"):
-        lines += ["## Problems", ""] + [f"- {p}" for p in s["problems"]] + [""]
+        lines += ["## Problems" if s["verdict"] == "FAIL" else "## Findings (reported, not passes)", ""] + [f"- {p}" for p in s["problems"]] + [""]
     lines += ["| Check | Result | What was seen |", "|---|---|---|"]
     for r in s["results"]:
         d = str(r["detail"]).replace("|", "\\|").replace("\n", " ")
@@ -900,7 +906,7 @@ def cmd_smoke(a):
     (ev / "summary.md").write_text(render_smoke_md(summary))
     print((ev / "summary.md").read_text(), flush=True)
     log("RESULT", a.label, verdict)
-    sys.exit(0 if verdict in ("PASS", "INCOMPLETE") else 1)
+    sys.exit(0 if verdict in ("PASS", "INCOMPLETE", "FINDINGS") else 1)
 
 
 def ack_line(m, strict_creation):

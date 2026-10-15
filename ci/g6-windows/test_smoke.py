@@ -48,6 +48,11 @@ def main():
     # NOT-RUN never hides a failure.
     v, p = o.evaluate_smoke(good(**{"B-OPENWITH-ZIP": "NOT-RUN", "A-FILES": "FAIL"}), True, [])
     assert v == "FAIL", (v, p)
+    # A known gap is reported, does not fail the run, and is never a pass.
+    v, p = o.evaluate_smoke(good(**{"A-INSTALL-KEY": "KNOWN-GAP"}), True, [])
+    assert v == "FINDINGS" and any("A-INSTALL-KEY" in x for x in p), (v, p)
+    v, p = o.evaluate_smoke(good(**{"A-INSTALL-KEY": "KNOWN-GAP", "B-LAUNCH": "FAIL"}), True, [])
+    assert v == "FAIL", (v, p)
     md = o.render_smoke_md({"label": "t", "verdict": v, "problems": p, "results": good(), "windows": {},
                             "facts": {}, "counts": {}})
     assert "| `A-FILES` " in md and "## Problems" in md

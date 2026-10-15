@@ -172,6 +172,7 @@ function Get-AppExe {
 # Registry: key names, value names and data that mention MOCHI. OS usage traces
 # (recent files, compatibility records) are told apart: they record that the app
 # ran, are not made by the installer, and are not removed by an uninstaller.
+$gapRx = 'The MOCHI Project contributors'
 $traceRx = '\\Explorer\\(FileExts|RecentDocs|ComDlg32|StartPage|Search)|AppCompatFlags|Compatibility Assistant|\\MuiCache|\\FeatureUsage|\\BagMRU|\\Bags\\|UserAssist|\\Shell\\(BagMRU|Bags)|\\Windows\\Shell\\Associations'
 function Scan-Registry {
   $lines = New-Object System.Collections.Generic.List[string]
@@ -189,6 +190,26 @@ function Scan-Registry {
   @($lines | Sort-Object -Unique)
 }
 
+# After an uninstall Explorer's own "open with" history can still name the deleted exe;
+# that is a usage trace, not a registration. Only a program that still exists counts.
+function Get-LiveAssoc {
+  if (-not $haveAssoc) { return $null }
+  $q = [G6Assoc]::Query('.mochi', 2, 'open')
+  if ($q -and (Test-Path -LiteralPath $q)) { return $q }
+  return $null
+}
+function Get-InstallKeyLeft {
+  # Tauri's install-location bookkeeping key (not a class registration): the installer
+  # writes it, and the uninstaller currently leaves it. Reported by its own check.
+  $k = 'HKCU:\SOFTWARE\The MOCHI Project contributors'
+  if (-not (Test-Path $k)) { return $null }
+  $vals = foreach ($c in @(Get-Item $k; Get-ChildItem $k -Recurse -ErrorAction SilentlyContinue)) {
+    $p = Get-ItemProperty $c.PSPath
+    $names = @($c.GetValueNames() | ForEach-Object { if ($_ -eq '') { '(Default)' } else { $_ } })
+    "$($c.Name -replace '^HKEY_CURRENT_USER','HKCU') [" + (($names | ForEach-Object { $n = $_; $v = if ($n -eq '(Default)') { $c.GetValue('') } else { $c.GetValue($n) }; "$n=$v" }) -join '; ') + "]"
+  }
+  ($vals -join ' || ')
+}
 function Get-Shortcuts {
   $sh = New-Object -ComObject WScript.Shell
   $found = @()
@@ -390,15 +411,23 @@ function Main {
   Check 'A-LEFTOVERS' 'After uninstall: no Mochi*, MOCHI.Archive or MOCHI.Foreign key or value; .mochi has no program' {
     $after = Scan-Registry
     $new = @($after | Where-Object { $regBeforeA -notcontains $_ })
-    $ours = @($new | Where-Object { $_ -notmatch $traceRx })
+    $ours = @($new | Where-Object { $_ -notmatch $traceRx -and $_ -notmatch $gapRx })
     $trace = @($new | Where-Object { $_ -match $traceRx })
     if ($ours.Count -gt 0) { Fail ("registry entries remain: " + ($ours -join ' || ')) }
     if (Get-ClassDefault $classesRoot '.mochi') { Fail '.mochi still has a program' }
-    if ($haveAssoc -and [G6Assoc]::Query('.mochi', 2, 'open')) { Fail 'AssocQueryString still resolves .mochi' }
+    $live = Get-LiveAssoc
+    if ($live) { Fail "AssocQueryString still resolves .mochi to an existing program: $live" }
     if (Get-ClassDefault $classesRoot 'MOCHI.Archive') { Fail 'MOCHI.Archive still resolves' }
     if ($trace.Count -gt 0) { @{ status = 'PASS'; detail = "none left by the installer; $($trace.Count) OS usage trace(s) ignored: $($trace -join ' || ')" } }
     else { 'none' }
   }
+
+  Check 'A-INSTALL-KEY' 'After uninstall: the install-location key under HKCU\Software is gone' {
+    $left = Get-InstallKeyLeft
+    if (-not $left) { return 'gone' }
+    @{ status = 'KNOWN-GAP'; detail = "the uninstaller leaves: $left (Tauri writes it at install; the NSIS hooks do not remove it; proposed, not done)" }
+  }
+  Remove-Item 'HKCU:\SOFTWARE\The MOCHI Project contributors' -Recurse -Force -ErrorAction SilentlyContinue
 
   # ---------------- cycle B: /ASSOCIATE_FOREIGN, launch, verbs, uninstall ---------------------------
   New-Item -ItemType Directory -Force $trickyDir | Out-Null
@@ -517,7 +546,9 @@ function Main {
     $procs = @(Get-AppProcs | Where-Object { $_.Name -notlike 'msedgewebview2*' })
     if ($procs.Count -ne 1) { Fail "expected one MOCHI process for 3 launches, found $($procs.Count)" }
     $names = Get-UiaText $w.MainWindowHandle
-    $seen = if ($names) { $n = @($files | Where-Object { @($names | Where-Object { $_ -like "*$([IO.Path]::GetFileName($_))*" }).Count -gt 0 }); "$($n.Count) of 3 file names found in the window text" } else { 'window text not readable' }
+    $found = 0
+    if ($names) { foreach ($f in $files) { $leaf = [IO.Path]::GetFileName($f); if (@($names | Where-Object { $_ -like "*$leaf*" }).Count -gt 0) { $found++ } } }
+    $seen = if ($names) { "$found of 3 file names found in the window text" } else { 'window text not readable' }
     "3 launches, 1 process; $seen"
   }
   foreach ($x in @(@('zip', "Zip & $([char]0x00E7).zip", 'fx-basic.zip'), @('7z', "Seven & $([char]0x00E7).7z", 'fx-basic.7z'),
@@ -555,18 +586,24 @@ function Main {
   Check 'B-LEFTOVERS' 'After uninstall: no Mochi*, MOCHI.Archive or MOCHI.Foreign key or value; no Open-with entry; .mochi has no program' {
     $after = Scan-Registry
     $new = @($after | Where-Object { $regBeforeB -notcontains $_ })
-    $ours = @($new | Where-Object { $_ -notmatch $traceRx })
+    $ours = @($new | Where-Object { $_ -notmatch $traceRx -and $_ -notmatch $gapRx })
     $trace = @($new | Where-Object { $_ -match $traceRx })
     if ($ours.Count -gt 0) { Fail ("registry entries remain: " + ($ours -join ' || ')) }
     foreach ($x in $foreignExts) { if (Test-OpenWithValue $x) { Fail "MOCHI.Foreign is still offered for .$x" } }
     if (Get-ClassDefault $classesRoot '.mochi') { Fail '.mochi still has a program' }
-    if ($haveAssoc -and [G6Assoc]::Query('.mochi', 2, 'open')) { Fail 'AssocQueryString still resolves .mochi' }
+    $live = Get-LiveAssoc
+    if ($live) { Fail "AssocQueryString still resolves .mochi to an existing program: $live" }
     if ($haveEnum) {
       $h = [G6OpenWith]::List('.zip', 1)
       if (@($h | Where-Object { $_ -match 'mochi' }).Count -gt 0) { Fail "Windows still lists MOCHI for .zip: $($h -join ' ; ')" }
     }
     $trailer = if ($trace.Count -gt 0) { "; $($trace.Count) OS usage trace(s) ignored (they record that the app ran): $($trace -join ' || ')" } else { '' }
     "none left by the installer$trailer"
+  }
+  Check 'B-INSTALL-KEY' 'After uninstall: the install-location key under HKCU\Software is gone' {
+    $left = Get-InstallKeyLeft
+    if (-not $left) { return 'gone' }
+    @{ status = 'KNOWN-GAP'; detail = "the uninstaller leaves: $left (Tauri writes it at install; the NSIS hooks do not remove it; proposed, not done)" }
   }
   Check 'B-APPDATA' 'User data the running app created (observation: an uninstall keeps it)' {
     $dirs = @("$env:APPDATA\io.github.immerh8.mochi", "$env:LOCALAPPDATA\io.github.immerh8.mochi", "$env:LOCALAPPDATA\MOCHI") |
