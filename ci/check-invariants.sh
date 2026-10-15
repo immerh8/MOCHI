@@ -27,7 +27,8 @@ hits=$(grep -rnE --include='*.rs' 'b"MOCHI(2|TQ)\\0' crates apps fuzz 2>/dev/nul
         | grep -v '^crates/mochi-format/src/registry.rs:' || true)
 [ -n "$hits" ] && report "8-byte MOCHI magic literal outside mochi-format/src/registry.rs (AGENTS.md: Wire format)" "$hits"
 
-# 3. unsafe is forbidden in the two format-critical library crates.
+# 3. unsafe is forbidden in the two format-critical library crates (mochi-sys,
+#    rule 11 (f2), is where mochi-core's one Win32 call lives).
 for f in crates/mochi-format/src/lib.rs crates/mochi-core/src/lib.rs; do
   grep -q 'forbid(unsafe_code)' "$f" || report "missing #![forbid(unsafe_code)]" "$f"
 done
@@ -155,8 +156,26 @@ hits=$(awk '
       if (!ok) print FILENAME ":" FNR ": " line
     }
     for (k=7;k>0;k--) w[k]=w[k-1]; w[0]=line }' \
-  crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs || true)
-[ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign)" "$hits"
+  crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs crates/mochi-sys/src/lib.rs || true)
+[ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign / mochi-sys)" "$hits"
+#     (f2) `unsafe` is allowed only in mochi-foreign (above) and mochi-sys, the
+#     two Win32 calls mochi-core may not make itself (owner decision
+#     2026-10-15, G6a). Library and app sources only; the testkit's counting
+#     allocator example and the fuzz targets are not shipped.
+hits=$(grep -rnE --include='*.rs' '\bunsafe\b' crates/*/src apps/mochi-desktop/src-tauri/src 2>/dev/null \
+        | grep -vE '^crates/mochi-foreign/src/(rarfmt|jobobject)\.rs:|^crates/mochi-sys/src/lib\.rs:' \
+        | grep -vE '^[^:]+:[0-9]+:\s*(//|\*)' || true)
+[ -n "$hits" ] && report "unsafe outside mochi-foreign's rarfmt.rs / jobobject.rs and mochi-sys/src/lib.rs (AGENTS.md)" "$hits"
+grep -q 'deny(unsafe_op_in_unsafe_fn)' crates/mochi-sys/src/lib.rs \
+  || report "mochi-sys must keep #![deny(unsafe_op_in_unsafe_fn)]" "crates/mochi-sys/src/lib.rs"
+#     mochi-sys stays tiny: its only dependency is windows-sys, Windows only.
+hits=$(awk '/^\[/{sec=$0} sec=="[dependencies]" && NF && $0 !~ /^\[/ && $0 !~ /^#/' crates/mochi-sys/Cargo.toml)
+[ -n "$hits" ] && report "mochi-sys has a dependency outside [target.'cfg(windows)'.dependencies]" "$hits"
+hits=$(awk '/^\[/{sec=$0} sec ~ /dependencies\]$/ && sec !~ /dev-dependencies/ && NF && $0 !~ /^\[/ && $0 !~ /^#/ && $0 !~ /^windows-sys/' crates/mochi-sys/Cargo.toml)
+[ -n "$hits" ] && report "mochi-sys depends on something other than windows-sys" "$hits"
+#     mochi-core may depend on mochi-sys only under cfg(windows).
+hits=$(awk '/^\[/{sec=$0} /mochi-sys/ && sec != "[target.'"'"'cfg(windows)'"'"'.dependencies]"' crates/mochi-core/Cargo.toml | grep -v '^#' || true)
+[ -n "$hits" ] && report "mochi-core depends on mochi-sys outside [target.'cfg(windows)'.dependencies]" "$hits"
 #     (g) UnRAR is only ever asked to TEST an entry (RAR_TEST) or skip it: never
 #     RAR_EXTRACT, and RARProcessFile never gets a destination (plan D8 rule 4:
 #     its own extract-to-disk path bypasses the restore engine's protections).

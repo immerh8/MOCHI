@@ -31,20 +31,34 @@
 //!   also flushes the file's metadata, including its size. Appending needs
 //!   no directory flush.
 //! * Creating (D13, T22): the first commit goes to a locked temporary file,
-//!   which is published by hard link (`CreateHardLinkW`, which fails if the
-//!   name exists) and then removal of the temporary name; see [`OsDir`].
-//!   The owner chose this over `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)`
-//!   (T21, checklist Q63), so `mochi-core` keeps `forbid(unsafe_code)` and
-//!   needs no Windows API crate. Neither step is documented as
-//!   write-through, so the new directory entry rests on the undocumented
-//!   directory flush, and `sync_directory` reports
+//!   which is published by `MoveFileExW(src, dst, MOVEFILE_WRITE_THROUGH)`
+//!   **without** `MOVEFILE_REPLACE_EXISTING`, so an existing name is refused
+//!   (`ERROR_ALREADY_EXISTS` → [`StorageError::Exists`]) and nothing is
+//!   replaced; see [`OsDir`]. The call is made by the `mochi-sys` crate, the
+//!   only place outside `mochi-foreign` that holds `unsafe`, so `mochi-core`
+//!   keeps `forbid(unsafe_code)`. Owner decision of 2026-10-15, superseding
+//!   T21 and checklist Q63 (hard link then unlink): neither of those steps is
+//!   documented as write-through, which left no documented evidence for gate
+//!   G6 on creation.
+//!   Microsoft's `MoveFileExW` page says of `MOVEFILE_WRITE_THROUGH`: "The
+//!   function does not return until the file is actually moved on the disk."
+//!   Its next sentence ("Setting this value guarantees that a move performed
+//!   as a copy and delete operation is flushed to disk before the function
+//!   returns.") concerns the copy-and-delete case, which a rename within one
+//!   directory is not; this crate relies on the first sentence only, and
+//!   whether that is enough for G6 is for G6's evidence to decide.
+//!   **What is reported has not changed:** `sync_directory` reports
 //!   [`DirectoryDurability::Unconfirmed`] on Windows **even when the flush
-//!   succeeds**: the first commit of a new archive is reported as degraded
-//!   ("directory durability unconfirmed"), as D13 requires until G6.
-//!   Appends to an existing archive are unaffected.
-//! * Windows CI (`windows-latest`) runs the storage conformance suite,
-//!   including publication of a locked temporary file and refusal of an
-//!   existing destination.
+//!   succeeds**, so the first commit of a new archive is reported as degraded
+//!   ("directory durability unconfirmed"), as D13 requires until G6 passes.
+//!   [`OsDir`] only records whether the last publication was a
+//!   `MoveWriteThrough` on an NTFS volume, which the later flip to
+//!   `Confirmed` will need. Appends to an existing archive are unaffected.
+//! * Windows CI (`windows-latest`) runs the storage conformance suite and the
+//!   `windows_*` tests below: a locked temporary file is published (with the
+//!   archive's own `.mochi-lock` held and another handle open on it), an
+//!   existing destination is refused with both files untouched, and two
+//!   concurrent creators produce exactly one winner.
 //!
 //! **Locking (spec §12.2 step 1; owner decision Q54, spec Annex B D17 and
 //! B.2.7).** An archive's publication lock is an OS lock (`File::try_lock`:
@@ -414,19 +428,25 @@ impl Storage for OsStorage {
 /// * **Linux:** one atomic `renameat2(RENAME_NOREPLACE)`. `EEXIST` is
 ///   `Exists`. If the filesystem (`EINVAL`) or kernel (`ENOSYS`) rejects the
 ///   flag, it falls back to the portable mechanism below.
-/// * **Portable** (Windows, other Unix, and Linux's fallback): a
-///   hard link to the new name, then removal of the old one. `link(2)` /
-///   `CreateHardLinkW` fail if the new name exists, so nothing is ever
-///   replaced. A crash between the two steps leaves both names on the same
+/// * **Portable** (other Unix, and Linux's fallback): a hard link to the new
+///   name, then removal of the old one. `link(2)` fails if the new name
+///   exists, so nothing is ever replaced. A crash between the two steps leaves both names on the same
 ///   bytes; cleanup removes the temporary name once its lock is free.
 ///
+/// * **Windows:** `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` without
+///   `MOVEFILE_REPLACE_EXISTING`, via `mochi-sys` (owner decision 2026-10-15,
+///   superseding T21 / Q63). It fails if the new name exists, so nothing is
+///   replaced, and it never falls back to link then unlink.
+///
 /// A filesystem with neither refuses publication with an I/O error; nothing
-/// ever falls back to a replacing rename. Windows keeps the portable
-/// mechanism (T21 decided, checklist Q63): no `MoveFileExW`.
+/// ever falls back to a replacing rename.
 #[derive(Debug)]
 pub struct OsDir {
     path: PathBuf,
     last_publish: Option<PublishMechanism>,
+    /// Whether the last publication was a [`PublishMechanism::MoveWriteThrough`]
+    /// on a volume whose filesystem is NTFS (see [`is_ntfs_write_through`]).
+    last_publish_ntfs_write_through: bool,
 }
 
 /// How the last [`StorageDir::publish_no_replace`] was carried out.
@@ -438,6 +458,9 @@ pub enum PublishMechanism {
     /// mechanism, and Linux's fallback where the filesystem or kernel
     /// rejects the flag.
     LinkThenUnlink,
+    /// `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` without
+    /// `MOVEFILE_REPLACE_EXISTING` (Windows, through `mochi-sys`).
+    MoveWriteThrough,
 }
 
 impl OsDir {
@@ -446,8 +469,41 @@ impl OsDir {
     pub fn last_publish(&self) -> Option<PublishMechanism> {
         self.last_publish
     }
+
+    /// Whether the last publication was a `MoveWriteThrough` on NTFS. Nothing
+    /// reports it yet: Windows stays `Unconfirmed` until gate G6 has its
+    /// evidence (module docs).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn last_publish_was_ntfs_write_through(&self) -> bool {
+        self.last_publish_ntfs_write_through
+    }
+
+    fn record_publish(&mut self, mechanism: PublishMechanism) {
+        self.last_publish = Some(mechanism);
+        self.last_publish_ntfs_write_through = mechanism == PublishMechanism::MoveWriteThrough
+            && is_ntfs_write_through(mechanism, volume_filesystem_name(&self.path).as_deref());
+    }
 }
 
+/// Whether a publication by `mechanism` on a volume named `filesystem` is the
+/// documented-write-through-on-NTFS case G6 asks about.
+fn is_ntfs_write_through(mechanism: PublishMechanism, filesystem: Option<&str>) -> bool {
+    mechanism == PublishMechanism::MoveWriteThrough
+        && filesystem.is_some_and(|name| name.eq_ignore_ascii_case("NTFS"))
+}
+
+#[cfg(windows)]
+fn volume_filesystem_name(dir: &Path) -> Option<String> {
+    mochi_sys::volume_filesystem_name(dir).ok()
+}
+
+#[cfg(not(windows))]
+fn volume_filesystem_name(_: &Path) -> Option<String> {
+    None
+}
+
+/// Also the restore engine's publication on Windows (`restore_windows.rs`):
+/// restored files are not archives, so G6 does not concern them.
 fn link_then_unlink(src: &Path, dst: &Path, to: &str) -> Result<PublishMechanism, StorageError> {
     std::fs::hard_link(src, dst).map_err(exists_as(to))?;
     std::fs::remove_file(src)?;
@@ -513,7 +569,19 @@ fn publish_with(
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows: one `MoveFileExW` with write-through and without replacing. The
+/// source is untouched when the destination exists.
+#[cfg(windows)]
+fn publish_no_replace_at(
+    src: &Path,
+    dst: &Path,
+    to: &str,
+) -> Result<PublishMechanism, StorageError> {
+    mochi_sys::move_no_replace_write_through(src, dst).map_err(exists_as(to))?;
+    Ok(PublishMechanism::MoveWriteThrough)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn publish_no_replace_at(
     src: &Path,
     dst: &Path,
@@ -535,6 +603,7 @@ impl OsDir {
         Ok(Self {
             path,
             last_publish: None,
+            last_publish_ntfs_write_through: false,
         })
     }
 
@@ -583,7 +652,8 @@ impl StorageDir for OsDir {
 
     fn publish_no_replace(&mut self, from: &str, to: &str) -> Result<(), StorageError> {
         let (src, dst) = (self.entry(from)?, self.entry(to)?);
-        self.last_publish = Some(publish_no_replace_at(&src, &dst, to)?);
+        let mechanism = publish_no_replace_at(&src, &dst, to)?;
+        self.record_publish(mechanism);
         Ok(())
     }
 
@@ -601,7 +671,7 @@ impl StorageDir for OsDir {
         let dir = std::fs::canonicalize(&self.path)?;
         file.lock_archive_at(&named_lock_file(&dir, std::ffi::OsStr::new(to)))?;
         match publish_no_replace_at(&src, &dst, to) {
-            Ok(m) => self.last_publish = Some(m),
+            Ok(m) => self.record_publish(m),
             Err(e) => {
                 let _ = file.release_lock_file();
                 return Err(e);
@@ -885,6 +955,164 @@ mod tests {
         assert!(matches!(e, StorageError::Exists { .. }), "{e}");
         assert_eq!(std::fs::read(dir.join("a")).unwrap(), b"payload");
         assert_eq!(std::fs::read(dir.join("b.tmp")).unwrap(), b"other");
+    }
+
+    #[test]
+    fn ntfs_write_through_needs_both_the_mechanism_and_the_filesystem() {
+        use PublishMechanism::*;
+        assert!(is_ntfs_write_through(MoveWriteThrough, Some("NTFS")));
+        assert!(is_ntfs_write_through(MoveWriteThrough, Some("ntfs")));
+        assert!(!is_ntfs_write_through(MoveWriteThrough, Some("FAT32")));
+        assert!(!is_ntfs_write_through(MoveWriteThrough, Some("ReFS")));
+        assert!(!is_ntfs_write_through(MoveWriteThrough, Some("")));
+        assert!(!is_ntfs_write_through(MoveWriteThrough, None));
+        assert!(!is_ntfs_write_through(LinkThenUnlink, Some("NTFS")));
+        assert!(!is_ntfs_write_through(RenameNoReplace, Some("NTFS")));
+        let (_d, path) = tmp();
+        let dir = OsDir::open(path.parent().unwrap()).unwrap();
+        assert!(!dir.last_publish_was_ntfs_write_through());
+    }
+
+    /// Several creators race to publish distinct temporary files at one name:
+    /// exactly one wins, every loser is told `Exists` and keeps its own
+    /// temporary file, and the winner's bytes are what is at the name.
+    #[test]
+    fn concurrent_creators_have_exactly_one_winner() {
+        const N: usize = 8;
+        let td = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Barrier::new(N);
+        let results: Vec<Result<(), StorageError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..N)
+                .map(|i| {
+                    let (root, barrier) = (td.path(), &barrier);
+                    scope.spawn(move || {
+                        let mut dir = OsDir::open(root).unwrap();
+                        let temp = format!("c{i}.tmp");
+                        let mut f = dir.create_exclusive(&temp).unwrap();
+                        f.append(format!("creator {i}").as_bytes()).unwrap();
+                        f.sync_data().unwrap();
+                        barrier.wait();
+                        let r = dir.publish_no_replace(&temp, "archive");
+                        f.unlock().unwrap();
+                        r
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let winners: Vec<usize> = (0..N).filter(|&i| results[i].is_ok()).collect();
+        assert_eq!(winners.len(), 1, "{results:?}");
+        for (i, r) in results.iter().enumerate() {
+            let temp = td.path().join(format!("c{i}.tmp"));
+            if let Err(e) = r {
+                assert!(
+                    matches!(e, StorageError::Exists { name } if name == "archive"),
+                    "{e}"
+                );
+                assert_eq!(
+                    std::fs::read(&temp).unwrap(),
+                    format!("creator {i}").as_bytes()
+                );
+            } else {
+                assert!(!temp.exists());
+            }
+        }
+        assert_eq!(
+            std::fs::read(td.path().join("archive")).unwrap(),
+            format!("creator {}", winners[0]).as_bytes()
+        );
+    }
+
+    /// **Windows (G6a).** A locked temporary file is published by
+    /// `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` while MOCHI holds the file's
+    /// own lock, the archive's `.mochi-lock` file, and another open handle:
+    /// none of them blocks the move. Nothing but the lock holder can then
+    /// take the archive's lock, and the NTFS write-through record is set.
+    #[cfg(windows)]
+    #[test]
+    fn windows_publishes_a_locked_temporary_file_by_move_write_through() {
+        let td = tempfile::tempdir().unwrap();
+        let mut dir = OsDir::open(td.path()).unwrap();
+        let mut f = dir.create_exclusive("a.tmp").unwrap();
+        f.append(b"first commit").unwrap();
+        f.sync_data().unwrap();
+        let other_handle = OsReadStorage::open(td.path().join("a.tmp")).unwrap();
+
+        dir.publish_archive(&mut f, "a.tmp", "a.mochi").unwrap();
+
+        assert_eq!(dir.last_publish(), Some(PublishMechanism::MoveWriteThrough));
+        assert!(dir.last_publish_was_ntfs_write_through());
+        assert!(!td.path().join("a.tmp").exists());
+        assert!(td.path().join("a.mochi.mochi-lock").exists());
+        let mut second = OsStorage::open_existing(td.path().join("a.mochi")).unwrap();
+        assert!(matches!(
+            second.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
+        assert_eq!(other_handle.size().unwrap(), 12);
+        let mut buf = [0u8; 12];
+        f.read_exact_at(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"first commit");
+        f.append(b"!").unwrap();
+        f.unlock().unwrap();
+        assert_eq!(
+            std::fs::read(td.path().join("a.mochi")).unwrap(),
+            b"first commit!"
+        );
+    }
+
+    /// **Windows (G6a).** The plain no-replace publish of a locked temporary
+    /// file reports the mechanism too.
+    #[cfg(windows)]
+    #[test]
+    fn windows_publish_no_replace_reports_move_write_through() {
+        let td = tempfile::tempdir().unwrap();
+        let mut dir = OsDir::open(td.path()).unwrap();
+        let mut f = dir.create_exclusive("a.tmp").unwrap();
+        f.append(b"payload").unwrap();
+        dir.publish_no_replace("a.tmp", "a").unwrap();
+        assert_eq!(dir.last_publish(), Some(PublishMechanism::MoveWriteThrough));
+        assert!(dir.last_publish_was_ntfs_write_through());
+        f.unlock().unwrap();
+        assert_eq!(std::fs::read(td.path().join("a")).unwrap(), b"payload");
+    }
+
+    /// **Windows (G6a).** An existing destination is refused as `Exists`
+    /// (for both `publish_no_replace` and `publish_archive`), the source and
+    /// the destination stay byte-identical, and the mechanism record is not
+    /// advanced.
+    #[cfg(windows)]
+    #[test]
+    fn windows_refuses_an_existing_destination_leaving_both_files_untouched() {
+        let td = tempfile::tempdir().unwrap();
+        let mut dir = OsDir::open(td.path()).unwrap();
+        std::fs::write(td.path().join("a"), b"existing archive").unwrap();
+        let mut f = dir.create_exclusive("b.tmp").unwrap();
+        f.append(b"new commit").unwrap();
+        f.sync_data().unwrap();
+
+        let e = dir.publish_no_replace("b.tmp", "a").unwrap_err();
+        assert!(
+            matches!(e, StorageError::Exists { ref name } if name == "a"),
+            "{e}"
+        );
+        let e = dir.publish_archive(&mut f, "b.tmp", "a").unwrap_err();
+        assert!(
+            matches!(e, StorageError::Exists { ref name } if name == "a"),
+            "{e}"
+        );
+
+        assert_eq!(dir.last_publish(), None);
+        assert!(!dir.last_publish_was_ntfs_write_through());
+        f.unlock().unwrap();
+        assert_eq!(
+            std::fs::read(td.path().join("a")).unwrap(),
+            b"existing archive"
+        );
+        assert_eq!(
+            std::fs::read(td.path().join("b.tmp")).unwrap(),
+            b"new commit"
+        );
     }
 
     #[test]

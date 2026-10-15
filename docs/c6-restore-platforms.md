@@ -16,7 +16,7 @@ All of these implement `mochi_core::storage::RestoreDir`. The restore engine (`m
 
 ## Windows: what is guaranteed
 
-The constraint is no `unsafe` in `mochi-core` (AGENTS.md; T21's decision), and `std` has no handle-relative file creation on Windows. The implementation therefore uses the strongest mechanism `std` exposes:
+The constraint is no `unsafe` in `mochi-core` (AGENTS.md; the one `unsafe` Windows call for archive creation lives in `mochi-sys`, owner decision 2026-10-15, and restoration does not use it), and `std` has no handle-relative file creation on Windows. The implementation therefore uses the strongest mechanism `std` exposes:
 
 1. **Pinning.** The root and every directory the restoration creates are opened with read access and a share mode **without `FILE_SHARE_DELETE`**, and held until the restoration ends. Windows refuses any other open that requests `DELETE`, and renaming or deleting a directory needs one. So no directory in the restored tree can be moved away and replaced by a junction or link while names are resolved through it.
    - Read access is required. An open with attribute access only takes no part in share-mode checks and would pin nothing.

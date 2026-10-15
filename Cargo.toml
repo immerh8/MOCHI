@@ -6,6 +6,8 @@ members = [
     "crates/mochi-cli",
     "crates/mochi-testkit",
     "crates/mochi-foreign",
+    # The only unsafe outside mochi-foreign: two Win32 calls (G6a).
+    "crates/mochi-sys",
     # Phase D0 (plan §7, decision O1): the Tauri v2 desktop app. Building it
     # on Linux needs webkit2gtk 4.1 (apps/mochi-desktop/README.md).
     "apps/mochi-desktop/src-tauri",
@@ -22,6 +24,7 @@ publish = false
 mochi-format = { path = "crates/mochi-format" }
 mochi-core = { path = "crates/mochi-core" }
 mochi-testkit = { path = "crates/mochi-testkit" }
+mochi-sys = { path = "crates/mochi-sys" }
 clap = { version = "4", features = ["derive", "string"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

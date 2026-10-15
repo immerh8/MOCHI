@@ -25,6 +25,11 @@ rusqlite.workspace = true
 # `process`: `geteuid`, for the restore root's ownership check (plan C6).
 rustix = { workspace = true, features = ["process"] }
 
+# Windows publication of a created archive (owner decision 2026-10-15): the
+# one Win32 call mochi-core may not make itself (forbid(unsafe_code)).
+[target.'cfg(windows)'.dependencies]
+mochi-sys.workspace = true
+
 [dev-dependencies]
 # `trace`: the T13 work-bound tests count SQL statements and full-scan steps
 # with SQLite's own profiler, independently of the code under test.
