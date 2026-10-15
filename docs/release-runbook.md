@@ -25,23 +25,23 @@ The manual workflow **`installer-smoke`** (Actions tab → *installer-smoke* →
 installs the CI-built setup in real Windows 11 **and Windows 10 22H2** client VMs and the
 `.deb` on Ubuntu 22.04 and 24.04, and writes a results table to the run summary (screenshots
 and logs attached for 90 days). **Run it on the candidate commit first and record its link.**
-It replaces the steps marked *Automated*. The VM has no UAC prompt, Defender or Windows
+It replaces the steps marked *Automated*. Its result per check is PASS, FAIL, INFO (an observation), NOT-RUN (could not be judged), or KNOWN-GAP (a real failure already written down as a finding below; reported, never a pass). The verdict is FAIL, INCOMPLETE, FINDINGS or PASS; read the table, not only the colour. The VM has no UAC prompt, Defender or Windows
 Update, and a throwaway administrator account; Explorer's `ShellExecute`, the registry and
 Windows' own "Open with" list are the real ones. It cannot see menus, dialogs or hear a screen reader.
 
 | Item | Automated check (run table id) | Still yours |
 |---|---|---|
 | Silent per-user install, files, helper, uninstall entry | `A-INSTALL`, `A-FILES`, `A-UNINSTALL-ENTRY` | the wizard (W-03) |
-| **WebView2 bootstrap** | Windows 10 leg, `A-WEBVIEW2`: PASS only if the VM removed WebView2 and the installer put it back; INFO means it could not, and the item is a **gap** | nothing: Windows 11 ships WebView2 and it cannot be removed, so the bootstrap is not checkable on your notebook |
+| **WebView2 bootstrap** | Windows 10 leg, `A-WEBVIEW2`: PASS only if WebView2 was absent and the installer put it back (observed: absent at start, the bootstrapper installed 155.0.4283.45). INFO means it was already there and the item is a **gap**. The Windows 11 leg reports INFO: WebView2 is part of Windows 11 and the removal command exits 93 | nothing: Windows 11 ships WebView2 and it cannot be removed, so the bootstrap is not checkable on your notebook |
 | App starts, window up, web view running | `B-LAUNCH` | seeing it (W-05) |
 | Start-menu entry | `A-START-MENU` | seeing it (W-05) |
-| Uninstall leaves nothing | `A-UNINSTALL`, `A-LEFTOVERS`, `B-UNINSTALL`, `B-LEFTOVERS` | the same on your notebook, once, at the very end (W-11) |
+| Uninstall leaves nothing | `A-UNINSTALL`, `A-LEFTOVERS`, `B-UNINSTALL`, `B-LEFTOVERS` (no `Mochi*`, `MOCHI.Archive`, `MOCHI.Foreign` key or value, no program for `.mochi`, install folder and shortcuts gone). **Known finding, `A-INSTALL-KEY` / `B-INSTALL-KEY` = KNOWN-GAP:** the uninstaller leaves `HKCU\SOFTWARE\The MOCHI Project contributors\MOCHI` (default value: the old install folder), which Tauri's installer writes and `packaging/nsis/hooks.nsh` does not remove. Windows' own traces of the app having run (MuiCache, Start tile cache, compatibility records) are listed and ignored | the same on your notebook, once, at the very end (W-11); you will see the same key |
 | `.mochi` association, every verb registered with its exact command | `A-ASSOC-VERBS`, `B-ASSOC-VERBS` | the menu showing them (W-06) |
 | Each verb starts MOCHI on a path with spaces, accents and `&`; writes nothing | `B-VERB-*` (through `ShellExecute`, as Explorer does) | right-clicking (W-06) |
 | Double-click opens MOCHI; a second open reuses the window | `B-DOUBLE-CLICK`, `B-SINGLE-INSTANCE` | W-06 |
 | Opt-in off by default, on with `/ASSOCIATE_FOREIGN`, no default taken; Windows' own `.zip` "Open with" list | `A-FOREIGN-OFF`, `B-FOREIGN-ON`, `B-OPENWITH-ZIP` | the wizard question defaulting to **No**, the menu (W-03, W-07) |
 | Each foreign format opens read-only | `B-FOREIGN-OPEN-*` | passwords, hostile names (W-07) |
-| Ubuntu 22.04 / 24.04: `apt install ./*.deb`, type and "Open with" registration, launcher start under Xvfb, hard path, one window, `apt remove`/`purge` leave nothing | `U-*` | **not run on client hardware for 1.0**: double-click install, GNOME Files, Orca, the launcher |
+| Ubuntu 22.04 / 24.04: `apt install ./*.deb`, type and "Open with" registration, launcher start under Xvfb, hard path, one window, `apt remove`/`purge` leave nothing | `U-*`. Finding (`U-DEFAULT-BY-ORDER`, INFO): with no desktop defaults list naming a program, the fallback default for a type is the first handler in `mimeinfo.cache`, and `MOCHI.desktop` (capital M) sorts before `org.gnome.FileRoller.desktop`; whether that happens on a real Ubuntu desktop depends on its own defaults list | **not run on client hardware for 1.0**: double-click install, GNOME Files, Orca, the launcher |
 
 Items for **Windows 10 22H2 and Ubuntu** that need a person (screen reader, contrast
 themes, the desktop launcher, GNOME Files, an update on those systems) are **not run on
@@ -229,7 +229,7 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
    reg query HKCU\Software\Classes /f MOCHI /s /v
    ```
 
-   **Pass:** `End of search: 0 match(es) found.` each (keys under `Explorer\FileExts`, `RecentDocs`, `AppCompatFlags` and the like are Windows noting that the app ran: list them, they are not a fail). **Fail:** any `Mochi*`, `MOCHI.Archive` or `MOCHI.Foreign` key, or a `MOCHI.Foreign` value under an `OpenWithProgids` key.
+   **Pass:** no `MOCHI.Archive` or `MOCHI.Foreign` key, no `Mochi*` verb key, no `MOCHI.Foreign` value under an `OpenWithProgids` key. **Expected, write it down:** the first command lists `HKCU\SOFTWARE\The MOCHI Project contributors` and `...\MOCHI` (the install-location key; the automated run reports it as the known finding `A-INSTALL-KEY`); keys under `Explorer\FileExts`, `RecentDocs`, `AppCompatFlags`, `MuiCache`, `Start\TileProperties` are Windows noting that the app ran: list them, they are not a fail. **Fail:** any other `Mochi*` key.
 4. Double-click `Ärchive & ço.mochi`. **Pass:** Windows asks how to open it (no program). **Fail:** MOCHI starts.
 5. Double-click `Zip & ç.zip` and right-click → Open with. **Pass:** it opens in the program from 1.2 step 4 and MOCHI is no longer offered. **Fail:** anything else changed.
 6. Observation, not a fail: `%APPDATA%\io.github.immerh8.mochi` and `%LOCALAPPDATA%\io.github.immerh8.mochi` (settings, web-view cache) stay after an uninstall that does not delete application data. Write whether the uninstaller offered to delete it.
