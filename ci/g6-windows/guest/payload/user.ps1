@@ -173,7 +173,7 @@ function Get-AppExe {
 # (recent files, compatibility records) are told apart: they record that the app
 # ran, are not made by the installer, and are not removed by an uninstaller.
 $gapRx = 'The MOCHI Project contributors'
-$traceRx = '\\Explorer\\(FileExts|RecentDocs|ComDlg32|StartPage|Search)|AppCompatFlags|Compatibility Assistant|\\MuiCache|\\FeatureUsage|\\BagMRU|\\Bags\\|UserAssist|\\Shell\\(BagMRU|Bags)|\\Windows\\Shell\\Associations'
+$traceRx = '\\Explorer\\(FileExts|RecentDocs|ComDlg32|StartPage|Search)|AppCompatFlags|Compatibility Assistant|\\MuiCache|\\FeatureUsage|\\BagMRU|\\Bags\\|UserAssist|\\Shell\\(BagMRU|Bags)|\\Windows\\Shell\\Associations|\\CurrentVersion\\Start\\TileProperties'
 function Scan-Registry {
   $lines = New-Object System.Collections.Generic.List[string]
   $scans = @(
