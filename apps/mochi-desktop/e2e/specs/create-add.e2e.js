@@ -34,6 +34,12 @@ const entryNames = () =>
     Array.from(document.querySelectorAll('[data-testid="entry"] .name'), (e) => e.textContent),
   );
 
+const textOf = (testid) =>
+  browser.execute(
+    (id) => document.querySelector(`[data-testid="${id}"]`)?.textContent ?? "",
+    testid,
+  );
+
 const waitForStatus = (text) =>
   browser.waitUntil(
     async () => {
@@ -88,9 +94,10 @@ describe("create and add", () => {
     await expect($('[data-testid="staged-item"]')).toHaveText(expect.stringContaining("photos"));
     // Choosing another place uses the save dialog, which starts at the default.
     await $('[data-testid="change-destination"]').click();
-    await expect($('[data-testid="save-location"]')).toHaveText(
-      expect.stringContaining("main.mochi"),
-    );
+    // The panel re-renders when the place changes: poll the text, hold no element.
+    await browser.waitUntil(async () => (await textOf("save-location")).includes("main.mochi"), {
+      timeoutMsg: "the chosen place was not shown",
+    });
 
     // The options are collapsed; they hold neither encryption nor a recovery record unless asked (D5).
     await expect($('[data-testid="create-options"]')).not.toHaveAttribute("open");
