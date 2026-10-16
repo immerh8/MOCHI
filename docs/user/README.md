@@ -24,6 +24,15 @@ Read these first, in this order:
 The desktop application is a client of the same library (spec §23.3). Its "Test archive"
 command is `verify`; this guide documents the command line.
 
+On Windows, right-clicking a file or folder offers a **MOCHI** submenu (under "Show more
+options" on Windows 11). On a `.mochi` file it has "Open with MOCHI", "Extract here" and
+"Extract to a new folder"; on any file or folder, "Add to archive" and "Add to
+archive...". "Extract here", "Extract to a new folder" and "Add to archive" work at once in
+a small window and never overwrite: if a name in the way exists, nothing is written and the
+extract plan opens in the main window; a new archive is named for the item (or the folder)
+and gets a number if the name is taken. The command-line equivalents are `mochi get`
+and `mochi create` and `mochi append`. A new archive is a local file, not a backup.
+
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04
 on x86-64 (plan O11).
 

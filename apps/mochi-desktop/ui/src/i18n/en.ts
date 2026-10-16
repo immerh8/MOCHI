@@ -9,6 +9,7 @@ import { crypt } from "./en/crypt";
 import { extract } from "./en/extract";
 import { foreign } from "./en/foreign";
 import { help } from "./en/help";
+import { quick } from "./en/quick";
 import { settings } from "./en/settings";
 import { update } from "./en/update";
 import { write } from "./en/write";
@@ -22,6 +23,7 @@ export const en = {
   ...extract,
   ...foreign,
   ...help,
+  ...quick,
   ...settings,
   ...update,
   ...write,

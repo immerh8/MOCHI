@@ -65,16 +65,21 @@ Defined in `tauri.conf.json` (`bundle.fileAssociations`, the NSIS `installerHook
 `src-tauri/src/launch.rs`.
 
 **The command line** (`mochi-desktop [VERB] [--] PATH...`): no verb or `--open` opens
-`PATH` read-only (what a file manager passes); `--extract-here` and
-`--extract-to-folder` open it and show the extract plan for the whole snapshot into the
-archive's folder, or into a folder named for the archive; `--add` stages paths and shows
-the add panel. Rust parses and validates every argument (unknown option, empty, NUL,
+`PATH` read-only (what a file manager passes); `--add` stages paths and shows the add
+panel. The **quick verbs** work at once in a small compact window and do not open the main
+window (owner decision 2026-10-16; spec Annex B.3 item 9): `--extract-here` and
+`--extract-to-folder` extract the whole snapshot into the archive's folder, or into a new
+folder named for it (`<name>`, `<name> (2)`, ...); `--add-now` makes `<name>.mochi` next
+to the item (or `<folder>.mochi` for several, collected within 500 ms) with the Core
+profile and the Balanced preset. They never overwrite: if a name in the way exists,
+nothing is written and the extract plan opens in the main window instead. Rust parses and validates every argument (unknown option, empty, NUL,
 over-long, Windows `\\.\` device paths, wrong path counts) and a launch that does not parse
 changes nothing and is reported in the window. There is no passphrase option and none
-may ever be added: one is refused by name without echoing its value. **Nothing is
-written until the user presses the button in the panel.** The one side effect before
-that is "Extract to folder" creating the empty target folder so the plan can check it
-(delegated decision 1 in plan D6).
+may ever be added: one is refused by name without echoing its value (an encrypted archive
+asks for its passphrase in the compact window). **The panel verbs write nothing until the
+user presses the button in the panel**; the quick verbs write at once, under the limits
+above. When a collision sends an extract to the plan, the empty target folder of "Extract
+to a new folder" stays, because the plan checks an existing folder.
 
 **Single instance.** `tauri-plugin-single-instance` (official, MIT/Apache) is the first
 plugin registered. A second process forwards its arguments to the running one, which
@@ -85,17 +90,23 @@ facility that makes one process the owner (a named mutex and a window message on
 the session D-Bus on Linux, where a session without a bus simply runs without single
 instance). The one new app permission is `allow-watch-launches`, the command by which the
 window listens for "an archive was opened" or "this launch failed". It carries no path.
+The quick verbs (owner decision 2026-10-16) add a second capability, `capabilities/quick.json`,
+for the compact window only: `allow-watch-quick`, `allow-quick-passphrase` (once, into a
+zeroizing type; never a command line), `allow-quick-cancel`, `allow-quick-show-folder` (Rust
+remembers the folder; no path crosses) and `allow-quick-close`. Nothing is added to
+`capabilities/main.json`.
 
 **Windows (NSIS, per-user, `HKCU` only):**
 
 | What | Where | Removed by uninstall |
 |---|---|---|
 | `.mochi` association (ProgID `MOCHI.Archive`) | Tauri's `fileAssociations`; the hooks also remove the `.mochi` key and `MOCHI.Archive_backup` value that Tauri's own removal leaves | yes |
-| Classic Explorer verbs "Open with MOCHI", "Extract here", "Extract to folder" | `Software\Classes\SystemFileAssociations\.mochi\shell\Mochi*` | yes |
-| "Add to MOCHI archive" (every file and folder) | `Software\Classes\*\shell\MochiAdd`, `...\Directory\shell\MochiAdd` | yes |
+| Classic Explorer submenu "MOCHI" on `.mochi` files: Open with MOCHI, Extract here, Extract to a new folder, Add to archive, Add to archive... | `Software\Classes\SystemFileAssociations\.mochi\shell\MochiMenu` (value `MUIVerb`, empty `SubCommands`; entries in its `shell\10Open`, `20ExtractHere`, `30ExtractToFolder`, `40Add`, `50AddPanel`) | yes |
+| The same submenu with Add to archive, Add to archive... on every file and folder | `Software\Classes\*\shell\MochiMenu`, `...\Directory\shell\MochiMenu` | yes |
+| The flat verbs of 0.1.0 (`Mochi*` verb keys) | removed by install (an update) and uninstall | n/a |
 | Opt-in "Open with" for ZIP, 7z, RAR, TAR, TGZ, GZ | ProgID `MOCHI.Foreign`; the value `MOCHI.Foreign` under each `.ext\OpenWithProgids` | yes |
 
-Each verb runs `"<app>" --verb -- "%1"`. The opt-in is a question at the end of a
+Each entry runs `"<app>" --verb -- "%1"`; Explorer starts one process per selected item. The opt-in is a question at the end of a
 normal install, **default No**, never asked by a silent (`/S`) or passive install, and
 `/ASSOCIATE_FOREIGN` on the setup's command line says yes (CI uses it). It adds MOCHI to
 "Open with"; it never writes a type's default value and never touches the user's
@@ -107,8 +118,8 @@ A foreign archive that arrives from the shell (the opt-in "Open with", a double-
 once MOCHI is the user's default, or a second launch) is opened for **browsing** in the
 foreign archive section, read-only and in foreign wording, by the same path as the in-app
 "Open archive" button there (plan D8); an encrypted one asks for its password in the
-window. "Extract here" and "Extract to folder" exist only for `.mochi`: if one reaches a
-foreign file, MOCHI extracts nothing, says so plainly, and opens the archive for
+window. "Extract here" and "Extract to a new folder" exist only for `.mochi`: if one reaches
+a foreign file, MOCHI extracts nothing, says so plainly, and opens the archive for
 browsing, where the Extract button shows the plan first. There are no foreign verbs.
 
 **Ubuntu (`.deb`):** the `.desktop` file (from `packaging/linux/mochi.desktop`, a
@@ -256,12 +267,14 @@ by `apt install ./mochi_*.deb`, start from the launcher, remove.
 context menu, and no second user setting defaults, so on the same clean Windows 10 22H2
 and Windows 11 client machines check by hand:
 
-- Right-click a `.mochi` file: "Open with MOCHI", "Extract here", "Extract to folder"
-  are listed (Windows 11: under "Show more options"); each starts MOCHI (or goes to the
-  running window), shows the archive or the extract plan, and writes nothing until the
-  Extract button is pressed.
-- Right-click a file, several files, and a folder: "Add to MOCHI archive" opens the add
-  panel with them staged (several files make several launches that collect in one set).
+- Right-click a `.mochi` file: a submenu "MOCHI" (Windows 11: under "Show more options")
+  lists "Open with MOCHI", "Extract here", "Extract to a new folder", "Add to archive",
+  "Add to archive..."; "Open with MOCHI" shows the archive; "Extract here" and "Extract to
+  a new folder" extract at once in a small window and replace nothing (see
+  `docs/release-runbook.md` W-06).
+- Right-click a file, several files, and a folder: "MOCHI" > "Add to archive" makes one
+  archive next to them in a small window; "Add to archive..." opens the add panel with
+  them staged (several files make several launches that collect in one set).
 - Double-click a `.mochi` file with MOCHI already running: no second window or process.
 - Install interactively: the foreign-format question defaults to No; with No, a `.zip`'s
   "Open with" list does not offer MOCHI; with Yes it does, and ZIP still opens in the

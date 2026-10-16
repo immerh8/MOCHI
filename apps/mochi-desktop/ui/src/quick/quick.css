@@ -1,0 +1,41 @@
+/* The compact window (plan D6, owner decision 2026-10-16): one column, no
+   chrome. Only the colour tokens of styles.css; spec §23.3 gives success
+   styling to nothing here, so a result is plain text. */
+.quick {
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.quick h1 {
+  font-size: 1.05rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.quick p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.quick .note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.quick .actions {
+  margin: 0.25rem 0 0;
+  justify-content: flex-end;
+}
+.quick progress {
+  width: 100%;
+}
+.quick label {
+  display: block;
+}
+.quick input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  font: inherit;
+}

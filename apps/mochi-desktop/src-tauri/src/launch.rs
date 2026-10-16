@@ -7,12 +7,20 @@
 //! * **Paths from the OS stay in Rust.** The webview is told that an archive
 //!   was opened (an [`ArchiveSummary`], as `open_archive` returns) or what the
 //!   problem was. It never receives, and never sends, a path.
-//! * **Nothing runs silently.** A verb opens an archive read-only, or stages
-//!   sources, and the window then shows the existing panel: the extract plan
-//!   (what would collide, and the Extract button) or the add panel. No file
-//!   is written until the user presses the button there. The one exception
-//!   is a folder for "Extract to folder", created empty at that point
-//!   (`extract_to_folder`) so the plan has something to check.
+//! * **Two kinds of verb (owner decision 2026-10-16, replacing "nothing runs
+//!   silently").** *Panel verbs* open an archive read-only or stage sources
+//!   and the main window shows the existing panel: "Open with MOCHI" (the
+//!   browser) and "Add to archive…" (`--add`, the add panel). Nothing is
+//!   written until the user presses the button there. *Quick verbs* do the
+//!   job at once in a small compact window ([`crate::quick`]; progress, then a
+//!   one-line result with "Show in folder" and Close) and never open the main
+//!   window: "Extract here" and "Extract to new folder" (`--extract-here`,
+//!   `--extract-to-folder`) and "Add to archive" (`--add-now`). A quick verb
+//!   never overwrites: when anything in the way exists, nothing is written and
+//!   the extract plan for the same archive opens in the main window instead
+//!   (the panel verb's screen, with the folder chosen in Rust). Explorer starts
+//!   one process per selected item, so `--add-now` launches that arrive within
+//!   [`ADD_BATCH_WINDOW`] of each other are collected into one archive.
 //! * **No secret on a command line.** There is no option for a passphrase;
 //!   a passphrase option is refused by name, and the refusal never repeats an
 //!   option's value. Encrypted archives ask for the passphrase in the window.
@@ -28,9 +36,10 @@
 //!   does for the in-app path. What D8 does not support (a split ZIP, an SFX,
 //!   an unsupported method) comes back as the helper's typed refusal.
 //! * **Extract verbs are for `.mochi`.** `--extract-here` and
-//!   `--extract-to-folder` on a foreign archive extract nothing and choose no
-//!   folder: the archive is opened for browsing, with a plain sentence that
-//!   extraction from the shell is for `.mochi` archives. The user extracts
+//!   `--extract-to-folder` on a foreign archive extract nothing, choose no
+//!   folder, and open no compact window: the archive is opened for browsing,
+//!   with a plain sentence that extraction from the shell is for `.mochi`
+//!   archives. The user extracts
 //!   from the foreign browser's own buttons, which show the plan first.
 //!
 //! # Command line
@@ -39,9 +48,10 @@
 //! mochi-desktop [VERB] [--] PATH...
 //!   (no verb)               open PATH read-only (what a file manager passes)
 //!   --open                  the same, explicitly ("Open with MOCHI")
-//!   --extract-here          open PATH, extract into the archive's folder
-//!   --extract-to-folder     open PATH, extract into a folder named for it
-//!   --add                   stage PATH... to add to an archive
+//!   --extract-here          quick: extract PATH into the archive's folder
+//!   --extract-to-folder     quick: extract PATH into a new folder named for it
+//!   --add                   stage PATH... in the add panel
+//!   --add-now               quick: add PATH... to a new archive next to it
 //! ```
 //!
 //! `--` ends the options, so a path that starts with `-` is still a path.
@@ -49,8 +59,9 @@
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -59,6 +70,7 @@ use crate::browse::Archives;
 use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{ArchiveSummary, ForeignArchiveSummary, IpcError};
+use crate::quick::{MainPort, Quick, QuickAction, QuickJob};
 use crate::write::{DropWatch, Staging, MAX_STAGED};
 
 /// Longest path accepted from the command line, in bytes (Windows allows
@@ -68,6 +80,12 @@ pub const MAX_PATH_BYTES: usize = 32 * 1024;
 /// Events kept for a window that is not listening yet.
 const MAX_PENDING: usize = 64;
 
+/// How long after the last `--add-now` launch the worker waits for another
+/// before it adds what it has collected. Explorer starts one process per
+/// selected item; the second and later ones reach this process through the
+/// single-instance plugin, a few tens of milliseconds apart.
+pub const ADD_BATCH_WINDOW: Duration = Duration::from_millis(500);
+
 /// What the shell asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
@@ -75,6 +93,17 @@ pub enum Verb {
     ExtractHere,
     ExtractToFolder,
     Add,
+    AddNow,
+}
+
+impl Verb {
+    /// Quick verbs run in the compact window and never open the main one.
+    pub fn is_quick(self) -> bool {
+        matches!(
+            self,
+            Verb::ExtractHere | Verb::ExtractToFolder | Verb::AddNow
+        )
+    }
 }
 
 impl Verb {
@@ -84,6 +113,7 @@ impl Verb {
             "--extract-here" => Verb::ExtractHere,
             "--extract-to-folder" => Verb::ExtractToFolder,
             "--add" => Verb::Add,
+            "--add-now" => Verb::AddNow,
             _ => return None,
         })
     }
@@ -177,7 +207,7 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
                 };
                 if verb.is_some() {
                     return refuse(
-                        "only one of --open, --extract-here, --extract-to-folder, --add",
+                        "only one of --open, --extract-here, --extract-to-folder, --add, --add-now",
                     );
                 }
                 verb = Some(v);
@@ -193,7 +223,7 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
     match (verb, paths.len()) {
         (_, 0) if args.is_empty() => Ok(None),
         (_, 0) => refuse("the command needs a path"),
-        (Verb::Add, _) | (_, 1) => Ok(Some(Launch { verb, paths })),
+        (Verb::Add | Verb::AddNow, _) | (_, 1) => Ok(Some(Launch { verb, paths })),
         _ => refuse("one archive at a time: give a single path"),
     }
 }
@@ -256,6 +286,7 @@ struct Inner {
     destination: Arc<Destination>,
     drops: Arc<DropWatch>,
     foreign: Arc<Foreign>,
+    quick: Arc<Quick>,
     delivery: Mutex<Delivery>,
 }
 
@@ -264,12 +295,21 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// What the launch worker is asked to do.
+enum Item {
+    Launch(Result<Launch, LaunchError>),
+    /// A second start with no arguments: just bring the window forward.
+    ShowMain,
+}
+
 /// Handles launches in the order they arrive, on one worker thread, so that
 /// opening an archive never blocks the async runtime or the single-instance
-/// callback, and two quick launches cannot overtake each other.
+/// callback, and two quick launches cannot overtake each other. Quick jobs
+/// (extract, add now) run on a second worker, one at a time, so that a long
+/// extraction never holds up the shell's other verbs.
 pub struct Launches {
     inner: Arc<Inner>,
-    queue: Mutex<Sender<Result<Launch, LaunchError>>>,
+    queue: Mutex<Sender<Item>>,
 }
 
 impl Launches {
@@ -279,6 +319,28 @@ impl Launches {
         destination: Arc<Destination>,
         drops: Arc<DropWatch>,
         foreign: Arc<Foreign>,
+        quick: Arc<Quick>,
+    ) -> Launches {
+        Self::with_batch_window(
+            archives,
+            staging,
+            destination,
+            drops,
+            foreign,
+            quick,
+            ADD_BATCH_WINDOW,
+        )
+    }
+
+    /// [`Launches::new`] with another collection window for `--add-now`.
+    pub fn with_batch_window(
+        archives: Arc<Archives>,
+        staging: Arc<Staging>,
+        destination: Arc<Destination>,
+        drops: Arc<DropWatch>,
+        foreign: Arc<Foreign>,
+        quick: Arc<Quick>,
+        batch_window: Duration,
     ) -> Launches {
         let inner = Arc::new(Inner {
             archives,
@@ -286,14 +348,55 @@ impl Launches {
             destination,
             drops,
             foreign,
+            quick,
             delivery: Mutex::default(),
         });
-        let (tx, rx) = channel::<Result<Launch, LaunchError>>();
-        let worker = Arc::clone(&inner);
-        // The thread ends when `Launches` (the only sender) is dropped.
+        let (quick_tx, quick_rx) = channel::<QuickJob>();
+        let quick_worker = Arc::clone(&inner);
+        // Both threads end when `Launches` (the only sender) is dropped.
         std::thread::spawn(move || {
-            for item in rx {
-                worker.handle(item);
+            for job in quick_rx {
+                quick_worker.quick.run(&job, &*quick_worker);
+            }
+        });
+        let (tx, rx) = channel::<Item>();
+        let worker = Arc::clone(&inner);
+        std::thread::spawn(move || {
+            let mut later: VecDeque<Item> = VecDeque::new();
+            loop {
+                let item = match later.pop_front() {
+                    Some(item) => item,
+                    None => match rx.recv() {
+                        Ok(item) => item,
+                        Err(_) => return,
+                    },
+                };
+                match item {
+                    Item::ShowMain => worker.show_main(),
+                    Item::Launch(Ok(mut launch)) if launch.verb == Verb::AddNow => {
+                        // Collect the launches of one selection into one
+                        // archive: wait until none has arrived for a window.
+                        // Anything else that arrives meanwhile keeps its
+                        // place, after this one.
+                        loop {
+                            match rx.recv_timeout(batch_window) {
+                                Ok(Item::Launch(Ok(more))) if more.verb == Verb::AddNow => {
+                                    for p in more.paths {
+                                        if !launch.paths.contains(&p) {
+                                            launch.paths.push(p);
+                                        }
+                                    }
+                                }
+                                Ok(other) => later.push_back(other),
+                                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                                    break
+                                }
+                            }
+                        }
+                        worker.handle(Ok(launch), &quick_tx);
+                    }
+                    Item::Launch(launch) => worker.handle(launch, &quick_tx),
+                }
             }
         });
         Launches {
@@ -302,7 +405,8 @@ impl Launches {
         }
     }
 
-    /// Queue a launch (or its refusal) to be handled.
+    /// Queue a launch (or its refusal) to be handled. No arguments: nothing
+    /// to do.
     pub fn submit(&self, item: Result<Option<Launch>, LaunchError>) {
         let item = match item {
             Ok(None) => return,
@@ -310,7 +414,13 @@ impl Launches {
             Err(e) => Err(e),
         };
         // A send fails only if the worker is gone (a panic); nothing to do.
-        let _ = lock(&self.queue).send(item);
+        let _ = lock(&self.queue).send(Item::Launch(item));
+    }
+
+    /// A second start with no arguments: bring the main window forward
+    /// (creating it if only a compact window is open).
+    pub fn focus(&self) {
+        let _ = lock(&self.queue).send(Item::ShowMain);
     }
 
     /// Listen with `sink` and hand it what arrived before there was one.
@@ -325,26 +435,61 @@ impl Launches {
         d.sink = Some(sink);
     }
 
-    /// Handle one launch now, on the calling thread (tests).
+    /// Handle one launch now, on the calling thread (tests). Quick verbs run
+    /// to their end here too.
     #[cfg(test)]
     fn handle_now(&self, item: Result<Launch, LaunchError>) {
-        self.inner.handle(item);
+        let (tx, rx) = channel::<QuickJob>();
+        self.inner.handle(item, &tx);
+        drop(tx);
+        for job in rx {
+            self.inner.quick.run(&job, &*self.inner);
+        }
+    }
+}
+
+impl MainPort for Inner {
+    fn archives(&self) -> &Archives {
+        &self.archives
+    }
+
+    fn hand_over_extract(&self, archive: ArchiveSummary, folder: PathBuf) {
+        self.destination.set(folder);
+        self.emit(LaunchEvent::Opened {
+            archive,
+            extract: true,
+        });
     }
 }
 
 impl Inner {
+    fn show_main(&self) {
+        if let Some(host) = self.quick.host() {
+            host.show_main();
+        }
+    }
+
+    /// Queue an event for the main window and bring it forward: whatever
+    /// reached here needs the full window.
     fn emit(&self, event: LaunchEvent) {
-        let mut d = lock(&self.delivery);
-        if let Some(sink) = d.sink.clone() {
-            if sink.send(event.clone()) {
-                return;
+        {
+            let mut d = lock(&self.delivery);
+            let sent = match d.sink.clone() {
+                Some(sink) if sink.send(event.clone()) => true,
+                Some(_) => {
+                    d.sink = None;
+                    false
+                }
+                None => false,
+            };
+            if !sent {
+                if d.pending.len() >= MAX_PENDING {
+                    d.pending.pop_front();
+                }
+                d.pending.push_back(event);
             }
-            d.sink = None;
         }
-        if d.pending.len() >= MAX_PENDING {
-            d.pending.pop_front();
-        }
-        d.pending.push_back(event);
+        self.show_main();
     }
 
     fn problem(&self, message: impl Into<String>) {
@@ -353,7 +498,7 @@ impl Inner {
         });
     }
 
-    fn handle(&self, item: Result<Launch, LaunchError>) {
+    fn handle(&self, item: Result<Launch, LaunchError>, quick: &Sender<QuickJob>) {
         let launch = match item {
             Ok(l) => l,
             Err(e) => {
@@ -366,20 +511,44 @@ impl Inner {
             Verb::Add => {
                 let outcome = self.staging.add(&launch.paths);
                 self.drops.announce_staged(outcome);
+                self.show_main();
             }
-            Verb::Open | Verb::ExtractHere | Verb::ExtractToFolder => {
+            Verb::AddNow => {
+                // A send fails only if the quick worker is gone (a panic).
+                let _ = quick.send(QuickJob::Add {
+                    paths: launch.paths,
+                });
+            }
+            Verb::Open => {
                 // `parse` guarantees exactly one path for these verbs.
                 if let Some(path) = launch.paths.first() {
-                    self.open(launch.verb, path);
+                    self.open(path);
                 }
+            }
+            Verb::ExtractHere | Verb::ExtractToFolder => {
+                let Some(path) = launch.paths.first() else {
+                    return;
+                };
+                if foreign_kind(path).is_some() {
+                    return self.open_foreign(true, path);
+                }
+                let action = if launch.verb == Verb::ExtractHere {
+                    QuickAction::ExtractHere
+                } else {
+                    QuickAction::ExtractToFolder
+                };
+                let _ = quick.send(QuickJob::Extract {
+                    action,
+                    path: path.clone(),
+                });
             }
         }
     }
 
-    fn open(&self, verb: Verb, path: &Path) {
+    fn open(&self, path: &Path) {
         let shown = path.display();
         if foreign_kind(path).is_some() {
-            return self.open_foreign(verb, path);
+            return self.open_foreign(false, path);
         }
         match std::fs::metadata(path) {
             Ok(m) if m.is_file() => {}
@@ -391,48 +560,33 @@ impl Inner {
         if crate::browse::head_encrypted(path) {
             return self.problem(format!(
                 "{shown} is encrypted. Use Open archive… in MOCHI and enter its passphrase; \
-                 the shell's open and extract verbs cannot ask for one."
+                 the shell's open verb cannot ask for one."
             ));
         }
-        let archive = match self
+        match self
             .archives
             .open(path, mochi_core::publish::ReadOptions::default())
         {
-            Ok(a) => a,
+            Ok(archive) => self.emit(LaunchEvent::Opened {
+                archive,
+                extract: false,
+            }),
             Err(e) => {
                 let e = IpcError::from(e);
-                return self.problem(format!(
+                self.problem(format!(
                     "{shown} could not be opened ({}): {}",
                     e.code, e.message
                 ));
             }
-        };
-        let extract = verb != Verb::Open;
-        if extract {
-            let folder = match verb {
-                Verb::ExtractHere => extract_here(path),
-                _ => extract_to_folder(path),
-            };
-            match folder {
-                Ok(folder) => self.destination.set(folder),
-                Err(why) => {
-                    // The archive is open and shown; only the extract is off.
-                    self.problem(format!("{shown}: {why}."));
-                    return self.emit(LaunchEvent::Opened {
-                        archive,
-                        extract: false,
-                    });
-                }
-            }
         }
-        self.emit(LaunchEvent::Opened { archive, extract });
     }
 }
 
 impl Inner {
     /// Open a foreign archive for browsing through the in-app path
     /// ([`Foreign::open`]); the password, if any, is asked for in the window.
-    fn open_foreign(&self, verb: Verb, path: &Path) {
+    /// `extract_verb`: the shell asked to extract, which is for `.mochi` only.
+    fn open_foreign(&self, extract_verb: bool, path: &Path) {
         let shown = path.display();
         match std::fs::metadata(path) {
             Ok(m) if m.is_file() => {}
@@ -441,7 +595,7 @@ impl Inner {
         }
         match self.foreign.open(path, None) {
             Ok(archive) => {
-                if verb != Verb::Open {
+                if extract_verb {
                     self.problem(format!(
                         "{shown}: extracting from the shell is for .mochi archives. \
                          It is open for browsing; use Extract in the foreign archive section."
@@ -457,41 +611,6 @@ impl Inner {
                 e.code, e.message
             )),
         }
-    }
-}
-
-/// The archive's own folder.
-fn extract_here(archive: &Path) -> Result<PathBuf, String> {
-    archive
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "the archive has no folder to extract into".to_owned())
-}
-
-/// A folder next to the archive named for it (`a.mochi` → `a`). Created
-/// empty when it does not exist, because the plan checks an existing folder;
-/// an existing folder is used as it is (the plan lists what would collide).
-fn extract_to_folder(archive: &Path) -> Result<PathBuf, String> {
-    let parent = extract_here(archive)?;
-    let stem = archive
-        .file_stem()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "the archive has no name to make a folder from".to_owned())?;
-    let folder = parent.join(stem);
-    match std::fs::metadata(&folder) {
-        Ok(m) if m.is_dir() => Ok(folder),
-        Ok(_) => Err(format!(
-            "{} exists and is not a folder; choose a folder to extract into",
-            folder.display()
-        )),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Not `create_dir_all`: the archive's own folder exists.
-            std::fs::create_dir(&folder)
-                .map(|()| folder.clone())
-                .map_err(|e| format!("the folder {} could not be created: {e}", folder.display()))
-        }
-        Err(e) => Err(format!("{} cannot be checked: {e}", folder.display())),
     }
 }
 
@@ -556,6 +675,7 @@ mod tests {
             ("--extract-here", Verb::ExtractHere),
             ("--extract-to-folder", Verb::ExtractToFolder),
             ("--add", Verb::Add),
+            ("--add-now", Verb::AddNow),
         ] {
             let l = parsed(&[opt, "--", &a]).unwrap().unwrap();
             assert_eq!(l.verb, verb);
@@ -650,6 +770,7 @@ mod tests {
     fn verbs_check_their_path_counts_and_do_not_combine() {
         assert!(parsed(&["--open"]).is_err(), "a verb needs a path");
         assert!(parsed(&["--add"]).is_err());
+        assert!(parsed(&["--add-now"]).is_err());
         assert!(
             parsed(&["--extract-here", "a", "b"]).is_err(),
             "one archive"
@@ -658,6 +779,11 @@ mod tests {
         assert!(parsed(&["--open", "--add", "a"]).is_err(), "one verb");
         let l = parsed(&["--add", "a", "b", "c"]).unwrap().unwrap();
         assert_eq!(l.paths.len(), 3);
+        let l = parsed(&["--add-now", "a", "b"]).unwrap().unwrap();
+        assert_eq!((l.verb, l.paths.len()), (Verb::AddNow, 2));
+        assert!(!Verb::Open.is_quick() && !Verb::Add.is_quick());
+        assert!(Verb::ExtractHere.is_quick() && Verb::ExtractToFolder.is_quick());
+        assert!(Verb::AddNow.is_quick());
     }
 
     #[test]
@@ -719,6 +845,25 @@ mod tests {
         }
     }
 
+    /// Collects what the compact window would hear.
+    struct QSink(Mutex<Vec<crate::quick::QuickEvent>>);
+
+    impl QSink {
+        fn live() -> Arc<QSink> {
+            Arc::new(QSink(Mutex::default()))
+        }
+        fn events(&self) -> Vec<crate::quick::QuickEvent> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    impl crate::quick::QuickSink for QSink {
+        fn send(&self, event: crate::quick::QuickEvent) -> bool {
+            self.0.lock().unwrap().push(event);
+            true
+        }
+    }
+
     /// The helper binary next to the test executable, built on demand when
     /// only this package's tests were asked for.
     fn helper() -> PathBuf {
@@ -769,6 +914,7 @@ mod tests {
             Arc::clone(&destination),
             Arc::new(DropWatch::default()),
             Arc::clone(&foreign),
+            Quick::new(),
         );
         (l, foreign, destination)
     }
@@ -985,41 +1131,184 @@ mod tests {
     }
 
     #[test]
-    fn open_shows_the_archive_and_extract_verbs_choose_the_folder_in_rust() {
+    fn open_shows_the_archive_read_only_in_the_main_window() {
         let dir = tempfile::tempdir().unwrap();
         let archive = write_archive(dir.path(), "photos.mochi");
         let l = launches();
         let sink = Sink::live();
         l.watch(sink.clone());
-        for verb in [Verb::Open, Verb::ExtractHere, Verb::ExtractToFolder] {
+        l.handle_now(Ok(Launch {
+            verb: Verb::Open,
+            paths: vec![archive.clone()],
+        }));
+        let events = sink.events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        match &events[0] {
+            LaunchEvent::Opened { archive, extract } => {
+                assert_eq!(archive.file_name, "photos.mochi");
+                assert!(!extract);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(l.inner.destination.get().is_none());
+        // Opening is read-only: nothing was extracted.
+        assert!(!dir.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn extract_verbs_run_in_the_compact_window_and_leave_the_main_one_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "photos.mochi");
+        let l = launches();
+        let main = Sink::live();
+        l.watch(main.clone());
+        let compact = QSink::live();
+        l.inner.quick.watch(compact.clone());
+        for verb in [Verb::ExtractHere, Verb::ExtractToFolder] {
             l.handle_now(Ok(Launch {
                 verb,
                 paths: vec![archive.clone()],
             }));
         }
-        let events = sink.events();
-        assert_eq!(events.len(), 3, "{events:?}");
-        let extract: Vec<bool> = events
+        assert!(main.events().is_empty(), "{:?}", main.events());
+        let done = compact
+            .events()
+            .into_iter()
+            .filter(|e| matches!(e, crate::quick::QuickEvent::Done { .. }))
+            .count();
+        assert_eq!(done, 2);
+        // Written at once: here, and into a new folder named for the archive.
+        assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"alpha");
+        assert_eq!(
+            std::fs::read(dir.path().join("photos").join("a.txt")).unwrap(),
+            b"alpha"
+        );
+        assert!(l.inner.destination.get().is_none());
+    }
+
+    #[test]
+    fn a_collision_hands_the_extract_plan_to_the_main_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "photos.mochi");
+        std::fs::write(dir.path().join("a.txt"), b"mine").unwrap();
+        let l = launches();
+        let main = Sink::live();
+        l.watch(main.clone());
+        let compact = QSink::live();
+        l.inner.quick.watch(compact.clone());
+        l.handle_now(Ok(Launch {
+            verb: Verb::ExtractHere,
+            paths: vec![archive],
+        }));
+        assert!(matches!(
+            compact.events().last(),
+            Some(crate::quick::QuickEvent::Fallback { conflicts: 1, .. })
+        ));
+        let events = main.events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(
+            &events[0],
+            LaunchEvent::Opened { extract: true, archive } if archive.file_name == "photos.mochi"
+        ));
+        assert_eq!(l.inner.destination.get(), Some(dir.path().to_path_buf()));
+        assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"mine");
+    }
+
+    #[test]
+    fn add_now_launches_in_one_selection_make_one_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("trip");
+        std::fs::create_dir(&folder).unwrap();
+        let files: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt"]
             .iter()
-            .map(|e| match e {
-                LaunchEvent::Opened { archive, extract } => {
-                    assert_eq!(archive.file_name, "photos.mochi");
-                    *extract
-                }
-                other => panic!("{other:?}"),
+            .map(|n| {
+                let p = folder.join(n);
+                std::fs::write(&p, n.as_bytes()).unwrap();
+                p
             })
             .collect();
-        assert_eq!(extract, [false, true, true]);
-        // The last extract chose the sibling folder; nothing was extracted.
-        assert_eq!(l.inner.destination.get(), Some(dir.path().join("photos")));
-        let listing: Vec<_> = std::fs::read_dir(dir.path().join("photos"))
-            .unwrap()
-            .collect();
-        assert!(
-            listing.is_empty(),
-            "opening is read-only; extracting waits for the user"
+        let l = Launches::with_batch_window(
+            Arc::new(Archives::default()),
+            Arc::new(Staging::default()),
+            Arc::new(Destination::default()),
+            Arc::new(DropWatch::default()),
+            Arc::new(Foreign::default()),
+            Quick::new(),
+            Duration::from_millis(300),
         );
-        assert_eq!(l.inner.archives.open_count(), 3);
+        let compact = QSink::live();
+        l.inner.quick.watch(compact.clone());
+        // One process per item, a few milliseconds apart, as Explorer does.
+        for f in &files {
+            l.submit(parse(
+                &[OsStr::new("--add-now"), OsStr::new("--"), f.as_os_str()],
+                &cwd(),
+            ));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let done = loop {
+            let events = compact.events();
+            if let Some(e) = events
+                .into_iter()
+                .find(|e| matches!(e, crate::quick::QuickEvent::Done { .. }))
+            {
+                break e;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{:?}",
+                compact.events()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let crate::quick::QuickEvent::Done { name, files, .. } = done else {
+            unreachable!()
+        };
+        assert_eq!(name.text, "trip.mochi");
+        assert_eq!(files, 3);
+        // One archive, not three.
+        let archives: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".mochi"))
+            .collect();
+        assert_eq!(archives, ["trip.mochi"]);
+    }
+
+    #[test]
+    fn a_launch_that_is_not_an_add_keeps_its_place_during_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "a.mochi");
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let l = Launches::with_batch_window(
+            Arc::new(Archives::default()),
+            Arc::new(Staging::default()),
+            Arc::new(Destination::default()),
+            Arc::new(DropWatch::default()),
+            Arc::new(Foreign::default()),
+            Quick::new(),
+            Duration::from_millis(200),
+        );
+        let main = Sink::live();
+        l.watch(main.clone());
+        let compact = QSink::live();
+        l.inner.quick.watch(compact.clone());
+        l.submit(parse(&[OsStr::new("--add-now"), file.as_os_str()], &cwd()));
+        l.submit(parse(&[archive.as_os_str()], &cwd()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while (main.events().is_empty()
+            || !compact
+                .events()
+                .iter()
+                .any(|e| matches!(e, crate::quick::QuickEvent::Done { .. })))
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(&main.events()[0], LaunchEvent::Opened { .. }));
+        assert!(dir.path().join("note.mochi").is_file());
     }
 
     #[test]
@@ -1078,24 +1367,5 @@ mod tests {
         assert_eq!(staged.items[0].name.text, "notes.txt");
         assert_eq!(problems.len(), 1, "the missing path is explained");
         assert_eq!(l.inner.staging.view().items.len(), 1);
-    }
-
-    #[test]
-    fn extract_destinations_are_the_archives_folder_or_a_sibling_named_for_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let archive = dir.path().join("photos.mochi");
-        assert_eq!(extract_here(&archive).unwrap(), dir.path());
-        let folder = extract_to_folder(&archive).unwrap();
-        assert_eq!(folder, dir.path().join("photos"));
-        assert!(folder.is_dir(), "created empty so the plan can check it");
-        // Again: the existing folder is used, not replaced.
-        std::fs::write(folder.join("keep"), b"1").unwrap();
-        assert_eq!(extract_to_folder(&archive).unwrap(), folder);
-        assert!(folder.join("keep").exists());
-        // A file in the way is refused, not overwritten.
-        let blocked = dir.path().join("blocked.mochi");
-        std::fs::write(dir.path().join("blocked"), b"file").unwrap();
-        assert!(extract_to_folder(&blocked).is_err());
-        assert!(extract_here(Path::new("bare.mochi")).is_err());
     }
 }
