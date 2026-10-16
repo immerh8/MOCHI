@@ -161,6 +161,17 @@ so that an independent reader can match them exactly:
   data shards found damaged, shards rebuilt, and groups beyond capacity. **The chain and
   snapshots are read through the parity-healed view** (damage within capacity is rebuilt in
   memory, as `verify` does); `findings` still report the raw bytes.
+  **[Clarified 2026-10-16, F1/PR 71]** `parity` does not depend on the head. The scan walks
+  from the footer at the end of the file back to commit 0 whatever `open_head` says, so a
+  **refused** head with a recovery record still has `parity` populated (for example
+  `red-corrupt-beyond-capacity`: the head is refused, `parity` is `{commits 7,
+  damaged_shards 3, rebuilt 0, beyond_capacity 1}`). `parity` is null exactly when no scan
+  result exists or the archive does not declare a recovery record: the scan found no footer
+  or failed operationally, or the descriptor at offset 0, read through the healed view and
+  decoded without binding it to a commit, does not declare a percentage (including when it
+  cannot be decoded at all: a descriptor that does not decode yields null here, even if parity
+  frames sit after the commits). `commits` counts the commits the scan reached before it
+  stopped, from the head's commit down.
 * An interrupted publication's bytes after the head are not in the summary except as the
   `FOOTER_INVALID` / `TAIL_UNRESOLVED` findings `verify` gives them.
 

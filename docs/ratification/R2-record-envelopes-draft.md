@@ -112,8 +112,11 @@ one encoding (below); a registered encoding in the other kind's frame is refused
 length is computed from it); header length; payload length; payload budget; payload
 encoding, and that it is the kind's own; required features; record schema version;
 payload signature (and, for encoding 0, `user_version` = record schema version). For
-encoding 2 a further step follows `bind`: decode within the bound, then the SQLite
-signature and `user_version` of the decoded bytes (`ENVELOPE_INVALID` when they fail).
+encoding 2 further steps follow `bind`: the archive-profile check on the features
+(`RECORD_INVALID`), then decode within the bound, then the SQLite signature and
+`user_version` of the decoded bytes (`ENVELOPE_INVALID` when they fail). The decode's
+own faults and their codes (`TRUNCATED`, `MALFORMED_FRAME`, `LIMIT_EXCEEDED`,
+`CONTENT_INTEGRITY_FAILED`) and the window limit are in spec B.2.15 items 1 and 2.
 A parity frame's own digest is checked **before** this decoder runs, because no
 referencing record holds its hash (§4). The result is a *candidate*: nothing
 may interpret its payload until `Candidate::bind` has checked its identity against
