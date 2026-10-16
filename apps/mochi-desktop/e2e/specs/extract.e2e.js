@@ -103,6 +103,18 @@ function openUp(folder) {
   chmodSync(folder, 0o755);
 }
 
+// The plan names its folder. (On Windows the markup name is unsupported in any
+// folder, so even a new folder can list a conflict: wait for the folder, not for
+// "no conflicts".)
+const planShows = (folder) =>
+  browser.waitUntil(
+    async () => {
+      const el = await $('[data-testid="extract-destination"]');
+      return (await el.isExisting()) && (await el.getText()) === folder;
+    },
+    { timeout: 60_000, timeoutMsg: `the plan never named ${folder}` },
+  );
+
 const size = (...p) => statSync(path.join(...p)).size;
 
 describe("extract", () => {
@@ -197,8 +209,8 @@ describe("extract", () => {
     // Version 3 again from the top: the snapshot on screen is unchanged. The
     // default is a new folder, so it is the user's own pick that collides.
     await press("extract-all");
-    await $('[data-testid="extract-no-conflicts"]').waitForExist({ timeout: 60_000 });
     const made = path.join(root, "browse (3)");
+    await planShows(made);
     expect(existsSync(made)).toBe(true);
     queuePicks(crowdedDir);
     await press("extract-change-folder");
@@ -271,8 +283,8 @@ describe("extract", () => {
 
   it("closing the plan of a new folder removes it again, and never a folder with files in it", async () => {
     await press("extract-all");
-    await $('[data-testid="extract-no-conflicts"]').waitForExist({ timeout: 60_000 });
     const made = path.join(root, "browse (3)");
+    await planShows(made);
     expect(existsSync(made)).toBe(true);
     await press("extract-close");
     await browser.waitUntil(() => !existsSync(made), { timeoutMsg: "the empty new folder stayed" });
