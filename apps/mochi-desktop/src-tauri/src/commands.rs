@@ -21,6 +21,7 @@ use crate::ipc::{
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
+use crate::quick::{Quick, QuickEvent, QuickSink};
 use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::write::{DropSink, DropWatch, Staging};
@@ -33,6 +34,12 @@ impl DropSink for Channel<DropEvent> {
 
 impl LaunchSink for Channel<LaunchEvent> {
     fn send(&self, event: LaunchEvent) -> bool {
+        Channel::send(self, event).is_ok()
+    }
+}
+
+impl QuickSink for Channel<QuickEvent> {
+    fn send(&self, event: QuickEvent) -> bool {
         Channel::send(self, event).is_ok()
     }
 }
@@ -299,6 +306,42 @@ pub fn watch_drops(on_drop: Channel<DropEvent>, watch: State<'_, Arc<DropWatch>>
 #[tauri::command]
 pub fn watch_launches(on_launch: Channel<LaunchEvent>, launches: State<'_, Arc<Launches>>) {
     launches.watch(Arc::new(on_launch));
+}
+
+/// Listen for the compact window's job (D6 quick verbs): progress, a request
+/// for a passphrase, and the result. Anything that arrived before this call
+/// is delivered now. Only the `quick` window may call it.
+#[tauri::command]
+pub fn watch_quick(on_event: Channel<QuickEvent>, quick: State<'_, Arc<Quick>>) {
+    quick.watch(Arc::new(on_event));
+}
+
+/// The passphrase the compact window asked for. It goes straight to the
+/// waiting job and is not kept.
+#[tauri::command]
+pub fn quick_passphrase(passphrase: Secret, quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
+    quick.passphrase(passphrase).map_err(IpcError::from)
+}
+
+/// Stop the compact window's job.
+#[tauri::command]
+pub fn quick_cancel(quick: State<'_, Arc<Quick>>) {
+    quick.cancel();
+}
+
+/// Open the folder the compact window's job wrote into, in the file manager.
+/// The webview names no path: Rust remembers it.
+#[tauri::command]
+pub fn quick_show_folder(quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
+    quick.show_folder().map_err(IpcError::from)
+}
+
+/// Close the compact window.
+#[tauri::command]
+pub fn quick_close(quick: State<'_, Arc<Quick>>) {
+    if let Some(host) = quick.host() {
+        host.close_quick();
+    }
 }
 
 /// What is staged to add.

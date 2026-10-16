@@ -85,6 +85,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 
 ## Security decisions (each is a reason AGENTS.md asks for)
 
+- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder" and "Add to archive" run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it five commands and nothing else: `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path) and `allow-quick-close`. The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
   `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
@@ -339,7 +340,7 @@ attach it to an issue.
   The same holds when the shell starts the app with one (T20): `launch.rs` sends a ZIP, 7z, RAR,
   tar, or tar.gz path to the in-app open path in Rust, the window shows the foreign browser (an
   encrypted archive asks for its password there, once), and the shell's "Extract here" /
-  "Extract to folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
+  "Extract to a new folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
   for browsing with a plain note.
 
 ## The simplified main path (D10)
