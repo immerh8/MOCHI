@@ -114,6 +114,8 @@ export const config = {
   // start screen and about keyboard use open it themselves, as a person would.
   beforeTest: async (test) => {
     if (/(start|a11y)\.e2e\.js$/.test(test.file ?? "")) return;
+    // The first test of a file can start before the page has rendered.
+    await $('details[data-testid="advanced"]').waitForExist({ timeout: 60_000 });
     await browser.execute(() => {
       const advanced = document.querySelector('details[data-testid="advanced"]');
       if (advanced) advanced.open = true;

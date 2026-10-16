@@ -28,7 +28,9 @@ describe("the start screen", () => {
     }
     await expect($('[data-testid="start-note"]')).toHaveText(expect.stringContaining("not a second copy"));
     await expect($('[data-testid="advanced"]')).not.toHaveAttribute("open");
-    const text = (await $("body").getText()).toLowerCase();
+    // The start screen itself (the closed Advanced area is not part of it; some
+    // engines report a closed disclosure's text, and it names the tools plainly).
+    const text = (await $('[data-testid="start-screen"]').getText()).toLowerCase();
     for (const word of BANNED) expect(text).not.toContain(word);
     // None of the jargon is on the first screen.
     for (const word of ["snapshot", "commit", "verification", "retention"]) {
@@ -43,10 +45,11 @@ describe("the start screen", () => {
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("trip.mochi"));
     await $('[data-testid="close-archive"]').click();
     await $('[data-testid="start-screen"]').waitForExist();
-    await browser.waitUntil(async () => (await $$('[data-testid="recent-open"]')).length === 1, {
-      timeoutMsg: "the archive was not listed as recent",
-    });
-    await expect($('[data-testid="recent"]')).toHaveText(expect.stringContaining("trip.mochi"));
+    // The list is kept across app runs (and earlier specs opened archives), newest first.
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="recent-open"]')).length > 0 && (await $('[data-testid="recent-open"]').getText()) === "trip.mochi",
+      { timeoutMsg: "the archive was not listed first among the recent ones" },
+    );
   });
 
   it("opens a recent archive without a dialog", async () => {
