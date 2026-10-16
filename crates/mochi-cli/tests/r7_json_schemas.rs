@@ -2220,7 +2220,8 @@ fn mutated_outputs_fail() {
 // ---- spec §20.6 ---------------------------------------------------------------------
 
 /// The abridged report §20.6 shows: `mochi verify --json` of the R8 case,
-/// in `Report`'s field order, with the two wall-clock times fixed.
+/// in `Report`'s field order, with the two wall-clock times and the tool
+/// version fixed (so a version bump does not make the spec stale).
 fn spec_example() -> String {
     let a = s(&r8().join(format!("{SPEC_EXAMPLE_CASE}.mochi")));
     let (_, v) = ok(
@@ -2230,6 +2231,8 @@ fn spec_example() -> String {
     let mut report: Report = serde_json::from_value(v).unwrap();
     report.started_at = Some("2026-10-14T09:00:00.000000000Z".into());
     report.completed_at = Some("2026-10-14T09:00:00.250000000Z".into());
+    assert_eq!(report.tool.version, mochi_core::TOOL_VERSION);
+    report.tool.version = "1.0.0".into();
     let text = serde_json::to_string_pretty(&report).unwrap();
     valid(
         "report-v1.schema.json",
