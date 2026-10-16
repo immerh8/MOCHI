@@ -9,7 +9,7 @@
 // On Linux the single-instance plugin uses the session D-Bus: CI runs this
 // under `dbus-run-session` (a desktop session has one already).
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,10 +36,26 @@ function secondLaunch(args) {
   });
 }
 
+/** Make the window that shows `testid` the one WebDriver talks to (the shell's quick verbs open a compact second window). */
+async function switchToWindowWith(testid, timeout = 60_000) {
+  await browser.waitUntil(
+    async () => {
+      for (const handle of await browser.getWindowHandles()) {
+        await browser.switchToWindow(handle);
+        if (await $(`[data-testid="${testid}"]`).isExisting()) return true;
+      }
+      return false;
+    },
+    { timeout, timeoutMsg: `no window shows ${testid}` },
+  );
+}
+
 describe("a second launch", () => {
   let work;
-  before(() => {
+  let mainWindow;
+  before(async () => {
     work = mkdtempSync(path.join(os.tmpdir(), "mochi-e2e-launch-"));
+    mainWindow = await browser.getWindowHandle();
   });
   after(() => {
     rmSync(work, { recursive: true, force: true });
@@ -66,19 +82,110 @@ describe("a second launch", () => {
     );
   });
 
-  it("'Extract to folder' shows the plan and writes nothing until confirmed", async () => {
+  // Owner decision 2026-10-16: the quick verbs work at once in a small second window.
+  it("'Extract to a new folder' extracts at once in a compact window and leaves the main window alone", async () => {
     const archive = path.join(work, "photos.mochi");
     copyFileSync(fixture, archive);
     const ended = await secondLaunch(["--extract-to-folder", "--", archive]);
     expect(ended.code).toBe(0);
-    await $('[data-testid="extract-panel"]').waitForExist({ timeout: 30_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(
-      expect.stringContaining(path.join(work, "photos")),
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-title"]')).toHaveText(expect.stringContaining("photos.mochi"));
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Extracted"));
+    // Written at once, into a new folder named for the archive.
+    expect(readdirSync(path.join(work, "photos")).length).toBeGreaterThan(0);
+    // Not a verification, and no success claim beyond what happened.
+    const text = (await $('[data-testid="quick-result"]').getText()).toLowerCase();
+    for (const word of ["backed up", "safe", "preserved"]) expect(text).not.toContain(word);
+    // The main window did not open the extract panel.
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="extract-panel"]')).not.toExist();
+    // A second run never reuses the folder.
+    const again = await secondLaunch(["--extract-to-folder", "--", archive]);
+    expect(again.code).toBe(0);
+    await browser.waitUntil(() => readdirSync(work).includes("photos (2)"), {
+      timeoutMsg: "no second, new folder was made",
+    });
+    await switchToWindowWith("quick-result");
+    await browser.waitUntil(
+      async () => (await $('[data-testid="quick-result"]').getText()).includes("photos (2)"),
+      { timeoutMsg: "the second result was not shown" },
     );
-    await expect($('[data-testid="extract-confirm"]')).toBeEnabled();
-    // Opening and planning are read-only: the folder exists, empty.
-    expect(readdirSync(path.join(work, "photos"))).toEqual([]);
+    await $('[data-testid="quick-close"]').click();
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+      timeoutMsg: "the compact window did not close",
+    });
+    await browser.switchToWindow(mainWindow);
+  });
+
+  it("'Extract here' replaces nothing: a name in the way writes nothing and opens the plan in the main window", async () => {
+    const dir = path.join(work, "collide");
+    mkdirSync(dir);
+    const archive = path.join(dir, "again.mochi");
+    copyFileSync(fixture, archive);
+    // A file where the archive has the folder "docs".
+    writeFileSync(path.join(dir, "docs"), "mine");
+    const ended = await secondLaunch(["--extract-here", "--", archive]);
+    expect(ended.code).toBe(0);
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Nothing was written"));
+    await expect($('[data-testid="quick-show-folder"]')).not.toExist();
+    await switchToWindowWith("extract-panel");
+    await expect($('[data-testid="extract-destination"]')).toHaveText(expect.stringContaining(dir));
+    expect(readdirSync(dir).sort()).toEqual(["again.mochi", "docs"]);
+    expect(readFileSync(path.join(dir, "docs"), "utf8")).toBe("mine");
     await $('[data-testid="extract-close"]').click();
+    await switchToWindowWith("quick-result");
+    await $('[data-testid="quick-close"]').click();
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+      timeoutMsg: "the compact window did not close",
+    });
+    await browser.switchToWindow(mainWindow);
+  });
+
+  it("'Add to archive' collects one selection's launches into one archive and says it is a local commit", async () => {
+    const dir = path.join(work, "trip");
+    mkdirSync(dir);
+    const files = ["a.txt", "b.txt", "c.txt"].map((n) => {
+      const f = path.join(dir, n);
+      writeFileSync(f, n);
+      return f;
+    });
+    // One process per item, started together, as Explorer does.
+    const ended = await Promise.all(files.map((f) => secondLaunch(["--add-now", "--", f])));
+    expect(ended.map((e) => e.code)).toEqual([0, 0, 0]);
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Archive created: trip.mochi"));
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("LOCAL_COMMITTED"));
+    const text = (await $('[data-testid="quick-result"]').getText()).toLowerCase();
+    for (const word of ["backed up", "safe", "preserved"]) expect(text).not.toContain(word);
+    expect(readdirSync(dir).filter((n) => n.endsWith(".mochi"))).toEqual(["trip.mochi"]);
+    await $('[data-testid="quick-close"]').click();
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1);
+    await browser.switchToWindow(mainWindow);
+    // Again: a new name, the first archive stays.
+    const lengthBefore = readFileSync(path.join(dir, "trip.mochi")).length;
+    const second = await secondLaunch(["--add-now", "--", files[0]]);
+    expect(second.code).toBe(0);
+    await browser.waitUntil(() => readdirSync(dir).includes("a.mochi"), { timeoutMsg: "no archive named for the file" });
+    expect(readFileSync(path.join(dir, "trip.mochi")).length).toBe(lengthBefore);
+    await switchToWindowWith("quick-close");
+    await $('[data-testid="quick-close"]').click();
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1);
+    await browser.switchToWindow(mainWindow);
+  });
+
+  it("'Add to archive...' still opens the add panel in the main window and writes nothing", async () => {
+    const dir = path.join(work, "panel");
+    mkdirSync(dir);
+    const file = path.join(dir, "note.txt");
+    writeFileSync(file, "x");
+    const ended = await secondLaunch(["--add", "--", file]);
+    expect(ended.code).toBe(0);
+    await browser.switchToWindow(mainWindow);
+    await browser.waitUntil(async () => (await $('[data-testid="staged-item"]').isExisting()), {
+      timeoutMsg: "the add panel did not show the staged file",
+    });
+    expect(readdirSync(dir)).toEqual(["note.txt"]);
   });
 
   it("refuses a passphrase option without echoing its value", async () => {

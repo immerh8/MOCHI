@@ -36,8 +36,8 @@ Windows' own "Open with" list are the real ones. It cannot see menus, dialogs or
 | App starts, window up, web view running | `B-LAUNCH` | seeing it (W-05) |
 | Start-menu entry | `A-START-MENU` | seeing it (W-05) |
 | Uninstall leaves nothing | `A-UNINSTALL`, `A-LEFTOVERS`, `B-UNINSTALL`, `B-LEFTOVERS` (no `Mochi*`, `MOCHI.Archive`, `MOCHI.Foreign` key or value, no program for `.mochi`, install folder and shortcuts gone), and `A-INSTALL-KEY` / `B-INSTALL-KEY` (Tauri's install-location key `HKCU\SOFTWARE\The MOCHI Project contributors\MOCHI` is gone; `packaging/nsis/hooks.nsh` removes it on uninstall, not on update). Windows' own traces of the app having run (MuiCache, Start tile cache, compatibility records) are listed and ignored | the same on your notebook, once, at the very end (W-11) |
-| `.mochi` association, every verb registered with its exact command | `A-ASSOC-VERBS`, `B-ASSOC-VERBS` | the menu showing them (W-06) |
-| Each verb starts MOCHI on a path with spaces, accents and `&`; writes nothing | `B-VERB-*` (through `ShellExecute`, as Explorer does) | right-clicking (W-06) |
+| `.mochi` association, the three "MOCHI" submenus and every entry registered with its exact command | `A-ASSOC-VERBS`, `B-ASSOC-VERBS` | the menu showing them (W-06) |
+| Each submenu entry starts MOCHI on a path with spaces, accents and `&`; the quick entries write at once and replace nothing, one archive for three launches | `B-VERB-*` (the entry's registered command with `%1` replaced, as Explorer runs it) | right-clicking (W-06) |
 | Double-click opens MOCHI; a second open reuses the window | `B-DOUBLE-CLICK`, `B-SINGLE-INSTANCE` | W-06 |
 | Opt-in off by default, on with `/ASSOCIATE_FOREIGN`, no default taken; Windows' own `.zip` "Open with" list | `A-FOREIGN-OFF`, `B-FOREIGN-ON`, `B-OPENWITH-ZIP` | the wizard question defaulting to **No**, the menu (W-03, W-07) |
 | Each foreign format opens read-only | `B-FOREIGN-OPEN-*` | passwords, hostile names (W-07) |
@@ -150,20 +150,21 @@ scratch folder. Install the **0.9.0** setup from its published release.
 - **Fail:** a web address (`https://...`), "file not found" or a blank page, an error line "Could not open the user guide", or no button.
 2. Network back on.
 
-### W-06. Explorer verbs (the menu display is yours; the verbs themselves are Automated)
+### W-06. The MOCHI right-click menu (the menu display is yours; the entries themselves are Automated)
 
 Close MOCHI first each time. In the scratch folder:
 
 1. Right-click `Ärchive & ço.mochi` → **Show more options** (or Shift+F10).
-- **Pass:** the classic menu lists **Open with MOCHI**, **Extract here**, **Extract to folder**. (Windows 11's first short menu does not; that is expected, O10.)
-2. **Open with MOCHI** → **Pass:** the window shows the archive (snapshots, folder contents); nothing written next to it.
-3. **Extract here** → **Pass:** the **Extract** plan with an **Extract** button; **no new files** beside the archive.
-4. **Extract to folder** → **Pass:** the plan shows a target folder named for the archive; Explorer shows that folder **empty** (by design); press **Extract** once → "Extracted …" and the files appear.
-5. Right-click `Note é & more.txt` → **Add to MOCHI archive** → **Pass:** the add panel with the file under **Chosen items**.
-6. Select three files (Ctrl+click) → **Add to MOCHI archive** → **Pass:** **one** window with all three under **Chosen items**. **Fail:** two windows or fewer than three.
-7. Right-click the folder `Folder & ü` → **Add to MOCHI archive** → **Pass:** the add panel with the folder.
-8. With MOCHI open, double-click `Second é & copy.mochi` → **Pass:** the **same** window shows it; Task Manager lists **one** MOCHI. **Fail:** a second window.
-9. Throughout: **Pass:** every verb opened the right file despite the spaces, accents and `&`. **Fail:** "could not open", the wrong file, or a name cut at the `&`.
+- **Pass:** the classic menu has one entry **MOCHI** with a **▸**; hovering lists **Open with MOCHI**, **Extract here**, **Extract to a new folder**, **Add to archive**, **Add to archive...** in that order. (Windows 11's first short menu does not show it; that is expected, O10.)
+2. **MOCHI ▸ Open with MOCHI** → **Pass:** the full window shows the archive (snapshots, folder contents); nothing written next to it.
+3. **MOCHI ▸ Extract here** → **Pass:** only a **small** window (not the full program) with a progress bar and then "Extracted … into …", with **Show in folder** and **Close**; the files are next to the archive; no existing file changed. **Fail:** the full window opens, or the small window never ends.
+4. **Extract here** again → **Pass:** the small window says nothing was written because names already exist, and the full window opens on the **Extract** plan; your files are unchanged.
+5. **MOCHI ▸ Extract to a new folder** → **Pass:** a folder named for the archive that did not exist before (if one did, `… (2)`); an existing folder is left alone. **Show in folder** opens it.
+6. Right-click `Note é & more.txt` → **MOCHI ▸ Add to archive** → **Pass:** the small window says "Archive created: Note é & more.mochi" and that it is a local commit (it does not say backed up or safe); the archive is next to the file. Again: `… (2).mochi`, the first untouched.
+7. Select three files (Ctrl+click) → **MOCHI ▸ Add to archive** → **Pass:** **one** small window and **one** archive named for the folder. **Fail:** three archives or three windows.
+8. Right-click the folder `Folder & ü` → **MOCHI ▸ Add to archive...** → **Pass:** the full window with the add panel and the folder under **Chosen items**; nothing written until you press the button.
+9. With MOCHI open, double-click `Second é & copy.mochi` → **Pass:** the **same** window shows it; Task Manager lists **one** MOCHI. **Fail:** a second window.
+10. Throughout: **Pass:** every entry used the right file despite the spaces, accents and `&`. **Fail:** "could not open", the wrong file, or a name cut at the `&`.
 
 ### W-07. Foreign formats (opt-in answered Yes in W-03)
 
@@ -205,7 +206,7 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 | X-4 | Network on. **Check for updates** | *"Version 0.9.1 is available. You are running version 0.9.0."*, **Release notes** with the one test line as **plain text**, buttons **Not now** / **Download and install**. Press **Not now**; still 0.9.0 | markup in the notes, an install starting by itself |
 | X-5 | **Edited signature**, see below | *"The update's signature did not match, so it was refused. Nothing was installed."*; stays 0.9.0 | the installer starts, the version changes, any success text |
 | X-6 | Restore the real `latest.json`. **Check for updates → Download and install** | a progress readout, **MOCHI closes**, the installer's small progress bar runs (no questions), the **new version starts** (else open it from Start). Settings → Updates: *"You are running version 0.9.1."*; Settings → Apps: **0.9.1** | the app vanishes and nothing returns, an error box, still 0.9.0 |
-| X-7 | After the update: right-click `Zip & ç.zip` → Open with; a `.mochi` verb; double-click a `.mochi` | all of W-06/W-07 still there; MOCHI **still offered** for ZIP (an update keeps the opt-in); association intact | the opt-in or a verb vanished |
+| X-7 | After the update: right-click `Zip & ç.zip` → Open with; the MOCHI submenu on a `.mochi`; double-click a `.mochi` | all of W-06/W-07 still there (the submenu once, no leftover flat "Extract here" entries of 0.1.0); MOCHI **still offered** for ZIP (an update keeps the opt-in); association intact | the opt-in or a verb vanished |
 
 **X-5, the edited `.sig`.** The signature inside `latest.json` is the same text as the installer's `.sig`.
 1. On the **0.9.1** release page download `latest.json`, open it in a text editor, change **one letter in the middle** of the long `"signature"` text for `windows-x86_64…`, save as `latest.json`.
