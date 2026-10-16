@@ -75,11 +75,15 @@ function backend(plans: (ExtractPlan | null | { error: { code: string; message: 
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push({ cmd, args: a });
     switch (cmd) {
+      case "plan_extract_default":
       case "plan_extract": {
         const p = plans[Math.min(index++, plans.length - 1)] ?? null;
         if (p !== null && "error" in p) throw p.error;
         return p;
       }
+      case "discard_extract_folder":
+      case "show_in_folder":
+        return null;
       case "start_job":
         channel = a.onEvent as Channel<JobEvent>;
         return 7;
@@ -98,6 +102,8 @@ function backend(plans: (ExtractPlan | null | { error: { code: string; message: 
       act(() => internals().runCallback(id, { index: i, message: m }));
     },
     planCalls: () => calls.filter((c) => c.cmd === "plan_extract").map((c) => c.args),
+    defaultCalls: () => calls.filter((c) => c.cmd === "plan_extract_default").map((c) => c.args),
+    cmds: () => calls.map((c) => c.cmd),
     request: () => calls.find((c) => c.cmd === "start_job")?.args.request,
   };
 }
@@ -123,15 +129,17 @@ test("nothing can be extracted without an archive; a selection is needed for 'se
   expect(screen.getByTestId("extract-selected")).toBeEnabled();
 });
 
-test("extract all: Rust shows the folder dialog, the plan is shown, and the job names no path", async () => {
+test("extract all: a new folder next to the archive, no dialog, the plan is shown, and the job names no path", async () => {
   const user = userEvent.setup();
   const b = backend([plan()]);
   renderExtractor();
   await user.click(screen.getByTestId("extract-all"));
   const panel = await screen.findByTestId("extract-panel");
-  expect(b.planCalls()).toEqual([{ handle: 3, seq: 1, keys: [], pick: true }]);
+  expect(b.defaultCalls()).toEqual([{ handle: 3, seq: 1, keys: [] }]);
+  expect(b.planCalls()).toEqual([]);
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/out");
-  expect(screen.getByTestId("extract-scope")).toHaveTextContent("The whole of commit 1 (5 entries)");
+  expect(screen.getByTestId("extract-new-folder-note")).toHaveTextContent("A new folder was made");
+  expect(screen.getByTestId("extract-scope")).toHaveTextContent("Everything in version 1 (5 entries)");
   expect(panel).toHaveTextContent("Extract into a folder only you can modify.");
   expect(screen.getByTestId("extract-no-conflicts")).toBeInTheDocument();
   expect(screen.queryByTestId("extract-conflicts")).toBeNull();
@@ -154,22 +162,25 @@ test("extract selected sends the selected entry's key and says the folders above
   renderExtractor({ selected: SELECTED });
   await user.click(screen.getByTestId("extract-selected"));
   await screen.findByTestId("extract-panel");
-  expect(b.planCalls()).toEqual([{ handle: 3, seq: 1, keys: ["6162"], pick: true }]);
-  expect(screen.getByTestId("extract-scope")).toHaveTextContent("docs from commit 1 (3 entries)");
+  expect(b.defaultCalls()).toEqual([{ handle: 3, seq: 1, keys: ["6162"] }]);
+  expect(screen.getByTestId("extract-scope")).toHaveTextContent("docs from version 1 (3 entries)");
   expect(screen.getByTestId("extract-panel")).toHaveTextContent("folders above a selected entry are created too");
   await user.click(screen.getByTestId("extract-confirm"));
   await screen.findByTestId("extract-running");
   expect(b.request()).toMatchObject({ keys: ["6162"], on_conflict: "stop" });
 });
 
-test("cancelling the folder dialog shows nothing and starts nothing", async () => {
+test("cancelling the folder dialog (Choose a different folder) keeps the plan and starts nothing", async () => {
   const user = userEvent.setup();
-  const b = backend([null]);
+  const b = backend([plan(), null]);
   renderExtractor();
   await user.click(screen.getByTestId("extract-all"));
+  await screen.findByTestId("extract-panel");
+  await user.click(screen.getByTestId("extract-change-folder"));
   await act(async () => undefined);
-  expect(screen.queryByTestId("extract-panel")).toBeNull();
-  expect(b.calls.map((c) => c.cmd)).toEqual(["plan_extract"]);
+  expect(screen.getByTestId("extract-panel")).toBeInTheDocument();
+  expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/out");
+  expect(b.cmds()).toEqual(["plan_extract_default", "plan_extract"]);
 });
 
 test("a folder the engine refuses shows the error and no panel", async () => {
@@ -234,18 +245,49 @@ test("choose a different folder asks Rust to pick again; check again re-plans th
 
   await user.click(screen.getByTestId("extract-change-folder"));
   await screen.findByTestId("extract-no-conflicts");
+  // A folder the user picked is not "a new folder made for this".
+  expect(screen.queryByTestId("extract-new-folder-note")).toBeNull();
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/other");
   expect(screen.getByTestId("extract-confirm")).toHaveTextContent(/^Extract$/);
 
   await user.click(screen.getByTestId("extract-recheck"));
   await act(async () => undefined);
-  expect(b.planCalls().map((c) => c.pick)).toEqual([true, true, false]);
+  expect(b.defaultCalls()).toHaveLength(1);
+  expect(b.planCalls().map((c) => c.pick)).toEqual([true, false]);
   // The same selection each time.
-  expect(b.planCalls().map((c) => c.keys)).toEqual([["6162"], ["6162"], ["6162"]]);
+  expect(b.planCalls().map((c) => c.keys)).toEqual([["6162"], ["6162"]]);
 
   await user.click(screen.getByTestId("extract-close"));
   expect(screen.queryByTestId("extract-panel")).toBeNull();
   expect(b.calls.map((c) => c.cmd)).not.toContain("start_job");
+  // The folder was picked by the user, so there is no made folder to tidy up.
+  expect(b.cmds()).not.toContain("discard_extract_folder");
+});
+
+test("closing the plan of a new folder asks Rust to remove it if it is still empty", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await screen.findByTestId("extract-panel");
+  await user.click(screen.getByTestId("extract-close"));
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(b.cmds().at(-1)).toBe("discard_extract_folder");
+});
+
+test("a finished extraction offers Show in folder, which names no path", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  expect(screen.queryByTestId("extract-show-folder")).toBeNull();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({ event: "finished", job_id: 7, outcome: { status: "completed", summary: "s", extract: report() } });
+  await user.click(screen.getByTestId("extract-show-folder"));
+  const shown = b.calls.find((c) => c.cmd === "show_in_folder");
+  expect(shown?.args).toEqual({ what: { kind: "extract_destination" } });
 });
 
 test("progress and cancel: the job is cancelled by id, and the result says what stays", async () => {
@@ -349,7 +391,7 @@ test("a clean extraction is plain text: no success styling, no backed-up, safe, 
   b.job({ event: "started", job_id: 7 });
   b.job({ event: "finished", job_id: 7, outcome: { status: "completed", summary: "s", extract: report() } });
   expect(screen.getByTestId("extract-headline")).toHaveTextContent(
-    "Extracted 3 files (100 bytes) and 1 folder from commit 1 to /home/me/out.",
+    "Extracted 3 files (100 bytes) and 1 folder from version 1 to /home/me/out.",
   );
   expect(screen.getByTestId("extract-status")).toHaveAttribute("data-complete", "true");
   // The plan is stale once what it described has been written.
@@ -382,7 +424,7 @@ test("a failed job shows its code and that nothing was written; a job that canno
 test("a start that is refused shows the error and leaves the panel usable", async () => {
   const user = userEvent.setup();
   mockIPC((cmd) => {
-    if (cmd === "plan_extract") return plan();
+    if (cmd === "plan_extract_default") return plan();
     if (cmd === "start_job") throw { code: "INVALID_ARGUMENT", message: "choose the folder to extract into first" };
     throw new Error(cmd);
   });
@@ -413,8 +455,10 @@ test("the browser shows the extract buttons and 'selected' follows the details p
     switch (cmd) {
       case "watch_drops":
         return null;
+      case "recent_archives":
+        return [];
       case "staged_sources":
-        return { items: [], destination: null };
+        return { items: [], destination: null, default_destination: null };
       case "open_archive":
         return { status: "opened", archive: summary() };
       case "open_snapshot":
@@ -449,7 +493,8 @@ test("the browser shows the extract buttons and 'selected' follows the details p
   });
   const user = userEvent.setup();
   render(<Browser />);
-  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  // No archive, no Extract section: the start screen offers it instead.
+  expect(screen.queryByTestId("extract-all")).toBeNull();
   await user.click(screen.getByTestId("open-archive"));
   await screen.findByTestId("archive-meta");
   expect(screen.getByTestId("extract-all")).toBeEnabled();

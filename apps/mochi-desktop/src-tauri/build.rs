@@ -50,6 +50,13 @@ fn main() {
         "export_crash_log",
         "clear_crash_log",
         "open_user_guide",
+        "plan_extract_default",
+        "discard_extract_folder",
+        "recent_archives",
+        "forget_recent_archives",
+        "open_recent",
+        "open_dropped_archive",
+        "show_in_folder",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

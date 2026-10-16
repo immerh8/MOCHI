@@ -10,6 +10,7 @@ import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { IpcError, JobEvent, JobRequest } from "../ipc/jobs";
+import { showInFolder } from "../ipc/start";
 import {
   chooseDestination,
   clearStaged,
@@ -53,6 +54,18 @@ export interface WriterProps {
    * could not be reopened.
    */
   onCommitted: (archive: ArchiveSummary | null) => void;
+  /**
+   * Whether to show the buttons that start a create, add, or remove. The
+   * start screen starts a create itself (`createRequest`), so it hides them
+   * while no archive is open.
+   */
+  showToolbar?: boolean;
+  /** Changes when the start screen asks for a new archive. */
+  createRequest?: number;
+  /** Told when the create panel opens or closes (the start screen steps aside). */
+  onCreating?: (creating: boolean) => void;
+  /** A single `.mochi` file was dropped on the window; Rust holds it. */
+  onArchiveDropped?: () => void;
 }
 
 type Mode = "closed" | "create" | "add" | "remove";
@@ -68,10 +81,10 @@ type JobView =
       total: number | null;
       cancelRequested: boolean;
     }
-  | { state: "done"; lines: string[]; committed: boolean }
+  | { state: "done"; lines: string[]; committed: boolean; archive: ArchiveSummary | null }
   | { state: "error"; text: string };
 
-const EMPTY: StagedView = { items: [], destination: null };
+const EMPTY: StagedView = { items: [], destination: null, default_destination: null };
 
 function kindLabel(kind: "file" | "folder" | "other"): string {
   return t(kind === "folder" ? "write.kindFolder" : kind === "file" ? "write.kindFile" : "write.kindOther");
@@ -83,7 +96,16 @@ function kindLabel(kind: "file" | "folder" | "other"): string {
  * by Rust or from files dropped on the window (Rust receives them), and the
  * jobs run in Rust over the shared job channel.
  */
-export function Writer({ archive, viewingHead, selected, onCommitted }: WriterProps) {
+export function Writer({
+  archive,
+  viewingHead,
+  selected,
+  onCommitted,
+  showToolbar = true,
+  createRequest = 0,
+  onCreating,
+  onArchiveDropped,
+}: WriterProps) {
   const [mode, setMode] = useState<Mode>("closed");
   const [staged, setStaged] = useState<StagedView>(EMPTY);
   const [problems, setProblems] = useState<IpcError[]>([]);
@@ -109,8 +131,10 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
   });
   const operationRef = useRef<Operation>("add");
   const onCommittedRef = useRef(onCommitted);
+  const onArchiveDroppedRef = useRef(onArchiveDropped);
   useEffect(() => {
     onCommittedRef.current = onCommitted;
+    onArchiveDroppedRef.current = onArchiveDropped;
   });
 
   useEffect(() => {
@@ -118,6 +142,10 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
     watchDrops((event) => {
       if (event.event === "hover") {
         setDragging(event.active);
+        return;
+      }
+      if (event.event === "archive") {
+        onArchiveDroppedRef.current?.();
         return;
       }
       setStaged(event.staged);
@@ -153,6 +181,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
             state: "done",
             lines: outcomeLines(operationRef.current, o),
             committed: o.status === "completed" && o.commit !== undefined,
+            archive: o.status === "completed" ? (o.commit?.archive ?? null) : null,
           };
         }
       }
@@ -207,6 +236,22 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
     setMode(to);
   };
 
+  // The start screen asked for a new archive: open the panel, from the
+  // request itself rather than from an effect.
+  const [seenRequest, setSeenRequest] = useState(createRequest);
+  if (seenRequest !== createRequest) {
+    setSeenRequest(createRequest);
+    open("create");
+  }
+
+  const onCreatingRef = useRef(onCreating);
+  useEffect(() => {
+    onCreatingRef.current = onCreating;
+  });
+  useEffect(() => {
+    onCreatingRef.current?.(mode === "create");
+  }, [mode]);
+
   const close = () => {
     setMode("closed");
     setProblems([]);
@@ -233,22 +278,51 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
       }
       passphrase = first;
     }
+    const go = () => {
+      run("create", {
+        kind: "create_archive",
+        preset,
+        tar_compatible: tar,
+        ...(passphrase === undefined ? {} : { passphrase }),
+        ...(recovery === null ? {} : { recovery_percent: recovery }),
+      });
+      // Rust holds it now; the page does not.
+      if (passRef.current) passRef.current.value = "";
+      if (againRef.current) againRef.current.value = "";
+    };
+    // With a place already chosen or defaulted (next to the first item,
+    // never over an existing file) there is no dialog: one click creates.
+    if (staged.destination !== null || staged.default_destination !== null) {
+      go();
+      return;
+    }
     chooseDestination().then(
       (view) => {
         if (view === null) return; // the user cancelled the dialog
         setStaged(view);
-        run("create", {
-          kind: "create_archive",
-          preset,
-          tar_compatible: tar,
-          ...(passphrase === undefined ? {} : { passphrase }),
-          ...(recovery === null ? {} : { recovery_percent: recovery }),
-        });
-        // Rust holds it now; the page does not.
-        if (passRef.current) passRef.current.value = "";
-        if (againRef.current) againRef.current.value = "";
+        go();
       },
       (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)),
+    );
+  };
+
+  /** Let the user pick a different place (the dialog starts at the default). */
+  const changeDestination = () => {
+    setError(null);
+    chooseDestination().then(
+      (view) => {
+        if (view !== null) setStaged(view);
+      },
+      (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)),
+    );
+  };
+
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const showFolder = (handle: number) => {
+    setFolderError(null);
+    showInFolder({ kind: "archive", handle }).then(
+      () => undefined,
+      (e: unknown) => setFolderError(errorText(t("start.showInFolderFailed"), e)),
     );
   };
 
@@ -311,7 +385,7 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
 
   return (
     <section aria-labelledby="write-heading" className="writer" data-testid="writer">
-      <h2 id="write-heading" tabIndex={-1}>
+      <h2 id="write-heading" tabIndex={-1} className={showToolbar ? undefined : "sr-only"}>
         {t("write.heading")}
       </h2>
       {dragging && (
@@ -319,37 +393,39 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
           {t("write.dropOverlay")}
         </p>
       )}
-      <div className="actions">
-        <button type="button" data-testid="new-archive" onClick={() => open("create")} disabled={busy}>
-          {t("write.new")}
-        </button>
-        <button
-          type="button"
-          data-testid="add-to-archive"
-          onClick={() => open("add")}
-          disabled={busy || !canAdd}
-          title={canAdd ? undefined : t("write.openFirst")}
-        >
-          {t("write.add")}
-        </button>
-        <button
-          type="button"
-          data-testid="remove-entry"
-          onClick={() => open("remove")}
-          disabled={busy || !canRemove}
-          title={
-            !archive
-              ? t("write.openFirst")
-              : !viewingHead
-                ? t("write.onlyLatest")
-                : selected
-                  ? undefined
-                  : t("write.selectFirst")
-          }
-        >
-          {t("write.remove")}
-        </button>
-      </div>
+      {showToolbar && (
+        <div className="actions">
+          <button type="button" data-testid="new-archive" onClick={() => open("create")} disabled={busy}>
+            {t("write.new")}
+          </button>
+          <button
+            type="button"
+            data-testid="add-to-archive"
+            onClick={() => open("add")}
+            disabled={busy || !canAdd}
+            title={canAdd ? undefined : t("write.openFirst")}
+          >
+            {t("write.add")}
+          </button>
+          <button
+            type="button"
+            data-testid="remove-entry"
+            onClick={() => open("remove")}
+            disabled={busy || !canRemove}
+            title={
+              !archive
+                ? t("write.openFirst")
+                : !viewingHead
+                  ? t("write.onlyLatest")
+                  : selected
+                    ? undefined
+                    : t("write.selectFirst")
+            }
+          >
+            {t("write.remove")}
+          </button>
+        </div>
+      )}
       {error && (
         <p role="alert" className="error" data-testid="write-error">
           {error}
@@ -363,128 +439,160 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
           testId="write-panel"
           fallbackId="write-heading"
         >
-          {stagedList}
-          <fieldset disabled={busy}>
-            <legend>{t("write.compression")}</legend>
-            {PRESETS.map((p) => (
-              <label key={p.id}>
-                <input
-                  type="radio"
-                  name="preset"
-                  data-testid={`preset-${p.id}`}
-                  checked={preset === p.id}
-                  onChange={() => setPreset(p.id)}
-                />{" "}
-                {p.label()} <span className="meta">({p.hint()})</span>
-              </label>
-            ))}
-          </fieldset>
-          <fieldset disabled={busy}>
-            <legend>{t("write.compatibility")}</legend>
-            <label>
-              <input
-                type="checkbox"
-                data-testid="tar-compatible"
-                checked={tar}
-                disabled={encrypt}
-                onChange={(e) => setTar(e.target.checked)}
-              />{" "}
-              {t("write.tarCompatible")}
-            </label>
-            <ul className="note" data-testid="tar-notes">
-              {TAR_NOTES.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-          </fieldset>
-          <fieldset disabled={busy}>
-            <legend>{t("write.encryption")}</legend>
-            <label>
-              <input
-                type="checkbox"
-                data-testid="encrypt"
-                checked={encrypt}
-                disabled={tar}
-                onChange={(e) => {
-                  setEncrypt(e.target.checked);
-                  if (e.target.checked) setTar(false);
-                }}
-              />{" "}
-              {t("write.encrypt")}
-            </label>
-            {tar && <p className="note">{NO_GENERIC_TOOLS}</p>}
-            {encrypt && (
-              <div data-testid="encrypt-panel">
-                <label>
-                  {t("write.passphrase")}{" "}
-                  <input
-                    ref={passRef}
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    data-testid="create-passphrase"
-                  />
-                </label>
-                <label>
-                  {t("write.repeat")}{" "}
-                  <input
-                    ref={againRef}
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    data-testid="create-passphrase-again"
-                  />
-                </label>
-                <EncryptionNotes creating />
-                <p className="note">{HIDDEN_WITH_KEY}</p>
-                <p className="note">{t("write.visibleIntro")}</p>
-                <ul className="note" data-testid="visible-without-key">
-                  {VISIBLE_WITHOUT_KEY.map((v) => (
-                    <li key={v}>{v}</li>
-                  ))}
-                </ul>
-                <p className="note">{t("write.fixedAtCreation")}</p>
-              </div>
+          <section aria-labelledby="create-step-1" className="step" data-testid="create-step-files">
+            <h4 id="create-step-1">{t("write.step1")}</h4>
+            {stagedList}
+          </section>
+          <section aria-labelledby="create-step-2" className="step" data-testid="create-step-where">
+            <h4 id="create-step-2">{t("write.step2")}</h4>
+            {staged.destination !== null ? (
+              <p data-testid="save-location">{t("write.savedAs", { name: staged.destination })}</p>
+            ) : staged.default_destination !== null ? (
+              <>
+                <p data-testid="save-location">{staged.default_destination}</p>
+                <p className="note">{t("write.saveNote")}</p>
+              </>
+            ) : (
+              <p className="note" data-testid="save-location">
+                {t("write.saveUnknown")}
+              </p>
             )}
-          </fieldset>
-          <fieldset disabled={busy}>
-            <legend>{t("write.recoveryRecord")}</legend>
-            <label>
-              <input
-                type="radio"
-                name="recovery"
-                data-testid="recovery-none"
-                checked={recovery === null}
-                onChange={() => setRecovery(null)}
-              />{" "}
-              {t("write.recoveryNone")}
-            </label>
-            {RECOVERY_CHOICES.map((p) => (
-              <label key={p}>
+            <div className="actions">
+              <button
+                type="button"
+                data-testid="change-destination"
+                onClick={changeDestination}
+                disabled={busy || staged.items.length === 0}
+              >
+                {t("write.change")}
+              </button>
+            </div>
+          </section>
+          <details className="options" data-testid="create-options">
+            <summary>{t("write.options")}</summary>
+            <fieldset disabled={busy}>
+              <legend>{t("write.compression")}</legend>
+              {PRESETS.map((p) => (
+                <label key={p.id}>
+                  <input
+                    type="radio"
+                    name="preset"
+                    data-testid={`preset-${p.id}`}
+                    checked={preset === p.id}
+                    onChange={() => setPreset(p.id)}
+                  />{" "}
+                  {p.label()} <span className="meta">({p.hint()})</span>
+                </label>
+              ))}
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>{t("write.encryption")}</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  data-testid="encrypt"
+                  checked={encrypt}
+                  disabled={tar}
+                  onChange={(e) => {
+                    setEncrypt(e.target.checked);
+                    if (e.target.checked) setTar(false);
+                  }}
+                />{" "}
+                {t("write.encrypt")}
+              </label>
+              {tar && <p className="note">{NO_GENERIC_TOOLS}</p>}
+              {encrypt && (
+                <div data-testid="encrypt-panel">
+                  <label>
+                    {t("write.passphrase")}{" "}
+                    <input
+                      ref={passRef}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      data-testid="create-passphrase"
+                    />
+                  </label>
+                  <label>
+                    {t("write.repeat")}{" "}
+                    <input
+                      ref={againRef}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      data-testid="create-passphrase-again"
+                    />
+                  </label>
+                  <EncryptionNotes creating />
+                  <p className="note">{HIDDEN_WITH_KEY}</p>
+                  <p className="note">{t("write.visibleIntro")}</p>
+                  <ul className="note" data-testid="visible-without-key">
+                    {VISIBLE_WITHOUT_KEY.map((v) => (
+                      <li key={v}>{v}</li>
+                    ))}
+                  </ul>
+                  <p className="note">{t("write.fixedAtCreation")}</p>
+                </div>
+              )}
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>{t("write.recoveryRecord")}</legend>
+              <label>
                 <input
                   type="radio"
                   name="recovery"
-                  data-testid={`recovery-${p}`}
-                  checked={recovery === p}
-                  onChange={() => setRecovery(p)}
+                  data-testid="recovery-none"
+                  checked={recovery === null}
+                  onChange={() => setRecovery(null)}
                 />{" "}
-                {recoveryLabel(p)}
+                {t("write.recoveryNone")}
               </label>
-            ))}
-            <ul className="note" data-testid="recovery-notes">
-              {RECOVERY_NOTES.map((n) => (
-                <li key={n}>{n}</li>
+              {RECOVERY_CHOICES.map((p) => (
+                <label key={p}>
+                  <input
+                    type="radio"
+                    name="recovery"
+                    data-testid={`recovery-${p}`}
+                    checked={recovery === p}
+                    onChange={() => setRecovery(p)}
+                  />{" "}
+                  {recoveryLabel(p)}
+                </label>
               ))}
-            </ul>
-          </fieldset>
+              <ul className="note" data-testid="recovery-notes">
+                {RECOVERY_NOTES.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>{t("write.compatibility")}</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  data-testid="tar-compatible"
+                  checked={tar}
+                  disabled={encrypt}
+                  onChange={(e) => setTar(e.target.checked)}
+                />{" "}
+                {t("write.tarCompatible")}
+              </label>
+              <ul className="note" data-testid="tar-notes">
+                {TAR_NOTES.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </fieldset>
+          </details>
           <div className="actions">
             <button
               type="button"
+              className="big primary"
               data-testid="create-confirm"
               onClick={create}
               disabled={busy || staged.items.length === 0}
             >
-              {t("write.createConfirm")}
+              <span className="big-title">{t("write.createConfirm")}</span>
             </button>
             <button type="button" data-testid="write-close" onClick={close} disabled={busy}>
               {t("write.close")}
@@ -579,6 +687,22 @@ export function Writer({ archive, viewingHead, selected, onCommitted }: WriterPr
       <Live data-testid="write-status" data-committed={job.state === "done" ? job.committed : undefined}>
         {job.state === "done" && job.lines.map((l) => <p key={l}>{l}</p>)}
       </Live>
+      {job.state === "done" && job.archive !== null && (
+        <div className="actions">
+          <button
+            type="button"
+            data-testid="write-show-folder"
+            onClick={() => job.archive && showFolder(job.archive.handle)}
+          >
+            {t("start.showInFolder")}
+          </button>
+        </div>
+      )}
+      {folderError && (
+        <p role="alert" className="error" data-testid="write-folder-error">
+          {folderError}
+        </p>
+      )}
     </section>
   );
 }

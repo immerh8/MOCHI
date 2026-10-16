@@ -71,6 +71,8 @@ if (!existsSync(path.join(guideDir, "index.html"))) {
 }
 process.env.MOCHI_E2E_GUIDE_DIR = guideDir;
 process.env.MOCHI_E2E_OPEN_LOG = path.join(os.tmpdir(), "mochi-e2e-opened.txt");
+// "Show in folder" records the folder it was asked to show here (src/help.rs `open_folder`).
+process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt");
 
 let tauriDriver;
 
@@ -96,6 +98,7 @@ export const config = {
     // No pick left over from an earlier run.
     writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
     writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
+    writeFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "");
     // On PATH after `cargo install tauri-driver` (~/.cargo/bin).
     const bin = process.env.TAURI_DRIVER ?? "tauri-driver";
     tauriDriver = spawn(bin, driverArgs, { stdio: [null, process.stdout, process.stderr] });
@@ -105,6 +108,16 @@ export const config = {
     });
     // Give the driver a moment to listen before the first session.
     return new Promise((resolve) => setTimeout(resolve, 1500));
+  },
+  // The tools below "Advanced" are a closed disclosure on a fresh window (D10).
+  // Specs that are about those tools just need them open; the specs about the
+  // start screen and about keyboard use open it themselves, as a person would.
+  beforeTest: async (test) => {
+    if (/(start|a11y)\.e2e\.js$/.test(test.file ?? "")) return;
+    await browser.execute(() => {
+      const advanced = document.querySelector('details[data-testid="advanced"]');
+      if (advanced) advanced.open = true;
+    });
   },
   onComplete: () => {
     tauriDriver?.kill();

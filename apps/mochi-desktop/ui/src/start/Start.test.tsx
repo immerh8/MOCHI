@@ -1,0 +1,271 @@
+import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { Channel } from "@tauri-apps/api/core";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { afterEach, expect, test } from "vitest";
+
+import { App } from "../App";
+import type { ArchiveSummary } from "../ipc/browse";
+import type { DropEvent } from "../ipc/write";
+import type { RecentView } from "../ipc/start";
+
+type Internals = { runCallback: (id: number, data: unknown) => void };
+const internals = () =>
+  (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+
+const HOSTILE = '<img src=x onerror="alert(1)">.mochi';
+
+function summary(handle = 4, name = "photos.mochi"): ArchiveSummary {
+  return {
+    handle,
+    file_name: name,
+    archive_id: "ab".repeat(16),
+    profile: { tar_compatible: false, encrypted: false, redundancy_percent: null },
+    commits: [0].map((seq) => ({
+      seq,
+      commit_id: "0".repeat(64),
+      time: null,
+      checkpoint: true,
+      retained: true,
+      expired: false,
+      holds: [],
+    })),
+    retention_error: null,
+  };
+}
+
+function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  let dropChannel: Channel<DropEvent> | undefined;
+  let dropIndex = 0;
+  let recents = opts.recents ?? [];
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    switch (cmd) {
+      case "staged_sources":
+        return { items: [], destination: null, default_destination: null };
+      case "watch_drops":
+        dropChannel = a.onDrop as Channel<DropEvent>;
+        return null;
+      case "watch_launches":
+      case "get_crash_settings":
+        return cmd === "get_crash_settings"
+          ? { enabled: false, include_details: false, entries: 0, bytes: 0 }
+          : null;
+      case "recent_archives":
+        return recents;
+      case "get_update_settings":
+        return {
+          check_on_start: false,
+          current_version: "0.1.0",
+          install_mode: "manual",
+          download_page: "https://github.com/immerh8/MOCHI/releases/latest",
+          needs_admin_prompt: false,
+        };
+    }
+    calls.push({ cmd, args: a });
+    switch (cmd) {
+      case "forget_recent_archives":
+        recents = [];
+        return null;
+      case "open_archive":
+      case "open_recent":
+      case "open_dropped_archive":
+        return opts.open ? opts.open() : { status: "opened", archive: summary() };
+      case "open_snapshot":
+        return { seq: 0, commit_id: "c".repeat(64), entries: 0, root_dirs: 0, root_files: 0, catalog_source: { source: "image" } };
+      case "list_children":
+        return { total: 0, offset: 0, entries: [] };
+      case "plan_extract_default":
+        return { destination: "/home/me/photos", entries: 3, conflicts: [], conflicts_total: 0, case_insensitive: false };
+      case "close_archive":
+        return true;
+    }
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  return {
+    calls,
+    cmds: () => calls.map((c) => c.cmd),
+    drop: (message: DropEvent) => {
+      if (!dropChannel) throw new Error("no drop channel yet");
+      const id = dropChannel.id;
+      act(() => internals().runCallback(id, { index: dropIndex++, message }));
+    },
+  };
+}
+
+afterEach(() => clearMocks());
+
+test("with no archive open, three plain actions and one quiet sentence are on screen", async () => {
+  backend();
+  render(<App />);
+  const start = await screen.findByTestId("start-screen");
+  expect(screen.getByRole("heading", { level: 2, name: "What would you like to do?" })).toBeInTheDocument();
+  for (const name of ["Create archive", "Open archive", "Extract archive"]) {
+    expect(within(start).getByRole("button", { name: new RegExp(`^${name}`) })).toBeEnabled();
+  }
+  // The honest limit is stated once, quietly, and does not use success wording.
+  expect(screen.getByTestId("start-note")).toHaveTextContent("not a second copy of them");
+  const text = (start.textContent ?? "").toLowerCase();
+  for (const banned of ["backed up", "backup", "safe", "preserved", "secure"]) {
+    expect(text).not.toContain(banned);
+  }
+  // Technical words are not on the first screen.
+  for (const jargon of ["snapshot", "commit", "hash", "verification", "retention", "compaction"]) {
+    expect(text).not.toContain(jargon);
+  }
+  // No recent list when there is nothing recent.
+  expect(screen.queryByTestId("recent")).toBeNull();
+});
+
+test("the tools are behind a collapsed Advanced disclosure, still in the page for keyboard users", async () => {
+  backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  const advanced = screen.getByTestId("advanced");
+  expect(advanced).not.toHaveAttribute("open");
+  expect(within(advanced).getByText(/^Advanced:/)).toBeInTheDocument();
+  for (const id of ["search-heading", "rekey-heading", "check-heading", "foreign-heading", "self-test-heading", "settings-heading"]) {
+    expect(advanced.querySelector(`#${id}`), id).not.toBeNull();
+  }
+  // Create and Extract are not hidden in there.
+  expect(advanced.querySelector('[data-testid="start-create"]')).toBeNull();
+});
+
+test("Open archive shows the archive and replaces the start screen", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<App />);
+  await user.click(await screen.findByTestId("open-archive"));
+  await screen.findByTestId("archive-meta");
+  expect(screen.queryByTestId("start-screen")).toBeNull();
+  expect(b.cmds().slice(0, 2)).toEqual(["open_archive", "open_snapshot"]);
+  expect(screen.getByTestId("archive-meta")).toHaveTextContent("photos.mochi · 1 version");
+  // The archive's own actions: extract everything, extract a selection, add, remove.
+  expect(screen.getByTestId("extract-all")).toBeEnabled();
+  expect(screen.getByTestId("add-to-archive")).toBeEnabled();
+});
+
+test("Extract archive: pick an archive, then a plan into a new folder next to it, with no dialog for the folder", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<App />);
+  await user.click(await screen.findByTestId("start-extract"));
+  const panel = await screen.findByTestId("extract-panel");
+  expect(b.cmds().slice(0, 2)).toEqual(["open_archive", "open_snapshot"]);
+  const plan = b.calls.find((c) => c.cmd === "plan_extract_default");
+  expect(plan?.args).toEqual({ handle: 4, seq: 0, keys: [] });
+  expect(b.cmds()).not.toContain("plan_extract");
+  expect(within(panel).getByTestId("extract-destination")).toHaveTextContent("/home/me/photos");
+  expect(within(panel).getByTestId("extract-new-folder-note")).toBeInTheDocument();
+  expect(within(panel).getByTestId("extract-confirm")).toHaveTextContent("Extract");
+  // Nothing is extracted until the user confirms.
+  expect(b.cmds()).not.toContain("start_job");
+});
+
+test("a cancelled Extract archive dialog leaves the start screen as it was", async () => {
+  const user = userEvent.setup();
+  backend({ open: () => null });
+  render(<App />);
+  await user.click(await screen.findByTestId("start-extract"));
+  expect(screen.getByTestId("start-screen")).toBeInTheDocument();
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(screen.getByTestId("start-extract")).toBeEnabled();
+});
+
+test("Create archive opens the guided panel, the start screen steps aside, and Cancel brings it back", async () => {
+  const user = userEvent.setup();
+  backend();
+  render(<App />);
+  await user.click(await screen.findByTestId("start-create"));
+  const panel = await screen.findByRole("group", { name: "Create a new archive" });
+  expect(screen.queryByTestId("start-screen")).toBeNull();
+  expect(panel.contains(document.activeElement)).toBe(true);
+  expect(within(panel).getByTestId("create-step-files")).toBeInTheDocument();
+  expect(within(panel).getByTestId("create-step-where")).toBeInTheDocument();
+  // Options are collapsed, and Create is disabled until something is chosen.
+  expect(within(panel).getByTestId("create-options")).not.toHaveAttribute("open");
+  expect(within(panel).getByTestId("create-confirm")).toBeDisabled();
+  await user.click(within(panel).getByTestId("write-close"));
+  expect(await screen.findByTestId("start-screen")).toBeInTheDocument();
+  expect(document.activeElement).toBe(screen.getByTestId("start-create"));
+});
+
+test("dropping files with nothing open goes to the create panel", async () => {
+  const b = backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  b.drop({
+    event: "dropped",
+    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: "/home/me/x.mochi" },
+    problems: [],
+  });
+  const panel = await screen.findByRole("group", { name: "Create a new archive" });
+  expect(within(panel).getByTestId("staged-item")).toHaveTextContent(HOSTILE);
+  expect(within(panel).getByTestId("save-location")).toHaveTextContent("/home/me/x.mochi");
+  expect(panel.querySelector("img")).toBeNull();
+});
+
+test("dropping one .mochi file opens it, by asking Rust: the page names no path", async () => {
+  const b = backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  b.drop({ event: "archive", name: "photos.mochi" });
+  await screen.findByTestId("archive-meta");
+  expect(b.calls.find((c) => c.cmd === "open_dropped_archive")?.args).toEqual({});
+  expect(screen.queryByTestId("start-screen")).toBeNull();
+});
+
+test("recent archives are shown by name, as text, and opened by position", async () => {
+  const user = userEvent.setup();
+  const recents: RecentView[] = [
+    { index: 0, name: HOSTILE, folder: "/home/me/<b>docs</b>" },
+    { index: 1, name: "older.mochi", folder: "/home/me" },
+  ];
+  const b = backend({ recents });
+  const { container } = render(<App />);
+  const list = await screen.findByTestId("recent");
+  expect(within(list).getAllByTestId("recent-open")).toHaveLength(2);
+  expect(list).toHaveTextContent(HOSTILE);
+  expect(container.querySelector("img, b")).toBeNull();
+
+  await user.click(within(list).getAllByTestId("recent-open")[1] as HTMLElement);
+  await screen.findByTestId("archive-meta");
+  expect(b.calls.find((c) => c.cmd === "open_recent")?.args).toEqual({ index: 1 });
+});
+
+test("the recent list can be cleared", async () => {
+  const user = userEvent.setup();
+  const b = backend({ recents: [{ index: 0, name: "a.mochi", folder: "/x" }] });
+  render(<App />);
+  await user.click(await screen.findByTestId("recent-forget"));
+  await screen.findByTestId("start-screen");
+  expect(b.cmds()).toContain("forget_recent_archives");
+  await act(async () => undefined);
+  expect(screen.queryByTestId("recent")).toBeNull();
+});
+
+test("the start screen is operable by keyboard alone", async () => {
+  const user = userEvent.setup();
+  backend();
+  render(<App />);
+  const create = await screen.findByTestId("start-create");
+  create.focus();
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByTestId("open-archive"));
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByTestId("start-extract"));
+  await user.keyboard("{Enter}");
+  await screen.findByTestId("extract-panel");
+});
+
+test("an encrypted archive opened for extraction asks for its passphrase first", async () => {
+  const user = userEvent.setup();
+  backend({ open: () => ({ status: "needs_passphrase", pending: 2, file_name: "vault.mochi" }) });
+  render(<App />);
+  await user.click(await screen.findByTestId("start-extract"));
+  expect(await screen.findByTestId("unlock-panel")).toBeInTheDocument();
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  // The start screen is not shown under the prompt.
+  expect(screen.queryByTestId("start-screen")).toBeNull();
+});

@@ -10,6 +10,7 @@ import { extract } from "./en/extract";
 import { foreign } from "./en/foreign";
 import { help } from "./en/help";
 import { settings } from "./en/settings";
+import { start } from "./en/start";
 import { update } from "./en/update";
 import { write } from "./en/write";
 
@@ -23,6 +24,7 @@ export const en = {
   ...foreign,
   ...help,
   ...settings,
+  ...start,
   ...update,
   ...write,
 } as const;

@@ -35,7 +35,7 @@ function everything(outcome: JobOutcome): string {
 test("a completed extraction states what it extracted and that it is not a verification", () => {
   const d = describe(done(report()));
   expect(d.headline).toBe(
-    "Extracted 4 files (2.0 KiB (2,048 bytes)) and 2 folders from commit 3 to /home/me/out.",
+    "Extracted 4 files (2.0 KiB (2,048 bytes)) and 2 folders from version 3 to /home/me/out.",
   );
   expect(d.completed).toBe(true);
   expect(d.notes).toContain(CHECK_NOTE);
@@ -45,7 +45,7 @@ test("a completed extraction states what it extracted and that it is not a verif
 test("exceptions change the headline: the extraction is not described as complete", () => {
   const d = describe(done(report({ not_extracted_total: 1, files: 1, directories: 0, bytes: 1 })));
   expect(d.headline).toBe(
-    "Extracted 1 file (1 byte) and 0 folders from commit 3 to /home/me/out. 1 entry was not extracted.",
+    "Extracted 1 file (1 byte) and 0 folders from version 3 to /home/me/out. 1 entry was not extracted.",
   );
   const many = describe(done(report({ not_extracted_total: 12 })));
   expect(many.headline).toContain("12 entries were not extracted.");

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
 import { t, tn } from "../i18n";
@@ -12,12 +13,16 @@ import {
 } from "../ipc/browse";
 import type {
   ArchiveSummary,
+  OpenOutcome,
   CommitView,
   EntryDetails,
   EntryRow,
   SnapshotView,
 } from "../ipc/browse";
 import { subscribeLaunches } from "../ipc/launch";
+import { forgetRecentArchives, openDroppedArchive, openRecent, recentArchives } from "../ipc/start";
+import type { RecentView } from "../ipc/start";
+import { Start } from "../start/Start";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { Name } from "./Name";
 import { Tree } from "./Tree";
@@ -79,11 +84,7 @@ function Timeline({
             <span className="seq">
               {t(c.seq === head ? "browser.commitHead" : "browser.commit", { seq: c.seq })}
             </span>
-            <span className="meta">
-              {c.time ?? t("browser.noTime")}
-              {t("browser.metaSeparator")}
-              {c.checkpoint ? t("browser.checkpoint") : t("browser.delta")}
-            </span>
+            <span className="meta">{c.time ?? t("browser.noTime")}</span>
             {retentionText(c) && <span className="meta">{retentionText(c)}</span>}
             {c.holds.map((h) => (
               <span className="meta" key={h.text}>
@@ -114,12 +115,8 @@ function Details({ details }: { details: EntryDetails }) {
           <>
             <dt>{t("browser.detailSize")}</dt>
             <dd>{formatSize(details.size)}</dd>
-            <dt>{t("browser.detailHash")}</dt>
-            <dd className="hash">{details.content_hash}</dd>
           </>
         )}
-        <dt>{t("browser.detailVersionId")}</dt>
-        <dd className="hash">{details.file_version_id}</dd>
         {a.state === "recorded" ? (
           <>
             <dt>{t("browser.detailPermissions")}</dt>
@@ -146,6 +143,19 @@ function Details({ details }: { details: EntryDetails }) {
           </>
         )}
       </dl>
+      <details className="technical" data-testid="details-technical">
+        <summary>{t("start.technical")}</summary>
+        <dl>
+          {details.kind === "file" && (
+            <>
+              <dt>{t("browser.detailHash")}</dt>
+              <dd className="hash">{details.content_hash}</dd>
+            </>
+          )}
+          <dt>{t("browser.detailVersionId")}</dt>
+          <dd className="hash">{details.file_version_id}</dd>
+        </dl>
+      </details>
       <p className="note">{t("browser.detailsNote")}</p>
     </section>
   );
@@ -154,7 +164,7 @@ function Details({ details }: { details: EntryDetails }) {
 type Open = { archive: ArchiveSummary; snapshot: SnapshotView };
 
 /** Plan D1: open an archive and browse its snapshots. Read-only. */
-export function Browser() {
+export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: ReactNode }) {
   const [open, setOpen] = useState<Open | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +177,22 @@ export function Browser() {
   // Set when a folder was opened from the list by key or double click, so the
   // new listing takes keyboard focus instead of dropping it on the page.
   const [focusList, setFocusList] = useState(false);
-  const [autoExtract, setAutoExtract] = useState<{ token: number; handle: number } | null>(null);
+  const [autoExtract, setAutoExtract] = useState<{
+    token: number;
+    handle: number;
+    defaultFolder?: boolean;
+  } | null>(null);
+  const [recents, setRecents] = useState<RecentView[]>([]);
+  const [createRequest, setCreateRequest] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const [extractAfterUnlock, setExtractAfterUnlock] = useState(false);
+
+  const refreshRecents = useCallback(() => {
+    recentArchives().then(setRecents, () => setRecents([]));
+  }, []);
+  useEffect(() => {
+    if (open === null) refreshRecents();
+  }, [open, refreshRecents]);
 
   const handle = open?.archive.handle ?? null;
   const seq = open?.snapshot.seq ?? null;
@@ -228,7 +253,8 @@ export function Browser() {
     navigate([]);
   };
 
-  const doOpen = async () => {
+  /** Wait for the user's choice of archive, then show it (and plan an extract if asked). */
+  const openWith = async (get: () => Promise<OpenOutcome | null>, extract: boolean, what: string) => {
     setError(null);
     setBusy(true);
     try {
@@ -236,20 +262,32 @@ export function Browser() {
         await cancelUnlock(waiting.pending).catch(() => false);
         setWaiting(null);
       }
-      const outcome = await openArchive();
+      const outcome = await get();
       if (outcome === null) return;
       if (outcome.status === "needs_passphrase") {
         setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
+        setExtractAfterUnlock(extract);
         return;
       }
       await show(outcome.archive);
+      if (extract) {
+        setAutoExtract((a) => ({
+          token: (a?.token ?? 0) + 1,
+          handle: outcome.archive.handle,
+          defaultFolder: true,
+        }));
+      }
     } catch (e) {
-      setError(errorText(t("browser.openFailed"), e));
+      setError(errorText(what, e));
     } finally {
       setBusy(false);
     }
   };
 
+  const doOpen = (extract = false) => openWith(openArchive, extract, t("browser.openFailed"));
+  const doOpenRecent = (index: number) =>
+    openWith(() => openRecent(index), false, t("start.openRecentFailed"));
+  const doOpenDropped = () => openWith(openDroppedArchive, false, t("start.openDroppedFailed"));
   /** The passphrase goes to Rust once; a wrong one leaves the prompt up. */
   const unlock = async (passphrase: string) => {
     if (!waiting) return;
@@ -257,6 +295,9 @@ export function Browser() {
     setWaiting(null);
     try {
       await show(archive);
+      if (extractAfterUnlock) {
+        setAutoExtract((a) => ({ token: (a?.token ?? 0) + 1, handle: archive.handle, defaultFolder: true }));
+      }
     } catch (e) {
       setError(errorText(t("browser.openFailed"), e));
     }
@@ -265,6 +306,7 @@ export function Browser() {
   const giveUp = () => {
     if (waiting) void cancelUnlock(waiting.pending).catch(() => false);
     setWaiting(null);
+    setExtractAfterUnlock(false);
   };
 
   /** A commit was published: show the archive as it now stands, at its head. */
@@ -348,19 +390,33 @@ export function Browser() {
     }
   };
 
+  const showStart = open === null && !creating && waiting === null;
+
+  // The start screen steps aside while the create panel is open; when the
+  // panel closes without an archive, keyboard focus goes back to its button.
+  const wasCreatingRef = useRef(false);
+  useEffect(() => {
+    if (wasCreatingRef.current && !creating && open === null) {
+      document.querySelector<HTMLElement>('[data-testid="start-create"]')?.focus();
+    }
+    wasCreatingRef.current = creating;
+  }, [creating, open]);
+
   return (
     <section aria-labelledby="browser-heading" className="browser">
       <h2 id="browser-heading" tabIndex={-1}>
-        {t("browser.heading")}
+        {open ? t("browser.heading") : t("start.heading")}
       </h2>
-      <div className="actions">
-        <button type="button" data-testid="open-archive" onClick={doOpen} disabled={busy}>
-          {t("browser.open")}
-        </button>
-        <button type="button" data-testid="close-archive" onClick={doClose} disabled={!open || busy}>
-          {t("browser.close")}
-        </button>
-      </div>
+      {open && (
+        <div className="actions">
+          <button type="button" data-testid="open-archive" onClick={() => void doOpen()} disabled={busy}>
+            {t("browser.open")}
+          </button>
+          <button type="button" data-testid="close-archive" onClick={doClose} disabled={busy}>
+            {t("browser.close")}
+          </button>
+        </div>
+      )}
       {error && (
         <p role="alert" className="error" data-testid="browse-error">
           {error}
@@ -384,42 +440,69 @@ export function Browser() {
           </PassphraseForm>
         </Panel>
       )}
+      {showStart && (
+        <Start
+          busy={busy}
+          recents={recents}
+          onCreate={() => setCreateRequest((n) => n + 1)}
+          onOpen={() => void doOpen()}
+          onExtract={() => void doOpen(true)}
+          onOpenRecent={(i) => void doOpenRecent(i)}
+          onForgetRecent={() => {
+            forgetRecentArchives().then(refreshRecents, refreshRecents);
+          }}
+        />
+      )}
       <Writer
         archive={open?.archive ?? null}
         viewingHead={open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1)}
         selected={details ? { key: details.key, name: details.path } : null}
         onCommitted={(a) => void adopt(a)}
+        showToolbar={open !== null}
+        createRequest={createRequest}
+        onCreating={setCreating}
+        onArchiveDropped={() => void doOpenDropped()}
       />
-      <Extractor
-        archive={open?.archive ?? null}
-        seq={open?.snapshot.seq ?? null}
-        selected={details ? { key: details.key, name: details.path } : null}
-        autoPlan={autoExtract}
-      />
-      <Search archive={open?.archive ?? null} />
-      <Rekey
-        key={open?.archive.handle ?? "none"}
-        archive={open?.archive ?? null}
-        onChanged={(a) => {
-          if (a === null) void doClose();
-          else void adopt(a);
-        }}
-      />
-      <Checker archive={open?.archive ?? null} />
-      {!open && !error && <p data-testid="browse-empty">{t("browser.empty")}</p>}
+      {open && (
+        <Extractor
+          archive={open.archive}
+          seq={open.snapshot.seq}
+          selected={details ? { key: details.key, name: details.path } : null}
+          autoPlan={autoExtract}
+        />
+      )}
       {open && (
         <>
           <p className="archive-meta" data-testid="archive-meta">
             <strong>{open.archive.file_name}</strong>
             {t("browser.metaSeparator")}
-            {profileText(open.archive)}
-            {t("browser.metaSeparator")}
             {tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
               n: open.archive.commits.length,
             })}
-            {t("browser.metaSeparator")}
-            {t("browser.metaArchiveId")} <span className="hash">{open.archive.archive_id}</span>
+            {open.archive.profile.encrypted && (
+              <>
+                {t("browser.metaSeparator")}
+                {t("browser.profileEncrypted")}
+              </>
+            )}
           </p>
+          <details className="technical" data-testid="archive-technical">
+            <summary>{t("start.technical")}</summary>
+            <p data-testid="archive-technical-text">
+              {profileText(open.archive)}
+              {t("browser.metaSeparator")}
+              {t("browser.metaArchiveId")} <span className="hash">{open.archive.archive_id}</span>
+            </p>
+            <ul>
+              {open.archive.commits.map((c) => (
+                <li key={c.seq}>
+                  {t("browser.commitTechnical", { seq: c.seq })}
+                  {t("browser.metaSeparator")}
+                  {c.checkpoint ? t("browser.checkpoint") : t("browser.delta")}
+                </li>
+              ))}
+            </ul>
+          </details>
           {open.archive.profile.encrypted && (
             <details className="note" data-testid="encrypted-note">
               <summary>{t("browser.encryptedSummary")}</summary>
@@ -536,6 +619,22 @@ export function Browser() {
           </div>
         </>
       )}
+      <details className="advanced" data-testid="advanced">
+        <summary>{t("start.advanced")}</summary>
+        <p className="note">{t("start.advancedHint")}</p>
+        {toolsNav}
+        <Search archive={open?.archive ?? null} />
+        <Rekey
+          key={open?.archive.handle ?? "none"}
+          archive={open?.archive ?? null}
+          onChanged={(a) => {
+            if (a === null) void doClose();
+            else void adopt(a);
+          }}
+        />
+        <Checker archive={open?.archive ?? null} />
+        {tools}
+      </details>
     </section>
   );
 }
