@@ -35,6 +35,10 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The version step reads Cargo.toml with tomllib (3.11+); 22.04's system Python is 3.10.
+          python-version: "3.12"
       - name: Require the updater signing secrets
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -172,6 +176,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Same Python as the build jobs for packaging/latest_json.py (22.04's system one is 3.10).
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           name: release-deb
