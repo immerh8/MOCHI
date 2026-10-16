@@ -1216,8 +1216,11 @@ mod tests {
         let plan = plan_default(&f.archives, &f.destination, f.handle, 1, &[]).unwrap();
         assert!(made.is_dir());
         assert_eq!(plan.destination, made.display().to_string());
+        // Nothing already there can collide; on Windows the markup name is
+        // unsupported in any folder (as the other plan tests expect).
         assert_eq!(
-            plan.conflicts_total, 0,
+            plan.conflicts_total,
+            u32::from(cfg!(windows)),
             "a new folder has nothing to collide with"
         );
         assert_eq!(f.destination.get(), Some(made.clone()));
