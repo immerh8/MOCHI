@@ -501,6 +501,11 @@ fn history_summaries_agree_with_the_script() {
             .iter()
             .map(|e| e["path"].as_str().unwrap().to_owned())
             .collect();
+        let mut want = want.clone();
+        if name == "red-valid-50pct" {
+            // `history_big`: the first commit also puts a 4,000-byte `pad`.
+            want.push("pad");
+        }
         let want_hex: Vec<String> = want.iter().map(|p| hex(p.as_bytes())).collect();
         assert_eq!(last, want_hex, "{name}");
         assert_eq!(v["head"]["status"], "opened", "{name}");

@@ -1866,7 +1866,10 @@ pub fn b2_decode_envelope_vector(bytes: &[u8]) -> std::result::Result<BinaryEnve
     }
     let payload = &bytes[8..];
     let cand = decode_binary_record(span.magic, payload, &b2_envelope_rules(), &limits)?;
-    cand.bind(&B2_IDENTITY).map(|(e, _)| e)
+    let (envelope, payload) = cand.bind(&B2_IDENTITY)?;
+    // Encoding 2 is decompressed and its decoded bytes checked (B.2.2).
+    mochi_format::envelope::decode_image(&envelope, payload, &limits)?;
+    Ok(envelope)
 }
 
 /// Every B.2 envelope vector, in a stable order.
@@ -1879,12 +1882,17 @@ pub fn b2_envelope_vectors() -> Vec<EnvelopeVector> {
     };
     let f = |x| Err(FormatError::Envelope(x));
     let v = RawEnvelope::valid;
+    let ok_clone = ok.clone();
     let mut out = vec![EnvelopeVector {
         name: "valid-envelope-image",
         description: "catalog image, schema 0 = user_version 0, no features",
         bytes: v().frame(),
         expect: Ok(ok),
     }];
+    let zstd_ok = BinaryEnvelope {
+        encoding: PayloadEncoding::ZstdSqliteImage,
+        ..ok_clone
+    };
     let mut push = |name, description, raw: RawEnvelope, expect| {
         out.push(EnvelopeVector {
             name,
@@ -1956,8 +1964,8 @@ pub fn b2_envelope_vectors() -> Vec<EnvelopeVector> {
     );
     push(
         "reject-envelope-payload-encoding",
-        "payload encoding 2 (unregistered)",
-        RawEnvelope { encoding: 2, ..v() },
+        "payload encoding 3 (unregistered)",
+        RawEnvelope { encoding: 3, ..v() },
         f(EnvelopeFault::UnknownPayloadEncoding),
     );
     push(
@@ -1965,6 +1973,34 @@ pub fn b2_envelope_vectors() -> Vec<EnvelopeVector> {
         "payload encoding 1 (a parity shard, D21) in a catalog-image frame",
         RawEnvelope { encoding: 1, ..v() },
         f(EnvelopeFault::EncodingKindMismatch),
+    );
+    let zstd = |bytes: &[u8]| {
+        mochi_format::codec::compress_frame(bytes, mochi_format::envelope::IMAGE_ZSTD_LEVEL)
+            .expect("compress a vector payload")
+    };
+    let compressed = zstd(&b2_sqlite_header(0));
+    push(
+        "valid-envelope-image-zstd",
+        "payload encoding 2: one Zstandard frame whose decoded bytes are the same SQLite header",
+        RawEnvelope {
+            encoding: 2,
+            payload_len: compressed.len() as u64,
+            payload: compressed,
+            ..v()
+        },
+        Ok(zstd_ok),
+    );
+    let compressed = zstd(&[0u8; 100]);
+    push(
+        "reject-envelope-decoded-signature",
+        "payload encoding 2: a valid Zstandard frame whose decoded bytes are not a SQLite image",
+        RawEnvelope {
+            encoding: 2,
+            payload_len: compressed.len() as u64,
+            payload: compressed,
+            ..v()
+        },
+        f(EnvelopeFault::DecodedSignatureMismatch),
     );
     let mut bad_sig = b2_sqlite_header(0);
     bad_sig[0] = b's';

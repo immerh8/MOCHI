@@ -20,7 +20,7 @@
 //! | 0 | 4 | Header length | = 80 + 8·n |
 //! | 4 | 2 | Envelope version | = 0 |
 //! | 6 | 2 | Record schema version | catalog image: = SQLite `user_version` |
-//! | 8 | 4 | Payload encoding | 0 = SQLite 3 image; 1 = parity shard (D21); others unregistered |
+//! | 8 | 4 | Payload encoding | 0 = SQLite 3 image (draft 2 only); 1 = parity shard (D21); 2 = Zstandard-compressed SQLite 3 image; others unregistered |
 //! | 12 | 4 | n = required-feature count | ≤ 64 |
 //! | 16 | 8 | Payload length | = frame payload − header length |
 //! | 24 | 32 | Archive ID | |
@@ -36,7 +36,7 @@
 //! | Schema version | envelope version = 0; record schema version ∈ [`EnvelopeRules::schema_versions`]; for SQLite, = `user_version` |
 //! | Required features | [`check_required_features`] (both encodings) |
 //! | Archive identity, Identity | [`RecordIdentity::check`] (both encodings) |
-//! | Payload encoding | registered value and its signature |
+//! | Payload encoding | registered value and its signature; for encoding 2, [`decode_image`] checks the decoded bytes (bound, SQLite signature, schema version) |
 //! | Payload length | header field = frame payload − header |
 //! | Integrity scope | **not here**: the referencing record's stored-object hash, checked by `mochi-core` before this decoder runs. A record found by scanning is a [`Candidate`] until bound. |
 //!
@@ -63,11 +63,21 @@ pub const BINARY_ENVELOPE_MAX_FEATURES: u64 = DEFAULT_REQUIRED_FEATURES;
 /// Offset of SQLite's `user_version` in a database header (big-endian i32).
 const SQLITE_USER_VERSION_AT: usize = 60;
 
+/// Zstandard level of a 1.0 writer for payload encoding 2: fixed, so the same
+/// image always compresses to the same bytes under one libzstd (B.2.2). The
+/// level is a writer choice, not a wire rule: any conforming frame decodes.
+pub const IMAGE_ZSTD_LEVEL: i32 = 9;
+
 /// Registered payload encodings (B.2.2). Unregistered values are refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PayloadEncoding {
     /// 0: a SQLite 3 database image; payload starts `SQLite format 3\0`.
+    /// Draft 2 wrote it; a 1.0 writer never does, a 1.0 reader accepts it.
     SqliteImage,
+    /// 2: a Zstandard-compressed SQLite 3 image (owner decision 2026-10-16):
+    /// the payload is exactly one Zstandard frame with `Frame_Content_Size`
+    /// and the frame checksum, whose decoded bytes are encoding 0's payload.
+    ZstdSqliteImage,
     /// 1: a parity shard of the Redundancy profile (spec Annex B.2.11 D21;
     /// layout in [`crate::parity`]); payload starts `MOCHI2-PARITY\0\0\0`.
     ParityShard,
@@ -78,6 +88,7 @@ impl PayloadEncoding {
         match self {
             PayloadEncoding::SqliteImage => 0,
             PayloadEncoding::ParityShard => 1,
+            PayloadEncoding::ZstdSqliteImage => 2,
         }
     }
 
@@ -85,6 +96,7 @@ impl PayloadEncoding {
         match code {
             0 => Some(PayloadEncoding::SqliteImage),
             1 => Some(PayloadEncoding::ParityShard),
+            2 => Some(PayloadEncoding::ZstdSqliteImage),
             _ => None,
         }
     }
@@ -94,6 +106,7 @@ impl PayloadEncoding {
         match self {
             PayloadEncoding::SqliteImage => &registry::SQLITE_IMAGE_SIGNATURE,
             PayloadEncoding::ParityShard => &registry::PARITY_SIGNATURE,
+            PayloadEncoding::ZstdSqliteImage => &registry::ZSTD_IMAGE_SIGNATURE,
         }
     }
 }
@@ -105,14 +118,27 @@ pub const fn carries_binary_envelope(kind: FrameKind) -> bool {
     payload_encoding_for(kind).is_some()
 }
 
-/// The one payload encoding each enveloped kind carries: a catalog image
-/// is never a parity shard, and the reverse.
+/// The payload encoding a 1.0 writer gives each enveloped kind: encoding 2
+/// for a catalog image, encoding 1 for a parity frame.
 pub const fn payload_encoding_for(kind: FrameKind) -> Option<PayloadEncoding> {
     match kind {
-        FrameKind::MetadataDelta => Some(PayloadEncoding::SqliteImage),
+        FrameKind::MetadataDelta => Some(PayloadEncoding::ZstdSqliteImage),
         FrameKind::ParityObject => Some(PayloadEncoding::ParityShard),
         _ => None,
     }
+}
+
+/// Whether a reader accepts `encoding` in a frame of `kind`: a catalog image
+/// is encoding 0 (draft 2) or 2, a parity frame is encoding 1, and a catalog
+/// image is never a parity shard nor the reverse.
+pub const fn kind_accepts(kind: FrameKind, encoding: PayloadEncoding) -> bool {
+    matches!(
+        (kind, encoding),
+        (
+            FrameKind::MetadataDelta,
+            PayloadEncoding::SqliteImage | PayloadEncoding::ZstdSqliteImage
+        ) | (FrameKind::ParityObject, PayloadEncoding::ParityShard)
+    )
 }
 
 /// The identity a record must share with the commit that references it
@@ -239,12 +265,11 @@ pub fn encode_binary_record(
     known_features: &[u64],
     writer_limits: &Limits,
 ) -> Result<Vec<u8>> {
-    match payload_encoding_for(kind) {
-        None => return Err(FormatError::Envelope(EnvelopeFault::KindHasNoEnvelope)),
-        Some(e) if e != envelope.encoding => {
-            return Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch))
-        }
-        Some(_) => {}
+    if !carries_binary_envelope(kind) {
+        return Err(FormatError::Envelope(EnvelopeFault::KindHasNoEnvelope));
+    }
+    if !kind_accepts(kind, envelope.encoding) {
+        return Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch));
     }
     let n = envelope.required_features.len() as u64;
     if n > BINARY_ENVELOPE_MAX_FEATURES {
@@ -283,8 +308,9 @@ pub fn encode_binary_record(
     encode_skippable_frame_within(kind, &body, writer_limits)
 }
 
-/// Payload-encoding and (for SQLite) schema-version obligations, shared by
-/// encoder and decoder.
+/// Payload-encoding and (for encoding 0) schema-version obligations, shared
+/// by encoder and decoder. Encoding 2's decoded bytes are checked by
+/// [`decode_image`], which needs the decompressor.
 fn check_payload_encoding(envelope: &BinaryEnvelope, payload: &[u8]) -> Result<()> {
     if !payload.starts_with(envelope.encoding.signature()) {
         return Err(FormatError::Envelope(
@@ -292,20 +318,79 @@ fn check_payload_encoding(envelope: &BinaryEnvelope, payload: &[u8]) -> Result<(
         ));
     }
     match envelope.encoding {
-        PayloadEncoding::SqliteImage => {
-            // A SQLite header is 100 bytes; user_version is at 60..64.
-            let uv = payload
-                .get(SQLITE_USER_VERSION_AT..SQLITE_USER_VERSION_AT + 4)
-                .ok_or(FormatError::Envelope(EnvelopeFault::TooShort))?;
-            let user_version = i32::from_be_bytes([uv[0], uv[1], uv[2], uv[3]]);
-            if i64::from(user_version) != i64::from(envelope.record_schema_version) {
-                return Err(FormatError::Envelope(EnvelopeFault::SchemaVersionMismatch));
-            }
-        }
+        PayloadEncoding::SqliteImage => check_sqlite_image(envelope, payload),
         // The parity layout is checked by `crate::parity`, which owns it.
-        PayloadEncoding::ParityShard => {}
+        PayloadEncoding::ParityShard => Ok(()),
+        PayloadEncoding::ZstdSqliteImage => Ok(()),
+    }
+}
+
+/// A SQLite image's signature and `user_version` (= the envelope's record
+/// schema version).
+fn check_sqlite_image(envelope: &BinaryEnvelope, image: &[u8]) -> Result<()> {
+    if !image.starts_with(&registry::SQLITE_IMAGE_SIGNATURE) {
+        return Err(FormatError::Envelope(
+            EnvelopeFault::DecodedSignatureMismatch,
+        ));
+    }
+    // A SQLite header is 100 bytes; user_version is at 60..64.
+    let uv = image
+        .get(SQLITE_USER_VERSION_AT..SQLITE_USER_VERSION_AT + 4)
+        .ok_or(FormatError::Envelope(EnvelopeFault::TooShort))?;
+    let user_version = i32::from_be_bytes([uv[0], uv[1], uv[2], uv[3]]);
+    if i64::from(user_version) != i64::from(envelope.record_schema_version) {
+        return Err(FormatError::Envelope(EnvelopeFault::SchemaVersionMismatch));
     }
     Ok(())
+}
+
+/// Compress a SQLite image for payload encoding 2: one Zstandard frame at
+/// [`IMAGE_ZSTD_LEVEL`] with `Frame_Content_Size` and the checksum, no
+/// dictionary ID. Refuses (as a writer) an `image` that is not a SQLite image
+/// of `envelope`'s schema version, or that exceeds the decoded bound
+/// ([`image_payload_budget`]) of `writer_limits`.
+pub fn compress_image(
+    envelope: &BinaryEnvelope,
+    image: &[u8],
+    writer_limits: &Limits,
+) -> Result<Vec<u8>> {
+    check_sqlite_image(envelope, image)?;
+    let budget = image_payload_budget(writer_limits);
+    if image.len() as u64 > budget {
+        return Err(FormatError::CapacityExceeded {
+            kind: CapacityKind::EnvelopePayload,
+            limit: budget,
+            actual: image.len() as u64,
+        });
+    }
+    crate::codec::compress_frame(image, IMAGE_ZSTD_LEVEL)
+}
+
+/// The SQLite image a verified payload carries, after the encoding's own
+/// obligations: encoding 0 borrows it; encoding 2 decompresses it, refusing a
+/// declared or actual decoded size above [`image_payload_budget`] (the same
+/// bound as encoding 0's payload) before allocating, then requires the SQLite
+/// signature and `user_version` = the envelope's record schema version.
+///
+/// **Precondition:** the stored-object hash was checked before this runs; the
+/// decompressor never sees unverified bytes (AGENTS: hash the stored bytes).
+pub fn decode_image<'a>(
+    envelope: &BinaryEnvelope,
+    payload: &'a [u8],
+    limits: &Limits,
+) -> Result<std::borrow::Cow<'a, [u8]>> {
+    match envelope.encoding {
+        PayloadEncoding::SqliteImage => Ok(std::borrow::Cow::Borrowed(payload)),
+        PayloadEncoding::ZstdSqliteImage => {
+            let image =
+                crate::codec::decode_bounded_frame(payload, image_payload_budget(limits), limits)?;
+            check_sqlite_image(envelope, &image)?;
+            Ok(std::borrow::Cow::Owned(image))
+        }
+        PayloadEncoding::ParityShard => {
+            Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch))
+        }
+    }
 }
 
 /// Decode the payload of a skippable frame whose magic is `frame_magic`,
@@ -373,7 +458,7 @@ pub fn decode_binary_record<'a>(
     }
     let encoding = PayloadEncoding::from_code(u32_at(8))
         .ok_or(FormatError::Envelope(EnvelopeFault::UnknownPayloadEncoding))?;
-    if payload_encoding_for(kind) != Some(encoding) {
+    if !kind_accepts(kind, encoding) {
         return Err(FormatError::Envelope(EnvelopeFault::EncodingKindMismatch));
     }
 

@@ -272,10 +272,17 @@ fn obligation_header_length() {
 fn obligation_payload_encoding() {
     let frame = valid(vec![]);
     let mut p = frame[8..].to_vec();
-    set_u32(&mut p, 8, 2);
+    set_u32(&mut p, 8, 3);
     assert_eq!(
         decode(&p).unwrap_err(),
         fault(EnvelopeFault::UnknownPayloadEncoding)
+    );
+    // 2 is registered (a compressed image), but this payload is not a
+    // Zstandard frame.
+    set_u32(&mut p, 8, 2);
+    assert_eq!(
+        decode(&p).unwrap_err(),
+        fault(EnvelopeFault::EncodingSignatureMismatch)
     );
     // 1 is registered (a parity shard, D21), but not for a catalog image.
     set_u32(&mut p, 8, 1);
@@ -579,5 +586,199 @@ fn decoder_never_panics_on_mutations() {
             let _ = c.bind(&id());
         }
         let _ = decode_binary_record(rng.next() as u32, &p, &rules(), &Limits::default());
+    }
+}
+
+// ---- payload encoding 2: a Zstandard-compressed SQLite image (B.2.2) -------------------
+
+mod compressed_image {
+    use super::*;
+    use mochi_format::codec::compress_frame;
+    use mochi_format::envelope::{compress_image, decode_image};
+
+    fn env2(schema: u16) -> BinaryEnvelope {
+        BinaryEnvelope {
+            encoding: PayloadEncoding::ZstdSqliteImage,
+            ..env(schema, vec![])
+        }
+    }
+
+    /// A frame carrying `payload` under encoding 2, and its decode result.
+    fn decode2(payload: &[u8], limits: &Limits) -> Result<Vec<u8>, FormatError> {
+        let frame = encode_binary_record(
+            FrameKind::MetadataDelta,
+            &env2(0),
+            payload,
+            KNOWN,
+            &Limits::default(),
+        )?;
+        let (e, p) = decode_binary_record(registry::METADATA_DELTA, &frame[8..], &rules(), limits)
+            .and_then(|c| c.bind(&id()))?;
+        decode_image(&e, p, limits).map(|c| c.into_owned())
+    }
+
+    #[test]
+    fn round_trip_and_the_frame_meets_the_o21_profile() {
+        let image = sqlite_image(0, 5000);
+        let payload = compress_image(&env2(0), &image, &Limits::default()).unwrap();
+        assert!(payload.starts_with(&registry::ZSTD_IMAGE_SIGNATURE));
+        assert!(payload.len() < image.len() / 10);
+        assert_eq!(decode2(&payload, &Limits::default()).unwrap(), image);
+        // Deterministic: the same image compresses to the same bytes.
+        assert_eq!(
+            payload,
+            compress_image(&env2(0), &image, &Limits::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn decoded_bytes_that_are_not_sqlite_are_refused() {
+        let payload = compress_frame(&vec![7u8; 4096], 3).unwrap();
+        assert_eq!(
+            decode2(&payload, &Limits::default()).unwrap_err(),
+            fault(EnvelopeFault::DecodedSignatureMismatch)
+        );
+        // The writer refuses to compress it in the first place.
+        assert_eq!(
+            compress_image(&env2(0), &vec![7u8; 4096], &Limits::default()).unwrap_err(),
+            fault(EnvelopeFault::DecodedSignatureMismatch)
+        );
+    }
+
+    #[test]
+    fn the_decoded_user_version_must_equal_the_record_schema_version() {
+        let payload = compress_frame(&sqlite_image(1, 100), 3).unwrap();
+        assert_eq!(
+            decode2(&payload, &Limits::default()).unwrap_err(),
+            fault(EnvelopeFault::SchemaVersionMismatch)
+        );
+    }
+
+    /// The frame must declare its size and carry the checksum (O21).
+    #[test]
+    fn a_frame_without_content_size_or_checksum_is_refused() {
+        use std::io::Write;
+        let image = sqlite_image(0, 1000);
+        // Streaming encoder without `pledged_src_size`: no Frame_Content_Size.
+        let mut enc = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+        enc.include_checksum(true).unwrap();
+        enc.write_all(&image).unwrap();
+        let no_size = enc.finish().unwrap();
+        let e = decode2(&no_size, &Limits::default()).unwrap_err();
+        assert!(matches!(
+            e,
+            FormatError::Codec(mochi_format::error::CodecFault::MissingContentSize)
+        ));
+        let mut enc = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+        enc.set_pledged_src_size(Some(image.len() as u64)).unwrap();
+        enc.include_checksum(false).unwrap();
+        enc.write_all(&image).unwrap();
+        let no_sum = enc.finish().unwrap();
+        let e = decode2(&no_sum, &Limits::default()).unwrap_err();
+        assert!(matches!(
+            e,
+            FormatError::Codec(mochi_format::error::CodecFault::MissingChecksum)
+        ));
+    }
+
+    /// Trailing bytes, a second frame, and a damaged payload are all refused.
+    #[test]
+    fn extra_frames_and_damage_are_refused() {
+        let image = sqlite_image(0, 1000);
+        let good = compress_image(&env2(0), &image, &Limits::default()).unwrap();
+        let mut two = good.clone();
+        two.extend_from_slice(&good);
+        assert!(decode2(&two, &Limits::default()).is_err());
+        let mut trailing = good.clone();
+        trailing.push(0);
+        assert!(decode2(&trailing, &Limits::default()).is_err());
+        let mut damaged = good.clone();
+        let mid = damaged.len() / 2;
+        damaged[mid] ^= 0x40;
+        assert!(decode2(&damaged, &Limits::default()).is_err());
+        let mut sum = good;
+        let last = sum.len() - 1;
+        sum[last] ^= 1; // the content checksum
+        assert!(decode2(&sum, &Limits::default()).is_err());
+    }
+
+    /// The decoded-size bound is the image payload budget, applied to the
+    /// *declared* size before any allocation: a frame header declaring
+    /// 2^40 bytes (and nothing else) is refused without trying to read it.
+    #[test]
+    fn a_declared_size_over_the_bound_is_refused_before_allocating() {
+        // Not single-segment (so the window is small and the window limit
+        // does not fire first): descriptor with Frame_Content_Size_flag = 3
+        // (8 bytes) and the content checksum, a 1 KiB window descriptor, the
+        // declared size, one empty last raw block, the checksum.
+        let mut frame = vec![0x28, 0xB5, 0x2F, 0xFD, 0b1100_0100, 0x00];
+        frame.extend_from_slice(&(1u64 << 40).to_le_bytes());
+        frame.extend_from_slice(&[0x01, 0x00, 0x00]);
+        frame.extend_from_slice(&[0; 4]);
+        let e = decode2(&frame, &Limits::default()).unwrap_err();
+        assert_eq!(
+            e,
+            FormatError::LimitExceeded {
+                kind: LimitKind::ImageDecoded,
+                limit: image_payload_budget(&Limits::default()),
+                actual: 1 << 40,
+            }
+        );
+        assert_eq!(e.class(), ErrorClass::LimitExceeded);
+
+        // One byte over the bound, exactly.
+        let over = image_payload_budget(&Limits::default()) + 1;
+        let mut frame = vec![0x28, 0xB5, 0x2F, 0xFD, 0b1100_0100, 0x00];
+        frame.extend_from_slice(&over.to_le_bytes());
+        frame.extend_from_slice(&[0x01, 0x00, 0x00]);
+        frame.extend_from_slice(&[0; 4]);
+        assert!(matches!(
+            decode2(&frame, &Limits::default()).unwrap_err(),
+            FormatError::LimitExceeded {
+                kind: LimitKind::ImageDecoded,
+                ..
+            }
+        ));
+    }
+
+    /// A smaller reader limit moves the bound with it.
+    #[test]
+    fn the_bound_follows_the_reader_limit() {
+        let image = sqlite_image(0, 20_000);
+        let payload = compress_image(&env2(0), &image, &Limits::default()).unwrap();
+        let small = Limits {
+            max_skippable_payload: 592 + 10_000,
+            ..Limits::default()
+        };
+        let e = decode2(&payload, &small).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                FormatError::LimitExceeded {
+                    kind: LimitKind::ImageDecoded,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        // A writer under those limits refuses the image too.
+        assert!(matches!(
+            compress_image(&env2(0), &image, &small).unwrap_err(),
+            FormatError::CapacityExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn encoding_2_is_for_catalog_images_only() {
+        let payload = compress_frame(&sqlite_image(0, 100), 3).unwrap();
+        let e = encode_binary_record(
+            FrameKind::ParityObject,
+            &env2(0),
+            &payload,
+            KNOWN,
+            &Limits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(e, fault(EnvelopeFault::EncodingKindMismatch));
     }
 }

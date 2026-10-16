@@ -103,6 +103,8 @@ writes the whole archive state as one bounded record, and that record has a size
 (measured, gate G5, `docs/benchmarks/t32-capacity-memory.md`):
 
 * about **342,391** files when each file is a single chunk;
+  (the ceiling counts the catalog's size once decoded; the catalog is stored compressed,
+  which makes small archives much smaller but does not raise it);
 * fewer when files are large: each extra chunk of a file costs about as much as half a
   small file.
 

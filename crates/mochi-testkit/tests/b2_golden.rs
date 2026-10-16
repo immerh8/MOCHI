@@ -200,3 +200,27 @@ fn fuzz_smoke_over_mutated_envelopes() {
         }
     }
 }
+
+/// The `catalog_image` fuzz target's compressed-image path on the encoding-2
+/// vector, whole and with every single byte flipped: never a panic, and an
+/// acceptance stays within the bound (the target asserts it).
+#[test]
+fn the_compressed_image_vector_survives_single_byte_damage() {
+    let bytes = std::fs::read(dir().join("valid-envelope-image-zstd.bin")).unwrap();
+    // The fuzz target takes a frame payload (envelope included) and a bare
+    // Zstandard payload; feed both shapes.
+    let payload = &bytes[8..];
+    let zstd = &payload[80..];
+    mochi_testkit::fuzz::exercise_catalog_image(payload);
+    mochi_testkit::fuzz::exercise_catalog_image(zstd);
+    for i in 0..payload.len() {
+        let mut p = payload.to_vec();
+        p[i] ^= 0x5A;
+        mochi_testkit::fuzz::exercise_catalog_image(&p);
+    }
+    for i in 0..zstd.len() {
+        let mut p = zstd.to_vec();
+        p[i] ^= 0x5A;
+        mochi_testkit::fuzz::exercise_catalog_image(&p);
+    }
+}

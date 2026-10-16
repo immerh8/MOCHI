@@ -4,26 +4,26 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "072c618f61cf934299490da49195a8f920869c455d2ce6ec225f818a3e048643",
-      "footer_offset": 49157,
+      "commit_id": "66f148cf8ea72daeb49f5e3bdd2c9723c44456323b9581f894b3f9b717e42f5e",
+      "footer_offset": 6604,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "da152de087a3413c02796d496cd399ddbd95cd7ddc6c9371a354c05abf163215",
-      "footer_offset": 51738,
+      "commit_id": "aed73fa168232e8111c788455065735356ccc11f8e824471606155774e6f8d93",
+      "footer_offset": 9185,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "642a1e4782ba79672470e914f6e53d84e0a0918d93705914119e6c82acd8da53",
-      "footer_offset": 52262,
+      "commit_id": "6f66a5fb5d6d98763d2352ff8334d48d104c57e3ad19680536af3516d262093b",
+      "footer_offset": 9709,
       "seq": 2
     },
     {
       "checkpoint": false,
-      "commit_id": "2a9d098da6dbfefa758dafbc6e6ce0c5e8a516a86c57ee72e9739efbf213e53b",
-      "footer_offset": 53246,
+      "commit_id": "b03a2c67d1a74c0f4f687433ebff498fd3434c30ca26625eb36a722a180521e1",
+      "footer_offset": 10693,
       "seq": 3
     }
   ],

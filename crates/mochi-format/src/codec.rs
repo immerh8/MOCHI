@@ -361,6 +361,41 @@ fn decode_data_frame(plaintext: &[u8], expected_len: u64, limits: &Limits) -> Re
     Ok(DecodedBytes::new(out))
 }
 
+/// Compress `content` to one Zstandard frame meeting the O21 profile
+/// (`Frame_Content_Size`, checksum, no dictionary ID) at `level`.
+pub fn compress_frame(content: &[u8], level: i32) -> Result<Vec<u8>> {
+    use zstd::zstd_safe::CParameter;
+    let fail = |_| FormatError::Codec(CodecFault::EncoderFailed);
+    let mut c = zstd::bulk::Compressor::new(level).map_err(fail)?;
+    c.set_parameter(CParameter::ChecksumFlag(true))
+        .map_err(fail)?;
+    c.set_parameter(CParameter::ContentSizeFlag(true))
+        .map_err(fail)?;
+    c.set_parameter(CParameter::DictIdFlag(false))
+        .map_err(fail)?;
+    c.compress(content).map_err(fail)
+}
+
+/// Decode `bytes`, which must be exactly one Zstandard data frame meeting the
+/// O21 profile (`Frame_Content_Size`, checksum, no dictionary), to the size it
+/// declares, refusing a declared size above `max_len` as
+/// [`LimitKind::ImageDecoded`] **before** anything is allocated for it. Used
+/// by payload encoding 2 (catalog images), whose decoded size no record states.
+pub fn decode_bounded_frame(bytes: &[u8], max_len: u64, limits: &Limits) -> Result<Vec<u8>> {
+    let info = single_data_frame(bytes, limits)?;
+    let Some(declared) = info.declared_content_size else {
+        return Err(FormatError::Codec(CodecFault::MissingContentSize));
+    };
+    if declared > max_len {
+        return Err(FormatError::LimitExceeded {
+            kind: LimitKind::ImageDecoded,
+            limit: max_len,
+            actual: declared,
+        });
+    }
+    Ok(decode_data_frame(bytes, declared, limits)?.into_vec())
+}
+
 /// Smallest `n` with `2^n >= max`, clamped to libzstd's accepted range.
 fn window_log_for(max: u64) -> u32 {
     let n = if max <= 1 {

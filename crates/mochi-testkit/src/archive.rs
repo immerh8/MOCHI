@@ -214,6 +214,25 @@ pub fn scripted_history() -> Vec<Step> {
     steps
 }
 
+/// [`scripted_history`] with one incompressible file of `pad` bytes added to
+/// every commit (`pad-0`, `pad-1`, ...). The catalog image is compressed
+/// (B.2.2 encoding 2), so a commit's byte range is much smaller than its
+/// uncompressed image; tests whose geometry depends on that range (the
+/// Redundancy profile's shard layout, C12) use this to keep several shards.
+pub fn padded_history(pad: usize) -> Vec<Step> {
+    let mut steps = scripted_history();
+    let mut pads: State = State::new();
+    for (i, step) in steps.iter_mut().enumerate() {
+        let name = format!("pad-{i}");
+        let bytes = deterministic_bytes(1000 + i as u64, pad);
+        step.tx.put_file(path(&name), bytes.clone(), attrs(0o644));
+        pads.insert(name.into_bytes(), Content::File(bytes));
+        // Pad files persist: the expected state holds every one so far.
+        step.after.extend(pads.clone());
+    }
+    steps
+}
+
 /// Create an archive in `storage` and commit `steps` in order, every commit
 /// a checkpoint: the C5 full-checkpoint writer that the C5 publication tests
 /// and the replay oracle are written against. The production trigger (T14)

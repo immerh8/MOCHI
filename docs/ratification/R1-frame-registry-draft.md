@@ -148,6 +148,7 @@ them. *(checked)*
 | `FOOTER_MAGIC` | `4d4f43484932 0000` | Footer payload bytes 0–7 |
 | `TAIL_QUARANTINE_MAGIC` | `4d4f434849 5451 00` | Offset 0 of a `.mochiq` tail-quarantine sidecar (D14, B.2.2). Never inside an archive; its first four bytes are not a frame magic |
 | `SQLITE_IMAGE_SIGNATURE` | `53514c69746520666f726d6174203300` | Binary-envelope payload encoding 0 must start with these 16 bytes (R2) |
+| `ZSTD_IMAGE_SIGNATURE` | `28b52ffd` | Binary-envelope payload encoding 2, a Zstandard-compressed SQLite image (B.2.15), must start with these 4 bytes: the Zstandard frame magic. The SQLite signature is checked on the decoded bytes. Amended by the owner, 2026-10-16 |
 | `PARITY_SIGNATURE` | `4d4f434849322d504152495459000000` | Binary-envelope payload encoding 1, a parity shard (D21, R6), must start with these 16 bytes |
 
 ## 5. Record schema versions this build reads

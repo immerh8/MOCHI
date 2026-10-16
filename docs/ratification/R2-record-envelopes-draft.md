@@ -9,6 +9,13 @@
 > code by `crates/mochi-cli/tests/ratification_drafts.rs`. Names in code font
 > (`decode_binary_record`, `Candidate::bind`, …) are the reference implementation's; the
 > rules stand without them.
+>
+> **Amendment [owner, 2026-10-16]: payload encoding 2.** Before any 1.0 archive was
+> released, the owner approved registering payload encoding 2, a Zstandard-compressed
+> SQLite 3 image, and making it the only encoding a 1.0 writer emits for a catalog image
+> (spec B.2.15). Encoding 0 stays registered for reading (draft-2 archives, which only
+> `mochi migrate` accepts, and 1.0 readers). The envelope header layout is unchanged. This
+> is the one edit to this frozen document; every other change is still a new identifier.
 
 Sources: spec §8.3 and its D11 amendment, Annex B.2 D10 item 11, D11, D12, B.2.2,
 B.2.10 (D20). Code: `crates/mochi-format/src/envelope.rs` (binary envelope v0 and the
@@ -73,6 +80,21 @@ limits that is 268,434,864 bytes, independent of how many features a record list
 |---|---|---|
 | 0 | SQLite 3 database image | `SQLite format 3` ‖ `00` (16 bytes) |
 | 1 | Parity shard (Redundancy profile, D21; layout in R6) | `MOCHI2-PARITY` ‖ `00 00 00` (16 bytes) |
+| 2 | Zstandard-compressed SQLite 3 image (B.2.15; the signature is the Zstandard frame magic) | `28 b5 2f fd` (4 bytes) |
+
+**Encoding 2.** The payload after the header is exactly one Zstandard frame, with
+`Frame_Content_Size` present, the content checksum flag set, and no dictionary ID; its
+decoded bytes are an encoding-0 payload (a SQLite 3 image starting `SQLite format 3` ‖
+`00`, whose `user_version` equals the record schema version). The **decoded-size bound**
+is the image payload budget, *S* − 592 (268,434,864 bytes at the defaults): the same
+number as the stored bound. A reader refuses a frame whose *declared* size exceeds it
+before allocating anything for the output (`LIMIT_EXCEEDED`), and a frame that produces
+a different number of bytes than it declares (`CONTENT_INTEGRITY_FAILED`). A 1.0 writer
+uses Zstandard level 9, and refuses an image over the bound (`CAPACITY_EXCEEDED`). The
+level is a writer choice, not a rule: any frame meeting these rules decodes. Digests are
+unchanged: the stored-object hash and the commit's references cover the *stored* frame
+bytes and are checked before decompression; nothing in the format is a digest of the
+decoded image.
 
 Any other value is refused (`ENVELOPE_INVALID`). Each enveloped kind carries exactly
 one encoding (below); a registered encoding in the other kind's frame is refused too
@@ -82,14 +104,16 @@ one encoding (below); a registered encoding in the other kind's frame is refused
 
 | Kind | Record |
 |---|---|
-| `0x184D2A50` | Catalog image (encoding 0) |
+| `0x184D2A50` | Catalog image (encoding 2; encoding 0 in draft 2) |
 | `0x184D2A5F` | Parity frame (encoding 1; D21, R6) |
 
 **Decode order** (`decode_binary_record`; each failure has its own fault): kind; the
 80 fixed bytes present; envelope version; feature count ≤ 64 (before the header
 length is computed from it); header length; payload length; payload budget; payload
 encoding, and that it is the kind's own; required features; record schema version;
-payload signature (and, for SQLite, `user_version` = record schema version).
+payload signature (and, for encoding 0, `user_version` = record schema version). For
+encoding 2 a further step follows `bind`: decode within the bound, then the SQLite
+signature and `user_version` of the decoded bytes (`ENVELOPE_INVALID` when they fail).
 A parity frame's own digest is checked **before** this decoder runs, because no
 referencing record holds its hash (§4). The result is a *candidate*: nothing
 may interpret its payload until `Candidate::bind` has checked its identity against

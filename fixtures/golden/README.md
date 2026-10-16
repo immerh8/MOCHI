@@ -55,7 +55,7 @@ file the writer would otherwise refuse to overwrite):
 `r8/` is ratification artifact R8 (plan W16, K21): 76 cases built on the frozen draft-2
 format, with a coverage test. Valid, corrupt, and interrupted archives for every 1.0
 profile and allowed combination (Core, TAR, Encrypted, Redundancy, TAR+Redundancy,
-Encrypted+Redundancy), plus copy, salvage, and legacy cases. 9.6 MiB in all; the budget
+Encrypted+Redundancy), plus copy, salvage, and legacy cases. 7.2 MiB in all (it was 9.6 MiB before catalog images were compressed); the budget
 is 12 MiB and a test enforces it. Tests: `crates/mochi-testkit/tests/r8_golden.rs`;
 recipes: `tests/r8_golden/`; summary producer: `mochi_testkit::interop`.
 
@@ -90,6 +90,20 @@ repair outcome, and summary equal `cases.json` and the stored summary. Adding a 
 adding its recipe and spec, deleting `cases.json` (deliberately), and running the writer.
 Regeneration of existing files happens only at a draft bump or the 1.0 flip, with an
 explained diff.
+
+**Regenerated 2026-10-16 (owner decision, spec B.2.15, D25).** Catalog images became
+Zstandard frames (payload encoding 2), so every archive changed, and with it every hash
+downstream and (Encrypted cases) every nonce, salt, and key; `cases.json`, the summaries, and
+`g1/` were rebuilt from the recipes. The set is 76 cases with the same names and classes.
+Two recipe changes were needed because a commit is smaller now, and the Redundancy damage
+cases need one with several parity shards: `red-valid-50pct`, `tar-red-valid-history`, and
+`enc-red-valid-history` use `history_big()` (`history()` plus a 4,000-byte incompressible
+`pad` file in the first commit; `history_summaries_agree_with_the_script` expects it).
+`legacy/` is untouched: its three draft-2 archives keep their uncompressed (encoding 0)
+images, and the writer's test control (`set_legacy_draft_for_tests`) now writes encoding 0
+too, so it still rebuilds them byte for byte. The B.2 vectors gained
+`valid-envelope-image-zstd` and `reject-envelope-decoded-signature`; `reject-envelope-payload-encoding`
+now uses the unregistered value 3, since 2 is registered.
 
 **Coverage is a test, not prose** (`coverage_*` in `r8_golden.rs`). It fails if a profile lacks
 a valid, corrupt, or interrupted case; if a spec 24.2 row about archive bytes in 1.0 has no

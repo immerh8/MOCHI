@@ -1562,9 +1562,9 @@ pub(crate) fn check_image(
         decode_image_record(&stored, &cp.commit.identity(), &opts.limits)?
     };
     let catalog = if writable {
-        Catalog::open_image_writable(image, &opts.catalog)?
+        Catalog::open_image_writable(&image, &opts.catalog)?
     } else {
-        Catalog::open_image(image, &opts.catalog)?
+        Catalog::open_image(&image, &opts.catalog)?
     };
     if catalog.head_commit()? != Some(cp.commit.seq) {
         return Err(MochiError::new(
@@ -5091,7 +5091,7 @@ fn adopt_checkpoint(
         },
     }
     .map_err(|e| remap("catalog image", e))?;
-    let img = Catalog::open_image(bytes, &CatalogLimits::default())
+    let img = Catalog::open_image(&bytes, &CatalogLimits::default())
         .map_err(|e| remap("catalog image", e))?;
     let head = img.head_commit().map_err(|e| remap("catalog image", e))?;
     if head != Some(seq) {
