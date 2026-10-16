@@ -53,18 +53,21 @@ fn read_info<R: Read + Seek>(
         },
         Ok(f) => {
             let meta = f.get_metadata();
-            let encryption = if meta.encrypted {
-                match meta.aes_mode {
-                    Some((AesMode::Aes128, _, _)) => Encryption::Aes(128),
-                    Some((AesMode::Aes192, _, _)) => Encryption::Aes(192),
-                    Some((AesMode::Aes256, _, _)) => Encryption::Aes(256),
+            let aes = meta.aes_settings();
+            let encryption = if meta.is_encrypted() {
+                match aes {
+                    Some((AesMode::Aes128, _)) => Encryption::Aes(128),
+                    Some((AesMode::Aes192, _)) => Encryption::Aes(192),
+                    Some((AesMode::Aes256, _)) => Encryption::Aes(256),
                     None => Encryption::ZipCryptoWeak,
                 }
             } else {
                 Encryption::None
             };
-            let method = match meta.aes_mode {
-                Some((_, _, inner)) => format!("aes+{}", method_label(inner)),
+            // For an AES entry the metadata carries the inner method from the
+            // AE-x extra field (zip 9), not method 99.
+            let method = match aes {
+                Some(_) => format!("aes+{}", method_label(f.compression())),
                 None => method_label(f.compression()),
             };
             let kind = if f.is_dir() {
@@ -99,7 +102,7 @@ fn read_info<R: Read + Seek>(
                 link_target: None,
                 unix_mode: f.unix_mode(),
                 mtime_unix: None,
-                name_is_utf8_flag: Some(meta.flags & (1 << 11) != 0),
+                name_is_utf8_flag: Some(meta.flags.as_u16() & (1 << 11) != 0),
                 error,
             }
         }
@@ -186,7 +189,7 @@ fn stream_entry<R: Read + Seek>(
         }
         Err(e) => return done(EntryOutcome::ReadError(truncate_text(e.to_string()))),
     };
-    let ae2 = is_ae2(&file.get_metadata().aes_mode);
+    let ae2 = is_ae2(&file.get_metadata().aes_settings());
     let compressed = info.compressed_size.unwrap_or(0);
     let encrypted = info.encryption != Encryption::None;
     // Encrypted entries are held until their authentication passes, so a wrong
@@ -279,9 +282,9 @@ fn i_usize(i: u64) -> usize {
 }
 
 /// AE-2 stores no CRC32 (the authentication code replaces it).
-fn is_ae2<V: std::fmt::Debug>(aes: &Option<(AesMode, V, CompressionMethod)>) -> bool {
+fn is_ae2<V: std::fmt::Debug>(aes: &Option<(AesMode, V)>) -> bool {
     aes.as_ref()
-        .is_some_and(|(_, v, _)| format!("{v:?}").contains("Ae2"))
+        .is_some_and(|(_, v)| format!("{v:?}").contains("Ae2"))
 }
 
 /// The `zip` crate reports a failed check as an `io::Error` with a fixed

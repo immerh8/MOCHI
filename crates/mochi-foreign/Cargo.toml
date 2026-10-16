@@ -31,7 +31,7 @@ test-faults = ["engine"]
 [dependencies]
 # MIT. No bzip2/lzma/zstd/ppmd: C or large decoders we do not need yet; such
 # entries are reported UNSUPPORTED per entry. aes-crypto = AES + ZipCrypto.
-zip = { version = "8", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"], optional = true }
+zip = { version = "9", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"], optional = true }
 # MIT OR Apache-2.0 each.
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
