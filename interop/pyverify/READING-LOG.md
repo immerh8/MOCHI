@@ -401,10 +401,10 @@ no content size / no checksum, declared size 2^40 refused before decoding, decla
    non-zero dictionary ID, a decoding error (bad block, checksum mismatch), a size other than declared. Order:
    structure and window; `Frame_Content_Size` present; declared size against the bound (`LIMIT_EXCEEDED`);
    checksum flag; dictionary ID; decoding. So no checksum flag plus an over-bound size is `LIMIT_EXCEEDED`.
-   *Reading choice:* the envelope-level signature check (R2: payload signature) would turn an empty or
-   shorter-than-4 payload that is a prefix of `28 B5 2F FD` into `ENVELOPE_INVALID`; item 1 says empty is
-   `TRUNCATED`, so such a payload skips the signature check and the frame walk reports `TRUNCATED`. Any other
-   payload without the magic stays `ENVELOPE_INVALID` (envelope level, before the decoder).
+   *Envelope signature first (commit 4948c59, item 1):* an encoding-2 payload without the four magic bytes
+   `28 B5 2F FD` is `ENVELOPE_INVALID` at envelope level, including an empty payload and one shorter than four
+   bytes; `TRUNCATED` is only for a payload that has the magic and is cut short inside the frame. My earlier
+   reading (letting empty and short payloads reach the frame walk) is removed.
 2. *Window limit (item 2)* **[closed]**. `max-window-size` defaults to 134,217,728; the structural walk refuses a
    frame header declaring a larger window with `LIMIT_EXCEEDED` before the decoder exists (a single-segment
    frame's window is its content size, so the window is compared first), and the decoder is configured with the
@@ -420,7 +420,6 @@ no content size / no checksum, declared size 2^40 refused before decoding, decla
    verifier used to scan on parity frames after the head's commit when the descriptor was unreadable; that
    fallback is removed.
 
-**Tests added for the closure:** every code and ordering row above in `tests/test_image_encoding.py` (empty and
-cut-short payloads, second frame and trailing byte, no content size, no checksum flag, non-zero dictionary ID,
+**Tests added for the closure:** every code and ordering row above in `tests/test_image_encoding.py` (empty, 1 to 3 byte prefixes, cuts at 4, 5, 10 and len-1 bytes, second frame and trailing byte, no content size, no checksum flag, non-zero dictionary ID,
 corrupt checksum, size mismatch, over-bound before checksum flag, window above 128 MiB, features before decode,
 bind before decode), and `test_parity_is_null_when_the_descriptor_does_not_decode` in `tests/test_golden.py`.

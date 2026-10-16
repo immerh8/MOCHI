@@ -92,9 +92,7 @@ def decode_binary(data: bytes, expected_kind: int, schema_versions, payload_budg
     if schema not in schema_versions:
         raise MochiError("UNSUPPORTED_FEATURE", f"record schema version {schema}")
     payload = bytes(p[hlen:])
-    if enc == ENC_ZSTD_IMAGE and len(payload) < 4 and _SIGNATURES[enc].startswith(payload):
-        pass        # empty or cut short inside the magic: TRUNCATED from the frame walk (B.2.15 item 1)
-    elif not payload.startswith(_SIGNATURES[enc]):
+    if not payload.startswith(_SIGNATURES[enc]):
         raise MochiError("ENVELOPE_INVALID", "payload lacks its encoding's signature")
     if enc == ENC_SQLITE:
         if len(payload) < 64 or int.from_bytes(payload[60:64], "big", signed=True) != schema:

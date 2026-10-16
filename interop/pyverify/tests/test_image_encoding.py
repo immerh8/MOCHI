@@ -146,12 +146,20 @@ def test_corrupt_block_or_checksum_is_integrity_failure():
     assert e.value.code == "CONTENT_INTEGRITY_FAILED"
 
 
-def test_empty_and_cut_short_payloads_are_truncated():
+def test_payload_without_the_four_magic_bytes_is_envelope_invalid():
     f = zstd_frame(sqlite_image())
-    for payload in (b"", f[:2], f[:4], f[:7], f[:-1]):
+    for payload in (b"", f[:1], f[:2], f[:3]):          # empty, 28, 28 B5, 28 B5 2F
         with pytest.raises(MochiError) as e:
-            read(payload, 2)
-        assert e.value.code == "TRUNCATED", len(payload)
+            envelope.decode_binary(envelope_frame(payload, 2), frames.K_IMAGE, (1,))
+        assert e.value.code == "ENVELOPE_INVALID", len(payload)
+
+
+def test_cut_short_inside_the_frame_is_truncated():
+    f = zstd_frame(sqlite_image())
+    for n in (4, 5, 10, len(f) - 1):
+        with pytest.raises(MochiError) as e:
+            read(f[:n], 2)
+        assert e.value.code == "TRUNCATED", n
 
 
 def test_second_frame_and_trailing_bytes_are_malformed():
