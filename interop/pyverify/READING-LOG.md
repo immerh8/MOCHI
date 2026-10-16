@@ -365,3 +365,52 @@ descriptor vectors, as data. No Rust source and no `gen_vectors.py`.
    refused at the head with `UNSUPPORTED_FEATURE` naming draft 2, and that the R8 comparison (exact equality,
    D7, G14) covers every case of `r8/cases.json`.
 6. The R5 layout vector's descriptor (draft identifier 1) remains refused; the test comment now says "1.0 reader".
+
+## F1: compressed catalog images (payload encoding 2; branch `claude/f1-compressed-catalog`)
+
+**Read for this change:** `docs/spec.md`: Annex B.2.2 (payload-encoding row, frame-kind table), B.2.3 (limits
+table, "Decoded: Image"), B.2.10 item 5 (compress, then seal), B.2.15 (D25) items 1 to 9, and the status line;
+`docs/ratification/R2-record-envelopes-draft.md` (the 2026-10-16 amendment, "Encoding 2", decode order);
+`fixtures/golden/b2/vectors.txt` and the two new `.bin` vectors (as data); `fixtures/golden/r8/` summaries
+(as data). No Rust source, no PR diff of Rust files.
+
+**Done:** `envelope.decode_binary` registers encoding 2 (signature `28 b5 2f fd`) and lets `0x184D2A50` carry 2
+or 0 and `0x184D2A5F` only 1 (B.2.2); any other value, and 2 in a parity frame, is `ENVELOPE_INVALID`.
+New `envelope.decode_image(env)` runs after `bind` (B.2.15 item 3 order: stored-hash check, identity bind, then
+decompress): payload is exactly one Zstandard frame (`MALFORMED_FRAME` otherwise) with
+`Frame_Content_Size`, the checksum flag, no dictionary ID; the *declared* size is compared with *S* − 592 before
+any output exists (`LIMIT_EXCEEDED`); the decoder is capped at declared + 1; a different size or a Zstandard
+error is `CONTENT_INTEGRITY_FAILED` (item 2); then the decoded bytes must start `SQLite format 3\0` and their
+`user_version` equals the envelope schema version (`ENVELOPE_INVALID`, R2). Encoding 0 returns the payload
+unchanged (draft-2 and pre-decision 1.0 images, item 6; draft-2 *archives* are still refused at the
+descriptor, W20). The existing catalog checks (R4 section 3, page size, application id) run on the decoded
+bytes. Encrypted images unseal first, then take the same path (item 5). No new dependency: `zstandard` is
+already pinned; the CI job is unchanged.
+
+**Tests:** `tests/test_image_encoding.py` (round trip, encoding 0 still read, encoding 3, encoding 2 in a parity
+frame, wrong envelope signature, decoded signature, decoded `user_version`, trailing bytes / two frames /
+no content size / no checksum, declared size 2^40 refused before decoding, declared size ≠ actual);
+`tests/test_golden.py` lists and decodes the two new b2 vectors.
+
+**Gaps (spec silent; chosen, for the parent to rule on):**
+
+1. *Fault code for a frame-shape failure.* B.2.15 item 1 requires exactly one frame with content size,
+   checksum flag and no dictionary ID but names no code for a violation (item 2 names `LIMIT_EXCEEDED` and
+   `CONTENT_INTEGRITY_FAILED`; R2 names `ENVELOPE_INVALID` only for the decoded signature and `user_version`).
+   **Chosen:** `MALFORMED_FRAME`, as for data objects (O21). **Risk:** the reference may say `ENVELOPE_INVALID`
+   or `CONTENT_INTEGRITY_FAILED`. No fixture exercises it.
+2. *Window-size limit.* Item 2 says `max-window-size` "applies as for data objects"; neither the spec text I
+   read nor the data-object path in this verifier states a number, and the verifier applies the decoder
+   library's own default, as it does for chunks. **Risk:** a frame with an enormous window decodes here and not
+   in the reference. No fixture exercises it.
+3. *Order of the features check against the decode.* Item 3 fixes stored-hash, bind, decompress, decoded-byte
+   checks; the image-features comparison with the commit's profile is not placed. **Chosen:** after bind,
+   before decompressing.
+4. *`parity` in a summary whose head is refused.* The summary format says `parity` is "null without a recovery
+   record; otherwise ..." and a refused head "verified nothing"; this verifier had returned null for every
+   refused head, which was never exercised. The regenerated R8 case `red-corrupt-beyond-capacity` now has a
+   refused head (the damage reaches the head's snapshot manifest) and the reference reports the scan
+   (`commits 7, damaged_shards 3, beyond_capacity 1`). **Chosen:** report `parity` whenever the parity scan ran
+   and reached commits, whatever the head status; still null when no scan ran. **Risk:** a refused head with a
+   recovery record whose scan found nothing: unknown (no case).
+   **Source:** `fixtures/golden/r8/red-corrupt-beyond-capacity.summary.json` (data), which taught this.

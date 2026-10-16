@@ -9,7 +9,7 @@ ZSTD_MAGIC = 0xFD2FB528
 SKIP_FIRST = 0x184D2A50
 SKIP_LAST = 0x184D2A5F
 
-K_IMAGE = 0x184D2A50          # catalog image (binary envelope, encoding 0)
+K_IMAGE = 0x184D2A50          # catalog image (binary envelope, encoding 2; 0 in draft 2)
 K_COMMIT = 0x184D2A51
 K_PREPARED = 0x184D2A52
 K_FOOTER = 0x184D2A56

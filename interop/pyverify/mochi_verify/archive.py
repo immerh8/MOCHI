@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from . import catalog, commit as commit_mod, crypto, descriptor as desc_mod, digest, footer as footer_mod
 from . import frames, manifest as manifest_mod, objects, parity, state as state_mod, tar as tar_mod
-from .envelope import SEAL_DATA, SEAL_DELTA, SEAL_IMAGE, SEAL_SNAPSHOT, decode_binary, parse_sealed
+from .envelope import SEAL_DATA, SEAL_DELTA, SEAL_IMAGE, SEAL_SNAPSHOT, decode_binary, decode_image, parse_sealed
 from .errors import MochiError, is_violation
 from .frames import K_COMMIT, K_DESCRIPTOR, K_FOOTER, K_IMAGE, K_KEY_ENVELOPE, K_MANIFEST, K_SEALED, ZSTD_MAGIC
 
@@ -571,7 +571,7 @@ class Verifier:
             env.bind(c.archive_id, c.sequence, c.transaction_id)
             if env.features != ([1] if c.encrypted else []):
                 raise MochiError("RECORD_INVALID", "image features differ from the archive's profile")
-            st = catalog.check_image(env.payload)
+            st = catalog.check_image(decode_image(env))
             if st.archive_id != c.archive_id or st.head_seq != c.sequence:
                 raise MochiError("RECORD_INVALID", "image's archive id or head sequence differs from the commit's")
             self._compare_image(nd, st)
