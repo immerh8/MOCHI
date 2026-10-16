@@ -9,7 +9,7 @@
 // On Linux the single-instance plugin uses the session D-Bus: CI runs this
 // under `dbus-run-session` (a desktop session has one already).
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,18 @@ function secondLaunch(args) {
   });
 }
 
+/** Extracted folders keep the archive's modes (some are read-only): make them removable. */
+function makeWritable(dir) {
+  for (const name of readdirSync(dir)) {
+    const p = path.join(dir, name);
+    if (lstatSync(p).isDirectory()) {
+      chmodSync(p, 0o755);
+      makeWritable(p);
+    }
+  }
+  chmodSync(dir, 0o755);
+}
+
 /** Make the window that shows `testid` the one WebDriver talks to (the shell's quick verbs open a compact second window). */
 async function switchToWindowWith(testid, timeout = 60_000) {
   await browser.waitUntil(
@@ -58,6 +70,7 @@ describe("a second launch", () => {
     mainWindow = await browser.getWindowHandle();
   });
   after(() => {
+    makeWritable(work);
     rmSync(work, { recursive: true, force: true });
   });
 
