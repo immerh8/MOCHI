@@ -681,6 +681,27 @@ mod compressed_image {
         ));
     }
 
+    /// Codes pinned for a payload that is not a frame (spec B.2.15 item 1): no
+    /// magic, even an empty payload or a 2-byte prefix of it, is an envelope
+    /// signature fault; cut short after the magic is truncation.
+    #[test]
+    fn a_payload_without_or_cut_after_the_magic_has_its_own_fault() {
+        let good = compress_image(&env2(0), &sqlite_image(0, 1000), &Limits::default()).unwrap();
+        for short in [&good[..0], &good[..2], &good[..3]] {
+            assert_eq!(
+                decode2(short, &Limits::default()).unwrap_err(),
+                fault(EnvelopeFault::EncodingSignatureMismatch),
+                "{} bytes",
+                short.len()
+            );
+        }
+        for cut in [4, 5, 10, good.len() - 1] {
+            let e = decode2(&good[..cut], &Limits::default()).unwrap_err();
+            assert!(matches!(e, FormatError::Truncated { .. }), "{cut}: {e:?}");
+            assert_eq!(e.class(), ErrorClass::Truncated);
+        }
+    }
+
     /// Trailing bytes, a second frame, and a damaged payload are all refused.
     #[test]
     fn extra_frames_and_damage_are_refused() {
