@@ -106,7 +106,7 @@ done
 if [ -n "$bad" ]; then rec U-FOREIGN-NO-DEFAULT FAIL "MOCHI is the default although a defaults list names another program for:$bad"
 else rec U-FOREIGN-NO-DEFAULT PASS "MOCHI is offered under Open with for:$listed; the package sets no default, and MOCHI is not the default for any type whose defaults list names another program"; fi
 if [ -n "$byorder" ]; then
-  rec U-DEFAULT-BY-ORDER INFO "no desktop defaults list names a program for:$byorder, so this machine falls back to the first handler in mimeinfo.cache, and that is MOCHI.desktop (capital M sorts first). On a real Ubuntu desktop its own defaults list decides: check it in Files (runbook U-04), and see the proposal to name the launcher in lower case."
+  rec U-DEFAULT-BY-ORDER INFO "no desktop defaults list names a program for:$byorder, so this machine falls back to the first handler in mimeinfo.cache, and that is MOCHI.desktop (update-desktop-database orders handlers by file name, so a lower-case name would sort first as well). On a real Ubuntu desktop its own defaults list decides: check it in Files (runbook U-04)."
 fi
 [ -n "$only" ] && rec U-DEFAULT-ONLY INFO "MOCHI is the only registered handler here for:$only"
 

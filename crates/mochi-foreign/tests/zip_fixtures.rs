@@ -264,7 +264,8 @@ fn aes_entries_report_the_authentication_code_and_fail_closed() {
 
     let l = c.list(&p, None).unwrap();
     assert_eq!(l.entries[0].encryption, Encryption::Aes(256));
-    assert!(l.entries[0].method.starts_with("aes+"));
+    // The inner method from the AE-x extra field, not AES method 99.
+    assert_eq!(l.entries[0].method, "aes+deflate");
 
     assert_eq!(
         c.test(&p, None).unwrap().entries[0].outcome,

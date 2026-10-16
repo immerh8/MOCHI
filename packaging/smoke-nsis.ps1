@@ -39,6 +39,8 @@ $verbKeys = @(
 )
 $foreignExts = "zip", "7z", "rar", "tar", "tgz", "gz"
 
+$installKey = "HKCU:\Software\The MOCHI Project contributors\MOCHI"
+
 function Assert-NothingRegistered($when) {
   foreach ($k in $verbKeys + @("MOCHI.Archive", "MOCHI.Foreign")) {
     if (Test-ClassKey $k) { Fail "$when : HKCU\Software\Classes\$k exists" }
@@ -47,6 +49,8 @@ function Assert-NothingRegistered($when) {
   foreach ($e in $foreignExts) {
     if (Test-OpenWith $e) { Fail "$when : MOCHI.Foreign still offered for .$e" }
   }
+  # Tauri's install-location key; packaging/nsis/hooks.nsh removes it on uninstall.
+  if (Test-Path $installKey) { Fail "$when : $installKey exists" }
 }
 
 function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
@@ -93,6 +97,8 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   $probe = Join-Path $PSScriptRoot "helper_probe.py"
   & python -I $probe $helper (Resolve-Path $fixture).Path --expect a.txt --expect sub/b.txt
   if ($LASTEXITCODE -ne 0) { Fail "the installed helper did not list the fixture" }
+  # Tauri writes its install-location key (read again by the next install).
+  if (-not (Test-Path $installKey)) { Fail "no $installKey after install" }
   # Per-user: the uninstall entry is under HKCU, nothing needed elevation.
   $key = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
     Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -eq "MOCHI" }

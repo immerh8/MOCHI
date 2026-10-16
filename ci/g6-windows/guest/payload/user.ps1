@@ -202,7 +202,7 @@ function Get-LiveAssoc {
 }
 function Get-InstallKeyLeft {
   # Tauri's install-location bookkeeping key (not a class registration): the installer
-  # writes it, and the uninstaller currently leaves it. Reported by its own check.
+  # writes it and the NSIS uninstall hook removes it. Reported by its own check.
   $k = 'HKCU:\SOFTWARE\The MOCHI Project contributors'
   if (-not (Test-Path $k)) { return $null }
   $vals = foreach ($c in @(Get-Item $k; Get-ChildItem $k -Recurse -ErrorAction SilentlyContinue)) {
@@ -434,7 +434,7 @@ function Main {
   Check 'A-INSTALL-KEY' 'After uninstall: the install-location key under HKCU\Software is gone' {
     $left = Get-InstallKeyLeft
     if (-not $left) { return 'gone' }
-    @{ status = 'KNOWN-GAP'; detail = "the uninstaller leaves: $left (Tauri writes it at install; the NSIS hooks do not remove it; proposed, not done)" }
+    Fail "the uninstaller leaves: $left (Tauri writes it at install; packaging/nsis/hooks.nsh removes it on uninstall)"
   }
   Remove-Item 'HKCU:\SOFTWARE\The MOCHI Project contributors' -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -612,7 +612,7 @@ function Main {
   Check 'B-INSTALL-KEY' 'After uninstall: the install-location key under HKCU\Software is gone' {
     $left = Get-InstallKeyLeft
     if (-not $left) { return 'gone' }
-    @{ status = 'KNOWN-GAP'; detail = "the uninstaller leaves: $left (Tauri writes it at install; the NSIS hooks do not remove it; proposed, not done)" }
+    Fail "the uninstaller leaves: $left (Tauri writes it at install; packaging/nsis/hooks.nsh removes it on uninstall)"
   }
   Check 'B-APPDATA' 'User data the running app created (observation: an uninstall keeps it)' {
     $dirs = @("$env:APPDATA\io.github.immerh8.mochi", "$env:LOCALAPPDATA\io.github.immerh8.mochi", "$env:LOCALAPPDATA\MOCHI") |

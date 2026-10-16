@@ -9,6 +9,9 @@
 ;                   (Tauri's APP_ASSOCIATE; ProgID "MOCHI.Archive"). Its leftovers
 ;                   are cleaned here, because Tauri's APP_UNASSOCIATE leaves the
 ;                   ".mochi" key and a "<ProgID>_backup" value behind.
+;   Install key     Tauri's HKCU\Software\<publisher>\<product> install-location
+;                   key, which Tauri's own uninstaller keeps unless the user
+;                   ticks "delete application data" (removed here, not on update).
 ;   Explorer verbs  classic context menu (shown under "Show more options" on
 ;                   Windows 11; the top-level Windows 11 menu needs an
 ;                   IExplorerCommand handler with package identity: 1.x, O10):
@@ -138,6 +141,12 @@
 
   ${If} $UpdateMode <> 1
     !insertmacro MochiUnregisterForeign
+    ; Tauri's install-location key (written at install, ${MANUPRODUCTKEY}; with
+    ; installMode currentUser that is HKCU). Its uninstaller removes it only when
+    ; "delete application data" is ticked. An update (/UPDATE) keeps it: the next
+    ; install reads it to find the folder. A reinstall writes it again.
+    DeleteRegKey HKCU "${MANUPRODUCTKEY}"
+    DeleteRegKey /ifempty HKCU "${MANUKEY}"
   ${EndIf}
   !insertmacro UPDATEFILEASSOC
 !macroend
