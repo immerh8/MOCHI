@@ -377,3 +377,13 @@ def test_descriptor_draft_is_refused_naming_it(name, draft):
 def test_ratified_descriptor_has_null_draft():
     d = descriptor.decode_object(read(GOLDEN / "b2" / "valid-descriptor-minimal.bin"))
     assert d.draft is None
+
+
+# ---------------------------------------------------------------- R8 summary: parity without a decodable descriptor
+def test_parity_is_null_when_the_descriptor_does_not_decode():
+    raw = bytearray(read(GOLDEN / "c12" / "valid-archive-recovery-record.mochi"))
+    assert archive.verify(bytes(raw)).parity is not None
+    fr = frames.walk_frame(bytes(raw), 0)
+    assert fr.magic == frames.K_DESCRIPTOR
+    raw[fr.length - 5] ^= 0x01                      # damage inside the descriptor; parity frames still follow the commits
+    assert archive.verify(bytes(raw)).parity is None

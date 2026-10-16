@@ -113,8 +113,7 @@ class Verifier:
     # ------------------------------------------------------------ parity
     def _parity_pre(self) -> None:
         """Use parity in memory only (ladder step 6).  Applies when the descriptor
-        asks for a recovery record, or (descriptor unreadable) when a parity frame
-        follows the head's commit frame."""
+        declares a recovery record (R8 summary rules: an undecodable descriptor means no scan)."""
         if not self.use_parity:
             return
         v = self.view
@@ -135,11 +134,11 @@ class Verifier:
             f = footer_mod.parse_footer(v, head_off)
         except MochiError:
             return
-        c_end = f.commit_offset + f.commit_length
-        has_frame_after_commit = (c_end + 8 <= f.offset and frames.u32(v, c_end) == frames.K_PARITY)
-        if want is None and not has_frame_after_commit:
+        # fixtures/golden/README.md (R8 summaries): the scan runs only when the descriptor at offset 0 decodes
+        # and declares a percentage; a descriptor that does not decode gives no parity, even if parity frames follow
+        if want is None:
             return
-        self._scan_parity(f, want[1] if want else None)
+        self._scan_parity(f, want[1])
 
     def _footer_candidates(self):
         """Footers that may be the head, best first: the footer at end of file and the

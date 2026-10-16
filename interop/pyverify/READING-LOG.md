@@ -392,25 +392,35 @@ frame, wrong envelope signature, decoded signature, decoded `user_version`, trai
 no content size / no checksum, declared size 2^40 refused before decoding, declared size ≠ actual);
 `tests/test_golden.py` lists and decodes the two new b2 vectors.
 
-**Gaps (spec silent; chosen, for the parent to rule on):**
+**Gaps, all four now closed by the spec (commit 20cd681; B.2.15 items 1 to 3 and the R8 summary section of
+`fixtures/golden/README.md`).** Re-read and aligned; my first choices that differed are marked.
 
-1. *Fault code for a frame-shape failure.* B.2.15 item 1 requires exactly one frame with content size,
-   checksum flag and no dictionary ID but names no code for a violation (item 2 names `LIMIT_EXCEEDED` and
-   `CONTENT_INTEGRITY_FAILED`; R2 names `ENVELOPE_INVALID` only for the decoded signature and `user_version`).
-   **Chosen:** `MALFORMED_FRAME`, as for data objects (O21). **Risk:** the reference may say `ENVELOPE_INVALID`
-   or `CONTENT_INTEGRITY_FAILED`. No fixture exercises it.
-2. *Window-size limit.* Item 2 says `max-window-size` "applies as for data objects"; neither the spec text I
-   read nor the data-object path in this verifier states a number, and the verifier applies the decoder
-   library's own default, as it does for chunks. **Risk:** a frame with an enormous window decodes here and not
-   in the reference. No fixture exercises it.
-3. *Order of the features check against the decode.* Item 3 fixes stored-hash, bind, decompress, decoded-byte
-   checks; the image-features comparison with the commit's profile is not placed. **Chosen:** after bind,
-   before decompressing.
-4. *`parity` in a summary whose head is refused.* The summary format says `parity` is "null without a recovery
-   record; otherwise ..." and a refused head "verified nothing"; this verifier had returned null for every
-   refused head, which was never exercised. The regenerated R8 case `red-corrupt-beyond-capacity` now has a
-   refused head (the damage reaches the head's snapshot manifest) and the reference reports the scan
-   (`commits 7, damaged_shards 3, beyond_capacity 1`). **Chosen:** report `parity` whenever the parity scan ran
-   and reached commits, whatever the head status; still null when no scan ran. **Risk:** a refused head with a
-   recovery record whose scan found nothing: unknown (no case).
-   **Source:** `fixtures/golden/r8/red-corrupt-beyond-capacity.summary.json` (data), which taught this.
+1. *Fault codes for a non-conforming encoding-2 payload (B.2.15 item 1)* **[closed; first choice changed]**.
+   `TRUNCATED`: empty or cut short inside the frame. `MALFORMED_FRAME`: not a Zstandard data-frame magic,
+   bytes after the frame or a second frame, no `Frame_Content_Size`, no checksum flag. `CONTENT_INTEGRITY_FAILED`:
+   non-zero dictionary ID, a decoding error (bad block, checksum mismatch), a size other than declared. Order:
+   structure and window; `Frame_Content_Size` present; declared size against the bound (`LIMIT_EXCEEDED`);
+   checksum flag; dictionary ID; decoding. So no checksum flag plus an over-bound size is `LIMIT_EXCEEDED`.
+   *Reading choice:* the envelope-level signature check (R2: payload signature) would turn an empty or
+   shorter-than-4 payload that is a prefix of `28 B5 2F FD` into `ENVELOPE_INVALID`; item 1 says empty is
+   `TRUNCATED`, so such a payload skips the signature check and the frame walk reports `TRUNCATED`. Any other
+   payload without the magic stays `ENVELOPE_INVALID` (envelope level, before the decoder).
+2. *Window limit (item 2)* **[closed]**. `max-window-size` defaults to 134,217,728; the structural walk refuses a
+   frame header declaring a larger window with `LIMIT_EXCEEDED` before the decoder exists (a single-segment
+   frame's window is its content size, so the window is compared first), and the decoder is configured with the
+   same maximum. *Not done:* the same limit for data objects ("exactly as for data objects"); this verifier's
+   chunk path never applied it and no task asked for it, so chunks are unchanged.
+3. *Order of checks (item 3)* **[closed]**. Stored hash; the envelope's intrinsic checks in R2's order (feature
+   count, header and payload length, budget, encoding, features strictly increasing, each known, schema,
+   signature); bind; the profile features check (`[1]` exactly in an Encrypted archive, else none;
+   `RECORD_INVALID`); decompress; decoded-byte checks. This was already the code's order; tests now pin it.
+4. *`parity` with a refused head and with no usable descriptor (R8 summary section)* **[closed]**. Parity does
+   not depend on the head. It is null when the descriptor at offset 0 does not decode or declares no percentage
+   (even if parity frames follow), when no footer is found, or when the scan fails. *First choice changed:* the
+   verifier used to scan on parity frames after the head's commit when the descriptor was unreadable; that
+   fallback is removed.
+
+**Tests added for the closure:** every code and ordering row above in `tests/test_image_encoding.py` (empty and
+cut-short payloads, second frame and trailing byte, no content size, no checksum flag, non-zero dictionary ID,
+corrupt checksum, size mismatch, over-bound before checksum flag, window above 128 MiB, features before decode,
+bind before decode), and `test_parity_is_null_when_the_descriptor_does_not_decode` in `tests/test_golden.py`.

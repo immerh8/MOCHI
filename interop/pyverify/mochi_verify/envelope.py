@@ -92,7 +92,9 @@ def decode_binary(data: bytes, expected_kind: int, schema_versions, payload_budg
     if schema not in schema_versions:
         raise MochiError("UNSUPPORTED_FEATURE", f"record schema version {schema}")
     payload = bytes(p[hlen:])
-    if not payload.startswith(_SIGNATURES[enc]):
+    if enc == ENC_ZSTD_IMAGE and len(payload) < 4 and _SIGNATURES[enc].startswith(payload):
+        pass        # empty or cut short inside the magic: TRUNCATED from the frame walk (B.2.15 item 1)
+    elif not payload.startswith(_SIGNATURES[enc]):
         raise MochiError("ENVELOPE_INVALID", "payload lacks its encoding's signature")
     if enc == ENC_SQLITE:
         if len(payload) < 64 or int.from_bytes(payload[60:64], "big", signed=True) != schema:
@@ -101,7 +103,7 @@ def decode_binary(data: bytes, expected_kind: int, schema_versions, payload_budg
                     bytes(p[64:80]), hlen, payload)
 
 
-def decode_image(env: Envelope, limit: int = frames.IMAGE_PAYLOAD_LIMIT) -> bytes:
+def decode_image(env: Envelope, limit: int = frames.IMAGE_PAYLOAD_LIMIT, max_window: int = frames.MAX_WINDOW_SIZE) -> bytes:
     """The SQLite bytes of a catalog-image envelope, after ``bind`` (B.2.15 items 1-3, R2 section 2).
 
     Encoding 0: the payload is the image.  Encoding 2: the payload is exactly one Zstandard frame
@@ -115,20 +117,26 @@ def decode_image(env: Envelope, limit: int = frames.IMAGE_PAYLOAD_LIMIT) -> byte
     if env.encoding != ENC_ZSTD_IMAGE:
         raise MochiError("ENVELOPE_INVALID", "not a catalog-image encoding")
     frame = env.payload
-    try:
-        fr = frames.walk_frame(frame, 0)
-    except MochiError as e:
-        raise MochiError("MALFORMED_FRAME" if e.code != "LIMIT_EXCEEDED" else e.code, e.message) from None
-    if fr.magic != frames.ZSTD_MAGIC or fr.length != len(frame):
-        raise MochiError("MALFORMED_FRAME", "an encoding-2 payload is exactly one Zstandard frame")
+    # B.2.15 item 1 fixes the order: structure and window, Frame_Content_Size present, declared size against
+    # the bound, checksum flag, dictionary ID, decoding.  Codes: TRUNCATED, MALFORMED_FRAME, LIMIT_EXCEEDED,
+    # CONTENT_INTEGRITY_FAILED.
+    fr = frames.walk_frame(frame, 0, max_window=max_window)       # TRUNCATED / MALFORMED_FRAME / LIMIT_EXCEEDED (window)
+    if fr.magic != frames.ZSTD_MAGIC:
+        raise MochiError("MALFORMED_FRAME", "an encoding-2 payload starts with a Zstandard data-frame magic")
+    if fr.length != len(frame):
+        raise MochiError("MALFORMED_FRAME", "bytes after the Zstandard frame (or a second frame)")
     hdr = frames.data_frame_header(frame)
-    if hdr["content_size"] is None or not hdr["checksum"] or hdr["dictionary_id_flag"]:
-        raise MochiError("MALFORMED_FRAME", "an encoding-2 frame carries Frame_Content_Size and the checksum and no dictionary ID")
     size = hdr["content_size"]
+    if size is None:
+        raise MochiError("MALFORMED_FRAME", "an encoding-2 frame carries Frame_Content_Size")
     if size > limit:
         raise MochiError("LIMIT_EXCEEDED", "declared decoded image size above the bound")
+    if not hdr["checksum"]:
+        raise MochiError("MALFORMED_FRAME", "an encoding-2 frame carries the content checksum flag")
+    if hdr["dictionary_id"]:
+        raise MochiError("CONTENT_INTEGRITY_FAILED", "an encoding-2 frame names a dictionary")
     try:
-        out = zstandard.ZstdDecompressor().decompress(frame, max_output_size=size + 1)
+        out = zstandard.ZstdDecompressor(max_window_size=max_window).decompress(frame, max_output_size=size + 1)
     except zstandard.ZstdError as e:
         raise MochiError("CONTENT_INTEGRITY_FAILED", "Zstandard: %s" % e) from None
     if len(out) != size:

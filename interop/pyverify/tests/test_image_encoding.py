@@ -21,10 +21,10 @@ def zstd_frame(data, checksum=True, content_size=True):
     return zstandard.ZstdCompressor(level=9, write_checksum=checksum, write_content_size=content_size).compress(data)
 
 
-def envelope_frame(payload, enc, schema=1, kind=frames.K_IMAGE):
-    hdr = (80).to_bytes(4, "little") + (0).to_bytes(2, "little") + schema.to_bytes(2, "little") \
-        + enc.to_bytes(4, "little") + (0).to_bytes(4, "little") + len(payload).to_bytes(8, "little") \
-        + AID + SEQ.to_bytes(8, "little") + TXN
+def envelope_frame(payload, enc, schema=1, kind=frames.K_IMAGE, features=()):
+    hdr = (80 + 8 * len(features)).to_bytes(4, "little") + (0).to_bytes(2, "little") + schema.to_bytes(2, "little") \
+        + enc.to_bytes(4, "little") + len(features).to_bytes(4, "little") + len(payload).to_bytes(8, "little") \
+        + AID + SEQ.to_bytes(8, "little") + TXN + b"".join(f.to_bytes(8, "little") for f in features)
     body = hdr + payload
     return kind.to_bytes(4, "little") + len(body).to_bytes(4, "little") + body
 
@@ -95,20 +95,96 @@ def test_two_frames_are_refused():
         read(f + f, 2)
 
 
+def raw_frame(fhd, header_rest, blocks=b"\x01\x00\x00", checksum=b"\x00\x00\x00\x00"):
+    return b"\x28\xb5\x2f\xfd" + bytes([fhd]) + header_rest + blocks + checksum
+
+
 def test_declared_size_above_the_bound_is_refused_before_decoding():
-    # a frame header declaring 2**40 decoded bytes, with a body that would never decode
-    declared = (1 << 40)
-    f = (b"\x28\xb5\x2f\xfd" + bytes([0xC0 | 0x20 | 0x04]) + declared.to_bytes(8, "little")
-         + b"\x01\x00\x00" + b"\x00\x00\x00\x00")
+    # not single-segment (1 KiB window), 8-byte Frame_Content_Size of 2**30 > S - 592; body never decodes
+    f = raw_frame(0xC0 | 0x04, b"\x00" + (1 << 30).to_bytes(8, "little"))
+    with pytest.raises(MochiError) as e:
+        read(f, 2)
+    assert e.value.code == "LIMIT_EXCEEDED"
+    assert "window" not in e.value.message
+
+
+def test_bound_is_checked_before_the_checksum_flag():
+    f = raw_frame(0xC0, b"\x00" + (1 << 30).to_bytes(8, "little"), checksum=b"")
     with pytest.raises(MochiError) as e:
         read(f, 2)
     assert e.value.code == "LIMIT_EXCEEDED"
 
 
+def test_window_above_max_window_size_is_refused_on_the_window():
+    # single segment: window = content size = 200,000,000 > 128 MiB but below the image bound
+    f = raw_frame(0x80 | 0x20 | 0x04, (200_000_000).to_bytes(4, "little"))
+    with pytest.raises(MochiError) as e:
+        read(f, 2)
+    assert e.value.code == "LIMIT_EXCEEDED" and "window" in e.value.message
+
+
 def test_declared_size_differing_from_actual_is_integrity_failure():
     # declares 8192 bytes (4-byte FCS), carries one empty last raw block: it decodes to nothing
-    f = (b"\x28\xb5\x2f\xfd" + bytes([0x80 | 0x20 | 0x04]) + (8192).to_bytes(4, "little")
-         + b"\x01\x00\x00" + b"\x00\x00\x00\x00")
+    f = raw_frame(0x80 | 0x20 | 0x04, (8192).to_bytes(4, "little"))
     with pytest.raises(MochiError) as e:
         read(f, 2)
     assert e.value.code == "CONTENT_INTEGRITY_FAILED"
+
+
+def test_nonzero_dictionary_id_is_integrity_failure():
+    f = raw_frame(0x20 | 0x04 | 0x01, b"\x05" + b"\x00")           # single segment, 1-byte dictionary ID 5, size 0
+    with pytest.raises(MochiError) as e:
+        read(f, 2)
+    assert e.value.code == "CONTENT_INTEGRITY_FAILED"
+
+
+def test_corrupt_block_or_checksum_is_integrity_failure():
+    f = bytearray(zstd_frame(sqlite_image()))
+    f[-1] ^= 1                                                  # the content checksum
+    with pytest.raises(MochiError) as e:
+        read(bytes(f), 2)
+    assert e.value.code == "CONTENT_INTEGRITY_FAILED"
+
+
+def test_empty_and_cut_short_payloads_are_truncated():
+    f = zstd_frame(sqlite_image())
+    for payload in (b"", f[:2], f[:4], f[:7], f[:-1]):
+        with pytest.raises(MochiError) as e:
+            read(payload, 2)
+        assert e.value.code == "TRUNCATED", len(payload)
+
+
+def test_second_frame_and_trailing_bytes_are_malformed():
+    f = zstd_frame(sqlite_image())
+    for payload in (f + f, f + b"\x00"):
+        with pytest.raises(MochiError) as e:
+            read(payload, 2)
+        assert e.value.code == "MALFORMED_FRAME"
+
+
+def test_missing_content_size_is_malformed():
+    with pytest.raises(MochiError) as e:
+        read(zstd_frame(sqlite_image(), content_size=False), 2)
+    assert e.value.code == "MALFORMED_FRAME"
+
+
+def test_missing_checksum_flag_is_malformed():
+    with pytest.raises(MochiError) as e:
+        read(zstd_frame(sqlite_image(), checksum=False), 2)
+    assert e.value.code == "MALFORMED_FRAME"
+
+
+def test_required_features_are_checked_before_any_decode():
+    junk = zstd_frame(sqlite_image())[:-1]          # would be CONTENT_INTEGRITY_FAILED / TRUNCATED if decoded
+    for feats, code in (((2,), "UNSUPPORTED_FEATURE"), ((1, 1), "ENVELOPE_INVALID"), ((2, 1), "ENVELOPE_INVALID")):
+        with pytest.raises(MochiError) as e:
+            envelope.decode_binary(envelope_frame(junk, 2, features=feats), frames.K_IMAGE, (1,))
+        assert e.value.code == code, feats
+
+
+def test_identity_is_bound_before_decoding():
+    # decode_binary alone never decompresses; a wrong identity is refused by bind, with a payload that cannot decode
+    env = envelope.decode_binary(envelope_frame(zstd_frame(sqlite_image())[:-1], 2), frames.K_IMAGE, (1,))
+    with pytest.raises(MochiError) as e:
+        env.bind(b"\x00" * 32, SEQ, TXN)
+    assert e.value.code == "ENVELOPE_INVALID"
