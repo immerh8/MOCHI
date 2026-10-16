@@ -1063,7 +1063,7 @@ Reports SHOULD be stored outside the archive being checked.
 
 ### 20.6 Example report
 
-The following is a real report of schema version 1, abridged only in its two wall-clock times, which are replaced by fixed values: `mochi verify --json` of the golden archive `fixtures/golden/r8/core-corrupt-chunk-older.mochi` (a data object of an older commit is damaged), in the field order of the report type. `crates/mochi-cli/tests/r7_json_schemas.rs` regenerates it and compares, so it cannot drift from the code. Its JSON Schema is `docs/schemas/json/report-v1.schema.json`, the field meanings are in `docs/report-schema-v1.md`, and the report schema and the error codes are frozen as ratification artifact R7 (Annex B.2.6, gate G15).
+The following is a real report of schema version 1, abridged only in its two wall-clock times and the tool version, which are replaced by fixed values: `mochi verify --json` of the golden archive `fixtures/golden/r8/core-corrupt-chunk-older.mochi` (a data object of an older commit is damaged), in the field order of the report type. `crates/mochi-cli/tests/r7_json_schemas.rs` regenerates it and compares, so it cannot drift from the code. Its JSON Schema is `docs/schemas/json/report-v1.schema.json`, the field meanings are in `docs/report-schema-v1.md`, and the report schema and the error codes are frozen as ratification artifact R7 (Annex B.2.6, gate G15).
 
 ```json
 {
@@ -1074,7 +1074,7 @@ The following is a real report of schema version 1, abridged only in its two wal
   "freshness_anchor": "none",
   "tool": {
     "name": "mochi-core",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "spec_revision": "2.0",
     "wire_generation": 2,
     "format_status": "1.0 (ratified format)"
