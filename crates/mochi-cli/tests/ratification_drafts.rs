@@ -264,6 +264,7 @@ fn r1_registered_byte_strings_match_the_code() {
             "SQLITE_IMAGE_SIGNATURE",
             &registry::SQLITE_IMAGE_SIGNATURE[..],
         ),
+        ("ZSTD_IMAGE_SIGNATURE", &registry::ZSTD_IMAGE_SIGNATURE[..]),
         ("PARITY_SIGNATURE", &registry::PARITY_SIGNATURE[..]),
     ]
     .into_iter()
@@ -413,7 +414,7 @@ fn r2_payload_encodings_and_enveloped_kinds_match_the_code() {
         let code: u32 = r[0].parse().unwrap();
         let enc = PayloadEncoding::from_code(code).unwrap_or_else(|| panic!("code {code}"));
         assert_eq!(
-            bytes_expr(&r[2].replace(" (16 bytes)", "")),
+            bytes_expr(&r[2].replace(" (16 bytes)", "").replace(" (4 bytes)", "")),
             enc.signature()
         );
     }

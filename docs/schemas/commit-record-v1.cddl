@@ -79,7 +79,7 @@ parent = {
 metadata = checkpoint / delta-on-base
 checkpoint = {
   0: 0,
-  1: object-ref,              ; catalog image: METADATA_DELTA frame, binary envelope v0, encoding 0
+  1: object-ref,              ; catalog image: METADATA_DELTA frame, binary envelope v0, encoding 2 (Zstandard-compressed SQLite image; encoding 0 in draft 2)
   2: object-ref,              ; snapshot manifest: RECOVERY_MANIFEST frame, kind 1
 }
 delta-on-base = {

@@ -15,6 +15,8 @@ reject-envelope-feature-count rejects Envelope(FeatureCountOutOfRange)
 reject-envelope-header-length rejects Envelope(HeaderLengthMismatch)
 reject-envelope-payload-encoding rejects Envelope(UnknownPayloadEncoding)
 reject-envelope-payload-encoding-kind rejects Envelope(EncodingKindMismatch)
+valid-envelope-image-zstd valid
+reject-envelope-decoded-signature rejects Envelope(DecodedSignatureMismatch)
 reject-envelope-signature rejects Envelope(EncodingSignatureMismatch)
 reject-envelope-payload-length rejects Envelope(PayloadLengthMismatch)
 reject-envelope-archive-id rejects Envelope(ArchiveIdMismatch)

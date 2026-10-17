@@ -9,7 +9,7 @@ ZSTD_MAGIC = 0xFD2FB528
 SKIP_FIRST = 0x184D2A50
 SKIP_LAST = 0x184D2A5F
 
-K_IMAGE = 0x184D2A50          # catalog image (binary envelope, encoding 0)
+K_IMAGE = 0x184D2A50          # catalog image (binary envelope, encoding 2; 0 in draft 2)
 K_COMMIT = 0x184D2A51
 K_PREPARED = 0x184D2A52
 K_FOOTER = 0x184D2A56
@@ -23,6 +23,7 @@ SKIPPABLE_PAYLOAD_LIMIT = 256 * 1024 * 1024            # S (B.2.3)
 FRAME_LIMIT = 269_484_032                              # any frame (B.2.3)
 COMMIT_FRAME_LIMIT = 8 + 64 * 1024                     # B.2.3
 IMAGE_PAYLOAD_LIMIT = SKIPPABLE_PAYLOAD_LIMIT - 592    # S - 592
+MAX_WINDOW_SIZE = 134_217_728                          # reader limit max-window-size, 128 MiB (B.2.15 item 2)
 
 
 def is_skippable(magic: int) -> bool:
@@ -48,7 +49,7 @@ def u64(buf, off: int) -> int:
     return int.from_bytes(buf[off:off + 8], "little")
 
 
-def walk_frame(buf, off: int, limit: int | None = None) -> Frame:
+def walk_frame(buf, off: int, limit: int | None = None, max_window: int | None = None) -> Frame:
     """Walk one frame starting at ``off``.  Raises MALFORMED_FRAME/TRUNCATED.
 
     The physical length comes from the structure only (8.6), never from
@@ -71,10 +72,10 @@ def walk_frame(buf, off: int, limit: int | None = None) -> Frame:
         return Frame(off, 8 + size, magic)
     if magic != ZSTD_MAGIC:
         raise MochiError("MALFORMED_FRAME", "not a frame magic at %d" % off)
-    return _walk_data_frame(buf, off, end_limit)
+    return _walk_data_frame(buf, off, end_limit, max_window)
 
 
-def _walk_data_frame(buf, off: int, end_limit: int) -> Frame:
+def _walk_data_frame(buf, off: int, end_limit: int, max_window: int | None = None) -> Frame:
     p = off + 4
     if p + 1 > end_limit:
         raise MochiError("TRUNCATED", "frame header cut short")
@@ -110,6 +111,8 @@ def _walk_data_frame(buf, off: int, end_limit: int) -> Frame:
     p += fcs_len
     if single:
         window = fcs
+    if max_window is not None and window is not None and window > max_window:
+        raise MochiError("LIMIT_EXCEEDED", "window size %d above the limit %d" % (window, max_window))
     block_max = min(window if window is not None else 128 * 1024, 128 * 1024)
     while True:
         if p + 3 > end_limit:
@@ -145,14 +148,16 @@ def data_frame_header(buf) -> dict:
     single = (fhd >> 5) & 1
     checksum = (fhd >> 2) & 1
     did_flag = fhd & 3
-    p = 5 + (0 if single else 1) + (0, 1, 2, 4)[did_flag]
+    dl = (0, 1, 2, 4)[did_flag]
+    p = 5 + (0 if single else 1) + dl
+    did = int.from_bytes(buf[p - dl:p], "little")
     fcs_len = {0: 1 if single else 0, 1: 2, 2: 4, 3: 8}[fcs_flag]
     fcs = None
     if fcs_len:
         fcs = int.from_bytes(buf[p:p + fcs_len], "little")
         if fcs_flag == 1:
             fcs += 256
-    return {"checksum": bool(checksum), "content_size": fcs, "dictionary_id_flag": did_flag}
+    return {"checksum": bool(checksum), "content_size": fcs, "dictionary_id_flag": did_flag, "dictionary_id": did}
 
 
 def walk_all(buf, start: int = 0, end: int | None = None):

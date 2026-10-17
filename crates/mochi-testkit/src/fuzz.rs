@@ -173,6 +173,55 @@ pub fn exercise_catalog_image(data: &[u8]) {
         assert!(catalog.verify().is_ok());
         assert!(catalog.replay(None).is_ok());
     }
+    exercise_compressed_image(data);
+}
+
+/// Payload encoding 2 (B.2.2): `data` as a Zstandard-compressed image
+/// payload, and as a whole skippable-frame payload (envelope included). A
+/// decode either fails or yields a SQLite image within the bound; no input
+/// allocates beyond it, and nothing panics.
+fn exercise_compressed_image(data: &[u8]) {
+    use mochi_format::envelope::{
+        decode_binary_record, decode_image, image_payload_budget, BinaryEnvelope, EnvelopeRules,
+        PayloadEncoding, RecordIdentity,
+    };
+    // A small reader limit keeps each execution cheap; the bound scales with it.
+    let limits = Limits {
+        max_skippable_payload: 592 + (1 << 20),
+        ..Limits::default()
+    };
+    let identity = RecordIdentity {
+        archive_id: [1; 32],
+        commit_sequence: 0,
+        transaction_id: [2; 16],
+    };
+    let envelope = BinaryEnvelope {
+        record_schema_version: 1,
+        encoding: PayloadEncoding::ZstdSqliteImage,
+        identity,
+        required_features: Vec::new(),
+    };
+    if let Ok(image) = decode_image(&envelope, data, &limits) {
+        assert!(image.len() as u64 <= image_payload_budget(&limits));
+        assert!(image.starts_with(&mochi_format::registry::SQLITE_IMAGE_SIGNATURE));
+    }
+    let rules = EnvelopeRules {
+        kind: mochi_format::registry::FrameKind::MetadataDelta,
+        schema_versions: &[1],
+        known_features: &[],
+    };
+    if let Ok(candidate) = decode_binary_record(
+        mochi_format::registry::METADATA_DELTA,
+        data,
+        &rules,
+        &limits,
+    ) {
+        if let Ok((env, payload)) = candidate.bind(&identity) {
+            if let Ok(image) = decode_image(&env, payload, &limits) {
+                assert!(image.len() as u64 <= image_payload_budget(&limits));
+            }
+        }
+    }
 }
 
 /// Canonical CBOR (C4, spec D2). Whatever the input, decoding either fails or

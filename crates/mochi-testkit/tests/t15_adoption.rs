@@ -278,7 +278,7 @@ fn t15_user_read_limits_do_not_block_adoption() {
     let mut o = test_options();
     // Below the catalog image's frame, above everything the writer reads
     // through these limits for data objects.
-    o.read.limits.max_frame_len = 30_000;
+    o.read.limits.max_frame_len = 3_000;
     let s = SimStorage::new();
     let mut w = ArchiveWriter::create(s.clone(), Box::new(SeqIds::new(7)), o).unwrap();
     w.set_checkpoint_policy(CheckpointPolicy::EveryCommit)
@@ -291,7 +291,7 @@ fn t15_user_read_limits_do_not_block_adoption() {
         panic!("checkpoint")
     };
     assert!(
-        image.stored_len > 30_000,
+        image.stored_len > 3_000,
         "the limit really is below the image ({} bytes)",
         image.stored_len
     );

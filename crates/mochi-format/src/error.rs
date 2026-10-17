@@ -60,6 +60,10 @@ pub enum LimitKind {
     /// Payload of a binary-enveloped record, e.g. a catalog image (B.2.3:
     /// *S* − 592).
     ImagePayload,
+    /// Decoded size of a compressed catalog image (payload encoding 2): the
+    /// same bound as [`LimitKind::ImagePayload`], applied to what the frame
+    /// declares and produces, before anything is allocated for it.
+    ImageDecoded,
     /// Argon2id memory a key envelope declares, in KiB (D20 item 1).
     KdfMemory,
     /// Argon2id passes (iterations) a key envelope declares.
@@ -129,6 +133,9 @@ pub enum EnvelopeFault {
     /// Schema version: for a catalog image, the header's record schema
     /// version differs from the image's SQLite `user_version`.
     SchemaVersionMismatch,
+    /// Payload encoding 2: the decoded image does not start with the SQLite
+    /// signature (it is not a SQLite 3 image).
+    DecodedSignatureMismatch,
     /// Payload length: the header's value is not the frame payload minus the
     /// header.
     PayloadLengthMismatch,
