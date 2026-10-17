@@ -4,44 +4,44 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "f0b21cb40dfee648e0433faee01ca34b00b7c49a068dab8ae5762371d036bb85",
-      "footer_offset": 82540,
+      "commit_id": "761a7a9061fefc1847a9499ca78635cd149e3a00d07a89b8863d26c4ecf44a42",
+      "footer_offset": 73701,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "0072251a8c169f72e1216ce27ea0f52279f408bd02901b3d89d46b0df5198c76",
-      "footer_offset": 87975,
+      "commit_id": "8f36089048f16d0b6b609e8c76d872af16fb9ad32532f9ef254671d86948f43b",
+      "footer_offset": 79136,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "6f8e1644991ac9071d3b9d6447653e1570093d9dccee0c71da33dc2ef85dc0b3",
-      "footer_offset": 89289,
+      "commit_id": "3aeab4d5c71f0e06a153e7596b36c9edfd47f02e9cf6c4a056684cf85215a635",
+      "footer_offset": 80450,
       "seq": 2
     },
     {
       "checkpoint": false,
-      "commit_id": "90447a26af0b3e6e13d0b2a74c2b9e8a83def142fb796c4aac96206a36ca934c",
-      "footer_offset": 91651,
+      "commit_id": "8adfa40f4a46568c81b40a9b66d9a008d5e70f9a599f15c07a6ee450a1708be0",
+      "footer_offset": 82812,
       "seq": 3
     },
     {
       "checkpoint": false,
-      "commit_id": "cfb676534de6ef187f3b6358d66b90a6141f1277a9606d68cf56168d7ce005f0",
-      "footer_offset": 94508,
+      "commit_id": "fcd3399f55939e211978d023169963ba79d23144e983fd8209b6416f7b30f3d0",
+      "footer_offset": 85669,
       "seq": 4
     },
     {
       "checkpoint": false,
-      "commit_id": "75dfc0ded74942289da62226ae2631034c06d20b7fef1c7eb06c7a8383f9e945",
-      "footer_offset": 95820,
+      "commit_id": "b354d711b69ad092f7d23dd46a25a4e65ce15235aa4c27117b47a92829f852a0",
+      "footer_offset": 86981,
       "seq": 5
     },
     {
       "checkpoint": false,
-      "commit_id": "3176c8d6553d1a9eac89e860089513c0a9c813f160e148597c8f72453620c650",
-      "footer_offset": 98152,
+      "commit_id": "e9128368980f47c93a81670438a50151f06dbc450dd04a4fc278cc43a77ddf45",
+      "footer_offset": 89313,
       "seq": 6
     }
   ],
@@ -134,6 +134,20 @@
           "path": "65",
           "size": 0,
           "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
+          "target": null
         }
       ],
       "seq": 0
@@ -223,6 +237,20 @@
           "path": "66",
           "size": 300,
           "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
+          "target": null
         }
       ],
       "seq": 1
@@ -297,6 +325,20 @@
           "kind": "file",
           "path": "66",
           "size": 300,
+          "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
           "target": null
         }
       ],
@@ -387,6 +429,20 @@
           "path": "66",
           "size": 300,
           "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
+          "target": null
         }
       ],
       "seq": 3
@@ -476,6 +532,20 @@
           "path": "652f6e",
           "size": 150,
           "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
+          "target": null
         }
       ],
       "seq": 4
@@ -564,6 +634,20 @@
           "kind": "file",
           "path": "652f6e",
           "size": 150,
+          "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
           "target": null
         }
       ],
@@ -667,6 +751,20 @@
           "kind": "file",
           "path": "68",
           "size": 65,
+          "target": null
+        },
+        {
+          "attributes": {
+            "gid": 2000,
+            "mtime_ns": 1700000008000000056,
+            "posix_mode": 420,
+            "uid": 1420,
+            "windows": null
+          },
+          "content_hash": "b4b7fecafdd5523bf2b20086117351e9e964ee6381a6a201d8ca2207b6b8a0cf",
+          "kind": "file",
+          "path": "706164",
+          "size": 4000,
           "target": null
         }
       ],

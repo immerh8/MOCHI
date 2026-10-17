@@ -4,44 +4,44 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "78aed3fff7c9cc03c0d46bdf9cbec4ed61e7a5416f7486fa807f0c4b007b8591",
-      "footer_offset": 65851,
+      "commit_id": "df520641c06aee3d7462720a23c7135df9c238f9019698b9c756d1337a3b5b97",
+      "footer_offset": 13476,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "d979de678d658e2153f0bbd817bfdbbc4db3e9dee9068beacab0622bff121fb1",
-      "footer_offset": 71286,
+      "commit_id": "7d850a973484536be416a2eaf2b0cd671dbdfbd46ca4bd1ade9cc88a69183e3e",
+      "footer_offset": 18889,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "8c0e0fdf42bea8c11f01d808c0c635cd884971ce135d41a0703281b522297127",
-      "footer_offset": 72600,
+      "commit_id": "e88a86ec8f8449ef1dbf6976e634bb2d25c9c65101ee76085b6054b175e22ace",
+      "footer_offset": 20197,
       "seq": 2
     },
     {
       "checkpoint": false,
-      "commit_id": "2f8e8817b0cb3e53c3ce03f35e83e151df2b2f0c3a79890266ef135143c25dae",
-      "footer_offset": 74962,
+      "commit_id": "956315e59163221dce979522cb9fccfc73af14aa17975ecf044f7fa7ba156b07",
+      "footer_offset": 22549,
       "seq": 3
     },
     {
       "checkpoint": false,
-      "commit_id": "65f578d37a0d8934422bf0768e7ce8e56fffa2e5f94e93d53ae2f7f27414f44e",
-      "footer_offset": 77819,
+      "commit_id": "2c5d148485a51869b5c94d363db4ab9f83c858da813c78dd8166ff61ea9a4cbc",
+      "footer_offset": 25394,
       "seq": 4
     },
     {
       "checkpoint": false,
-      "commit_id": "190cd6652e704ff59e7c32074343694f8b589d2bf2299bb7c6c46f2e02b9254c",
-      "footer_offset": 79131,
+      "commit_id": "d05c85199c675007cc6658dcde512224b0900cd9b8367f4189c76031c321ab3a",
+      "footer_offset": 26700,
       "seq": 5
     },
     {
       "checkpoint": false,
-      "commit_id": "6f5ada7f685d1bf8299f501fa09af7e969d31c1b434a8cc02567f7d02b800f54",
-      "footer_offset": 81463,
+      "commit_id": "d2e75f047c811b36bc484fd001300be35ebf1795d4be43763b56e999c39bf649",
+      "footer_offset": 29022,
       "seq": 6
     }
   ],

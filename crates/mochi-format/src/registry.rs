@@ -52,6 +52,12 @@ pub const TAIL_QUARANTINE_MAGIC: [u8; 8] = *b"MOCHITQ\0";
 /// image (spec Annex B.2.2): the 16-byte SQLite header string.
 pub const SQLITE_IMAGE_SIGNATURE: [u8; 16] = *b"SQLite format 3\0";
 
+/// Signature of binary-envelope payload encoding 2, a Zstandard-compressed
+/// SQLite 3 image (spec Annex B.2.2, owner decision 2026-10-16): the
+/// Zstandard frame magic number, little-endian `0xFD2FB528`. The SQLite
+/// signature is checked on the *decoded* bytes.
+pub const ZSTD_IMAGE_SIGNATURE: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
 /// Signature of binary-envelope payload encoding 1, a parity shard of the
 /// Redundancy profile (spec Annex B.2.11 D21; R6): ASCII `MOCHI2-PARITY` and
 /// three zero bytes.

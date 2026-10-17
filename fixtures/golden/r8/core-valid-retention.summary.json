@@ -4,56 +4,56 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "8347a8d6445a878233b59173caaa7bb46023ae787a3a570dceea2d1a44998ec4",
-      "footer_offset": 48711,
+      "commit_id": "879b75399832e159fbc0cccf908fe628f73c79b5e8b590850d2c34e8ce4fe6e8",
+      "footer_offset": 6019,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "5a0c729036bed3d4271b96e3c3c72a482dc476febaea4be56eca89082e8208be",
-      "footer_offset": 49999,
+      "commit_id": "d9784c9fd1b1f5609f49f8acf615a0dc1e1aba29b07aa6f18452adbfe4d916cb",
+      "footer_offset": 7307,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "ac0826902500a06d3b21d8bc32b8ba8ea21690e64a3bb2292d1b797244bd214b",
-      "footer_offset": 50519,
+      "commit_id": "f6a44e58176adc7768e25c6277bc7aba8b4c454beb4c72081ab2fd5e9c3e0108",
+      "footer_offset": 7827,
       "seq": 2
     },
     {
       "checkpoint": true,
-      "commit_id": "fa506652146d551c988b1c716bc018adeceed33a84a9766796c6d5c3e3e01739",
-      "footer_offset": 99040,
+      "commit_id": "07b2d72d98183ea7c685c6d7b4ab8c5f68cb68d247ccfb834cf946a293f90091",
+      "footer_offset": 14667,
       "seq": 3
     },
     {
       "checkpoint": false,
-      "commit_id": "baa4ce99ff7c0cae230039bb0d160bc804fc9684a1314f1c79ad5f15de1877ea",
-      "footer_offset": 99526,
+      "commit_id": "bef8a95a17ffa299b811ce871e7bbdca55e08214128e74cb8a32a54ded9535aa",
+      "footer_offset": 15147,
       "seq": 4
     },
     {
       "checkpoint": false,
-      "commit_id": "a9394faf04889e1839ce5bdaa41c74fc2b47a6e7ed87903b40acef0096193972",
-      "footer_offset": 100825,
+      "commit_id": "fe03806a80d3c08d7947336ea008d6b0d2259d471d18a58840f840234312afa4",
+      "footer_offset": 16434,
       "seq": 5
     },
     {
       "checkpoint": false,
-      "commit_id": "61dd47d6d897b5994771eebfa4806b2c63f948846824a2666fd5de29a23d56e5",
-      "footer_offset": 102124,
+      "commit_id": "5618f13406bbadfaf8bf6620f40fb359560be88afc841c656453ecf271084bd7",
+      "footer_offset": 17721,
       "seq": 6
     },
     {
       "checkpoint": false,
-      "commit_id": "ca7be89f1389ab64d1069c228b70f931e90a6eb5c4b9c45f9916e783b0cff68e",
-      "footer_offset": 102629,
+      "commit_id": "2f75696349dc781cc9c98b02c7c6e896d3e578b14bff2ec15bd3d6edf77919cc",
+      "footer_offset": 18220,
       "seq": 7
     },
     {
       "checkpoint": false,
-      "commit_id": "7e96a673615ade1cd719f0f47f87a187d4289c250cbed43f24e508a26f4625cb",
-      "footer_offset": 103928,
+      "commit_id": "2ffcdddcb021ab279bfbfb1417b760df5b4ac567b3d963d4d55c6f07d0c52039",
+      "footer_offset": 19507,
       "seq": 8
     }
   ],

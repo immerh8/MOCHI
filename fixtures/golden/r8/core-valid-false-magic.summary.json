@@ -4,20 +4,20 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "035693065a4f39ebe86ad06c2623224521c422bac53bd37f4093149018754fc4",
-      "footer_offset": 46299,
+      "commit_id": "d21995d0e58981ae1cb66aed58148d584ea4ecfae8e38253771cf4e52370d4e0",
+      "footer_offset": 2773,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "5e1a68c04b601b269d6bd4d74f6ed244b51cdb3e764b9ef39d38198b954bb856",
-      "footer_offset": 47104,
+      "commit_id": "2314dc46e865ff4035234e42c6d462c5284b0078c55bd5421560ae1558bf3303",
+      "footer_offset": 3578,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "0b9044f590d5c0dcc89583863420b4dcfcf17fd0cee01cb26bb006400fb86dc1",
-      "footer_offset": 48381,
+      "commit_id": "6c630a4847dd0b2998dc389c8c3b0f4c7f0cc7ce128a125bd4e107604779c3dc",
+      "footer_offset": 4855,
       "seq": 2
     }
   ],
@@ -124,7 +124,7 @@
             "uid": 1420,
             "windows": null
           },
-          "content_hash": "bfa9046f56bf5c4c2d35a4717c1a4b2d2a97ed3d10dbc760d17c9177c3dfa078",
+          "content_hash": "44a3b6fde5408f3dced06a0ba99f9d83160909670d7c1046762319f16f9a361e",
           "kind": "file",
           "path": "7061796c6f61642e62696e",
           "size": 152,

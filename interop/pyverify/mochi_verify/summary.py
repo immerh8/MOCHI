@@ -31,10 +31,10 @@ def _entry(path: bytes, ver) -> dict:
 
 def _parity(res: Result):
     d = res.descriptor
+    if res.parity is not None:      # a scan that reached commits is reported even when the head is then refused
+        return res.parity
     if res.head_status not in ("opened", "keyless"):
         return None
-    if res.parity is not None:
-        return res.parity
     if d is not None and d.recovery is not None:
         return {"commits": 0, "damaged_shards": 0, "rebuilt": 0, "beyond_capacity": 0}
     return None
