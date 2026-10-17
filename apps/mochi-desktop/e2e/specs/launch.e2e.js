@@ -62,6 +62,24 @@ async function switchToWindowWith(testid, timeout = 60_000) {
   );
 }
 
+/**
+ * Close the compact window with its Close button, then talk to the main window again.
+ * The button makes Rust destroy the window, which can happen before WebDriver answers
+ * the click; WebKitWebDriver then reports "no such window" for a click that worked.
+ * Only that error is ignored: the window count below is what the test checks.
+ */
+async function closeQuickWindow(mainWindow) {
+  try {
+    await $('[data-testid="quick-close"]').click();
+  } catch (err) {
+    if (!/no such window/i.test(String(err?.message ?? err))) throw err;
+  }
+  await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+    timeoutMsg: "the compact window did not close",
+  });
+  await browser.switchToWindow(mainWindow);
+}
+
 describe("a second launch", () => {
   let work;
   let mainWindow;
@@ -123,11 +141,7 @@ describe("a second launch", () => {
       async () => (await $('[data-testid="quick-result"]').getText()).includes("photos (2)"),
       { timeoutMsg: "the second result was not shown" },
     );
-    await $('[data-testid="quick-close"]').click();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
-      timeoutMsg: "the compact window did not close",
-    });
-    await browser.switchToWindow(mainWindow);
+    await closeQuickWindow(mainWindow);
   });
 
   it("'Extract here' replaces nothing: a name in the way writes nothing and opens the plan in the main window", async () => {
@@ -148,11 +162,7 @@ describe("a second launch", () => {
     expect(readFileSync(path.join(dir, "docs"), "utf8")).toBe("mine");
     await $('[data-testid="extract-close"]').click();
     await switchToWindowWith("quick-result");
-    await $('[data-testid="quick-close"]').click();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
-      timeoutMsg: "the compact window did not close",
-    });
-    await browser.switchToWindow(mainWindow);
+    await closeQuickWindow(mainWindow);
   });
 
   it("'Add to archive' collects one selection's launches into one archive and says it is a local commit", async () => {
@@ -172,9 +182,7 @@ describe("a second launch", () => {
     const text = (await $('[data-testid="quick-result"]').getText()).toLowerCase();
     for (const word of ["backed up", "safe", "preserved"]) expect(text).not.toContain(word);
     expect(readdirSync(dir).filter((n) => n.endsWith(".mochi"))).toEqual(["trip.mochi"]);
-    await $('[data-testid="quick-close"]').click();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1);
-    await browser.switchToWindow(mainWindow);
+    await closeQuickWindow(mainWindow);
     // Again: a new name, the first archive stays.
     const lengthBefore = readFileSync(path.join(dir, "trip.mochi")).length;
     const second = await secondLaunch(["--add-now", "--", files[0]]);
@@ -182,9 +190,7 @@ describe("a second launch", () => {
     await browser.waitUntil(() => readdirSync(dir).includes("a.mochi"), { timeoutMsg: "no archive named for the file" });
     expect(readFileSync(path.join(dir, "trip.mochi")).length).toBe(lengthBefore);
     await switchToWindowWith("quick-close");
-    await $('[data-testid="quick-close"]').click();
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1);
-    await browser.switchToWindow(mainWindow);
+    await closeQuickWindow(mainWindow);
   });
 
   it("'Add to archive...' still opens the add panel in the main window and writes nothing", async () => {
