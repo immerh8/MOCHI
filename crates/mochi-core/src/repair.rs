@@ -1296,19 +1296,29 @@ fn salvage_pass(
             let Some(mut c) = chain_at(&*view, *r, opts)? else {
                 continue;
             };
-            if Some(*r) != head_footer {
-                // A salvaged chain holds only commits the scan confirmed (D23
-                // items 5, 11(c)). The walk follows parent links by footer
-                // alone, so it can reach a commit whose link the scan refused
-                // (its footer lies inside a frame that walked validly). Below
-                // the first such commit, the chain's catalogs still supply
-                // the older snapshots, but no commit record is trusted.
+            // A chain opened by salvage holds only commits the scan confirmed
+            // (D23 items 5, 11(c)). The walk follows parent links by footer
+            // alone, so it can reach a commit whose link the scan refused
+            // (its footer lies inside a frame that walked validly). Below
+            // the first such commit, the chain's catalogs still supply the
+            // older snapshots, but no commit record is trusted. The trusted
+            // head's chain is the same below its break: the ordinary walk
+            // reached only the commits from the break up, and regenerated
+            // footers carried it further.
+            let trusted_from = if Some(*r) == head_footer {
+                a.plan.chain_break.as_ref().map(|b| b.first_trusted_seq)
+            } else {
+                Some(u64::MAX)
+            };
+            if let Some(from) = trusted_from {
                 let keep = c
                     .iter()
                     .rev()
                     .take_while(|e| {
-                        prep.confirmed
-                            .contains(&(e.commit_offset, *e.commit_id.as_bytes()))
+                        Some(*r) == head_footer && e.commit.seq >= from
+                            || prep
+                                .confirmed
+                                .contains(&(e.commit_offset, *e.commit_id.as_bytes()))
                     })
                     .count();
                 c.drain(..c.len() - keep);

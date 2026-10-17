@@ -296,6 +296,18 @@ jobs:
       - name: Fuzz 60 seconds, seeded from the golden vectors
         working-directory: fuzz
         run: cargo +nightly fuzz run ${{ matrix.target }} corpus/${{ matrix.target }} ${{ matrix.seeds }} -- -max_total_time=60 ${{ matrix.args }}
+      # libFuzzer writes the crashing input to fuzz/artifacts/<target>/. The
+      # runner is discarded, so without this a crash found by the random
+      # phase cannot be reproduced or minimised (run 38952433601 lost its
+      # input). Add the file to fixtures/fuzz-regressions/<target>/ once fixed.
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/**
+          if-no-files-found: ignore
+          retention-days: 30
 
   powercut:
     # Gate G7 (spec Annex B.2.6): power loss at every step of D13 creation,
