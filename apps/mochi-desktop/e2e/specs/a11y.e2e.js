@@ -28,8 +28,8 @@ async function tabTo(testid, { back = false, max = 160 } = {}) {
 }
 
 describe("keyboard-only use", () => {
-  it("starts at the top of the page and the first stops are the section buttons", async () => {
-    await $('[data-testid="browse-empty"]').waitForExist();
+  it("starts at the top of the page and the first stops are the three start actions", async () => {
+    await $('[data-testid="start-screen"]').waitForExist();
     // WebView2 keeps its own sequential-focus starting point, so the first Tab of
     // a fresh session does not always begin at the top. Clicking the page title
     // fixes the starting point at the top of the page in every engine; the
@@ -38,13 +38,31 @@ describe("keyboard-only use", () => {
     await browser.keys(["Tab"]);
     const first = await active();
     expect(first.tag).toBe("BUTTON");
-    expect(first.text).toBe("Archive");
+    expect(first.testid).toBe("start-create");
+    expect(first.text).toContain("Create archive");
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("open-archive");
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("start-extract");
+    await browser.keys(["Shift", "Tab"]);
+    await browser.keys(["Shift", "Tab"]);
     // The focus ring is drawn (the stylesheet never turns the outline off).
     expect(first.outlineStyle).not.toBe("none");
     expect(first.outlineWidth).toBe("3px");
   });
 
-  it("a section button moves focus to that section's heading", async () => {
+  it("the Advanced tools open from the keyboard, and a section button moves focus to its heading", async () => {
+    // Tab to the Advanced disclosure and open it with Enter.
+    for (let i = 0; i < 30; i++) {
+      const here = await active();
+      if (here.tag === "SUMMARY") break;
+      await browser.keys(["Tab"]);
+    }
+    const summary = await active();
+    expect(summary.tag).toBe("SUMMARY");
+    expect(summary.text).toContain("Advanced");
+    await browser.keys(["Enter"]);
+    await $('[data-testid="advanced"] nav').waitForDisplayed();
     // Walk the buttons with Tab until the one for the test and repair section.
     for (let i = 0; i < 12; i++) {
       const here = await active();
@@ -109,7 +127,7 @@ describe("keyboard-only use", () => {
     await $('[data-testid="write-panel"]').waitForExist();
     const inPanel = await active();
     expect(inPanel.tag).toBe("H3");
-    expect(inPanel.text).toBe("New archive");
+    expect(inPanel.text).toBe("Create a new archive");
     // Tab leaves the heading for the panel's controls: no trap, no skipped content.
     await browser.keys(["Tab"]);
     expect((await active()).testid).toBe("stage-files");

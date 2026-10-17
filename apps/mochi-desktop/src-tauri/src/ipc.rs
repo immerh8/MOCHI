@@ -466,6 +466,22 @@ pub struct StagedView {
     pub items: Vec<StagedItem>,
     /// File name of the chosen destination for a new archive, if chosen.
     pub destination: Option<String>,
+    /// Where a new archive would be written if the user does not choose: next
+    /// to the first item, never over an existing file. `None` when nothing is
+    /// staged, a destination was chosen, or no default can be made.
+    pub default_destination: Option<String>,
+}
+
+/// A folder the window asks Rust to show in the file manager. The window
+/// never names a path: Rust resolves the folder from its own state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ShowTarget {
+    /// The folder the last extraction went to.
+    ExtractDestination,
+    /// The folder that holds an open archive.
+    Archive { handle: ArchiveHandle },
 }
 
 /// What reaches the webview about drag and drop (Rust handles the window's
@@ -482,6 +498,9 @@ pub enum DropEvent {
         staged: StagedView,
         problems: Vec<IpcError>,
     },
+    /// One `.mochi` file was dropped. It is not staged: the window asks Rust
+    /// to open it (`open_dropped_archive`). Only the file name is shown.
+    Archive { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

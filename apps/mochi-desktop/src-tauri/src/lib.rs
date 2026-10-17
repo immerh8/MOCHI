@@ -21,6 +21,7 @@ pub mod jobs;
 pub mod launch;
 mod picker;
 pub mod quick;
+pub mod recent;
 pub mod rekey;
 pub mod search;
 pub mod self_test;
@@ -32,6 +33,8 @@ use std::sync::Arc;
 /// Build and run the application until its last window closes.
 pub fn run() -> Result<(), tauri::Error> {
     let archives = Arc::new(browse::Archives::default());
+    let recents = Arc::new(recent::Recents::default());
+    archives.set_recents(Arc::clone(&recents));
     let staging = Arc::new(write::Staging::default());
     let drops = Arc::new(write::DropWatch::default());
     let destination = Arc::new(extract::Destination::default());
@@ -60,6 +63,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let second_launches = Arc::clone(&launches);
     let first_launches = Arc::clone(&launches);
     let setup_updates = Arc::clone(&updates);
+    let setup_recents = Arc::clone(&recents);
     let setup_quick = Arc::clone(&quick);
     let event_quick = Arc::clone(&quick);
     tauri::Builder::default()
@@ -88,6 +92,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(foreign)
         .manage(checks)
         .manage(updates)
+        .manage(recents)
         .manage(quick)
         .on_window_event(move |window, event| {
             // Items dragged from the file manager arrive here, in Rust. Only
@@ -122,6 +127,13 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::clear_staged,
             commands::choose_destination,
             commands::plan_extract,
+            commands::plan_extract_default,
+            commands::discard_extract_folder,
+            commands::recent_archives,
+            commands::forget_recent_archives,
+            commands::open_recent,
+            commands::open_dropped_archive,
+            commands::show_in_folder,
             commands::open_foreign_archive,
             commands::close_foreign_archive,
             commands::foreign_children,
@@ -164,6 +176,7 @@ pub fn run() -> Result<(), tauri::Error> {
             {
                 use tauri::Manager;
                 let dir = app.path().app_config_dir()?;
+                setup_recents.configure(&dir);
                 setup_updates.configure(
                     dir,
                     Arc::new(update::PluginBackend::new(app.handle().clone())),

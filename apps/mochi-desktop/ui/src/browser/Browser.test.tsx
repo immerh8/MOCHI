@@ -68,8 +68,9 @@ function fakeBackend(opts: { open?: () => unknown } = {}) {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     // The Writer's start-up calls (D2) are tested in write/Writer.test.tsx.
-    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "recent_archives") return [];
     calls.push({ cmd, args: a });
     switch (cmd) {
       case "open_archive":
@@ -132,13 +133,16 @@ test("opening shows the archive, its timeline, and the root, with hostile names 
   expect(calls.map((c) => c.cmd).slice(0, 2)).toEqual(["open_archive", "open_snapshot"]);
   expect(calls[1]?.args).toEqual({ handle: 3, seq: 2 });
   expect(screen.getByTestId("archive-meta")).toHaveTextContent("fake.mochi");
-  expect(screen.getByTestId("archive-meta")).toHaveTextContent("3 commits");
+  expect(screen.getByTestId("archive-meta")).toHaveTextContent("3 versions");
 
   const timeline = screen.getByTestId("timeline");
-  expect(within(timeline).getByTestId("commit-2")).toHaveTextContent("Commit 2 (head)");
+  expect(within(timeline).getByTestId("commit-2")).toHaveTextContent("Version 2 (latest)");
   expect(within(timeline).getByTestId("commit-0")).toHaveTextContent("retention unknown");
   expect(within(timeline).getByTestId("commit-1")).toHaveTextContent("no time recorded");
-  expect(within(timeline).getByTestId("commit-1")).toHaveTextContent("delta");
+  // Checkpoint or delta is technical detail, not on the main path.
+  expect(within(timeline).getByTestId("commit-1")).not.toHaveTextContent("delta");
+  expect(screen.getByTestId("archive-technical")).toHaveTextContent("Commit 1 · delta");
+  expect(screen.getByTestId("archive-technical")).toHaveTextContent("Commit 2 · checkpoint");
 
   const entries = await screen.findAllByTestId("entry");
   const names = entries.map((e) => e.querySelector(".name")?.textContent);
@@ -177,7 +181,7 @@ test("a 100,000-entry folder is paged and only a window of rows is in the DOM", 
   const deep = calls.filter((c) => c.cmd === "list_children" && (c.args.offset as number) >= 99_800);
   expect(deep.length).toBeGreaterThan(0);
   expect(screen.queryByText("f000000")).toBeNull();
-  expect(screen.getByTestId("crumbs")).toHaveTextContent("Commit 2 / many");
+  expect(screen.getByTestId("crumbs")).toHaveTextContent("Version 2 / many");
 });
 
 test("selecting an entry shows its recorded details without verification wording", async () => {
@@ -212,13 +216,13 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   await within(tree).findByText("deeper");
   await user.click(within(tree).getByText("sub"));
   await screen.findByText(/2 entries in this folder/);
-  expect(screen.getByTestId("crumbs")).toHaveTextContent("Commit 2 / sub");
+  expect(screen.getByTestId("crumbs")).toHaveTextContent("Version 2 / sub");
 
   await user.click(screen.getByTestId("commit-0"));
   await screen.findByText(/5 entries in this folder/);
   expect(calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
   expect(screen.getByTestId("commit-0")).toHaveAttribute("aria-current", "true");
-  expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Commit 0$/);
+  expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Version 0$/);
 });
 
 test("a cancelled dialog changes nothing; a refused archive shows its code", async () => {
@@ -227,7 +231,7 @@ test("a cancelled dialog changes nothing; a refused archive shows its code", asy
   fakeBackend({ open: () => answer() });
   render(<Browser />);
   await user.click(screen.getByTestId("open-archive"));
-  expect(screen.getByTestId("browse-empty")).toHaveTextContent("No archive is open.");
+  expect(screen.getByTestId("start-screen")).toBeInTheDocument();
   answer = () => {
     throw { code: "KEY_UNAVAILABLE", message: "this archive is encrypted" };
   };

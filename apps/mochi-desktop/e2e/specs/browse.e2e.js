@@ -37,15 +37,15 @@ describe("archive browser", () => {
   it("opens an archive and shows its history and hostile names as text", async () => {
     await openNext();
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("4 commits"));
-    await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(head)"));
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("4 versions"));
+    await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
 
     // Root of the head: the scripted history's hostile name, inert.
     await browser.waitUntil(async () => (await entryNames()).includes("<img src=x onerror=alert(1)>"), {
       timeoutMsg: "the hostile name is not listed as text",
     });
     await enterFolder("hostile");
-    await expect($('[data-testid="crumbs"]')).toHaveText("Commit 3 / hostile");
+    await expect($('[data-testid="crumbs"]')).toHaveText("Version 3 / hostile");
     await browser.waitUntil(async () => (await entryNames()).length === 6);
     const names = await entryNames();
     for (const n of ["<script>alert(1)", '"><svg onload=alert(1)>', "javascript:alert(1)", "&lt;b&gt;entity"]) {
@@ -77,7 +77,7 @@ describe("archive browser", () => {
 
   it("switches snapshots from the timeline", async () => {
     await $('[data-testid="commit-0"]').click();
-    await expect($('[data-testid="crumbs"]')).toHaveText("Commit 0");
+    await expect($('[data-testid="crumbs"]')).toHaveText("Version 0");
     await browser.waitUntil(async () => (await entryNames()).includes("docs"));
     // `hostile/` arrived in commit 3; commit 0 does not have it.
     expect(await entryNames()).not.toContain("hostile");
@@ -86,7 +86,7 @@ describe("archive browser", () => {
 
   it("pages a 100,000-entry folder and keeps only a window of rows in the DOM", async () => {
     await $('[data-testid="close-archive"]').click();
-    await expect($('[data-testid="browse-empty"]')).toBeExisting();
+    await expect($('[data-testid="start-screen"]')).toBeExisting();
     await openNext();
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("large.mochi"));
     await enterFolder("many");

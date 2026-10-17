@@ -56,7 +56,7 @@ function commit(operation: CommitReport["operation"], archive: ArchiveSummary | 
 const completed = (c: CommitReport): JobOutcome => ({ status: "completed", summary: "s", commit: c });
 
 /** A fake backend for the staging and job commands; the test pushes events. */
-function backend(opts: { destination?: string | null } = {}) {
+function backend(opts: { destination?: string | null; defaultDestination?: string | null } = {}) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let staged: StagedItem[] = [];
   let destination: string | null = null;
@@ -64,7 +64,11 @@ function backend(opts: { destination?: string | null } = {}) {
   let dropChannel: Channel<DropEvent> | undefined;
   // Tauri delivers a channel's messages in order, numbered from 0 per channel.
   const next = new Map<number, number>();
-  const view = (): StagedView => ({ items: staged, destination });
+  const view = (): StagedView => ({
+    items: staged,
+    destination,
+    default_destination: destination === null && staged.length > 0 ? (opts.defaultDestination ?? null) : null,
+  });
   const browse = { archive: summary(3, 1) };
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -180,13 +184,55 @@ test("create: choose items, options, a location, then a job with those options",
   expect(b.request()).toEqual({ kind: "create_archive", preset: "smaller", tar_compatible: true });
 });
 
+test("the options are collapsed by default, with the plain defaults, and nothing is encrypted", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  expect(screen.getByTestId("create-options")).not.toHaveAttribute("open");
+  expect(screen.getByTestId("preset-balanced")).toBeChecked();
+  expect(screen.getByTestId("encrypt")).not.toBeChecked();
+  expect(screen.getByTestId("recovery-none")).toBeChecked();
+  expect(screen.getByTestId("create-step-files")).toBeInTheDocument();
+  expect(screen.getByTestId("create-step-where")).toBeInTheDocument();
+});
+
+test("with a default place there is no dialog: one click creates, and the place is shown", async () => {
+  const user = userEvent.setup();
+  const b = backend({ defaultDestination: "/home/me/photos.mochi" });
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  expect(screen.getByTestId("save-location")).toHaveTextContent("/home/me/photos.mochi");
+  expect(screen.getByTestId("create-step-where")).toHaveTextContent("An existing file is never replaced");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  expect(b.cmds()).not.toContain("choose_destination");
+  expect(b.cmds().at(-1)).toBe("start_job");
+});
+
+test("Change… shows the save dialog and the chosen name replaces the default", async () => {
+  const user = userEvent.setup();
+  const b = backend({ defaultDestination: "/home/me/photos.mochi" });
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  expect(screen.getByTestId("change-destination")).toBeEnabled();
+  await user.click(screen.getByTestId("change-destination"));
+  await screen.findByText(/Saved as/);
+  expect(b.cmds()).toContain("choose_destination");
+  expect(screen.getByTestId("save-location")).toHaveTextContent(/Saved as .*\.mochi/);
+});
+
 test("the TAR option names itself and states its trade-offs", async () => {
   const user = userEvent.setup();
   backend();
   renderWriter();
   await user.click(screen.getByTestId("new-archive"));
   const panel = screen.getByTestId("write-panel");
-  expect(panel).toHaveTextContent("Readable with standard zstd + tar");
+  expect(panel).toHaveTextContent("Let standard zstd and tar tools read it");
   const notes = screen.getByTestId("tar-notes");
   expect(notes).toHaveTextContent("history of every commit, not the latest snapshot");
   expect(notes).toHaveTextContent("a file you delete later is still extracted");
@@ -253,8 +299,9 @@ test("a completed commit says committed, never backed up, safe, or preserved, an
   b.job({ event: "finished", job_id: 5, outcome: completed(commit("create", created)) });
 
   const status = screen.getByTestId("write-status");
-  expect(status).toHaveTextContent("Committed commit 0 to new.mochi (LOCAL_COMMITTED): 2 files, 1 folder, 2.0 KiB");
-  expect(status).toHaveTextContent("local commit in one file");
+  expect(status).toHaveTextContent("Created new.mochi: 2 files, 1 folder, 2.0 KiB");
+  expect(status).toHaveTextContent("Technical detail: commit 0 (LOCAL_COMMITTED).");
+  expect(status).toHaveTextContent("saved in one file on this computer");
   expect(status).toHaveAttribute("data-committed", "true");
   expect(adopted).toEqual([created]);
   expect(screen.queryByTestId("write-panel")).toBeNull();
@@ -269,9 +316,10 @@ test("a completed commit says committed, never backed up, safe, or preserved, an
 test("a job that cannot start shows the error and leaves the panel usable", async () => {
   const user = userEvent.setup();
   mockIPC((cmd) => {
-    if (cmd === "staged_sources") return { items: [{ name: { text: "x", verbatim: true }, kind: "file" }], destination: null };
+    if (cmd === "staged_sources") return { items: [{ name: { text: "x", verbatim: true }, kind: "file" }], destination: null, default_destination: null };
     if (cmd === "watch_drops") return null;
-    if (cmd === "choose_destination") return { items: [], destination: "n.mochi" };
+    if (cmd === "recent_archives") return [];
+    if (cmd === "choose_destination") return { items: [], destination: "n.mochi", default_destination: null };
     if (cmd === "start_job") throw { code: "INVALID_ARGUMENT", message: "nothing is staged" };
     throw new Error(cmd);
   });
@@ -290,12 +338,12 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
   expect(screen.getByTestId("drop-overlay")).toBeInTheDocument();
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null },
+    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: null },
     problems: [{ code: "INVALID_ARGUMENT", message: "x would be stored under the same name as y" }],
   });
   b.drop({ event: "hover", active: false });
   expect(screen.queryByTestId("drop-overlay")).toBeNull();
-  expect(screen.getByRole("group", { name: "New archive" })).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Create a new archive" })).toBeInTheDocument();
   expect(screen.getByTestId("staged-item")).toHaveTextContent(HOSTILE);
   expect(screen.getByTestId("write-problems")).toHaveTextContent("Not added (INVALID_ARGUMENT)");
   expect(container.querySelector("img")).toBeNull();
@@ -308,7 +356,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
   await user.click(screen.getByTestId("write-close"));
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null },
+    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
     problems: [],
   });
   expect(screen.getByRole("group", { name: "Add to archive" })).toBeInTheDocument();
@@ -342,9 +390,9 @@ test("remove: asks first, states that history keeps the content, and Keep starts
   renderWriter({ archive, selected: { key: "6162", name: { text: HOSTILE, verbatim: true } } });
   await user.click(screen.getByTestId("remove-entry"));
   const panel = screen.getByTestId("write-panel");
-  expect(panel).toHaveTextContent(`Remove ${HOSTILE} from the current snapshot?`);
+  expect(panel).toHaveTextContent(`Remove ${HOSTILE} from the current version?`);
   const note = screen.getByTestId("delete-note");
-  expect(note).toHaveTextContent("removes the entry from the current snapshot only");
+  expect(note).toHaveTextContent("removes the entry from the current version only");
   expect(note).toHaveTextContent("stays in the archive's history");
   expect(note).toHaveTextContent("retention and garbage collection");
   expect(within(panel).queryByRole("img")).toBeNull();
@@ -359,7 +407,7 @@ test("remove: asks first, states that history keeps the content, and Keep starts
   expect(b.request()).toEqual({ kind: "delete_from_archive", handle: 3, keys: ["6162"] });
 });
 
-test("only the latest snapshot can be changed", () => {
+test("only the latest version can be changed", () => {
   backend();
   renderWriter({
     archive: summary(3, 2),
@@ -367,7 +415,7 @@ test("only the latest snapshot can be changed", () => {
     selected: { key: "61", name: { text: "a", verbatim: true } },
   });
   expect(screen.getByTestId("remove-entry")).toBeDisabled();
-  expect(screen.getByTestId("remove-entry")).toHaveAttribute("title", "Only the latest commit can be changed");
+  expect(screen.getByTestId("remove-entry")).toHaveAttribute("title", "Only the latest version can be changed");
 });
 
 test("the browser shows the archive as it stands after a commit: same handle for add, new handle for create", async () => {
@@ -376,7 +424,7 @@ test("the browser shows the archive as it stands after a commit: same handle for
   render(<Browser />);
   await user.click(screen.getByTestId("open-archive"));
   await screen.findByTestId("archive-meta");
-  expect(screen.getByTestId("archive-meta")).toHaveTextContent("1 commit");
+  expect(screen.getByTestId("archive-meta")).toHaveTextContent("1 version");
 
   // Add to the open archive: now two commits, shown at the head.
   await user.click(screen.getByTestId("add-to-archive"));
@@ -384,7 +432,7 @@ test("the browser shows the archive as it stands after a commit: same handle for
   await user.click(await screen.findByTestId("add-confirm"));
   await screen.findByTestId("write-running");
   b.job({ event: "finished", job_id: 5, outcome: completed(commit("add", summary(3, 2))) });
-  await screen.findByText(/2 commits/);
+  await screen.findByText(/2 versions/);
   const snaps = b.calls.filter((c) => c.cmd === "open_snapshot").map((c) => c.args);
   expect(snaps.at(-1)).toEqual({ handle: 3, seq: 1 });
   expect(b.cmds()).not.toContain("close_archive");

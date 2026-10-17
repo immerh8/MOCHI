@@ -74,13 +74,16 @@ test("no message claims the data is backed up, safe, or preserved (spec §23.3 #
 
 test("a commit says it completed locally and names its status", () => {
   const lines = outcomeLines("add", at(1));
-  expect(lines[0]).toBe("Committed commit 4 to a.mochi (LOCAL_COMMITTED): 3 files, 1 folder, 1.5 KiB (1,536 bytes).");
+  expect(lines[0]).toBe("Added to a.mochi: 3 files, 1 folder, 1.5 KiB (1,536 bytes).");
   expect(lines).toContain(LOCAL_COMMIT_NOTE);
+  // The precise term and the status are kept, as the last line.
+  expect(lines.at(-1)).toBe("Technical detail: commit 4 (LOCAL_COMMITTED).");
 });
 
-test("a deletion is removal from the current snapshot and says the content stays in history", () => {
+test("a deletion is removal from the current version and says the content stays in history", () => {
   const lines = outcomeLines("delete", at(2));
-  expect(lines[0]).toContain("removed 2 entries from the current snapshot");
+  expect(lines[0]).toContain("Removed 2 entries from the current version of a.mochi");
+  expect(lines[0]).toContain("Earlier versions still have them");
   const note = lines.join(" ");
   expect(note).toContain("stays in the archive's history");
   expect(note).toContain("retention and garbage collection");

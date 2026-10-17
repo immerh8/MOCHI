@@ -8,6 +8,7 @@ import { errorText } from "../browser/format";
 import { t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { planExtract } from "../ipc/extract";
+import { discardExtractFolder, planExtractDefault, showInFolder } from "../ipc/start";
 import type { ConflictChoice, ExtractPlan } from "../ipc/extract";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -35,8 +36,11 @@ export interface ExtractorProps {
    * the plan for the whole snapshot into the folder Rust already chose. Nothing
    * is written until the user confirms it.
    */
-  autoPlan?: { token: number; handle: number } | null;
+  autoPlan?: { token: number; handle: number; defaultFolder?: boolean } | null;
 }
+
+/** Where the folder comes from: made next to the archive, picked, or the one already chosen. */
+type FolderMode = "default" | "pick" | "again";
 
 type Scope = { kind: "all" } | { kind: "selected"; entry: SelectedEntry };
 
@@ -62,6 +66,10 @@ type JobView =
 export function Extractor({ archive, seq, selected, autoPlan = null }: ExtractorProps) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [plan, setPlan] = useState<ExtractPlan | null>(null);
+  // The plan's folder is the new one made next to the archive (it is removed
+  // again if the plan is closed unused).
+  const [madeFolder, setMadeFolder] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
 
@@ -84,23 +92,33 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     identityRef.current = identity;
     setScope(null);
     setPlan(null);
+    setMadeFolder(false);
     setError(null);
     setJob((j) => (j.state === "done" ? { state: "idle" } : j));
   }, [identity]);
 
   const keysOf = (s: Scope): string[] => (s.kind === "all" ? [] : [s.entry.key]);
 
-  /** Show the folder dialog (or check the chosen folder again) and plan. */
+  /**
+   * Plan into a new folder next to the archive (the default), after the
+   * folder dialog, or into the folder chosen earlier. Nothing is written but
+   * the new folder.
+   */
   const planFor = useCallback(
-    (s: Scope, pick: boolean) => {
+    (s: Scope, mode: FolderMode) => {
       if (handle === null || seq === null) return;
       setError(null);
       setJob({ state: "idle" });
-      planExtract(handle, seq, keysOf(s), pick).then(
+      const planned =
+        mode === "default"
+          ? planExtractDefault(handle, seq, keysOf(s))
+          : planExtract(handle, seq, keysOf(s), mode === "pick");
+      planned.then(
         (p) => {
           if (p === null) return; // the user cancelled the folder dialog
           setScope(s);
           setPlan(p);
+          setMadeFolder((was) => (mode === "default" ? true : mode === "again" ? was : false));
         },
         (e: unknown) => {
           setScope(s);
@@ -111,18 +129,21 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     [handle, seq],
   );
 
-  // An extract asked for by the shell: plan the whole snapshot into the folder
-  // Rust chose (no dialog), once per request and only for that archive.
+  // An extract asked for from the start screen or by the shell: plan the
+  // whole snapshot, once per request and only for that archive. The shell's
+  // folder is the one Rust already chose; the start screen's is the default.
   const plannedTokenRef = useRef(0);
   useEffect(() => {
     if (autoPlan === null || autoPlan.token === plannedTokenRef.current) return;
     if (handle !== autoPlan.handle || seq === null) return;
     plannedTokenRef.current = autoPlan.token;
-    planExtract(handle, seq, [], false).then(
+    const made = autoPlan.defaultFolder === true;
+    (made ? planExtractDefault(handle, seq, []) : planExtract(handle, seq, [], false)).then(
       (p) => {
         if (p === null) return;
         setScope({ kind: "all" });
         setPlan(p);
+        setMadeFolder(made);
       },
       (e: unknown) => {
         setScope({ kind: "all" });
@@ -157,6 +178,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     if (event.event === "finished" && event.outcome.status === "completed") {
       setScope(null);
       setPlan(null);
+      setMadeFolder(false);
     }
   }, []);
 
@@ -181,10 +203,21 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
   };
 
   const close = () => {
+    // A new folder nobody extracted into is tidied up (Rust only removes an empty one).
+    if (madeFolder) void discardExtractFolder().catch(() => undefined);
     setScope(null);
     setPlan(null);
+    setMadeFolder(false);
     setError(null);
     setJob({ state: "idle" });
+  };
+
+  const showFolder = () => {
+    setFolderError(null);
+    showInFolder({ kind: "extract_destination" }).then(
+      () => undefined,
+      (e: unknown) => setFolderError(errorText(t("start.showInFolderFailed"), e)),
+    );
   };
 
   const described = job.state === "done" ? describe(job.outcome) : null;
@@ -200,7 +233,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         <button
           type="button"
           data-testid="extract-all"
-          onClick={() => planFor({ kind: "all" }, true)}
+          onClick={() => planFor({ kind: "all" }, "default")}
           disabled={busy || archive === null || seq === null}
           title={archive ? undefined : t("extract.openFirst")}
         >
@@ -209,7 +242,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         <button
           type="button"
           data-testid="extract-selected"
-          onClick={() => selected && planFor({ kind: "selected", entry: selected }, true)}
+          onClick={() => selected && planFor({ kind: "selected", entry: selected }, "default")}
           disabled={busy || archive === null || seq === null || selected === null}
           title={!archive ? t("extract.openFirst") : selected ? undefined : t("extract.selectFirst")}
         >
@@ -249,6 +282,11 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           </dl>
           {scope.kind === "selected" && (
             <p className="note">{t("extract.parentsNote")}</p>
+          )}
+          {madeFolder && (
+            <p className="note" data-testid="extract-new-folder-note">
+              {t("extract.newFolderNote")}
+            </p>
           )}
           <p className="note">{FOLDER_NOTE}</p>
           {plan.case_insensitive && (
@@ -297,7 +335,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
             <button
               type="button"
               data-testid="extract-change-folder"
-              onClick={() => planFor(scope, true)}
+              onClick={() => planFor(scope, "pick")}
               disabled={busy}
             >
               {t("extract.changeFolder")}
@@ -305,7 +343,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
             <button
               type="button"
               data-testid="extract-recheck"
-              onClick={() => planFor(scope, false)}
+              onClick={() => planFor(scope, "again")}
               disabled={busy}
             >
               {t("extract.recheck")}
@@ -390,6 +428,18 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           </>
         )}
       </Live>
+      {job.state === "done" && job.outcome.status === "completed" && report && (
+        <div className="actions">
+          <button type="button" data-testid="extract-show-folder" onClick={showFolder}>
+            {t("start.showInFolder")}
+          </button>
+        </div>
+      )}
+      {folderError && (
+        <p role="alert" className="error" data-testid="extract-folder-error">
+          {folderError}
+        </p>
+      )}
     </section>
   );
 }

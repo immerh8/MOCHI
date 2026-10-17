@@ -56,8 +56,10 @@ function backend() {
         return null;
       case "watch_drops":
         return null;
+      case "recent_archives":
+        return [];
       case "staged_sources":
-        return { items: [], destination: null };
+        return { items: [], destination: null, default_destination: null };
       case "open_snapshot":
         return { seq: a.seq, commit_id: "c".repeat(64), entries: 0, root_dirs: 0, root_files: 0, catalog_source: { source: "image" } };
       case "list_children":
@@ -106,7 +108,7 @@ afterEach(() => clearMocks());
 test("an archive opened by the shell is shown, and the previous one is closed", async () => {
   const b = backend();
   render(<Browser />);
-  await screen.findByTestId("browse-empty");
+  await screen.findByTestId("start-screen");
   b.launch({ event: "opened", archive: summary(7, "first.mochi"), extract: false });
   expect(await screen.findByText("first.mochi")).toBeInTheDocument();
   b.launch({ event: "opened", archive: summary(8, "second.mochi"), extract: false });
@@ -125,10 +127,10 @@ test("an archive opened by the shell is shown, and the previous one is closed", 
 test("an extract verb shows the plan for the folder Rust chose, and writes nothing until confirmed", async () => {
   const b = backend();
   render(<Browser />);
-  await screen.findByTestId("browse-empty");
+  await screen.findByTestId("start-screen");
   b.launch({ event: "opened", archive: summary(7, "photos.mochi"), extract: true });
   const panel = await screen.findByTestId("extract-panel");
-  expect(panel).toHaveTextContent("The whole of commit 0");
+  expect(panel).toHaveTextContent("Everything in version 0");
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/photos");
   const plan = b.calls.find((c) => c.cmd === "plan_extract");
   // The folder was chosen in Rust: no dialog (`pick` false), the whole snapshot.
@@ -140,7 +142,7 @@ test("an extract verb shows the plan for the folder Rust chose, and writes nothi
 test("a launch that failed is shown as text, hostile markup inert", async () => {
   const b = backend();
   const { container } = render(<Browser />);
-  await screen.findByTestId("browse-empty");
+  await screen.findByTestId("start-screen");
   b.launch({ event: "problem", message: '<img src=x onerror="alert(1)"> could not be opened (CORRUPT)' });
   const alert = await screen.findByTestId("browse-error");
   expect(alert).toHaveTextContent('<img src=x onerror="alert(1)"> could not be opened');
@@ -155,14 +157,14 @@ test("a foreign archive opened by the shell shows the foreign browser, read-only
       <ForeignBrowser />
     </>,
   );
-  await screen.findByTestId("browse-empty");
+  await screen.findByTestId("start-screen");
   b.launch({ event: "foreign_opened", archive: foreignSummary(11, "photos.zip") });
   expect(await screen.findByTestId("foreign-meta")).toHaveTextContent("photos.zip");
   expect(screen.getByTestId("foreign-label")).toBeInTheDocument();
   expect(await screen.findByTestId("foreign-entry")).toHaveTextContent('<img src=x onerror="alert(1)">');
   expect(container.querySelector("img")).toBeNull();
   // The MOCHI browser is untouched, and nothing asked for a dialog or a path.
-  expect(screen.getByTestId("browse-empty")).toBeInTheDocument();
+  expect(screen.getByTestId("start-screen")).toBeInTheDocument();
   const cmds = b.calls.map((c) => c.cmd);
   expect(cmds).not.toContain("open_archive");
   expect(cmds).not.toContain("open_foreign_archive");
@@ -181,7 +183,7 @@ test("a password-protected foreign archive asks in the window and sends the pass
       <ForeignBrowser />
     </>,
   );
-  await screen.findByTestId("browse-empty");
+  await screen.findByTestId("start-screen");
   b.launch({ event: "foreign_password", wrong: false });
   const input = await screen.findByTestId("foreign-password-input");
   await user.type(input, "SECRET");

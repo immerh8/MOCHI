@@ -11,7 +11,7 @@
 // `"`, `:` or control characters in a name, so there the same entries are
 // reported NAME_UNSUPPORTED instead of being extracted. Either way the name is
 // shown as text and the app never writes outside the chosen folder.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
@@ -30,11 +30,18 @@ const dir = (name) => {
   mkdirSync(d, { recursive: true });
   return d;
 };
-const allDir = dir("all");
-const selectedDir = dir("selected");
+// The default folder of an extraction is a new one next to the archive, named
+// after it (`browse`, then `browse (2)`, ...): copy the fixtures here so that
+// the folders it makes are in a directory of ours, not in the fixtures'.
+const browseCopy = path.join(root, "browse.mochi");
+const largeCopy = path.join(root, "large.mochi");
+copyFileSync(path.join(fixtures, "browse.mochi"), browseCopy);
+copyFileSync(path.join(fixtures, "large.mochi"), largeCopy);
+const allDir = path.join(root, "browse");
+const selectedDir = path.join(root, "browse (2)");
+const cancelDir = path.join(root, "large");
 const crowdedDir = dir("crowded");
 const emptyDir = dir("empty");
-const cancelDir = dir("cancel");
 
 const entryNames = () =>
   browser.execute(() =>
@@ -96,23 +103,38 @@ function openUp(folder) {
   chmodSync(folder, 0o755);
 }
 
+// The plan names its folder. (On Windows the markup name is unsupported in any
+// folder, so even a new folder can list a conflict: wait for the folder, not for
+// "no conflicts".)
+const planShows = (folder) =>
+  browser.waitUntil(
+    async () => {
+      const el = await $('[data-testid="extract-destination"]');
+      return (await el.isExisting()) && (await el.getText()) === folder;
+    },
+    { timeout: 60_000, timeoutMsg: `the plan never named ${folder}` },
+  );
+
 const size = (...p) => statSync(path.join(...p)).size;
 
 describe("extract", () => {
   before(async () => {
-    queuePicks(path.join(fixtures, "browse.mochi"));
+    queuePicks(browseCopy);
     await $('[data-testid="open-archive"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 60_000 });
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
   });
 
-  it("extracts all of the snapshot on screen into the folder chosen in the native dialog", async () => {
-    queuePicks(allDir);
+  it("extracts everything into a new folder next to the archive, with no folder dialog", async () => {
+    // No pick is queued: the folder is made by the app, next to browse.mochi.
+    expect(existsSync(allDir)).toBe(false);
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
     await expect($('[data-testid="extract-destination"]')).toHaveText(allDir);
+    expect(existsSync(allDir)).toBe(true);
+    await expect($('[data-testid="extract-new-folder-note"]')).toBeExisting();
     await expect($('[data-testid="extract-scope"]')).toHaveText(
-      expect.stringContaining("The whole of commit 3"),
+      expect.stringContaining("Everything in version 3"),
     );
     await expect($('[data-testid="extract-panel"]')).toHaveText(
       expect.stringContaining("Extract into a folder only you can modify."),
@@ -152,12 +174,23 @@ describe("extract", () => {
     expect(await countElements("svg")).toBe(0);
   });
 
+  it("shows the finished extraction's folder in the file manager, by asking Rust", async () => {
+    await press("extract-show-folder");
+    // The e2e build records the folder it was asked to show instead of opening a window.
+    const log = process.env.MOCHI_E2E_FOLDER_LOG;
+    await browser.waitUntil(() => readFileSync(log, "utf8").split("\n").includes(allDir), {
+      timeoutMsg: `${allDir} was never handed to the file manager`,
+    });
+  });
+
   it("extracts the selected entry with the folders above it, and only that", async () => {
     await selectEntry("docs");
-    queuePicks(selectedDir);
+    // The next free name next to the archive: nothing already there is reused.
+    expect(existsSync(selectedDir)).toBe(false);
     await press("extract-selected");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs from commit 3"));
+    await expect($('[data-testid="extract-destination"]')).toHaveText(selectedDir);
+    await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs from version 3"));
     await press("extract-confirm");
     await waitForState("completed");
     expect(readdirSync(selectedDir)).toEqual(["docs"]);
@@ -173,10 +206,17 @@ describe("extract", () => {
     if (!windows) writeFileSync(path.join(crowdedDir, HOSTILE_ROOT), "mine too");
     const before = readdirSync(crowdedDir).sort();
 
-    // Commit 3 again from the top: the snapshot on screen is unchanged.
-    queuePicks(crowdedDir);
+    // Version 3 again from the top: the snapshot on screen is unchanged. The
+    // default is a new folder, so it is the user's own pick that collides.
     await press("extract-all");
+    const made = path.join(root, "browse (3)");
+    await planShows(made);
+    expect(existsSync(made)).toBe(true);
+    queuePicks(crowdedDir);
+    await press("extract-change-folder");
     await $('[data-testid="extract-conflicts"]').waitForExist({ timeout: 60_000 });
+    // The unused new folder was tidied away when another one was chosen.
+    expect(existsSync(made)).toBe(false);
     const conflicts = await listed("extract-conflict");
     const has = (name, code) => conflicts.some((t) => t.includes(name) && t.includes(code));
     expect(has("big", "NAME_COLLISION")).toBe(true);
@@ -241,16 +281,28 @@ describe("extract", () => {
     expect(await countElements("svg")).toBe(0);
   });
 
+  it("closing the plan of a new folder removes it again, and never a folder with files in it", async () => {
+    await press("extract-all");
+    const made = path.join(root, "browse (3)");
+    await planShows(made);
+    expect(existsSync(made)).toBe(true);
+    await press("extract-close");
+    await browser.waitUntil(() => !existsSync(made), { timeoutMsg: "the empty new folder stayed" });
+    // The folders that were extracted into are still there.
+    expect(existsSync(allDir)).toBe(true);
+    expect(existsSync(selectedDir)).toBe(true);
+  });
+
   it("cancels an extraction midway: files already extracted stay, none is partial, none is temporary", async () => {
-    queuePicks(path.join(fixtures, "large.mochi"));
+    queuePicks(largeCopy);
     await $('[data-testid="open-archive"]').click();
     await browser.waitUntil(
       async () => (await $('[data-testid="archive-meta"]').getText()).includes("large.mochi"),
       { timeout: 60_000 },
     );
-    queuePicks(cancelDir);
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 120_000 });
+    await expect($('[data-testid="extract-destination"]')).toHaveText(cancelDir);
     await press("extract-confirm");
 
     // 100,000 entries at MOCHI_E2E_PACE_MS each: ample time to cancel.

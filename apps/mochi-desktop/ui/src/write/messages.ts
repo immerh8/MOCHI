@@ -43,25 +43,19 @@ export function outcomeLines(operation: Operation, outcome: JobOutcome): string[
 }
 
 function commitLines(c: CommitReport): string[] {
-  const where = c.archive ? t("write.committedWhere", { file: c.archive.file_name }) : "";
-  const status = c.status;
+  const file = c.archive?.file_name ?? "";
   const lines: string[] = [];
   if (c.operation === "delete") {
+    const entries = tc(c.removed, "count.entryOne", "count.entryMany");
     lines.push(
-      t("write.committedDelete", {
-        seq: c.seq,
-        where,
-        status,
-        entries: tc(c.removed, "count.entryOne", "count.entryMany"),
-      }),
+      t("write.committedDelete", { entries, file, them: c.removed === 1 ? "it" : "them" }),
       DELETE_NOTE,
     );
   } else {
     lines.push(
       t("write.committedAdd", {
-        seq: c.seq,
-        where,
-        status,
+        verb: t(c.operation === "create" ? "write.verbCreated" : "write.verbAdded"),
+        file,
         files: tc(c.files, "count.fileOne", "count.fileMany"),
         folders: tc(c.directories, "count.folderOne", "count.folderMany"),
         size: formatSize(String(c.bytes)),
@@ -86,6 +80,7 @@ function commitLines(c: CommitReport): string[] {
     );
   }
   lines.push(LOCAL_COMMIT_NOTE);
+  lines.push(t("write.committedTechnical", { seq: c.seq, status: c.status }));
   return lines;
 }
 

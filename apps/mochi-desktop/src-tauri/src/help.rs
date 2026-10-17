@@ -85,6 +85,32 @@ pub fn open_guide_at(path: Option<PathBuf>, opener: &dyn Opener) -> Result<PathB
     Ok(path)
 }
 
+/// Show `folder` in the operating system's file manager ("Show in folder").
+/// Rust resolved the folder; the webview named nothing. E2E builds append it
+/// to `MOCHI_E2E_FOLDER_LOG` (not the guide's log) instead of opening a window.
+pub fn open_folder(folder: &Path) -> Result<(), IpcError> {
+    let folder = for_shell(folder);
+    if !folder.is_dir() {
+        return Err(IpcError {
+            code: ErrorCode::IoError.as_str().to_owned(),
+            message: "That folder is not there any more.".to_owned(),
+        });
+    }
+    #[cfg(feature = "e2e")]
+    if let Some(log) = std::env::var_os("MOCHI_E2E_FOLDER_LOG") {
+        return RecordingOpener(PathBuf::from(log))
+            .open(&folder)
+            .map_err(|e| IpcError {
+                code: ErrorCode::IoError.as_str().to_owned(),
+                message: format!("Could not record the folder: {e}"),
+            });
+    }
+    OsOpener.open(&folder).map_err(|e| IpcError {
+        code: ErrorCode::IoError.as_str().to_owned(),
+        message: format!("No program on this computer could show the folder: {e}"),
+    })
+}
+
 /// The bundled guide's first page, as the app resolves it.
 pub fn resolve_guide(app: &AppHandle) -> Option<PathBuf> {
     #[cfg(feature = "e2e")]

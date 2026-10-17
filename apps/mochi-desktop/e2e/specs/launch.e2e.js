@@ -75,13 +75,13 @@ describe("a second launch", () => {
   });
 
   it("opens the archive in the running window instead of starting a second app", async () => {
-    await $('[data-testid="browse-empty"]').waitForExist();
+    await $('[data-testid="start-screen"]').waitForExist();
     // No dialog click: the path comes from the second process's command line.
     const ended = await secondLaunch(["--open", "--", fixture]);
     expect(ended.code).toBe(0);
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
-    await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(head)"));
+    await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
   });
 
   it("takes a bare path, which is what a file manager passes", async () => {

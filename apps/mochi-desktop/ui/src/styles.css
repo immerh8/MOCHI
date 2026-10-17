@@ -401,3 +401,75 @@ h3:focus {
     border-style: dashed;
   }
 }
+
+/* ---- D10: the start screen and the guided flows ------------------------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.big-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+button.big {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1.25rem 1.25rem;
+  text-align: left;
+  background: var(--surface);
+  color: var(--fg);
+  border: 2px solid var(--accent);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button.big:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+button.big:disabled {
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+button.big.primary {
+  align-items: center;
+  background: var(--accent-bg);
+}
+.big-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.big-hint {
+  color: var(--muted);
+}
+.note.quiet {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.step {
+  margin: 1rem 0;
+}
+.step h4 {
+  margin: 0 0 0.25rem;
+}
+details.options,
+details.technical,
+details.advanced {
+  margin: 1rem 0;
+}
+details.advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+summary {
+  cursor: pointer;
+}

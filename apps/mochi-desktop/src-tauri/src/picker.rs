@@ -71,22 +71,32 @@ pub fn pick_sources<R: Runtime>(app: &AppHandle<R>, what: SourcePick) -> Option<
 }
 
 /// Show the save dialog for a new archive (plan D2). `None` if the user
-/// cancelled. The `.mochi` extension is added when the name has none.
+/// cancelled. The `.mochi` extension is added when the name has none. The
+/// dialog starts in `suggested`'s folder with its name filled in, when given.
 /// Blocks: call it off the async runtime.
-pub fn pick_destination<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+pub fn pick_destination<R: Runtime>(
+    app: &AppHandle<R>,
+    suggested: Option<&std::path::Path>,
+) -> Option<PathBuf> {
     #[cfg(feature = "e2e")]
     if let Some(path) = crate::automation::next_pick() {
         return Some(with_extension(path));
     }
-    let path = app
+    let mut dialog = app
         .dialog()
         .file()
-        .set_title("Create a MOCHI archive")
+        .set_title("Save the new archive as")
         .set_file_name("archive.mochi")
-        .add_filter("MOCHI archive", &["mochi"])
-        .blocking_save_file()?
-        .into_path()
-        .ok()?;
+        .add_filter("MOCHI archive", &["mochi"]);
+    if let Some(suggested) = suggested {
+        if let Some(dir) = suggested.parent() {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(name) = suggested.file_name().and_then(|n| n.to_str()) {
+            dialog = dialog.set_file_name(name);
+        }
+    }
+    let path = dialog.blocking_save_file()?.into_path().ok()?;
     Some(with_extension(path))
 }
 
