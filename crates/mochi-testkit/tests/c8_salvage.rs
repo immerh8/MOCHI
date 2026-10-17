@@ -1507,9 +1507,41 @@ fn salvage_19_a_salvaged_chain_never_walks_past_what_the_scan_confirmed() {
     assert_eq!(opened_all(&out).len(), 2, "{report:#?}");
 }
 
+/// **The trusted head's chain, below its break, stays inside what the scan
+/// confirmed** (D23 items 5, 11(c); found by the `salvage_scan` fuzz target,
+/// CI run 38952433601). The same defect as `salvage_19`, reached from an
+/// intact head: the ordinary walk breaks below the head (commit 1's footer is
+/// damaged), salvage regenerates that footer, and the walk then went on to
+/// commit 0, whose footer lies where the scan refused it (rejected). The
+/// snapshot it holds must carry no commit record. Run on the fuzz input
+/// (`crash-s1-a`, a Redundancy archive, kept whole: `fuzz tmin` shrinks it
+/// by only a few percent), because parity heals a hand-built version of the
+/// damage before salvage is needed.
+#[test]
+fn salvage_20_the_trusted_heads_chain_never_walks_past_what_the_scan_confirmed() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/fuzz-regressions/salvage_scan/crash-s1-a");
+    let bad = SimStorage::from_bytes(std::fs::read(path).unwrap());
+    let p = plan_s(&bad);
+    let sv = p.salvage.as_ref().expect("the scan ran");
+    assert_eq!(p.head.as_ref().map(|h| h.seq), Some(2), "{p:#?}");
+    assert!(sv.rejected.iter().any(|c| c.seq == 0), "{sv:#?}");
+    assert!(!sv.confirmed.iter().any(|c| c.seq == 0), "{sv:#?}");
+    let ids = commit_ids(&p);
+    assert_eq!(
+        ids.iter().find(|(s, _)| *s == 0).unwrap().1,
+        None,
+        "{ids:?}"
+    );
+    assert!(p.snapshots.iter().all(|s| s.trust == Trust::Salvage));
+    assert_ne!(p.outcome, Outcome::Complete);
+    mochi_testkit::fuzz::exercise_salvage_scan(&bad.contents());
+}
+
 /// The input the `salvage_scan` fuzz target found in CI (run 38452009022,
 /// `crash-599502c9…`), kept whole: no nightly toolchain was at hand to
-/// minimize it. See `salvage_19` for the same case built by hand.
+/// minimize it. See `salvage_19` for the same case built by hand. The
+/// `crash-s1-*` inputs are from CI run 38952433601 (see `salvage_20`).
 #[test]
 fn salvage_fuzz_regression_inputs() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
