@@ -76,6 +76,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Debug, Default)]
 pub struct Destination {
     chosen: Mutex<Option<PathBuf>>,
+    /// The new folder `plan_default` made, until something is extracted into
+    /// it: closing the plan removes it again if it is still empty.
+    made: Mutex<Option<PathBuf>>,
 }
 
 impl Destination {
@@ -85,6 +88,74 @@ impl Destination {
 
     pub fn set(&self, folder: PathBuf) {
         *lock(&self.chosen) = Some(folder);
+    }
+
+    /// Remove the folder `plan_default` made, if it is still empty and still
+    /// the chosen one. A folder with anything in it is never touched.
+    pub fn discard_made(&self) {
+        let Some(made) = lock(&self.made).take() else {
+            return;
+        };
+        if std::fs::remove_dir(&made).is_ok() {
+            let mut chosen = lock(&self.chosen);
+            if chosen.as_deref() == Some(made.as_path()) {
+                *chosen = None;
+            }
+        }
+    }
+}
+
+/// The folder an extraction goes to when the user does not choose: a new
+/// folder next to the archive, named after it (`name`, then `name (2)`, ...).
+/// Never an existing folder, so nothing in it can collide.
+fn default_folder(archive: &Path) -> Result<PathBuf> {
+    let parent = archive
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| invalid("this archive's folder is not known; choose a folder instead"))?;
+    let stem = archive
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid("this archive's name cannot be used for a folder; choose one"))?;
+    (1u32..=99)
+        .map(|n| {
+            if n == 1 {
+                parent.join(stem)
+            } else {
+                parent.join(format!("{stem} ({n})"))
+            }
+        })
+        .find(|c| !c.exists())
+        .ok_or_else(|| invalid("too many folders with this name already exist; choose one"))
+}
+
+/// Plan an extraction into a new folder next to the archive, which is made
+/// now (an extraction needs its folder to exist) and removed again if the
+/// plan is closed unused (`Destination::discard_made`). An earlier unused
+/// folder of this kind is removed first.
+pub fn plan_default(
+    archives: &Archives,
+    destination: &Destination,
+    handle: u32,
+    seq: u32,
+    keys: &[PathKey],
+) -> Result<ExtractPlan> {
+    destination.discard_made();
+    let folder = default_folder(&archives.path(handle)?)?;
+    std::fs::create_dir(&folder).map_err(|e| {
+        MochiError::new(
+            ErrorCode::IoError,
+            format!("could not create the folder {}: {e}", folder.display()),
+        )
+    })?;
+    *lock(&destination.made) = Some(folder.clone());
+    match plan(archives, destination, Some(folder), handle, seq, keys) {
+        Ok(p) => Ok(p),
+        Err(e) => {
+            destination.discard_made();
+            Err(e)
+        }
     }
 }
 
@@ -1133,5 +1204,51 @@ mod tests {
         assert_eq!(plan.conflicts_total as usize, n);
         assert_eq!(plan.entries as usize, n);
         assert_eq!(plan.conflicts[0].path.text, "f0000", "in path order");
+    }
+    #[test]
+    fn the_default_folder_is_new_next_to_the_archive_and_tidied_when_unused() {
+        let f = fx();
+        let made = f
+            .archive
+            .parent()
+            .unwrap()
+            .join(f.archive.file_stem().unwrap());
+        let plan = plan_default(&f.archives, &f.destination, f.handle, 1, &[]).unwrap();
+        assert!(made.is_dir());
+        assert_eq!(plan.destination, made.display().to_string());
+        // Nothing already there can collide; on Windows the markup name is
+        // unsupported in any folder (as the other plan tests expect).
+        assert_eq!(
+            plan.conflicts_total,
+            u32::from(cfg!(windows)),
+            "a new folder has nothing to collide with"
+        );
+        assert_eq!(f.destination.get(), Some(made.clone()));
+        f.destination.discard_made();
+        assert!(!made.exists(), "an unused default folder is removed");
+        assert_eq!(f.destination.get(), None);
+    }
+
+    #[test]
+    fn the_default_folder_never_reuses_an_existing_one_and_is_never_removed_when_used() {
+        let f = fx();
+        let base = f
+            .archive
+            .parent()
+            .unwrap()
+            .join(f.archive.file_stem().unwrap());
+        std::fs::create_dir(&base).unwrap();
+        std::fs::write(base.join("mine.txt"), b"mine").unwrap();
+        let second = PathBuf::from(format!("{} (2)", base.display()));
+        plan_default(&f.archives, &f.destination, f.handle, 1, &[]).unwrap();
+        assert!(second.is_dir());
+        assert_eq!(f.destination.get(), Some(second.clone()));
+        std::fs::write(second.join("extracted.txt"), b"x").unwrap();
+        f.destination.discard_made();
+        assert!(
+            second.join("extracted.txt").is_file(),
+            "a folder with files stays"
+        );
+        assert_eq!(std::fs::read(base.join("mine.txt")).unwrap(), b"mine");
     }
 }

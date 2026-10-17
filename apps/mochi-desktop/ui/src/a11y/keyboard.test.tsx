@@ -43,7 +43,7 @@ function backend(opts: { encrypted?: boolean } = {}) {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
       case "staged_sources":
-        return { items: [], destination: null };
+        return { items: [], destination: null, default_destination: null };
       case "watch_drops":
       case "watch_launches":
         return null;
@@ -119,7 +119,7 @@ test("opening an archive, choosing a file, and closing it need no pointer", asyn
 
   screen.getByTestId("close-archive").focus();
   await user.keyboard("{Enter}");
-  expect(await screen.findByTestId("browse-empty")).toBeInTheDocument();
+  expect(await screen.findByTestId("start-screen")).toBeInTheDocument();
 });
 
 test("arrow keys, Page Up/Down, Home and End move through a 5,000-row folder", async () => {
@@ -197,10 +197,10 @@ test("an opened panel takes focus, and closing it gives focus back to the button
   backend();
   const user = userEvent.setup();
   render(<App />);
-  const opener = screen.getByTestId("new-archive");
+  const opener = screen.getByTestId("start-create");
   opener.focus();
   await user.keyboard("{Enter}");
-  const panel = await screen.findByRole("group", { name: "New archive" });
+  const panel = await screen.findByRole("group", { name: "Create a new archive" });
   expect(panel.contains(focused())).toBe(true);
   expect(focused().tagName).toBe("H3");
 
@@ -211,7 +211,8 @@ test("an opened panel takes focus, and closing it gives focus back to the button
   screen.getByTestId("write-close").focus();
   await user.keyboard("{Enter}");
   await waitFor(() => expect(screen.queryByTestId("write-panel")).toBeNull());
-  expect(focused()).toBe(opener);
+  // The start screen steps aside while the panel is open and comes back; focus goes to its button.
+  await waitFor(() => expect(focused()).toBe(screen.getByTestId("start-create")));
 });
 
 test("a wrong passphrase leaves focus in the passphrase field with the error attached to it", async () => {
@@ -274,23 +275,29 @@ test("the section buttons move focus to a heading, so a keyboard user can skip a
 
 test("results and progress have live regions that exist before they are used", async () => {
   backend();
+  const user = userEvent.setup();
   render(<App />);
-  for (const id of ["write-status", "extract-status", "search-coverage", "check-status", "report-exported", "crash-status"]) {
+  const regions = ["write-status", "search-coverage", "check-status", "report-exported", "crash-status"];
+  // Errors are alerts, which assistive technology announces at once.
+  expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  // The extract section exists once an archive is open.
+  expect(screen.queryByTestId("extract-status")).toBeNull();
+  await openArchive(user);
+  for (const id of [...regions, "extract-status"]) {
     const region = screen.getByTestId(id);
     expect(region, id).toHaveAttribute("role", "status");
     expect(region, id).toHaveAttribute("aria-live", "polite");
     expect(region, id).toBeEmptyDOMElement();
   }
-  // Errors are alerts, which assistive technology announces at once.
-  expect(screen.queryAllByRole("alert")).toHaveLength(0);
 });
 
 test("the self-test progress bar has a name and a spoken value", async () => {
   backend();
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "recent_archives") return [];
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
     if (cmd === "start_job") {
       const ch = a.onEvent as { id: number };
@@ -318,8 +325,9 @@ function jobBackend() {
   let index = 0;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "recent_archives") return [];
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
     if (cmd === "start_job") {
       channel = a.onEvent as { id: number };

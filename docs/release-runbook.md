@@ -139,13 +139,13 @@ scratch folder. Install the **0.9.0** setup from its published release.
 ### W-04. Start menu and first start
 
 1. Start → `MOCHI`; open it.
-- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds with the **Sections** links *Archive*, *Create and add*, *Extract*, *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Help*, *Job runner self-test*, *Settings* (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
+- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds showing **What would you like to do?** with three large buttons *Create archive*, *Open archive*, *Extract archive*, a short sentence saying an archive is not a second copy of the files, and a closed **Advanced** disclosure (opening it shows the **Sections** links *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Job runner self-test*, *Settings*) above **Help** (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
 - **Fail:** no entry, a blank window after 30 s, a missing-web-view message, a crash.
 2. Settings → Apps → Installed apps → **MOCHI**: **Pass:** version 0.9.0, publisher *The MOCHI Project contributors*.
 
 ### W-05. Help → User guide (command line), offline (F8)
 
-1. Turn the network **off** (1.3). In the MOCHI window find the **Help** section (use the **Sections** links if it is not in view) and press **User guide (command line)**. Its note says the guide is written for the `mochi` command line, opens the copy installed with MOCHI in your default web browser, and needs no network.
+1. Turn the network **off** (1.3). In the MOCHI window scroll to the **Help** section at the bottom of the window and press **User guide (command line)**. Its note says the guide is written for the `mochi` command line, opens the copy installed with MOCHI in your default web browser, and needs no network.
 - **Pass:** your default browser opens a **local file** (the address starts `file:///` and ends in the install folder's `guide/index.html`), the first page is readable, its links to the other topics work (*Getting started*, *An archive is not a backup*, ...), and nothing tries to reach a website. The guide says an archive is not a backup and that a passing test does not make the file one. MOCHI shows "The user guide was handed to your default program for web pages."
 - **Fail:** a web address (`https://...`), "file not found" or a blank page, an error line "Could not open the user guide", or no button.
 2. Network back on.
@@ -180,17 +180,28 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 
 | # | Do this | **Pass: you hear / see** | **Fail** |
 |---|---|---|---|
-| N-1 | **Open archive…**, pick `valid-archive-3-commits.mochi`; Tab into **Folder contents**, Down Arrow | *Folder contents, list, N items* (plus the key hint); each Down Arrow says the row's **name and kind** and *n of N* | silence, a kind without a name, no position |
-| N-2 | **New archive…**; tick **Encrypt with a passphrase**; type **Passphrase** and **Repeat it**; **Add files…** (scratch files); **Choose location and create…** | on opening, the heading **New archive** is spoken with focus on it; at the end the result ("Committed commit … a local commit …") is spoken once, no focus move; never "backed up", "safe" | silent panel, result unspoken or twice, "backed up/safe" |
-| N-3 | **Test, health, and repair → Test archive** | the headline, **Overall PASS (exit code 0)…**, then each dimension's status **as a word**, not only ✓ ✗ ! ? … – | symbols only, overall word missing |
+| N-1 | **Open archive**, pick `valid-archive-3-commits.mochi`; Tab into **Folder contents**, Down Arrow | *Folder contents, list, N items* (plus the key hint); each Down Arrow says the row's **name and kind** and *n of N* | silence, a kind without a name, no position |
+| N-2 | **Create archive**; **Add files…** (scratch files); open **Options**, tick **Protect with a password (a passphrase)**; type **Passphrase** and **Repeat it**; **Create archive** | on opening, the heading **Create a new archive** is spoken with focus on it; the two steps are announced as headings (*1. Choose what to put in the archive*, *2. Where it will be saved*); at the end the result ("Created … saved in one file on this computer …") is spoken once, no focus move; never "backed up", "safe" | silent panel, result unspoken or twice, "backed up/safe" |
+| N-3 | **Advanced → Test, health, and repair → Test archive** | the headline, **Overall PASS (exit code 0)…**, then each dimension's status **as a word**, not only ✓ ✗ ! ? … – | symbols only, overall word missing |
 | N-4 | open an **encrypted** archive, submit a **wrong** passphrase | an alert *"The passphrase did not open this archive."* and **focus back in the field** | no alert, or focus lost |
-| N-5 | **Settings → Crash reports** → **Include the panic message in each record** | NVDA reads the checkbox **and** the warning *"The panic message is the program's own description…"* with it | warning not read |
+| N-5 | **Advanced → Settings → Crash reports** → **Include the panic message in each record** | NVDA reads the checkbox **and** the warning *"The panic message is the program's own description…"* with it | warning not read |
 
 ### W-09. Contrast themes, scaling, window size
 
 1. Settings → Accessibility → **Contrast themes** → *Night sky*, then *Desert*. Open an archive and run a test. **Pass:** text readable; selected row/snapshot/folder have a **visible 2-pixel outline**; every status is a **word inside a shape** (dashed for needs-attention); nothing depends on colour. **Fail:** a selection you cannot find, text lost in the background.
 2. Settings → System → Display → **Scale 200 %**, window about 1280×720. **Pass:** no **horizontal** scroll bar for the page; panels reflow to one column. **Fail:** sideways scrolling or cut-off controls.
 3. Put the theme and scale back.
+
+### W-09a. The start screen, drag and drop, and the simple Create and Extract flows (D10)
+
+WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
+
+1. **Pass:** the window asks **What would you like to do?** with **Create archive**, **Open archive**, **Extract archive**; one quiet sentence says an archive is not a second copy; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed. **Fail:** more than those three actions at the top, jargon, or *backup/safe*.
+2. Drag the scratch file `Note é & more.txt` from Explorer onto the window. **Pass:** the **Create a new archive** panel opens with the file listed under step 1 and the full path of `Note é & more.mochi` (next to the file) under step 2; **Options** is closed. Press **Create archive**. **Pass:** the result says *Created Note é & more.mochi: 1 file…* and **Show in folder** opens Explorer on that folder. Repeat the drag and create again: **Pass:** the second archive is `Note é & more (2).mochi`; the first is untouched (never replaced).
+3. Close the archive, then drag `Second é & copy.mochi` onto the window. **Pass:** it opens (no panel to add it to a new archive). Drag it together with a text file: **Pass:** both go to the create panel instead.
+4. **Extract archive** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Run **Extract all** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
+5. Close the archive. **Pass:** the start screen lists the archives you opened under **Recent archives**; one click reopens one; **Clear this list** empties it.
+6. Keyboard only (Tab, Enter): **Pass:** all three start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
 
 ---
 

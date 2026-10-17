@@ -11,6 +11,7 @@ import { foreign } from "./en/foreign";
 import { help } from "./en/help";
 import { quick } from "./en/quick";
 import { settings } from "./en/settings";
+import { start } from "./en/start";
 import { update } from "./en/update";
 import { write } from "./en/write";
 
@@ -25,6 +26,7 @@ export const en = {
   ...help,
   ...quick,
   ...settings,
+  ...start,
   ...update,
   ...write,
 } as const;

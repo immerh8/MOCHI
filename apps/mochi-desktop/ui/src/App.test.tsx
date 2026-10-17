@@ -19,8 +19,9 @@ function fakeBackend(startResult: () => unknown = () => 7) {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     // The Writer's start-up calls (D2) are tested in write/Writer.test.tsx.
-    if (cmd === "staged_sources") return { items: [], destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "recent_archives") return [];
     // The update settings (T13) are tested in update/Updates.test.tsx.
     if (cmd === "get_update_settings") {
       return {

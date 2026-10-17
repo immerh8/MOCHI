@@ -34,6 +34,12 @@ const entryNames = () =>
     Array.from(document.querySelectorAll('[data-testid="entry"] .name'), (e) => e.textContent),
   );
 
+const textOf = (testid) =>
+  browser.execute(
+    (id) => document.querySelector(`[data-testid="${id}"]`)?.textContent ?? "",
+    testid,
+  );
+
 const waitForStatus = (text) =>
   browser.waitUntil(
     async () => {
@@ -50,30 +56,68 @@ const assertNoBannedWording = async () => {
 };
 
 describe("create and add", () => {
-  it("creates an archive from a folder and says it committed, nothing more", async () => {
+  it("starts from the start screen with three plain actions", async () => {
+    await expect($('[data-testid="start-screen"]')).toBeExisting();
+    for (const id of ["start-create", "open-archive", "start-extract"]) {
+      await expect($(`[data-testid="${id}"]`)).toBeEnabled();
+    }
+    await expect($('[data-testid="start-note"]')).toHaveText(
+      expect.stringContaining("not a second copy of them"),
+    );
+    await assertNoBannedWording();
+  });
+
+  it("creates an archive next to the first item by default, never over an existing file", async () => {
+    // A file is already called photos.mochi: the default name steps aside.
+    writeFileSync(path.join(src, "photos.mochi"), "mine");
+    queuePicks(path.join(src, "photos"));
+    await $('[data-testid="start-create"]').click();
+    await $('[data-testid="stage-folder"]').click();
+    await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await expect($('[data-testid="save-location"]')).toHaveText(path.join(src, "photos (2).mochi"));
+    await expect($('[data-testid="create-step-where"]')).toHaveText(
+      expect.stringContaining("An existing file is never replaced"),
+    );
+    // Cancel: nothing was created, and the start screen is back.
+    await $('[data-testid="stage-clear"]').click();
+    await $('[data-testid="write-close"]').click();
+    await expect($('[data-testid="start-screen"]')).toBeExisting();
+    expect(existsSync(path.join(src, "photos (2).mochi"))).toBe(false);
+    expect(readFileSync(path.join(src, "photos.mochi"), "utf8")).toBe("mine");
+  });
+
+  it("creates an archive from a folder and says it was created, nothing more", async () => {
     queuePicks(path.join(src, "photos"), mainArchive);
-    await $('[data-testid="new-archive"]').click();
+    await $('[data-testid="start-create"]').click();
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await expect($('[data-testid="staged-item"]')).toHaveText(expect.stringContaining("photos"));
+    // Choosing another place uses the save dialog, which starts at the default.
+    await $('[data-testid="change-destination"]').click();
+    // The panel re-renders when the place changes: poll the text, hold no element.
+    await browser.waitUntil(async () => (await textOf("save-location")).includes("main.mochi"), {
+      timeoutMsg: "the chosen place was not shown",
+    });
 
-    // The options: neither encryption nor a recovery record unless asked (D5).
+    // The options are collapsed; they hold neither encryption nor a recovery record unless asked (D5).
+    await expect($('[data-testid="create-options"]')).not.toHaveAttribute("open");
+    await $('[data-testid="create-options"] summary').click();
     await expect($('[data-testid="preset-balanced"]')).toBeSelected();
     await expect($('[data-testid="tar-compatible"]')).not.toBeSelected();
     await expect($('[data-testid="encrypt"]')).not.toBeSelected();
     await expect($('[data-testid="recovery-none"]')).toBeSelected();
 
     await $('[data-testid="create-confirm"]').click();
-    await waitForStatus("Committed commit 0");
+    await waitForStatus("Created main.mochi");
     const status = await $('[data-testid="write-status"]').getText();
-    expect(status).toContain("main.mochi (LOCAL_COMMITTED)");
-    expect(status).toContain("local commit in one file");
+    expect(status).toContain("Technical detail: commit 0 (LOCAL_COMMITTED).");
+    expect(status).toContain("saved in one file on this computer");
     await assertNoBannedWording();
     expect(existsSync(mainArchive)).toBe(true);
 
     // The new archive opened in the browser, at its head.
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("main.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("1 commit"));
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("1 version"));
     await browser.waitUntil(async () => (await entryNames()).includes("photos"));
   });
 
@@ -83,9 +127,9 @@ describe("create and add", () => {
     await $('[data-testid="stage-files"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="add-confirm"]').click();
-    await waitForStatus("Committed commit 1");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 commits"));
-    await expect($('[data-testid="commit-1"]')).toHaveText(expect.stringContaining("(head)"));
+    await waitForStatus("Added to main.mochi");
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
+    await expect($('[data-testid="commit-1"]')).toHaveText(expect.stringContaining("(latest)"));
     await browser.waitUntil(async () => {
       const names = await entryNames();
       return names.includes("extra.txt") && names.includes("photos");
@@ -103,7 +147,7 @@ describe("create and add", () => {
       const names = await entryNames();
       return names.includes("a.txt") && names.includes("b.txt");
     });
-    await expect($('[data-testid="crumbs"]')).toHaveText("Commit 1 / photos");
+    await expect($('[data-testid="crumbs"]')).toHaveText("Version 1 / photos");
     // Back to the root for the next step.
     await $('[data-testid="crumbs"] button').click();
     await browser.waitUntil(async () => (await entryNames()).includes("extra.txt"));
@@ -123,15 +167,15 @@ describe("create and add", () => {
     // Keep it: nothing happens.
     await $('[data-testid="delete-keep"]').click();
     await expect($('[data-testid="write-panel"]')).not.toBeExisting();
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 commits"));
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
 
     await $('[data-testid="remove-entry"]').click();
     await $('[data-testid="delete-confirm"]').click();
-    await waitForStatus("Committed commit 2");
+    await waitForStatus("Removed 1 entry from the current version");
     const status = await $('[data-testid="write-status"]').getText();
-    expect(status).toContain("removed 1 entry from the current snapshot");
+    expect(status).toContain("Earlier versions still have it");
     expect(status).toContain("stays in the archive's history");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("3 commits"));
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("3 versions"));
     await browser.waitUntil(async () => {
       const names = await entryNames();
       return names.includes("photos") && !names.includes("extra.txt");
@@ -148,15 +192,20 @@ describe("create and add", () => {
     await $('[data-testid="new-archive"]').click();
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await $('[data-testid="change-destination"]').click();
+    await $('[data-testid="create-options"] summary').click();
     await expect($('[data-testid="tar-notes"]')).toHaveText(
       expect.stringContaining("not the latest snapshot"),
     );
     await $('[data-testid="preset-fast"]').click();
     await $('[data-testid="tar-compatible"]').click();
     await $('[data-testid="create-confirm"]').click();
-    await waitForStatus("Committed commit 0");
+    await waitForStatus("Created tar.mochi");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("TAR-compatible"));
+    await expect($('[data-testid="archive-technical"]')).toHaveElementProperty(
+      "textContent",
+      expect.stringContaining("TAR-compatible"),
+    );
     // A standard zstd decoder reads the file's first frame: the TAR stream.
     expect(readFileSync(tarArchive).length).toBeGreaterThan(0);
   });
@@ -166,6 +215,7 @@ describe("create and add", () => {
     await $('[data-testid="new-archive"]').click();
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await $('[data-testid="change-destination"]').click();
     await $('[data-testid="create-confirm"]').click();
 
     // Progress streams over the channel; cancel once some content was read.

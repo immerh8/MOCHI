@@ -136,6 +136,9 @@ struct StagedSet {
 #[derive(Debug, Default)]
 pub struct Staging {
     inner: Mutex<StagedSet>,
+    /// A single `.mochi` file dropped on the window: opened on request, not
+    /// staged (`on_drag_drop`). Only Rust ever holds the path.
+    dropped_archive: Mutex<Option<PathBuf>>,
 }
 
 fn view_of(set: &StagedSet) -> StagedView {
@@ -157,7 +160,31 @@ fn view_of(set: &StagedSet) -> StagedView {
             .as_ref()
             .and_then(|d| d.file_name())
             .map(|n| n.to_string_lossy().into_owned()),
+        default_destination: default_destination(set).map(|p| p.display().to_string()),
     }
+}
+
+/// Where a new archive goes when the user did not choose: next to the first
+/// staged item, named after it, never over an existing file (`name.mochi`,
+/// then `name (2).mochi`, and so on). `None` when there is nothing staged,
+/// or the item has no usable parent folder or Unicode name; the save dialog
+/// then has to be used. Nothing is created here.
+fn default_destination(set: &StagedSet) -> Option<PathBuf> {
+    if set.destination.is_some() {
+        return None;
+    }
+    let first = set.items.first()?;
+    let parent = first.path.parent().filter(|p| !p.as_os_str().is_empty())?;
+    let stem = first.path.file_stem()?.to_str()?;
+    (1u32..=99).find_map(|n| {
+        let name = if n == 1 {
+            format!("{stem}.mochi")
+        } else {
+            format!("{stem} ({n}).mochi")
+        };
+        let candidate = parent.join(name);
+        (!candidate.exists()).then_some(candidate)
+    })
 }
 
 fn stage_one(path: &Path) -> Result<Staged> {
@@ -254,6 +281,24 @@ impl Staging {
         }
     }
 
+    /// Where the save dialog should start: the default destination.
+    pub(crate) fn suggested_destination(&self) -> Option<PathBuf> {
+        let set = lock(&self.inner);
+        set.destination
+            .clone()
+            .or_else(|| default_destination(&set))
+    }
+
+    /// Remember a dropped `.mochi` file until the window asks to open it.
+    fn set_dropped_archive(&self, path: PathBuf) {
+        *lock(&self.dropped_archive) = Some(path);
+    }
+
+    /// The dropped archive, once.
+    pub(crate) fn take_dropped_archive(&self) -> Option<PathBuf> {
+        lock(&self.dropped_archive).take()
+    }
+
     pub fn set_destination(&self, path: PathBuf) -> StagedView {
         let mut set = lock(&self.inner);
         set.destination = Some(path);
@@ -264,7 +309,10 @@ impl Staging {
         let set = lock(&self.inner);
         Taken {
             items: set.items.clone(),
-            destination: set.destination.clone(),
+            destination: set
+                .destination
+                .clone()
+                .or_else(|| default_destination(&set)),
         }
     }
 
@@ -334,6 +382,16 @@ impl DropWatch {
     }
 }
 
+/// A single dropped file that names a MOCHI archive (by its extension): the
+/// window opens it instead of adding it to a new archive. The extension is
+/// only a hint; opening checks the contents.
+fn is_archive_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("mochi"))
+}
+
 /// Translate the window's drag-and-drop event: hovering lights the drop
 /// target, a drop stages what was dropped. Nothing is read or written here.
 pub fn on_drag_drop(event: &DragDropEvent, staging: &Staging, watch: &DropWatch) {
@@ -341,6 +399,19 @@ pub fn on_drag_drop(event: &DragDropEvent, staging: &Staging, watch: &DropWatch)
         DragDropEvent::Enter { .. } => watch.emit(DropEvent::Hover { active: true }),
         DragDropEvent::Leave => watch.emit(DropEvent::Hover { active: false }),
         DragDropEvent::Drop { paths, .. } => {
+            if let [only] = paths.as_slice() {
+                if is_archive_file(only) {
+                    staging.set_dropped_archive(only.clone());
+                    watch.emit(DropEvent::Hover { active: false });
+                    watch.emit(DropEvent::Archive {
+                        name: only
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    });
+                    return;
+                }
+            }
             let StageOutcome { staged, problems } = staging.add(paths);
             watch.emit(DropEvent::Hover { active: false });
             watch.emit(DropEvent::Dropped { staged, problems });
@@ -983,9 +1054,8 @@ mod tests {
             ErrorCode::InvalidArgument
         );
         stage_ok(svc, &[fx.root.join("loose.bin")]);
-        // Staged, but nowhere to save it.
-        let e = svc.validate(&create_request()).unwrap_err();
-        assert!(e.message.contains("where to save"), "{}", e.message);
+        // Staged, nowhere chosen: the default (next to the item) is used.
+        svc.validate(&create_request()).unwrap();
         // An archive that is not open.
         let e = svc
             .validate(&JobRequest::AddToArchive { handle: 99 })
@@ -1652,5 +1722,56 @@ mod tests {
         let v = fx.svc.staging.view();
         assert_eq!(v.items.len(), 1);
         assert_eq!(v.items[0].name.text, "loose.bin");
+    }
+    #[test]
+    fn the_default_destination_is_next_to_the_first_item_and_never_over_a_file() {
+        let fx = fixture();
+        assert_eq!(
+            fx.svc.staging.view().default_destination,
+            None,
+            "nothing staged"
+        );
+        stage_ok(&fx.svc, &[fx.root.join("docs"), fx.root.join("loose.bin")]);
+        let want = fx.root.join("docs.mochi");
+        assert_eq!(
+            fx.svc.staging.view().default_destination,
+            Some(want.display().to_string())
+        );
+        // An existing file is never the default: the next free name is.
+        std::fs::write(&want, b"mine").unwrap();
+        assert_eq!(
+            fx.svc.staging.view().default_destination,
+            Some(fx.root.join("docs (2).mochi").display().to_string())
+        );
+        // A destination the user chose replaces the default.
+        fx.svc.staging.set_destination(fx.out.join("x.mochi"));
+        assert_eq!(fx.svc.staging.view().default_destination, None);
+    }
+
+    #[test]
+    fn a_create_with_no_chosen_destination_uses_the_default_and_keeps_existing_files() {
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        let taken_over = fx.root.join("docs.mochi");
+        std::fs::write(&taken_over, b"not an archive").unwrap();
+        run_plain(&fx.svc, &create_request()).unwrap();
+        assert_eq!(std::fs::read(&taken_over).unwrap(), b"not an archive");
+        let made = fx.root.join("docs (2).mochi");
+        assert!(made.is_file());
+        assert!(!state_of(&made).is_empty());
+    }
+
+    #[test]
+    fn one_dropped_mochi_file_is_held_for_opening_not_staged() {
+        let fx = fixture();
+        let archive = fx.out.join("a.mochi");
+        std::fs::write(&archive, b"x").unwrap();
+        assert!(is_archive_file(&archive));
+        assert!(!is_archive_file(&fx.root.join("loose.bin")));
+        assert!(!is_archive_file(&fx.out.join("missing.mochi")));
+        fx.svc.staging.set_dropped_archive(archive.clone());
+        assert_eq!(fx.svc.staging.take_dropped_archive(), Some(archive));
+        assert_eq!(fx.svc.staging.take_dropped_archive(), None, "once");
+        assert!(fx.svc.staging.view().items.is_empty());
     }
 }

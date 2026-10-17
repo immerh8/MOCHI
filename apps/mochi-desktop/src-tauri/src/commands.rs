@@ -16,12 +16,13 @@ use crate::ipc::{
     ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView, DropEvent,
     EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
     ForeignExtractPlan, HealthView, IpcError, JobEvent, JobId, JobRequest, OpenOutcome, PathKey,
-    PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret, SnapshotView, SourcePick,
-    StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
+    PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret, ShowTarget, SnapshotView,
+    SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
 use crate::quick::{Quick, QuickEvent, QuickSink};
+use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::write::{DropSink, DropWatch, Staging};
 
@@ -101,6 +102,94 @@ pub async fn open_archive(
         Some(path) => archives.open_or_pend(&path).map(Some),
     })
     .await
+}
+
+/// The archives opened lately, for the start screen (names only).
+#[tauri::command]
+pub fn recent_archives(recents: State<'_, Arc<Recents>>) -> Vec<RecentView> {
+    recents.view()
+}
+
+/// Empty the recent list.
+#[tauri::command]
+pub fn forget_recent_archives(recents: State<'_, Arc<Recents>>) {
+    recents.clear();
+}
+
+/// Open entry `index` of the recent list. The window names no path.
+#[tauri::command]
+pub async fn open_recent(
+    index: u32,
+    recents: State<'_, Arc<Recents>>,
+    archives: State<'_, Arc<Archives>>,
+) -> Result<OpenOutcome, IpcError> {
+    let recents = Arc::clone(&recents);
+    let archives = Arc::clone(&archives);
+    blocking(move || {
+        let path = usize::try_from(index)
+            .ok()
+            .and_then(|i| recents.get(i))
+            .ok_or_else(|| {
+                mochi_core::MochiError::new(
+                    mochi_core::ErrorCode::InvalidArgument,
+                    "that archive is no longer in the recent list",
+                )
+            })?;
+        archives.open_or_pend(&path)
+    })
+    .await
+}
+
+/// Open the `.mochi` file just dropped on the window (`DropEvent::Archive`).
+/// `null` if there is none waiting.
+#[tauri::command]
+pub async fn open_dropped_archive(
+    staging: State<'_, Arc<Staging>>,
+    archives: State<'_, Arc<Archives>>,
+) -> Result<Option<OpenOutcome>, IpcError> {
+    let staging = Arc::clone(&staging);
+    let archives = Arc::clone(&archives);
+    blocking(move || match staging.take_dropped_archive() {
+        None => Ok(None),
+        Some(path) => archives.open_or_pend(&path).map(Some),
+    })
+    .await
+}
+
+/// Show a folder in the operating system's file manager.
+#[tauri::command]
+pub async fn show_in_folder(
+    what: ShowTarget,
+    archives: State<'_, Arc<Archives>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<(), IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&destination);
+    tauri::async_runtime::spawn_blocking(move || {
+        let folder = match what {
+            ShowTarget::ExtractDestination => destination.get().ok_or_else(|| {
+                mochi_core::MochiError::new(
+                    mochi_core::ErrorCode::InvalidArgument,
+                    "no folder has been chosen yet",
+                )
+            }),
+            ShowTarget::Archive { handle } => archives.path(handle).and_then(|p| {
+                p.parent().map(std::path::Path::to_path_buf).ok_or_else(|| {
+                    mochi_core::MochiError::new(
+                        mochi_core::ErrorCode::InvalidArgument,
+                        "this archive's folder is not known",
+                    )
+                })
+            }),
+        }
+        .map_err(IpcError::from)?;
+        crate::help::open_folder(&folder)
+    })
+    .await
+    .map_err(|_| IpcError {
+        code: mochi_core::ErrorCode::Cancelled.as_str().to_owned(),
+        message: "the operation stopped before it finished".to_owned(),
+    })?
 }
 
 /// Open the Encrypted archive that is waiting for `pending` with the
@@ -307,7 +396,9 @@ pub async fn choose_destination(
 ) -> Result<Option<StagedView>, IpcError> {
     let staging = Arc::clone(&staging);
     blocking(move || {
-        Ok(crate::picker::pick_destination(&app).map(|path| staging.set_destination(path)))
+        let suggested = staging.suggested_destination();
+        Ok(crate::picker::pick_destination(&app, suggested.as_deref())
+            .map(|path| staging.set_destination(path)))
     })
     .await
 }
@@ -333,7 +424,11 @@ pub async fn plan_extract(
     blocking(move || {
         let picked = if pick {
             match crate::picker::pick_extract_folder(&app) {
-                Some(folder) => Some(folder),
+                Some(folder) => {
+                    // The unused new folder of the default plan is not needed now.
+                    destination.discard_made();
+                    Some(folder)
+                }
                 None => return Ok(None),
             }
         } else {
@@ -342,6 +437,30 @@ pub async fn plan_extract(
         crate::extract::plan(&archives, &destination, picked, handle, seq, &keys).map(Some)
     })
     .await
+}
+
+/// Plan an extraction into a new folder next to the archive, named after it
+/// (the default of "Extract"): no dialog. The folder is made now, and removed
+/// again by `discard_extract_folder` if the plan is closed unused. Nothing is
+/// extracted.
+#[tauri::command]
+pub async fn plan_extract_default(
+    handle: ArchiveHandle,
+    seq: u32,
+    keys: Vec<PathKey>,
+    archives: State<'_, Arc<Archives>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<ExtractPlan, IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&destination);
+    blocking(move || crate::extract::plan_default(&archives, &destination, handle, seq, &keys))
+        .await
+}
+
+/// Remove the new folder a default plan made, if nothing was extracted into it.
+#[tauri::command]
+pub fn discard_extract_folder(destination: State<'_, Arc<Destination>>) {
+    destination.discard_made();
 }
 
 /// Choose the archive to test, check, or repair (D4): the native open dialog

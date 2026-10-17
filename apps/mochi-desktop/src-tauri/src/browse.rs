@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use mochi_core::browse::{BrowseEntry, Children, SnapshotIndex, MAX_PAGE};
 use mochi_core::catalog::namespace::{EntryKind, FileVersionId};
@@ -112,6 +112,8 @@ impl Session {
 #[derive(Default)]
 pub struct Archives {
     inner: Mutex<Registry>,
+    /// Told of every archive opened, for the start screen's recent list.
+    recents: OnceLock<Arc<crate::recent::Recents>>,
 }
 
 #[derive(Default)]
@@ -272,7 +274,16 @@ impl Archives {
         })?;
         reg.last = handle;
         reg.open.insert(handle, Arc::new(Mutex::new(session)));
+        drop(reg);
+        if let Some(recents) = self.recents.get() {
+            recents.record(path);
+        }
         Ok(ArchiveSummary { handle, ..summary })
+    }
+
+    /// Keep `recents` informed of the archives opened from now on (once).
+    pub fn set_recents(&self, recents: Arc<crate::recent::Recents>) {
+        let _ = self.recents.set(recents);
     }
 
     /// Open the archive at `path` if it needs no passphrase; an Encrypted one
