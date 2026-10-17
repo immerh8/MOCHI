@@ -12,7 +12,7 @@ MOCHI is an archive format and archiver, shipped like WinRAR: a format library p
 - `crates/mochi-testkit` — fault-injecting storage and fixture builders.
 - `apps/mochi-desktop` — Tauri v2 application (`src-tauri/` Rust backend, `ui/` frontend).
 
-The format is **ratified at 1.0** (the flip, W20, 2026-10-15; spec B.2.14). The layout frozen as **draft 2** (R1–R6, gate G12) is the 1.0 layout; a 1.0 archive carries `null` in descriptor key 3. A change to any byte or rule in `docs/ratification/` is a new format identifier with an Annex B entry, never an edit. Every command but `mochi migrate` refuses a draft archive (`UNSUPPORTED_FEATURE`, exit 4); `migrate` reads draft 2 only (`descriptor::DraftPolicy`, `DRAFT_ID`). 1.0 does not claim preservation readiness (spec §28).
+The format is **ratified at 1.0** (the flip, W20, 2026-10-15; spec B.2.14). The layout frozen as **draft 2** (R1–R6, gate G12) is the 1.0 layout; a 1.0 archive carries `null` in descriptor key 3. The one change since: catalog images are Zstandard-compressed (payload encoding 2, owner decision 2026-10-16, spec B.2.15); readers still accept draft 2's encoding 0. A change to any byte or rule in `docs/ratification/` is a new format identifier with an Annex B entry, never an edit. Every command but `mochi migrate` refuses a draft archive (`UNSUPPORTED_FEATURE`, exit 4); `migrate` reads draft 2 only (`descriptor::DraftPolicy`, `DRAFT_ID`). 1.0 does not claim preservation readiness (spec §28).
 
 ## Sources of truth, in order
 

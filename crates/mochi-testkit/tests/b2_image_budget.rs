@@ -63,10 +63,8 @@ fn image_budget_boundary_with_synthetic_image_bytes() {
     // Exactly the budget: written, and read back by a default reader.
     let mut payload = sqlite_shaped(DEFAULT_IMAGE_PAYLOAD);
     let stored = encode_image_record(&payload, identity(), false).unwrap();
-    assert_eq!(
-        stored.len(),
-        SKIPPABLE_HEADER_LEN as u64 + 80 + DEFAULT_IMAGE_PAYLOAD
-    );
+    // Encoding 2: the budget bounds the decoded image, and zeros compress.
+    assert!(stored.len() < 1 << 20, "{}", stored.len());
     let back = decode_image_record(&stored, &identity(), &Limits::default()).unwrap();
     assert_eq!(back.len() as u64, DEFAULT_IMAGE_PAYLOAD);
     drop(stored);
@@ -103,6 +101,35 @@ fn image_budget_boundary_with_synthetic_image_bytes() {
     assert_eq!(e.code, ErrorCode::LimitExceeded, "{e}");
     // ... and a reader that raised its limit explicitly accepts it.
     assert!(decode_image_record(&over, &identity(), &raised).is_ok());
+}
+
+/// Encoding 2: a small stored frame that *declares* one byte more than the
+/// bound is refused by a default reader from the frame header alone, before
+/// the decoder allocates for it (B.2.2, amendment 2026-10-16).
+#[test]
+fn a_compressed_image_declaring_more_than_the_bound_is_refused_unallocated() {
+    let mut payload = sqlite_shaped(DEFAULT_IMAGE_PAYLOAD + 1);
+    let compressed = mochi_format::codec::compress_frame(&payload, 1).unwrap();
+    payload.clear();
+    payload.shrink_to_fit();
+    assert!(compressed.len() < 1 << 20);
+    let frame = encode_binary_record(
+        FrameKind::MetadataDelta,
+        &BinaryEnvelope {
+            record_schema_version: IMAGE_RECORD_SCHEMA,
+            encoding: PayloadEncoding::ZstdSqliteImage,
+            identity: identity(),
+            required_features: Vec::new(),
+        },
+        &compressed,
+        &[],
+        &Limits::default(),
+    )
+    .unwrap();
+    let stored = StoredObject::from_loaded(frame);
+    let e = decode_image_record(&stored, &identity(), &Limits::default()).unwrap_err();
+    assert_eq!(e.code, ErrorCode::LimitExceeded, "{e}");
+    assert!(e.to_string().contains("ImageDecoded"), "{e}");
 }
 
 /// The budget is not page-aligned, so the largest catalog a default writer

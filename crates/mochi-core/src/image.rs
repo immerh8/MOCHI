@@ -10,16 +10,24 @@
 //! |---|---|
 //! | Record type | frame kind `METADATA_DELTA` (commit key 5, checkpoint form, key 1) |
 //! | Record schema version | [`IMAGE_RECORD_SCHEMA`] = the catalog's SQLite `user_version` |
-//! | Payload encoding | 0, SQLite 3 image |
+//! | Payload encoding | written: 2, Zstandard-compressed SQLite 3 image; read: 2, and 0 (draft 2, uncompressed SQLite 3 image) |
 //! | Required features | none in Core; exactly `[1]` in the Encrypted profile (D20 item 4) |
 //! | Identity | archive ID, sequence, transaction ID of the checkpoint commit |
-//! | Payload budget | *S* − 592 (B.2.3), 268,434,864 bytes at the defaults |
+//! | Payload budget | *S* − 592 (B.2.3), 268,434,864 bytes at the defaults: the stored payload, and also the decoded image of encoding 2 |
 //!
 //! **Integrity scope.** [`decode_image_record`] requires that the caller has
 //! already checked the stored-object hash recorded by the referencing commit.
 //! That ordering is load-bearing twice over: SQLite has no page checksums
 //! (C3), and the envelope's identity fields are only meaningful once the
 //! bytes are bound to the commit by hash (D11).
+//!
+//! **Compression.** A 1.0 writer always writes encoding 2: one Zstandard frame
+//! (level [`mochi_format::envelope::IMAGE_ZSTD_LEVEL`], `Frame_Content_Size`
+//! and checksum) around the SQLite image. Hashes stay on the *stored* frame
+//! bytes and are checked before this module runs; decompression is bounded by
+//! the declared size before allocation. The Encrypted profile seals the same
+//! payload (header and compressed image); compress-then-seal, so the AEAD
+//! tag, not the compressor, is what authenticates it.
 //!
 //! **Writer limits.** The encoder always applies the reader defaults
 //! ([`Limits::WRITER_DEFAULT`], B.2.3 "writer default rule"), whatever limits
@@ -33,9 +41,11 @@
 //! that passes is 65,535 pages (268,431,360 bytes); 65,536 pages is exactly
 //! *S* and is refused. See the checklist's T10 note.
 
+use std::borrow::Cow;
+
 use mochi_format::envelope::{
-    decode_binary_record, encode_binary_record, BinaryEnvelope, EnvelopeRules, PayloadEncoding,
-    RecordIdentity,
+    compress_image, decode_binary_record, decode_image, encode_binary_record, BinaryEnvelope,
+    EnvelopeRules, PayloadEncoding, RecordIdentity,
 };
 use mochi_format::registry::FrameKind;
 use mochi_format::repr::StoredObject;
@@ -82,6 +92,40 @@ pub fn encode_image_record(
     identity: RecordIdentity,
     encrypted: bool,
 ) -> Result<StoredObject> {
+    if crate::descriptor::new_archive_draft().is_some() {
+        // The test control that builds draft-2 sources for `mochi migrate`
+        // (`set_legacy_draft_for_tests`) also writes draft 2's image form.
+        return encode_image_record_draft2(image, identity, encrypted);
+    }
+    let envelope = BinaryEnvelope {
+        record_schema_version: IMAGE_RECORD_SCHEMA,
+        encoding: PayloadEncoding::ZstdSqliteImage,
+        identity,
+        required_features: if encrypted {
+            vec![FEATURE_ENCRYPTED]
+        } else {
+            Vec::new()
+        },
+    };
+    let compressed = compress_image(&envelope, image, &Limits::WRITER_DEFAULT)?;
+    let frame = encode_binary_record(
+        FrameKind::MetadataDelta,
+        &envelope,
+        &compressed,
+        KNOWN_IMAGE_FEATURES,
+        &Limits::WRITER_DEFAULT,
+    )?;
+    Ok(StoredObject::from_loaded(frame))
+}
+
+/// A draft-2 image record (payload encoding 0, uncompressed). No 1.0 writer
+/// calls this; it exists so tests can build the archives `mochi migrate`
+/// must still read and the readers must still accept.
+pub fn encode_image_record_draft2(
+    image: &[u8],
+    identity: RecordIdentity,
+    encrypted: bool,
+) -> Result<StoredObject> {
     let envelope = BinaryEnvelope {
         record_schema_version: IMAGE_RECORD_SCHEMA,
         encoding: PayloadEncoding::SqliteImage,
@@ -120,7 +164,7 @@ pub fn decode_image_record<'a>(
     stored: &'a StoredObject,
     expected: &RecordIdentity,
     limits: &Limits,
-) -> Result<&'a [u8]> {
+) -> Result<Cow<'a, [u8]>> {
     let payload = skippable_payload(stored, FrameKind::MetadataDelta, limits)?;
     decode_image_payload(payload, expected, limits, false)
 }
@@ -147,14 +191,14 @@ pub fn decode_image_payload<'a>(
     expected: &RecordIdentity,
     limits: &Limits,
     encrypted: bool,
-) -> Result<&'a [u8]> {
+) -> Result<Cow<'a, [u8]>> {
     let candidate = decode_binary_record(
         mochi_format::registry::METADATA_DELTA,
         payload,
         &IMAGE_RULES,
         limits,
     )?;
-    let (envelope, image) = candidate.bind(expected)?;
+    let (envelope, payload) = candidate.bind(expected)?;
     let want: &[u64] = if encrypted { &[FEATURE_ENCRYPTED] } else { &[] };
     if envelope.required_features != want {
         return Err(crate::error::MochiError::new(
@@ -163,7 +207,7 @@ pub fn decode_image_payload<'a>(
              (the Encrypted feature is listed exactly in an Encrypted archive)",
         ));
     }
-    Ok(image)
+    Ok(decode_image(&envelope, payload, limits)?)
 }
 
 #[cfg(test)]
@@ -196,22 +240,93 @@ mod tests {
         let stored = encode_image_record(&img, identity(3), false).unwrap();
         let b = stored.as_bytes();
         // 8-byte skippable header, then the 80-byte envelope (n = 0).
-        assert_eq!(b.len(), SKIPPABLE_HEADER_LEN + 80 + img.len());
         let e = &b[SKIPPABLE_HEADER_LEN..];
+        let compressed = &e[80..];
+        assert_eq!(b.len(), SKIPPABLE_HEADER_LEN + 80 + compressed.len());
+        assert!(
+            compressed.len() < img.len() / 4,
+            "a catalog image compresses"
+        );
         assert_eq!(&e[0..4], &80u32.to_le_bytes()); // header length
         assert_eq!(&e[4..6], &0u16.to_le_bytes()); // envelope version
         assert_eq!(&e[6..8], &IMAGE_RECORD_SCHEMA.to_le_bytes()); // = user_version
-        assert_eq!(&e[8..12], &0u32.to_le_bytes()); // SQLite image
+        assert_eq!(&e[8..12], &2u32.to_le_bytes()); // Zstandard-compressed SQLite image
         assert_eq!(&e[12..16], &0u32.to_le_bytes()); // n
-        assert_eq!(&e[16..24], &(img.len() as u64).to_le_bytes());
+        assert_eq!(&e[16..24], &(compressed.len() as u64).to_le_bytes());
         assert_eq!(&e[24..56], &[7; 32]);
         assert_eq!(&e[56..64], &3u64.to_le_bytes());
         assert_eq!(&e[64..80], &[9; 16]);
-        assert_eq!(&e[80..], &img[..]);
+        assert_eq!(&compressed[..4], &[0x28, 0xB5, 0x2F, 0xFD]);
 
         let back = decode_image_record(&stored, &identity(3), &Limits::default()).unwrap();
-        assert_eq!(back, &img[..]);
-        Catalog::open_image(back, &Default::default()).unwrap();
+        assert_eq!(&back[..], &img[..]);
+        Catalog::open_image(&back, &Default::default()).unwrap();
+    }
+
+    /// Writing is deterministic: same image, same bytes.
+    #[test]
+    fn the_writer_is_deterministic() {
+        let img = real_image();
+        let a = encode_image_record(&img, identity(3), false).unwrap();
+        let b = encode_image_record(&img, identity(3), false).unwrap();
+        assert_eq!(a.as_bytes(), b.as_bytes());
+    }
+
+    /// Draft 2 wrote encoding 0 (an uncompressed image); readers still accept it.
+    #[test]
+    fn a_draft_2_uncompressed_image_is_still_read() {
+        let img = real_image();
+        let stored = encode_image_record_draft2(&img, identity(3), false).unwrap();
+        let b = stored.as_bytes();
+        assert_eq!(b.len(), SKIPPABLE_HEADER_LEN + 80 + img.len());
+        assert_eq!(
+            &b[SKIPPABLE_HEADER_LEN + 8..SKIPPABLE_HEADER_LEN + 12],
+            &0u32.to_le_bytes()
+        );
+        let back = decode_image_record(&stored, &identity(3), &Limits::default()).unwrap();
+        assert!(matches!(back, Cow::Borrowed(_)));
+        assert_eq!(&back[..], &img[..]);
+    }
+
+    /// Encoding 2 with a valid Zstandard frame of something that is not a
+    /// SQLite image is `ENVELOPE_INVALID`; a damaged frame is an error, never
+    /// a panic and never handed to SQLite. (The stored hash catches damage
+    /// before this runs, `c5_publication`; these are the second line.)
+    #[test]
+    fn a_compressed_payload_that_is_not_an_image_is_refused() {
+        let envelope = BinaryEnvelope {
+            record_schema_version: IMAGE_RECORD_SCHEMA,
+            encoding: PayloadEncoding::ZstdSqliteImage,
+            identity: identity(3),
+            required_features: Vec::new(),
+        };
+        let frame_of = |payload: &[u8]| {
+            StoredObject::from_loaded(
+                encode_binary_record(
+                    FrameKind::MetadataDelta,
+                    &envelope,
+                    payload,
+                    KNOWN_IMAGE_FEATURES,
+                    &Limits::WRITER_DEFAULT,
+                )
+                .unwrap(),
+            )
+        };
+        let text = mochi_format::codec::compress_frame(&vec![b'x'; 8192], 3).unwrap();
+        let e =
+            decode_image_record(&frame_of(&text), &identity(3), &Limits::default()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::EnvelopeInvalid, "{e}");
+
+        let good = encode_image_record(&real_image(), identity(3), false).unwrap();
+        let mut b = good.as_bytes().to_vec();
+        let mid = SKIPPABLE_HEADER_LEN + 80 + (b.len() - SKIPPABLE_HEADER_LEN - 80) / 2;
+        b[mid] ^= 0x08;
+        assert!(decode_image_record(
+            &StoredObject::from_loaded(b),
+            &identity(3),
+            &Limits::default()
+        )
+        .is_err());
     }
 
     /// D11 identity: an image bound to another commit is refused, field by

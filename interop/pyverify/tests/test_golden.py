@@ -170,7 +170,8 @@ def test_c5_valid_archives_verify_clean(name):
 
 # ------------------------------------------------------------------------------ b2: envelopes, descriptors
 B2_ENV_CODES = {
-    "valid-envelope-image": None,
+    "valid-envelope-image": None, "valid-envelope-image-zstd": None,
+    "reject-envelope-decoded-signature": "ENVELOPE_INVALID",
     "reject-envelope-wrong-frame-kind": "ENVELOPE_INVALID", "reject-envelope-version": "UNSUPPORTED_FEATURE",
     "reject-envelope-schema-unknown": "UNSUPPORTED_FEATURE", "reject-envelope-schema-user-version": "ENVELOPE_INVALID",
     "reject-envelope-unknown-feature": "UNSUPPORTED_FEATURE", "reject-envelope-features-not-increasing": "ENVELOPE_INVALID",
@@ -185,6 +186,7 @@ B2_ENV_CODES = {
 def _b2_envelope(data):
     env = envelope.decode_binary(data, frames.K_IMAGE, (0,))
     env.bind(b"\xa1" * 32, 7, b"\xb2" * 16)
+    envelope.decode_image(env)      # B.2.15: encoding 2 is decoded after bind, then its signature is checked
     return env
 
 
@@ -375,3 +377,13 @@ def test_descriptor_draft_is_refused_naming_it(name, draft):
 def test_ratified_descriptor_has_null_draft():
     d = descriptor.decode_object(read(GOLDEN / "b2" / "valid-descriptor-minimal.bin"))
     assert d.draft is None
+
+
+# ---------------------------------------------------------------- R8 summary: parity without a decodable descriptor
+def test_parity_is_null_when_the_descriptor_does_not_decode():
+    raw = bytearray(read(GOLDEN / "c12" / "valid-archive-recovery-record.mochi"))
+    assert archive.verify(bytes(raw)).parity is not None
+    fr = frames.walk_frame(bytes(raw), 0)
+    assert fr.magic == frames.K_DESCRIPTOR
+    raw[fr.length - 5] ^= 0x01                      # damage inside the descriptor; parity frames still follow the commits
+    assert archive.verify(bytes(raw)).parity is None

@@ -566,20 +566,21 @@ fn a_value_level_bit_flip_in_the_catalog_image_is_refused() {
         .unwrap();
     let (version, _) = head.catalog.file_version(&entry.version).unwrap().unwrap();
     let needle = version.content_hash.unwrap();
-    let image = &bytes[meta.offset as usize..(meta.offset + meta.stored_len) as usize];
+    let stored = StoredObject::from_loaded(
+        bytes[meta.offset as usize..(meta.offset + meta.stored_len) as usize].to_vec(),
+    );
+    let mut image = decode_image_record(&stored, &head.commit.identity(), &Limits::default())
+        .unwrap()
+        .into_owned();
     let at = image
         .windows(32)
         .position(|w| w == needle.as_bytes())
-        .expect("hash stored in the image") as u64
-        + meta.offset;
-    bytes[at as usize + 5] ^= 0x10;
+        .expect("hash stored in the image");
+    image[at + 5] ^= 0x10;
 
-    // SQLite alone accepts the flipped image: it is a different valid catalog.
-    // (The image starts after the frame header and the 80-byte binary
-    // envelope, n = 0: B.2.2.)
-    let flipped = &bytes[(meta.offset as usize + SKIPPABLE_HEADER_LEN + 80)
-        ..(meta.offset + meta.stored_len) as usize];
-    let cat = Catalog::open_image(flipped, &Default::default()).unwrap();
+    // SQLite alone accepts the flipped *decoded* image: it is a different
+    // valid catalog.
+    let cat = Catalog::open_image(&image, &Default::default()).unwrap();
     assert_ne!(
         cat.file_version(&entry.version)
             .unwrap()
@@ -588,6 +589,11 @@ fn a_value_level_bit_flip_in_the_catalog_image_is_refused() {
             .content_hash,
         Some(needle)
     );
+
+    // On disk the image is compressed, so the same damage is a flipped bit in
+    // the stored frame, in the middle of the Zstandard payload. The stored
+    // hash catches it before the decompressor or SQLite see it.
+    bytes[(meta.offset + meta.stored_len / 2) as usize] ^= 0x10;
 
     // The reader refuses the image before SQLite sees it (annex B.2 D10.9
     // changed what happens next: the same commit's snapshot manifest, which

@@ -24,11 +24,18 @@ use mochi_format::footer::FOOTER_FRAME_LEN;
 use mochi_format::parity::{decode_frame, Layout};
 use mochi_format::Limits;
 use mochi_testkit::archive::{
-    encrypted_options, keyed_read, path, read_state, scripted_history, test_options, Job,
+    encrypted_options, keyed_read, padded_history, path, read_state, scripted_history,
+    test_options, Job,
 };
 use mochi_testkit::{SeqIds, SimDir, SimStorage};
 
 const OUT: &str = "repaired.mochi";
+
+/// Incompressible bytes added per commit so that each commit spans several
+/// parity shards although catalog images are compressed (see
+/// `padded_history`). The test writer chunks finely, so a few KB per commit is
+/// enough: more makes the catalog (one row per chunk) large again.
+const PAD: usize = 4000;
 
 fn profile(percent: u16) -> Profile {
     Profile {
@@ -50,7 +57,7 @@ fn write_with(opts: WriterOptions) -> SimStorage {
     w.set_checkpoint_policy(CheckpointPolicy::EveryCommit)
         .unwrap();
     let job = Job::new();
-    for st in scripted_history() {
+    for st in padded_history(PAD) {
         w.commit(st.tx.clone(), &job.ctx()).unwrap();
     }
     w.close().unwrap();
@@ -163,7 +170,7 @@ fn c12_parity_frames_sit_between_each_commit_and_its_footer() {
     }
     // A Core reader reads it as it reads any archive.
     let state = read_state(&s, &head).unwrap();
-    assert_eq!(state, scripted_history().last().unwrap().after);
+    assert_eq!(state, padded_history(PAD).last().unwrap().after);
     let r = verify_full(&s);
     assert_eq!(r.exit_code, 0, "{r:?}");
     assert_eq!(dim(&r, Dimension::Recoverability), Status::Pass);
@@ -596,7 +603,7 @@ fn c12_a_contiguous_burst_spreads_across_groups() {
     let l = layout(&sc.commits[0], 10);
     assert_eq!(
         (l.groups, l.data_shards, l.parity_shards),
-        (2, 98, 10),
+        (2, 97, 10),
         "{l:?}"
     );
 

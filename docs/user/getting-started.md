@@ -43,6 +43,29 @@ After each commit the tool prints `LOCAL_COMMITTED` and reminds you to keep an
 independent copy. That line means the commit is complete in this file
 ([not-a-backup.md](not-a-backup.md)).
 
+## The desktop app, in four steps
+
+The desktop app does the same work without a terminal. With no archive open, its first screen
+asks **What would you like to do?** and offers three buttons.
+
+1. **Create archive** — add files and folders (the buttons, or drop them on the window),
+   see where the new file will be saved (next to the first item, named after it; a file
+   that already exists is never replaced, a number is added to the name instead) and press
+   **Create archive**. **Options** (size and speed, password protection, extra repair data,
+   opening with standard tar tools) is closed unless you want it. The result says what was
+   created and keeps the precise status as a technical line.
+2. **Open archive** — look inside, pick an entry, then **Extract selected**, or add and remove
+   entries. You can also drop a `.mochi` file on the window, or pick one from **Recent archives**.
+3. **Extract archive** (or **Extract all** inside an open archive) — extracts into a **new folder
+   next to the archive**, named after it. Nothing already on your computer is overwritten;
+   a name collision is listed first and skipped. **Show in folder** opens the result.
+4. **Advanced** — search, test and repair, passphrases, other archive formats, settings.
+
+Plain words on these screens map to the precise terms used below: a **version** is a snapshot
+(one commit); the **Technical details** areas hold IDs and hashes. Deleting removes an entry
+from the current version only; earlier versions still have it. An archive is not a backup
+([not-a-backup.md](not-a-backup.md)).
+
 ## Check
 
 ```bash
@@ -103,6 +126,8 @@ writes the whole archive state as one bounded record, and that record has a size
 (measured, gate G5, `docs/benchmarks/t32-capacity-memory.md`):
 
 * about **342,391** files when each file is a single chunk;
+  (the ceiling counts the catalog's size once decoded; the catalog is stored compressed,
+  which makes small archives much smaller but does not raise it);
 * fewer when files are large: each extra chunk of a file costs about as much as half a
   small file.
 

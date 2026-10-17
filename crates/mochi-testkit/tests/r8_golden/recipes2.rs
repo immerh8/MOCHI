@@ -56,7 +56,7 @@ pub fn build(cx: &mut Ctx, name: &str) -> Built {
     let enc = name.starts_with("enc");
     let read = read_for(enc);
     match name {
-        "red-valid-50pct" => one(write(red(50), 36, &history()).contents()),
+        "red-valid-50pct" => one(write(red(50), 36, &history_big()).contents()),
 
         // ---- corrupt: Core ----
         "core-corrupt-chunk-head" | "tar-corrupt-chunk-head" | "enc-corrupt-chunk-head" => {

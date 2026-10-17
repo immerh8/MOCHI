@@ -782,7 +782,7 @@
       "verify_exit": 1,
       "verify_level": "restoration"
     },
-    "expected_head": "ebbd1cb928a2817b48048bc7695174d13bc9e6265fc66e91d4f9b1ce7f3b5298",
+    "expected_head": "ba1041d18a7bd794d805b6222e1b8a7642b06e23e1ebfc10231007b5051a18d3",
     "fault": "An older valid state of the archive substituted for the current one.",
     "fault_matrix_row": "Older valid archive substituted",
     "name": "core-corrupt-older-archive",
@@ -975,8 +975,8 @@
     "class": "corrupt",
     "copies": [],
     "expect": {
-      "repair_exit": 0,
-      "repair_outcome": "complete",
+      "repair_exit": 1,
+      "repair_outcome": "nothing_recoverable",
       "verify_exit": 1,
       "verify_level": "restoration"
     },
@@ -1047,8 +1047,8 @@
     "class": "corrupt",
     "copies": [],
     "expect": {
-      "repair_exit": 0,
-      "repair_outcome": "complete",
+      "repair_exit": 2,
+      "repair_outcome": "partial",
       "verify_exit": 1,
       "verify_level": "restoration"
     },

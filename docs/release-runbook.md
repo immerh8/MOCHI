@@ -36,8 +36,8 @@ Windows' own "Open with" list are the real ones. It cannot see menus, dialogs or
 | App starts, window up, web view running | `B-LAUNCH` | seeing it (W-05) |
 | Start-menu entry | `A-START-MENU` | seeing it (W-05) |
 | Uninstall leaves nothing | `A-UNINSTALL`, `A-LEFTOVERS`, `B-UNINSTALL`, `B-LEFTOVERS` (no `Mochi*`, `MOCHI.Archive`, `MOCHI.Foreign` key or value, no program for `.mochi`, install folder and shortcuts gone), and `A-INSTALL-KEY` / `B-INSTALL-KEY` (Tauri's install-location key `HKCU\SOFTWARE\The MOCHI Project contributors\MOCHI` is gone; `packaging/nsis/hooks.nsh` removes it on uninstall, not on update). Windows' own traces of the app having run (MuiCache, Start tile cache, compatibility records) are listed and ignored | the same on your notebook, once, at the very end (W-11) |
-| `.mochi` association, every verb registered with its exact command | `A-ASSOC-VERBS`, `B-ASSOC-VERBS` | the menu showing them (W-06) |
-| Each verb starts MOCHI on a path with spaces, accents and `&`; writes nothing | `B-VERB-*` (through `ShellExecute`, as Explorer does) | right-clicking (W-06) |
+| `.mochi` association, the three "MOCHI" submenus and every entry registered with its exact command | `A-ASSOC-VERBS`, `B-ASSOC-VERBS` | the menu showing them (W-06) |
+| Each submenu entry starts MOCHI on a path with spaces, accents and `&`; the quick entries write at once and replace nothing, one archive for three launches | `B-VERB-*` (the entry's registered command with `%1` replaced, as Explorer runs it) | right-clicking (W-06) |
 | Double-click opens MOCHI; a second open reuses the window | `B-DOUBLE-CLICK`, `B-SINGLE-INSTANCE` | W-06 |
 | Opt-in off by default, on with `/ASSOCIATE_FOREIGN`, no default taken; Windows' own `.zip` "Open with" list | `A-FOREIGN-OFF`, `B-FOREIGN-ON`, `B-OPENWITH-ZIP` | the wizard question defaulting to **No**, the menu (W-03, W-07) |
 | Each foreign format opens read-only | `B-FOREIGN-OPEN-*` | passwords, hostile names (W-07) |
@@ -139,31 +139,32 @@ scratch folder. Install the **0.9.0** setup from its published release.
 ### W-04. Start menu and first start
 
 1. Start → `MOCHI`; open it.
-- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds with the **Sections** links *Archive*, *Create and add*, *Extract*, *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Help*, *Job runner self-test*, *Settings* (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
+- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds showing **What would you like to do?** with three large buttons *Create archive*, *Open archive*, *Extract archive*, a short sentence saying an archive is not a second copy of the files, and a closed **Advanced** disclosure (opening it shows the **Sections** links *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Job runner self-test*, *Settings*) above **Help** (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
 - **Fail:** no entry, a blank window after 30 s, a missing-web-view message, a crash.
 2. Settings → Apps → Installed apps → **MOCHI**: **Pass:** version 0.9.0, publisher *The MOCHI Project contributors*.
 
 ### W-05. Help → User guide (command line), offline (F8)
 
-1. Turn the network **off** (1.3). In the MOCHI window find the **Help** section (use the **Sections** links if it is not in view) and press **User guide (command line)**. Its note says the guide is written for the `mochi` command line, opens the copy installed with MOCHI in your default web browser, and needs no network.
+1. Turn the network **off** (1.3). In the MOCHI window scroll to the **Help** section at the bottom of the window and press **User guide (command line)**. Its note says the guide is written for the `mochi` command line, opens the copy installed with MOCHI in your default web browser, and needs no network.
 - **Pass:** your default browser opens a **local file** (the address starts `file:///` and ends in the install folder's `guide/index.html`), the first page is readable, its links to the other topics work (*Getting started*, *An archive is not a backup*, ...), and nothing tries to reach a website. The guide says an archive is not a backup and that a passing test does not make the file one. MOCHI shows "The user guide was handed to your default program for web pages."
 - **Fail:** a web address (`https://...`), "file not found" or a blank page, an error line "Could not open the user guide", or no button.
 2. Network back on.
 
-### W-06. Explorer verbs (the menu display is yours; the verbs themselves are Automated)
+### W-06. The MOCHI right-click menu (the menu display is yours; the entries themselves are Automated)
 
 Close MOCHI first each time. In the scratch folder:
 
 1. Right-click `Ärchive & ço.mochi` → **Show more options** (or Shift+F10).
-- **Pass:** the classic menu lists **Open with MOCHI**, **Extract here**, **Extract to folder**. (Windows 11's first short menu does not; that is expected, O10.)
-2. **Open with MOCHI** → **Pass:** the window shows the archive (snapshots, folder contents); nothing written next to it.
-3. **Extract here** → **Pass:** the **Extract** plan with an **Extract** button; **no new files** beside the archive.
-4. **Extract to folder** → **Pass:** the plan shows a target folder named for the archive; Explorer shows that folder **empty** (by design); press **Extract** once → "Extracted …" and the files appear.
-5. Right-click `Note é & more.txt` → **Add to MOCHI archive** → **Pass:** the add panel with the file under **Chosen items**.
-6. Select three files (Ctrl+click) → **Add to MOCHI archive** → **Pass:** **one** window with all three under **Chosen items**. **Fail:** two windows or fewer than three.
-7. Right-click the folder `Folder & ü` → **Add to MOCHI archive** → **Pass:** the add panel with the folder.
-8. With MOCHI open, double-click `Second é & copy.mochi` → **Pass:** the **same** window shows it; Task Manager lists **one** MOCHI. **Fail:** a second window.
-9. Throughout: **Pass:** every verb opened the right file despite the spaces, accents and `&`. **Fail:** "could not open", the wrong file, or a name cut at the `&`.
+- **Pass:** the classic menu has one entry **MOCHI** with a **▸**; hovering lists **Open with MOCHI**, **Extract here**, **Extract to a new folder**, **Add to archive**, **Add to archive...** in that order. (Windows 11's first short menu does not show it; that is expected, O10.)
+2. **MOCHI ▸ Open with MOCHI** → **Pass:** the full window shows the archive (snapshots, folder contents); nothing written next to it.
+3. **MOCHI ▸ Extract here** → **Pass:** only a **small** window (not the full program) with a progress bar and then "Extracted … into …", with **Show in folder** and **Close**; the files are next to the archive; no existing file changed. **Fail:** the full window opens, or the small window never ends.
+4. **Extract here** again → **Pass:** the small window says nothing was written because names already exist, and the full window opens on the **Extract** plan; your files are unchanged.
+5. **MOCHI ▸ Extract to a new folder** → **Pass:** a folder named for the archive that did not exist before (if one did, `… (2)`); an existing folder is left alone. **Show in folder** opens it.
+6. Right-click `Note é & more.txt` → **MOCHI ▸ Add to archive** → **Pass:** the small window says "Archive created: Note é & more.mochi" and that it is a local commit (it does not say backed up or safe); the archive is next to the file. Again: `… (2).mochi`, the first untouched.
+7. Select three files (Ctrl+click) → **MOCHI ▸ Add to archive** → **Pass:** **one** small window and **one** archive named for the folder. **Fail:** three archives or three windows.
+8. Right-click the folder `Folder & ü` → **MOCHI ▸ Add to archive...** → **Pass:** the full window with the add panel and the folder under **Chosen items**; nothing written until you press the button.
+9. With MOCHI open, double-click `Second é & copy.mochi` → **Pass:** the **same** window shows it; Task Manager lists **one** MOCHI. **Fail:** a second window.
+10. Throughout: **Pass:** every entry used the right file despite the spaces, accents and `&`. **Fail:** "could not open", the wrong file, or a name cut at the `&`.
 
 ### W-07. Foreign formats (opt-in answered Yes in W-03)
 
@@ -179,17 +180,28 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 
 | # | Do this | **Pass: you hear / see** | **Fail** |
 |---|---|---|---|
-| N-1 | **Open archive…**, pick `valid-archive-3-commits.mochi`; Tab into **Folder contents**, Down Arrow | *Folder contents, list, N items* (plus the key hint); each Down Arrow says the row's **name and kind** and *n of N* | silence, a kind without a name, no position |
-| N-2 | **New archive…**; tick **Encrypt with a passphrase**; type **Passphrase** and **Repeat it**; **Add files…** (scratch files); **Choose location and create…** | on opening, the heading **New archive** is spoken with focus on it; at the end the result ("Committed commit … a local commit …") is spoken once, no focus move; never "backed up", "safe" | silent panel, result unspoken or twice, "backed up/safe" |
-| N-3 | **Test, health, and repair → Test archive** | the headline, **Overall PASS (exit code 0)…**, then each dimension's status **as a word**, not only ✓ ✗ ! ? … – | symbols only, overall word missing |
+| N-1 | **Open archive**, pick `valid-archive-3-commits.mochi`; Tab into **Folder contents**, Down Arrow | *Folder contents, list, N items* (plus the key hint); each Down Arrow says the row's **name and kind** and *n of N* | silence, a kind without a name, no position |
+| N-2 | **Create archive**; **Add files…** (scratch files); open **Options**, tick **Protect with a password (a passphrase)**; type **Passphrase** and **Repeat it**; **Create archive** | on opening, the heading **Create a new archive** is spoken with focus on it; the two steps are announced as headings (*1. Choose what to put in the archive*, *2. Where it will be saved*); at the end the result ("Created … saved in one file on this computer …") is spoken once, no focus move; never "backed up", "safe" | silent panel, result unspoken or twice, "backed up/safe" |
+| N-3 | **Advanced → Test, health, and repair → Test archive** | the headline, **Overall PASS (exit code 0)…**, then each dimension's status **as a word**, not only ✓ ✗ ! ? … – | symbols only, overall word missing |
 | N-4 | open an **encrypted** archive, submit a **wrong** passphrase | an alert *"The passphrase did not open this archive."* and **focus back in the field** | no alert, or focus lost |
-| N-5 | **Settings → Crash reports** → **Include the panic message in each record** | NVDA reads the checkbox **and** the warning *"The panic message is the program's own description…"* with it | warning not read |
+| N-5 | **Advanced → Settings → Crash reports** → **Include the panic message in each record** | NVDA reads the checkbox **and** the warning *"The panic message is the program's own description…"* with it | warning not read |
 
 ### W-09. Contrast themes, scaling, window size
 
 1. Settings → Accessibility → **Contrast themes** → *Night sky*, then *Desert*. Open an archive and run a test. **Pass:** text readable; selected row/snapshot/folder have a **visible 2-pixel outline**; every status is a **word inside a shape** (dashed for needs-attention); nothing depends on colour. **Fail:** a selection you cannot find, text lost in the background.
 2. Settings → System → Display → **Scale 200 %**, window about 1280×720. **Pass:** no **horizontal** scroll bar for the page; panels reflow to one column. **Fail:** sideways scrolling or cut-off controls.
 3. Put the theme and scale back.
+
+### W-09a. The start screen, drag and drop, and the simple Create and Extract flows (D10)
+
+WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
+
+1. **Pass:** the window asks **What would you like to do?** with **Create archive**, **Open archive**, **Extract archive**; one quiet sentence says an archive is not a second copy; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed. **Fail:** more than those three actions at the top, jargon, or *backup/safe*.
+2. Drag the scratch file `Note é & more.txt` from Explorer onto the window. **Pass:** the **Create a new archive** panel opens with the file listed under step 1 and the full path of `Note é & more.mochi` (next to the file) under step 2; **Options** is closed. Press **Create archive**. **Pass:** the result says *Created Note é & more.mochi: 1 file…* and **Show in folder** opens Explorer on that folder. Repeat the drag and create again: **Pass:** the second archive is `Note é & more (2).mochi`; the first is untouched (never replaced).
+3. Close the archive, then drag `Second é & copy.mochi` onto the window. **Pass:** it opens (no panel to add it to a new archive). Drag it together with a text file: **Pass:** both go to the create panel instead.
+4. **Extract archive** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Run **Extract all** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
+5. Close the archive. **Pass:** the start screen lists the archives you opened under **Recent archives**; one click reopens one; **Clear this list** empties it.
+6. Keyboard only (Tab, Enter): **Pass:** all three start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
 
 ---
 
@@ -205,7 +217,7 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 | X-4 | Network on. **Check for updates** | *"Version 0.9.1 is available. You are running version 0.9.0."*, **Release notes** with the one test line as **plain text**, buttons **Not now** / **Download and install**. Press **Not now**; still 0.9.0 | markup in the notes, an install starting by itself |
 | X-5 | **Edited signature**, see below | *"The update's signature did not match, so it was refused. Nothing was installed."*; stays 0.9.0 | the installer starts, the version changes, any success text |
 | X-6 | Restore the real `latest.json`. **Check for updates → Download and install** | a progress readout, **MOCHI closes**, the installer's small progress bar runs (no questions), the **new version starts** (else open it from Start). Settings → Updates: *"You are running version 0.9.1."*; Settings → Apps: **0.9.1** | the app vanishes and nothing returns, an error box, still 0.9.0 |
-| X-7 | After the update: right-click `Zip & ç.zip` → Open with; a `.mochi` verb; double-click a `.mochi` | all of W-06/W-07 still there; MOCHI **still offered** for ZIP (an update keeps the opt-in); association intact | the opt-in or a verb vanished |
+| X-7 | After the update: right-click `Zip & ç.zip` → Open with; the MOCHI submenu on a `.mochi`; double-click a `.mochi` | all of W-06/W-07 still there (the submenu once, no leftover flat "Extract here" entries of 0.1.0); MOCHI **still offered** for ZIP (an update keeps the opt-in); association intact | the opt-in or a verb vanished |
 
 **X-5, the edited `.sig`.** The signature inside `latest.json` is the same text as the installer's `.sig`.
 1. On the **0.9.1** release page download `latest.json`, open it in a text editor, change **one letter in the middle** of the long `"signature"` text for `windows-x86_64…`, save as `latest.json`.

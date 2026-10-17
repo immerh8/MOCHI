@@ -56,9 +56,11 @@ function backend(handlers: Record<string, (a: Record<string, unknown>) => unknow
     if (handlers[cmd]) return handlers[cmd](a);
     switch (cmd) {
       case "staged_sources":
-        return { items: [{ name: { text: "notes.txt", verbatim: true }, kind: "file" }], destination: null };
+        return { items: [{ name: { text: "notes.txt", verbatim: true }, kind: "file" }], destination: null, default_destination: null };
       case "watch_drops":
         return null;
+      case "recent_archives":
+        return [];
       case "choose_destination":
         return { items: [{ name: { text: "notes.txt", verbatim: true }, kind: "file" }], destination: "new.mochi" };
       case "start_job":

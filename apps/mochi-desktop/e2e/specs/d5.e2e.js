@@ -64,10 +64,20 @@ const assertNoPassphraseOnPage = async () => {
   }
 };
 
+// From the start screen when nothing is open, from the toolbar otherwise. The
+// save-as dialog is the "Change…" one (the default place would be next to the
+// folder), and the options are opened as a person would.
 const stageFolderAndOpenCreate = async () => {
-  await $('[data-testid="new-archive"]').click();
+  const toolbar = await $('[data-testid="new-archive"]');
+  if (await toolbar.isExisting()) await toolbar.click();
+  else await $('[data-testid="start-create"]').click();
   await $('[data-testid="stage-folder"]').click();
   await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+  await $('[data-testid="change-destination"]').click();
+  await browser.waitUntil(async () =>
+    (await $('[data-testid="save-location"]').getText()).startsWith("Saved as"),
+  );
+  await $('[data-testid="create-options"] summary').click();
 };
 
 describe("passphrases, rekey, recovery record, and search", () => {
@@ -95,7 +105,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
 
     await $('[data-testid="create-passphrase-again"]').setValue(PASS);
     await $('[data-testid="create-confirm"]').click();
-    await waitForStatus("Committed commit 0");
+    await waitForStatus("Created vault.mochi");
     expect(await $('[data-testid="write-status"]').getText()).toContain("(LOCAL_COMMITTED)");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("Encrypted"));
     await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
@@ -146,7 +156,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await waitForRekey("a passphrase was added");
     expect(await $('[data-testid="rekey-status"]').getText()).toContain("LOCAL_COMMITTED");
     await browser.waitUntil(async () => (await $$('[data-testid="envelope"]')).length === 2);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 commits"));
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
 
     await $('[data-testid="rekey-remove"]').click();
     await expect($('[data-testid="not-revocation"]')).toHaveText(
@@ -181,9 +191,11 @@ describe("passphrases, rekey, recovery record, and search", () => {
     );
     await $('[data-testid="recovery-10"]').click();
     await $('[data-testid="create-confirm"]').click();
-    await waitForStatus("Committed commit 0");
+    await waitForStatus("Created recovered.mochi");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("recovered.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(
+    // The profile is technical detail, in a closed disclosure: read its text, not what is shown.
+    await expect($('[data-testid="archive-technical"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("recovery record (10% parity)"),
     );
     await assertNoBannedWording();

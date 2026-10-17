@@ -5,9 +5,10 @@
 #   A: a silent install (/S): the foreign-format opt-in is OFF (its default).
 #      Checks the files, Start menu, association, verbs, the opt-in being off,
 #      WebView2, and that uninstall leaves nothing.
-#   B: /ASSOCIATE_FOREIGN. Launches the app, runs every Explorer verb through
-#      ShellExecute with a path containing spaces, non-ASCII letters and an
-#      ampersand, a second launch while the app runs, the opt-in "Open with"
+#   B: /ASSOCIATE_FOREIGN. Launches the app, runs every entry of the "MOCHI"
+#      Explorer submenu as Explorer does (the entry's registered command with
+#      %1 replaced; quick entries extract or create at once and replace nothing)
+#      with a path containing spaces, non-ASCII letters and an ampersand, a second launch while the app runs, the opt-in "Open with"
 #      handler, then uninstall and the leftovers check.
 #
 # Every check is recorded as one result: id, status (PASS, FAIL, ERROR, INFO,
@@ -140,12 +141,19 @@ $trickyName = "$([char]0x00C4)rchive & $([char]0x00E7)o.mochi"
 $trickyName2 = "Second $([char]0x00E9) & copy.mochi"
 $InstallDir = Join-Path $env:LOCALAPPDATA 'MOCHI'
 $Prep = Get-Content "$GuestState\prep.json" -Raw | ConvertFrom-Json
-$verbChecks = [ordered]@{
-  'SystemFileAssociations\.mochi\shell\MochiOpen'            = @('--open', 'Open with MOCHI')
-  'SystemFileAssociations\.mochi\shell\MochiExtractHere'     = @('--extract-here', 'Extract here')
-  'SystemFileAssociations\.mochi\shell\MochiExtractToFolder' = @('--extract-to-folder', 'Extract to folder')
-  '*\shell\MochiAdd'                                         = @('--add', 'Add to MOCHI archive')
-  'Directory\shell\MochiAdd'                                 = @('--add', 'Add to MOCHI archive')
+# The Explorer menu (owner decision 2026-10-16, 7-Zip style): one cascading submenu "MOCHI" per
+# class, entries as subkeys of MochiMenu\shell. Each value: option, menu text.
+$addItems = [ordered]@{ '40Add' = @('--add-now', 'Add to archive'); '50AddPanel' = @('--add', 'Add to archive...') }
+$mochiItems = [ordered]@{
+  '10Open'            = @('--open', 'Open with MOCHI')
+  '20ExtractHere'     = @('--extract-here', 'Extract here')
+  '30ExtractToFolder' = @('--extract-to-folder', 'Extract to a new folder')
+}
+foreach ($n in $addItems.Keys) { $mochiItems[$n] = $addItems[$n] }
+$menuChecks = [ordered]@{
+  'SystemFileAssociations\.mochi' = $mochiItems
+  '*'                              = $addItems
+  'Directory'                      = $addItems
 }
 $foreignExts = 'zip', '7z', 'rar', 'tar', 'tgz', 'gz'
 $classesRoot = [Microsoft.Win32.Registry]::ClassesRoot
@@ -263,23 +271,31 @@ function Get-UiaText([int]$hwnd, [int]$timeoutSec = 60) {
 }
 function Get-DirSnapshot([string]$dir) { @(Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + '|' + $(if ($_.PSIsContainer) { 'd' } else { $_.Length }) } | Sort-Object) }
 
-# One Explorer verb through ShellExecute (what Explorer calls). Returns what was seen.
+# One entry of the "MOCHI" submenu, started the way Explorer starts it: the entry's registered
+# command with %1 replaced by the path (a submenu entry has no ShellExecute verb name of its own).
+# `$wait` seconds for a window, then the UI text. Returns what was seen and what changed on disk.
 $script:uiaNotes = New-Object System.Collections.Generic.List[string]
-function Invoke-Verb([string]$path, [string]$verb, [string]$expectText) {
+function Start-MenuEntry([string]$path, [string]$class, [string]$item) {
+  $cmd = Get-ClassDefault $classesRoot "$class\shell\MochiMenu\shell\$item\command"
+  if (-not $cmd) { Fail "no command registered for $class / $item" }
+  $line = $cmd.Replace('%1', $path)
+  Start-Process -FilePath (Get-AppExe).FullName -ArgumentList ($line.Substring($line.IndexOf('" ') + 2))
+}
+function Invoke-MenuEntry([string]$path, [string]$class, [string]$item, [string]$expectText, [int]$settle = 6) {
   Stop-App
   $dir = Split-Path $path
   $before = Get-DirSnapshot $dir
-  Start-Process -FilePath $path -Verb $verb
+  Start-MenuEntry $path $class $item
   $w = Wait-AppWindow 45
-  if (-not $w) { Fail "verb $verb on '$path': no MOCHI window within 45 s" }
-  Start-Sleep 6
+  if (-not $w) { Fail "menu entry $item on '$path': no MOCHI window within 45 s" }
+  Start-Sleep $settle
   $names = Get-UiaText $w.MainWindowHandle
   $seen = 'UI text not readable'
   if ($names -and $names.Count -gt 0) {
     $hit = @($names | Where-Object { $_ -like "*$expectText*" })
     $seen = if ($hit.Count -gt 0) { "UI shows '$expectText'" } else { "UI readable ($($names.Count) names) but '$expectText' not among them" }
   }
-  $script:uiaNotes.Add("${verb}: $seen")
+  $script:uiaNotes.Add("${item}: $seen")
   $after = Get-DirSnapshot $dir
   [pscustomobject]@{ Window = $w; Seen = $seen; Added = @($after | Where-Object { $before -notcontains $_ }); Removed = @($before | Where-Object { $after -notcontains $_ }) }
 }
@@ -334,16 +350,35 @@ function Assert-Registrations([bool]$foreign) {
     if (-not $q -or $q -ne $exe) { Fail "AssocQueryString(.mochi) is '$q', expected $exe" }
     $notes += 'AssocQueryString resolves .mochi to the installed app'
   }
-  foreach ($k in $verbChecks.Keys) {
-    $want = $verbChecks[$k]
-    $text = Get-ClassDefault $classesRoot $k
-    if ($text -ne $want[1]) { Fail "verb $k has menu text '$text', expected '$($want[1])'" }
-    $cmd = Get-ClassDefault $classesRoot "$k\command"
-    $expect = '"' + $exe + '" ' + $want[0] + ' -- "%1"'
-    if ($cmd -ne $expect) { Fail "verb $k runs '$cmd', expected '$expect'" }
-    if ($cmd -match 'passphrase|password') { Fail "verb $k puts a secret option on the command line" }
+  $entries = 0
+  foreach ($class in $menuChecks.Keys) {
+    $menu = "$class\shell\MochiMenu"
+    $mk = $userClasses.OpenSubKey("Software\Classes\$menu")
+    if (-not $mk) { Fail "submenu $menu is not registered" }
+    try {
+      if ($mk.GetValue('MUIVerb') -ne 'MOCHI') { Fail "submenu $menu has text '$($mk.GetValue('MUIVerb'))', expected 'MOCHI'" }
+      if ($null -eq $mk.GetValue('SubCommands')) { Fail "submenu $menu has no SubCommands value (the cascade would not show)" }
+    } finally { $mk.Close() }
+    $items = $menuChecks[$class]
+    foreach ($item in $items.Keys) {
+      $k = "$menu\shell\$item"
+      $text = Get-ClassDefault $classesRoot $k
+      if ($text -ne $items[$item][1]) { Fail "entry $k has menu text '$text', expected '$($items[$item][1])'" }
+      $cmd = Get-ClassDefault $classesRoot "$k\command"
+      $expect = '"' + $exe + '" ' + $items[$item][0] + ' -- "%1"'
+      if ($cmd -ne $expect) { Fail "entry $k runs '$cmd', expected '$expect'" }
+      if ($cmd -match 'passphrase|password') { Fail "entry $k puts a secret option on the command line" }
+      $entries++
+    }
+    $sk = $userClasses.OpenSubKey("Software\Classes\$menu\shell")
+    try { $names = @($sk.GetSubKeyNames()) } finally { $sk.Close() }
+    if ($names.Count -ne $items.Count) { Fail "submenu $menu has entries [$($names -join ', ')], expected [$($items.Keys -join ', ')]" }
   }
-  $notes += "5 verbs with the expected text and command"
+  foreach ($old in @('SystemFileAssociations\.mochi\shell\MochiOpen', 'SystemFileAssociations\.mochi\shell\MochiExtractHere',
+                     'SystemFileAssociations\.mochi\shell\MochiExtractToFolder', '*\shell\MochiAdd', 'Directory\shell\MochiAdd')) {
+    if ($userClasses.OpenSubKey("Software\Classes\$old")) { Fail "flat verb of 0.1.0 still registered: $old" }
+  }
+  $notes += "3 submenus 'MOCHI' with $entries entries, expected text and commands"
   $notes -join '; '
 }
 
@@ -381,7 +416,7 @@ function Main {
     if ($sm.Count -eq 0) { Fail 'no .lnk under the per-user or common Start Menu\Programs resolves to the installed app' }
     ($sm | ForEach-Object { $_.Link }) -join '; '
   }
-  Check 'A-ASSOC-VERBS' '.mochi association and every Explorer verb are registered (as Windows sees them)' { Assert-Registrations $false }
+  Check 'A-ASSOC-VERBS' '.mochi association and the MOCHI submenu entries are registered (as Windows sees them)' { Assert-Registrations $false }
   Check 'A-FOREIGN-OFF' 'The foreign-format "Open with" opt-in is off after a silent install' {
     $notes = @()
     foreach ($x in $foreignExts) {
@@ -453,7 +488,7 @@ function Main {
 
   $regBeforeB = Scan-Registry
   Check 'B-INSTALL' 'Silent install with /ASSOCIATE_FOREIGN' { Install-Mochi @('/S', '/ASSOCIATE_FOREIGN') }
-  Check 'B-ASSOC-VERBS' '.mochi association and every verb are registered again' { Assert-Registrations $true }
+  Check 'B-ASSOC-VERBS' '.mochi association and the MOCHI submenu entries are registered again' { Assert-Registrations $true }
   Check 'B-FOREIGN-ON' 'The opt-in adds MOCHI under "Open with" for ZIP, 7z, RAR, TAR, TGZ, GZ and takes over no default' {
     $exe = (Get-AppExe).FullName
     foreach ($x in $foreignExts) {
@@ -519,46 +554,83 @@ function Main {
   }
   Stop-App
 
-  Check 'B-VERB-OPEN' 'Verb "Open with MOCHI" on the path with spaces, non-ASCII letters and &' {
-    $r = Invoke-Verb $archive 'MochiOpen' $trickyName
+  $mochiClass = 'SystemFileAssociations\.mochi'
+  Check 'B-VERB-OPEN' 'Menu entry "MOCHI > Open with MOCHI" on the path with spaces, non-ASCII letters and &' {
+    $r = Invoke-MenuEntry $archive $mochiClass '10Open' $trickyName
     if ($r.Added.Count -or $r.Removed.Count) { Fail "the folder changed: added $($r.Added -join '; ') removed $($r.Removed -join '; ')" }
     "window up; nothing written; $($r.Seen)"
   }
-  Check 'B-VERB-EXTRACT-HERE' 'Verb "Extract here": window up, nothing extracted until the button is pressed' {
-    $r = Invoke-Verb $archive 'MochiExtractHere' 'Extract'
-    if ($r.Added.Count -or $r.Removed.Count) { Fail "the folder changed before the Extract button: added $($r.Added -join '; ') removed $($r.Removed -join '; ')" }
-    "window up; nothing written; $($r.Seen)"
-  }
-  Check 'B-VERB-EXTRACT-TO-FOLDER' 'Verb "Extract to folder": window up; at most the empty target folder exists' {
-    $r = Invoke-Verb $archive 'MochiExtractToFolder' 'Extract'
+  Check 'B-VERB-EXTRACT-HERE' 'Menu entry "Extract here": extracts at once into the archive folder, replaces nothing' {
+    $r = Invoke-MenuEntry $archive $mochiClass '20ExtractHere' 'Extracted'
+    if ($r.Removed.Count) { Fail "something was removed or changed: $($r.Removed -join '; ')" }
     $files = @($r.Added | Where-Object { $_ -notmatch '\|d$' })
-    if ($files.Count -gt 0) { Fail "files were written before the Extract button: $($files -join '; ')" }
-    if ($r.Removed.Count) { Fail "something was removed: $($r.Removed -join '; ')" }
-    "window up; no file written; new folders: $($r.Added.Count); $($r.Seen)"
+    if ($files.Count -eq 0) { Fail 'no file was extracted into the archive folder' }
+    # Everything it wrote is in the folder next to the archive: the golden archive holds docs/a.txt.
+    if (-not (Test-Path (Join-Path (Split-Path $archive) 'docs\a.txt'))) { Fail 'docs\a.txt was not extracted' }
+    "compact window; $($files.Count) file(s) written, none replaced; $($r.Seen)"
   }
-  Check 'B-VERB-ADD-FILE' 'Verb "Add to MOCHI archive" on one file' {
-    $r = Invoke-Verb $plain 'MochiAdd' ([IO.Path]::GetFileName($plain))
+  Check 'B-VERB-EXTRACT-HERE-AGAIN' 'Menu entry "Extract here" again: names exist now, so nothing is written (the extract plan opens in the main window)' {
+    $a = Join-Path (Split-Path $archive) 'docs\a.txt'
+    Set-Content $a 'mine, not the archive'
+    $r = Invoke-MenuEntry $archive $mochiClass '20ExtractHere' 'Nothing was written'
     if ($r.Added.Count -or $r.Removed.Count) { Fail "the folder changed: added $($r.Added -join '; ') removed $($r.Removed -join '; ')" }
-    "window up; nothing written; $($r.Seen)"
+    if ((Get-Content $a -Raw).Trim() -ne 'mine, not the archive') { Fail 'an existing file was replaced' }
+    "nothing written, file untouched; $($r.Seen)"
   }
-  Check 'B-VERB-ADD-FOLDER' 'Verb "Add to MOCHI archive" on a folder' {
-    $r = Invoke-Verb $sub 'MochiAdd' ([IO.Path]::GetFileName($sub))
-    "window up; $($r.Seen)"
+  Check 'B-VERB-EXTRACT-TO-FOLDER' 'Menu entry "Extract to a new folder": a new folder named for the archive, never an existing one' {
+    $stem = [IO.Path]::GetFileNameWithoutExtension($archive)
+    $existing = Join-Path (Split-Path $archive) $stem
+    New-Item -ItemType Directory -Force $existing | Out-Null
+    Set-Content (Join-Path $existing 'keep.txt') 'mine'
+    $r = Invoke-MenuEntry $archive $mochiClass '30ExtractToFolder' 'Extracted'
+    if ($r.Removed.Count) { Fail "something was removed or changed: $($r.Removed -join '; ')" }
+    if (@(Get-ChildItem $existing -Force).Count -ne 1) { Fail "the existing folder $existing was reused" }
+    $fresh = Join-Path (Split-Path $archive) "$stem (2)"
+    if (-not (Test-Path (Join-Path $fresh 'docs\a.txt'))) { Fail "docs\a.txt is not in the new folder $fresh" }
+    "extracted into '$stem (2)'; the existing folder was left alone; $($r.Seen)"
   }
-  Check 'B-VERB-ADD-MULTI' 'Verb "Add to MOCHI archive" on several files (one launch each) collects in one window' {
+  Check 'B-VERB-ADD-FILE' 'Menu entry "Add to archive" on one file: creates <name>.mochi next to it at once' {
+    $r = Invoke-MenuEntry $plain '*' '40Add' 'Archive created'
+    $made = Join-Path (Split-Path $plain) ([IO.Path]::GetFileNameWithoutExtension($plain) + '.mochi')
+    if (-not (Test-Path $made)) { Fail "$made was not created" }
+    if ($r.Removed.Count) { Fail "something was removed or changed: $($r.Removed -join '; ')" }
+    "compact window; created $([IO.Path]::GetFileName($made)); $($r.Seen)"
+  }
+  Check 'B-VERB-ADD-FILE-AGAIN' 'Menu entry "Add to archive" again: a new name, the first archive is not replaced' {
+    $made = Join-Path (Split-Path $plain) ([IO.Path]::GetFileNameWithoutExtension($plain) + '.mochi')
+    $len = (Get-Item $made).Length
+    $r = Invoke-MenuEntry $plain '*' '40Add' 'Archive created'
+    $second = Join-Path (Split-Path $plain) ([IO.Path]::GetFileNameWithoutExtension($plain) + ' (2).mochi')
+    if (-not (Test-Path $second)) { Fail "$second was not created" }
+    if ((Get-Item $made).Length -ne $len) { Fail 'the first archive was changed' }
+    "created $([IO.Path]::GetFileName($second)); the first is untouched; $($r.Seen)"
+  }
+  Check 'B-VERB-ADD-FOLDER' 'Menu entry "Add to archive" on a folder: <folder>.mochi next to it' {
+    $r = Invoke-MenuEntry $sub 'Directory' '40Add' 'Archive created'
+    $made = Join-Path (Split-Path $sub) ([IO.Path]::GetFileName($sub) + '.mochi')
+    if (-not (Test-Path $made)) { Fail "$made was not created" }
+    "created $([IO.Path]::GetFileName($made)); $($r.Seen)"
+  }
+  Check 'B-VERB-ADD-PANEL' 'Menu entry "Add to archive...": the main window shows the add panel; nothing is written' {
+    $r = Invoke-MenuEntry $sub 'Directory' '50AddPanel' ([IO.Path]::GetFileName($sub))
+    if ($r.Added.Count -or $r.Removed.Count) { Fail "the folder changed: added $($r.Added -join '; ') removed $($r.Removed -join '; ')" }
+    "main window up; nothing written; $($r.Seen)"
+  }
+  Check 'B-VERB-ADD-MULTI' 'Menu entry "Add to archive" on several files (one launch each) collects in ONE archive named for the folder' {
     Stop-App
-    $files = @($plain, $archive, (Join-Path $sub 'inner.txt'))
-    foreach ($f in $files) { Start-Process -FilePath $f -Verb MochiAdd; Start-Sleep 4 }
-    $w = Wait-AppWindow 45
-    if (-not $w) { Fail 'no MOCHI window' }
+    $multi = Join-Path $trickyDir 'Multi & set'
+    New-Item -ItemType Directory -Force $multi | Out-Null
+    $files = @('one.txt', 'two.txt', 'three.txt') | ForEach-Object { $f = Join-Path $multi $_; Set-Content $f $_; $f }
+    foreach ($f in $files) { Start-MenuEntry $f '*' '40Add'; Start-Sleep -Milliseconds 300 }
+    $made = Join-Path $multi 'Multi & set.mochi'
+    for ($i = 0; $i -lt 60 -and -not (Test-Path $made); $i++) { Start-Sleep 1 }
+    if (-not (Test-Path $made)) { Fail "$made was not created within 60 s" }
     Start-Sleep 8
+    $archives = @(Get-ChildItem $multi -Filter *.mochi)
+    if ($archives.Count -ne 1) { Fail "expected one archive for 3 launches, found $($archives.Count): $($archives.Name -join ', ')" }
     $procs = @(Get-AppProcs | Where-Object { $_.Name -notlike 'msedgewebview2*' })
-    if ($procs.Count -ne 1) { Fail "expected one MOCHI process for 3 launches, found $($procs.Count)" }
-    $names = Get-UiaText $w.MainWindowHandle
-    $found = 0
-    if ($names) { foreach ($f in $files) { $leaf = [IO.Path]::GetFileName($f); if (@($names | Where-Object { $_ -like "*$leaf*" }).Count -gt 0) { $found++ } } }
-    $seen = if ($names) { "$found of 3 file names found in the window text" } else { 'window text not readable' }
-    "3 launches, 1 process; $seen"
+    if ($procs.Count -gt 1) { Fail "expected at most one MOCHI process for 3 launches, found $($procs.Count)" }
+    "3 launches, 1 archive ($($archives[0].Name)), $($procs.Count) process"
   }
   foreach ($x in @(@('zip', "Zip & $([char]0x00E7).zip", 'fx-basic.zip'), @('7z', "Seven & $([char]0x00E7).7z", 'fx-basic.7z'),
                    @('tar', "Tar & $([char]0x00E7).tar", 'fx-basic.tar'), @('tar.gz', "Tgz & $([char]0x00E7).tar.gz", 'fx-basic.tar.gz'))) {
@@ -580,7 +652,7 @@ function Main {
       "window up; $seen"
     }
   }
-  Check 'B-VERB-UI-NOTES' 'What UI Automation saw after each verb (observation)' {
+  Check 'B-VERB-UI-NOTES' 'What UI Automation saw after each menu entry (observation)' {
     @{ status = 'INFO'; detail = ($script:uiaNotes -join ' || ') }
   }
   Shot 'verbs-done'

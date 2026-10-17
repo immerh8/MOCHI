@@ -46,18 +46,17 @@ export function outcomeText(outcome: JobOutcome): string {
   }
 }
 
-/** The sections of the window in page order: their heading ids and names. */
+/**
+ * The sections inside "Advanced" in page order: their heading ids and names.
+ * The main path (start, create, extract, browse) is above it and needs no jump list.
+ */
 const SECTIONS: { id: string; name: () => string }[] = [
-  { id: "browser-heading", name: () => t("app.sectionArchive") },
-  { id: "write-heading", name: () => t("app.sectionCreate") },
-  { id: "extract-heading", name: () => t("app.sectionExtract") },
   { id: "search-heading", name: () => t("app.sectionSearch") },
   { id: "rekey-heading", name: () => t("app.sectionPassphrases") },
   { id: "check-heading", name: () => t("app.sectionCheck") },
   { id: "foreign-heading", name: () => t("app.sectionForeign") },
   { id: "self-test-heading", name: () => t("app.sectionSelfTest") },
   { id: "settings-heading", name: () => t("app.sectionSettings") },
-  { id: "help-heading", name: () => t("app.sectionHelp") },
 ];
 
 /**
@@ -94,7 +93,7 @@ function SectionNav() {
   );
 }
 
-export function App() {
+function SelfTest() {
   const [view, setView] = useState<View>({ state: "idle" });
   const running = view.state === "running";
   const busy = running || view.state === "starting";
@@ -152,56 +151,67 @@ export function App() {
   }, [view]);
 
   return (
+    <section aria-labelledby="self-test-heading">
+      <h2 id="self-test-heading" tabIndex={-1}>
+        {t("selfTest.heading")}
+      </h2>
+      <p>{t("selfTest.intro")}</p>
+      <div className="actions">
+        <button type="button" data-testid="start" onClick={start} disabled={busy}>
+          {t("selfTest.start")}
+        </button>
+        <button
+          type="button"
+          data-testid="cancel"
+          onClick={cancel}
+          disabled={!running || view.cancelRequested}
+        >
+          {t("selfTest.cancel")}
+        </button>
+      </div>
+      {running && (
+        <div className="progress">
+          <ProgressMeter
+            completed={view.completed}
+            total={view.total}
+            barTestId="progress"
+            textTestId="progress-text"
+            text={
+              (view.total === null
+                ? t("common.progressStep", { completed: view.completed })
+                : t("common.progressStepOf", { completed: view.completed, total: view.total })) +
+              (view.cancelRequested ? t("common.cancelling") : "")
+            }
+          />
+        </div>
+      )}
+      <p role="status" data-testid="status" data-state={view.state}>
+        {view.state === "idle" && t("selfTest.idle")}
+        {view.state === "starting" && t("common.starting")}
+        {view.state === "running" && t("selfTest.running")}
+        {view.state === "finished" && outcomeText(view.outcome)}
+        {view.state === "error" && view.text}
+      </p>
+    </section>
+  );
+}
+
+export function App() {
+  return (
     <main>
       <h1>{t("app.title")}</h1>
-      <SectionNav />
-      <Browser />
-      <ForeignBrowser />
-      <section aria-labelledby="self-test-heading">
-        <h2 id="self-test-heading" tabIndex={-1}>
-          {t("selfTest.heading")}
-        </h2>
-        <p>{t("selfTest.intro")}</p>
-        <div className="actions">
-          <button type="button" data-testid="start" onClick={start} disabled={busy}>
-            {t("selfTest.start")}
-          </button>
-          <button
-            type="button"
-            data-testid="cancel"
-            onClick={cancel}
-            disabled={!running || view.cancelRequested}
-          >
-            {t("selfTest.cancel")}
-          </button>
-        </div>
-        {running && (
-          <div className="progress">
-            <ProgressMeter
-              completed={view.completed}
-              total={view.total}
-              barTestId="progress"
-              textTestId="progress-text"
-              text={
-                (view.total === null
-                  ? t("common.progressStep", { completed: view.completed })
-                  : t("common.progressStepOf", { completed: view.completed, total: view.total })) +
-                (view.cancelRequested ? t("common.cancelling") : "")
-              }
-            />
-          </div>
-        )}
-        <p role="status" data-testid="status" data-state={view.state}>
-          {view.state === "idle" && t("selfTest.idle")}
-          {view.state === "starting" && t("common.starting")}
-          {view.state === "running" && t("selfTest.running")}
-          {view.state === "finished" && outcomeText(view.outcome)}
-          {view.state === "error" && view.text}
-        </p>
-      </section>
-      <CrashReports>
-        <Updates />
-      </CrashReports>
+      <Browser
+        toolsNav={<SectionNav />}
+        tools={
+          <>
+            <ForeignBrowser />
+            <SelfTest />
+            <CrashReports>
+              <Updates />
+            </CrashReports>
+          </>
+        }
+      />
       <Help />
     </main>
   );

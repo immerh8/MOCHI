@@ -347,6 +347,16 @@ pub fn history() -> Vec<Transaction> {
     out
 }
 
+/// [`history`] with 4,000 more incompressible bytes in the first commit. The
+/// catalog image is compressed (B.2.2 encoding 2), so the first commit of
+/// `history()` fits one parity shard; the damage cases of the Redundancy
+/// profile need a commit with several (more shards than its parity can cover).
+pub fn history_big() -> Vec<Transaction> {
+    let mut out = history();
+    put(&mut out[0], "pad", 8, 4000, 0o644);
+    out
+}
+
 pub const HOSTILE: [&[u8]; 10] = [
     b"<img src=x onerror=alert(1)>",
     b"line\nbreak",
@@ -779,8 +789,8 @@ pub fn build(cx: &mut Ctx, name: &str) -> Built {
             let s = write_with(&plan, &[timed(t, 0)], |_, _| {});
             one(s.contents())
         }
-        "tar-red-valid-history" => one(write(TAR_RED, 34, &history()).contents()),
-        "enc-red-valid-history" => one(write(ENC_RED, 35, &history()).contents()),
+        "tar-red-valid-history" => one(write(TAR_RED, 34, &history_big()).contents()),
+        "enc-red-valid-history" => one(write(ENC_RED, 35, &history_big()).contents()),
         _ => crate::recipes2::build(cx, name),
     }
 }

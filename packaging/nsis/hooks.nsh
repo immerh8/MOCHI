@@ -12,16 +12,27 @@
 ;   Install key     Tauri's HKCU\Software\<publisher>\<product> install-location
 ;                   key, which Tauri's own uninstaller keeps unless the user
 ;                   ticks "delete application data" (removed here, not on update).
-;   Explorer verbs  classic context menu (shown under "Show more options" on
-;                   Windows 11; the top-level Windows 11 menu needs an
-;                   IExplorerCommand handler with package identity: 1.x, O10):
-;                     .mochi files   Open with MOCHI / Extract here / Extract to folder
-;                     all files and folders   Add to archive
+;   Explorer menu   one cascading submenu "MOCHI" (7-Zip style; the owner decision of
+;                   2026-10-16), in the classic context menu, which Windows 11 shows
+;                   under "Show more options" (the top-level Windows 11 menu needs an
+;                   IExplorerCommand handler with package identity: 1.x, O10).
+;                   It is a key "MochiMenu" with MUIVerb and an empty SubCommands
+;                   value, whose own "shell" key holds the entries (the numeric
+;                   prefixes fix their order):
+;                     .mochi files            Open with MOCHI / Extract here /
+;                                             Extract to a new folder / Add to archive /
+;                                             Add to archive...
+;                     all files and folders   Add to archive / Add to archive...
 ;                   Each runs the app with a verb the app parses and validates in
-;                   Rust (src-tauri/src/launch.rs) and then shows its own panel.
-;                   A path is never joined into a shell string; "--" ends the
-;                   options so that a file named like an option stays a path.
-;                   No command line carries a passphrase.
+;                   Rust (src-tauri/src/launch.rs). The panel verbs (Open with MOCHI,
+;                   Add to archive...) show the main window. The quick verbs (Extract
+;                   here, Extract to a new folder, Add to archive) work at once in a
+;                   small window, and never overwrite: a collision falls back to the
+;                   main window's extract plan. A path is never joined into a shell
+;                   string; "--" ends the options so that a file named like an option
+;                   stays a path. No command line carries a passphrase.
+;                   (Earlier versions registered four flat verbs; they are removed on
+;                   install and uninstall.)
 ;   Opt-in          ZIP, 7z, RAR, tar, tar.gz/tgz (and so .gz, Windows keys on the
 ;                   last extension): offered under "Open with" for those types
 ;                   only if the user says yes (a question at install time, default
@@ -38,16 +49,38 @@
 !define MOCHI_FOREIGN_PROGID "MOCHI.Foreign"
 !define MOCHI_CLASSES "Software\Classes"
 
-; One Explorer verb: key under the given Classes path, the menu text, the argument.
-!macro MochiWriteVerb SHELLKEY VERB LABEL OPTION
-  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\${VERB}" "" "${LABEL}"
-  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\${VERB}" "Icon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
-  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\${VERB}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" ${OPTION} -- $\"%1$\""
+; One entry of the submenu: its key under the given Classes path, the menu text, the argument.
+!macro MochiWriteItem SHELLKEY ITEM LABEL OPTION
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu\shell\${ITEM}" "" "${LABEL}"
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu\shell\${ITEM}" "Icon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu\shell\${ITEM}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" ${OPTION} -- $\"%1$\""
+!macroend
+
+; The submenu itself: "MOCHI", with an empty SubCommands value so that the shell
+; builds the cascade from the key's own "shell" subkey.
+!macro MochiWriteMenu SHELLKEY
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu" "MUIVerb" "${PRODUCTNAME}"
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu" "Icon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+  WriteRegStr HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\MochiMenu" "SubCommands" ""
+!macroend
+
+!macro MochiWriteAddItems SHELLKEY
+  !insertmacro MochiWriteItem "${SHELLKEY}" "40Add" "Add to archive" "--add-now"
+  !insertmacro MochiWriteItem "${SHELLKEY}" "50AddPanel" "Add to archive..." "--add"
 !macroend
 
 !macro MochiDeleteVerb SHELLKEY VERB
   DeleteRegKey HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell\${VERB}"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\${SHELLKEY}\shell"
+!macroend
+
+; The flat verbs of earlier versions (0.1.0), replaced by the submenu.
+!macro MochiDeleteLegacyVerbs
+  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiOpen"
+  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiExtractHere"
+  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiExtractToFolder"
+  !insertmacro MochiDeleteVerb "*" "MochiAdd"
+  !insertmacro MochiDeleteVerb "Directory" "MochiAdd"
 !macroend
 
 ; Offer MOCHI under "Open with" for one extension (never the default value).
@@ -89,12 +122,17 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; Explorer verbs.
-  !insertmacro MochiWriteVerb "SystemFileAssociations\.mochi" "MochiOpen" "Open with ${PRODUCTNAME}" "--open"
-  !insertmacro MochiWriteVerb "SystemFileAssociations\.mochi" "MochiExtractHere" "Extract here" "--extract-here"
-  !insertmacro MochiWriteVerb "SystemFileAssociations\.mochi" "MochiExtractToFolder" "Extract to folder" "--extract-to-folder"
-  !insertmacro MochiWriteVerb "*" "MochiAdd" "Add to ${PRODUCTNAME} archive" "--add"
-  !insertmacro MochiWriteVerb "Directory" "MochiAdd" "Add to ${PRODUCTNAME} archive" "--add"
+  ; Explorer submenu (and the flat verbs of earlier versions removed).
+  !insertmacro MochiDeleteLegacyVerbs
+  !insertmacro MochiWriteMenu "SystemFileAssociations\.mochi"
+  !insertmacro MochiWriteItem "SystemFileAssociations\.mochi" "10Open" "Open with ${PRODUCTNAME}" "--open"
+  !insertmacro MochiWriteItem "SystemFileAssociations\.mochi" "20ExtractHere" "Extract here" "--extract-here"
+  !insertmacro MochiWriteItem "SystemFileAssociations\.mochi" "30ExtractToFolder" "Extract to a new folder" "--extract-to-folder"
+  !insertmacro MochiWriteAddItems "SystemFileAssociations\.mochi"
+  !insertmacro MochiWriteMenu "*"
+  !insertmacro MochiWriteAddItems "*"
+  !insertmacro MochiWriteMenu "Directory"
+  !insertmacro MochiWriteAddItems "Directory"
 
   ; The opt-in. An update keeps whatever the user chose at the first install.
   ${If} $UpdateMode <> 1
@@ -119,12 +157,11 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiOpen"
-  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiExtractHere"
-  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiExtractToFolder"
+  !insertmacro MochiDeleteLegacyVerbs
+  !insertmacro MochiDeleteVerb "SystemFileAssociations\.mochi" "MochiMenu"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\SystemFileAssociations\.mochi"
-  !insertmacro MochiDeleteVerb "*" "MochiAdd"
-  !insertmacro MochiDeleteVerb "Directory" "MochiAdd"
+  !insertmacro MochiDeleteVerb "*" "MochiMenu"
+  !insertmacro MochiDeleteVerb "Directory" "MochiMenu"
   ; Parent keys this created (never removed if anything else lives in them).
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\SystemFileAssociations"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\*"

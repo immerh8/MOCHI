@@ -4,7 +4,9 @@
 the archive browser (snapshot timeline, folder tree, virtualized list, details),
 create, add, and remove (D2), extract (D3), test, health, and repair (D4), encryption and
 search (D5), shell integration (D6), foreign formats (D8), packaging (D7 slice 1), and
-accessibility, the message catalogue, and the opt-in crash log (D7 slice 2).
+accessibility, the message catalogue, and the opt-in crash log (D7 slice 2), and the
+simplified main path (D10: a start screen, guided create and extract, technical tools under
+"Advanced").
 Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
@@ -83,6 +85,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 
 ## Security decisions (each is a reason AGENTS.md asks for)
 
+- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder" and "Add to archive" run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it five commands and nothing else: `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path) and `allow-quick-close`. The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
   `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
@@ -337,8 +340,43 @@ attach it to an issue.
   The same holds when the shell starts the app with one (T20): `launch.rs` sends a ZIP, 7z, RAR,
   tar, or tar.gz path to the in-app open path in Rust, the window shows the foreign browser (an
   encrypted archive asks for its password there, once), and the shell's "Extract here" /
-  "Extract to folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
+  "Extract to a new folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
   for browsing with a plain note.
+
+## The simplified main path (D10)
+
+Owner test, 2026-10-16: nobody knew where to start, the words were technical, and create and
+extract were confusing. The window now opens on **What would you like to do?** with three
+actions (Create archive, Open archive, Extract archive), a recent list, and one quiet sentence
+that an archive is not a second copy. Everything else is under **Advanced** (a closed
+`<details>`, `data-testid="advanced"`): search, passphrases, test and repair, other formats,
+the job self-test, settings. Nothing was removed.
+
+- **Plain words, precise terms secondary.** "Version" on the main path is a snapshot (one
+  commit); IDs, hashes, checkpoint/delta, and the profile are in "Technical details"
+  disclosures. Results keep their honest status as a last "Technical detail" line
+  (`LOCAL_COMMITTED`); deleting still says earlier versions keep the content.
+- **Create** is a guided panel: choose items, see where it will be saved (default: next to the
+  first item, named after it, `name (2).mochi` if taken; Rust computes it, `Staging`,
+  `StagedView.default_destination`; `create_archive` never replaces), a closed **Options**
+  (size and speed, password, repair data, tar tools), one **Create archive** button.
+  **Change…** shows the save dialog, started at the default.
+- **Extract** plans into a **new folder next to the archive** (`plan_extract_default`, Rust
+  makes it; `discard_extract_folder` removes it again, only while empty, when the plan is
+  closed or another folder is picked). **Choose a different folder…** keeps the dialog.
+  Collisions are listed and skipped exactly as before: nothing is overwritten.
+- **Drop.** Files dropped on the window go to the create panel (or add, with an archive open);
+  one dropped `.mochi` file is held by Rust (`DropEvent::Archive`) and opened on request
+  (`open_dropped_archive`).
+- **Recent archives** (`recent.rs`, `recent-archives.json` in the config folder, at most
+  six, cleared by "Clear this list"): the window sees file and folder names and opens an
+  entry by position (`open_recent`); it never holds a path.
+- **Show in folder** (`show_in_folder`): Rust resolves the folder (the last extraction's, or
+  the archive's) and asks the OS to show it. E2E builds record it in
+  `MOCHI_E2E_FOLDER_LOG`.
+
+The new commands are app commands in `build.rs` and `capabilities/main.json`; none takes or
+returns a path and no `fs`, `shell`, `opener`, or `dialog` permission was added.
 
 ## Foreign-format helper in the installers
 

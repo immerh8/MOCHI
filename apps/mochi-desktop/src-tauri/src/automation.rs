@@ -21,7 +21,7 @@
 //! (`crate::write::Tree`, `crate::extract`). The folder dialog of an extraction
 //! takes its path from the same pick queue.
 
-use tauri::{App, WebviewWindowBuilder, Wry};
+use tauri::{Manager, WebviewWindowBuilder, Wry};
 
 /// The arguments Tauri's webview layer uses when none are given (wry
 /// `webview2::create_environment`), kept when ours are added.
@@ -29,9 +29,9 @@ use tauri::{App, WebviewWindowBuilder, Wry};
 const DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
 #[cfg(all(windows, feature = "e2e"))]
-pub fn configure<'a>(
-    mut builder: WebviewWindowBuilder<'a, Wry, App>,
-) -> WebviewWindowBuilder<'a, Wry, App> {
+pub fn configure<'a, M: Manager<Wry>>(
+    mut builder: WebviewWindowBuilder<'a, Wry, M>,
+) -> WebviewWindowBuilder<'a, Wry, M> {
     if let Some(extra) = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
         let extra = extra.to_string_lossy();
         builder = builder.additional_browser_args(&format!("{DEFAULT_ARGS} {extra}"));
@@ -43,9 +43,9 @@ pub fn configure<'a>(
 }
 
 #[cfg(not(all(windows, feature = "e2e")))]
-pub fn configure<'a>(
-    builder: WebviewWindowBuilder<'a, Wry, App>,
-) -> WebviewWindowBuilder<'a, Wry, App> {
+pub fn configure<'a, M: Manager<Wry>>(
+    builder: WebviewWindowBuilder<'a, Wry, M>,
+) -> WebviewWindowBuilder<'a, Wry, M> {
     builder
 }
 

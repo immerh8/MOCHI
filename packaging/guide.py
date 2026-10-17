@@ -34,15 +34,16 @@ BANNER_BODY = (
     "has one. Commands shown below are typed in a terminal, not in the app. "
     "Where the desktop app has an equivalent:"
 )
-# (command line, desktop app). Section names are the app's own (ui/src/i18n/en/app.ts).
+# (command line, desktop app). Names are the app's own (ui/src/i18n/en/start.ts, write.ts, extract.ts, app.ts).
 EQUIVALENTS = [
-    ("mochi create, mochi append", "the “Create and add” section"),
-    ("mochi get", "the “Extract” section"),
-    ("mochi verify, mochi fsck, mochi health", "“Test, health, and repair” (“Test archive” is verify)"),
-    ("mochi repair plan, mochi repair apply", "“Test, health, and repair” (a reviewed plan, written to a new file)"),
-    ("passphrases and key envelopes", "the “Passphrases” section"),
-    ("mochi search", "the “Search names” section"),
-    ("ZIP, 7z, RAR and tar archives", "“Other archive formats” (read-only)"),
+    ("mochi create", "“Create archive” on the start screen"),
+    ("mochi append", "“Add to archive…” and “Remove from this version…” once an archive is open"),
+    ("mochi get", "“Extract archive” on the start screen, or “Extract all” and “Extract selected” once an archive is open"),
+    ("mochi verify, mochi fsck, mochi health", "“Test, health, and repair”, under “Advanced” (“Test archive” is verify)"),
+    ("mochi repair plan, mochi repair apply", "“Test, health, and repair”, under “Advanced” (a reviewed plan, written to a new file)"),
+    ("passphrases and key envelopes", "the “Passphrases” section, under “Advanced”"),
+    ("mochi search", "the “Search names” section, under “Advanced”"),
+    ("ZIP, 7z, RAR and tar archives", "“Other archive formats”, under “Advanced” (read-only)"),
 ]
 NO_EQUIVALENT = (
     "The desktop app has no head history, evidence log, or restore-test, so its freshness is "

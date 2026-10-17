@@ -9,4 +9,10 @@ export type StagedView = { items: Array<StagedItem>,
 /**
  * File name of the chosen destination for a new archive, if chosen.
  */
-destination: string | null, };
+destination: string | null, 
+/**
+ * Where a new archive would be written if the user does not choose: next
+ * to the first item, never over an existing file. `None` when nothing is
+ * staged, a destination was chosen, or no default can be made.
+ */
+default_destination: string | null, };

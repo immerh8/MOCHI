@@ -240,7 +240,7 @@ jobs:
           - { target: footer,          seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
           - { target: envelope,        seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
           - { target: object_decode,   seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
-          - { target: catalog_image,   seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
+          - { target: catalog_image,   seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4 ../fixtures/golden/b2", args: "" }
           - { target: cbor_decode,     seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
           - { target: manifest_decode, seeds: "../fixtures/golden/c1 ../fixtures/golden/c2 ../fixtures/golden/c3 ../fixtures/golden/c4", args: "" }
           # T11/T12 (approved 2026-10-04): whole archives, including the

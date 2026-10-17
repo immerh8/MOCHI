@@ -53,8 +53,8 @@ test("a placeholder is replaced once, and a value is never read as a template", 
 });
 
 test("counts pick the one or the many form", () => {
-  expect(tn(1, "browser.metaCommitOne", "browser.metaCommitMany", { n: 1 })).toBe("1 commit");
-  expect(tn(2, "browser.metaCommitOne", "browser.metaCommitMany", { n: 2 })).toBe("2 commits");
+  expect(tn(1, "browser.metaCommitOne", "browser.metaCommitMany", { n: 1 })).toBe("1 version");
+  expect(tn(2, "browser.metaCommitOne", "browser.metaCommitMany", { n: 2 })).toBe("2 versions");
 });
 
 test("a key that is not in the catalogue is a type error", () => {

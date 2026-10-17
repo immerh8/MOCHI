@@ -30,7 +30,12 @@ function Test-OpenWith($ext) {
 }
 
 # Every key and value this installer may add (plan D6; packaging/nsis/hooks.nsh).
+# One cascading submenu "MOCHI" per class, with its entries as subkeys; the flat verbs of
+# 0.1.0 must be gone as well (an update removes them, an uninstall leaves none).
 $verbKeys = @(
+  "SystemFileAssociations\.mochi\shell\MochiMenu",
+  "*\shell\MochiMenu",
+  "Directory\shell\MochiMenu",
   "SystemFileAssociations\.mochi\shell\MochiOpen",
   "SystemFileAssociations\.mochi\shell\MochiExtractHere",
   "SystemFileAssociations\.mochi\shell\MochiExtractToFolder",
@@ -109,23 +114,49 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if ((Get-ClassDefault ".mochi") -ne "MOCHI.Archive") { Fail ".mochi is not associated with MOCHI.Archive" }
   $open = Get-ClassDefault "MOCHI.Archive\shell\open\command"
   if (-not $open -or -not $open.Contains($exePath)) { Fail "MOCHI.Archive open command does not run the installed app: $open" }
-  $want = @{
-    "SystemFileAssociations\.mochi\shell\MochiOpen"            = "--open";
-    "SystemFileAssociations\.mochi\shell\MochiExtractHere"     = "--extract-here";
-    "SystemFileAssociations\.mochi\shell\MochiExtractToFolder" = "--extract-to-folder";
-    "*\shell\MochiAdd"                                         = "--add";
-    "Directory\shell\MochiAdd"                                 = "--add"
+  # The submenu: a menu key (text "MOCHI", empty SubCommands) whose own shell key holds the entries.
+  $addItems = [ordered]@{ "40Add" = @("--add-now", "Add to archive"); "50AddPanel" = @("--add", "Add to archive...") }
+  $mochiItems = [ordered]@{
+    "10Open"            = @("--open", "Open with MOCHI");
+    "20ExtractHere"     = @("--extract-here", "Extract here");
+    "30ExtractToFolder" = @("--extract-to-folder", "Extract to a new folder")
   }
-  foreach ($k in $want.Keys) {
-    if (-not (Get-ClassDefault $k)) { Fail "verb $k has no menu text" }
-    $cmd = Get-ClassDefault "$k\command"
-    if (-not $cmd) { Fail "verb $k has no command" }
-    $expect = "`"$exePath`" $($want[$k]) -- `"%1`""
-    if ($cmd -ne $expect) { Fail "verb $k runs '$cmd', expected '$expect'" }
-    if ($cmd -match "passphrase|password") { Fail "verb $k puts a secret option on the command line" }
+  foreach ($n in $addItems.Keys) { $mochiItems[$n] = $addItems[$n] }
+  $menus = [ordered]@{
+    "SystemFileAssociations\.mochi" = $mochiItems;
+    "*"                              = $addItems;
+    "Directory"                      = $addItems
   }
-  if ((Get-ClassDefault "SystemFileAssociations\.mochi\shell\MochiExtractHere") -ne "Extract here") { Fail "Extract here: wrong menu text" }
-  if ((Get-ClassDefault "SystemFileAssociations\.mochi\shell\MochiExtractToFolder") -ne "Extract to folder") { Fail "Extract to folder: wrong menu text" }
+  foreach ($class in $menus.Keys) {
+    $menu = "$class\shell\MochiMenu"
+    $mk = $classes.OpenSubKey("Software\Classes\$menu")
+    if (-not $mk) { Fail "submenu $menu is not registered" }
+    try {
+      if ($mk.GetValue("MUIVerb") -ne "MOCHI") { Fail "submenu $menu has the wrong text: '$($mk.GetValue('MUIVerb'))'" }
+      if ($null -eq $mk.GetValue("SubCommands")) { Fail "submenu $menu has no SubCommands value (the cascade would not show)" }
+    } finally { $mk.Close() }
+    $items = $menus[$class]
+    foreach ($item in $items.Keys) {
+      $k = "$menu\shell\$item"
+      $text = Get-ClassDefault $k
+      if ($text -ne $items[$item][1]) { Fail "menu entry $k has text '$text', expected '$($items[$item][1])'" }
+      $cmd = Get-ClassDefault "$k\command"
+      if (-not $cmd) { Fail "menu entry $k has no command" }
+      $expect = "`"$exePath`" $($items[$item][0]) -- `"%1`""
+      if ($cmd -ne $expect) { Fail "menu entry $k runs '$cmd', expected '$expect'" }
+      if ($cmd -match "passphrase|password") { Fail "menu entry $k puts a secret option on the command line" }
+    }
+    # Nothing else under the submenu.
+    $sk = $classes.OpenSubKey("Software\Classes\$menu\shell")
+    try {
+      $names = @($sk.GetSubKeyNames())
+      if ($names.Count -ne $items.Count) { Fail "submenu $menu has entries [$($names -join ', ')], expected [$($items.Keys -join ', ')]" }
+    } finally { $sk.Close() }
+  }
+  # The flat verbs of 0.1.0 are not registered next to the submenu.
+  foreach ($old in $verbKeys | Where-Object { $_ -notlike "*MochiMenu" }) {
+    if (Test-ClassKey $old) { Fail "legacy verb $old is still registered" }
+  }
   # The opt-in is OFF unless asked for, and never writes a type's default value.
   foreach ($e in $foreignExts) {
     if ((Test-OpenWith $e) -ne $ExpectForeign) { Fail ".$e offered = $(Test-OpenWith $e), expected $ExpectForeign" }

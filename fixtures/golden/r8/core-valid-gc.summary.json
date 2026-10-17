@@ -4,38 +4,38 @@
   "commits": [
     {
       "checkpoint": true,
-      "commit_id": "1de9ca7ace544df9b19156ad8e513fde4d240eb742785b8ed2ce2fc25a4a2f77",
-      "footer_offset": 48973,
+      "commit_id": "887c229d46cd6f26ff0b6cc08fcc79fdc995382d8e893c6f9cd25fb3fc51b6db",
+      "footer_offset": 6304,
       "seq": 0
     },
     {
       "checkpoint": false,
-      "commit_id": "ede5bd2eda288004d99a8721c6d2461b665a92b568e1f1aa52fb5980d4bbcbf8",
-      "footer_offset": 50305,
+      "commit_id": "57cdaf56a0fd38e391e0dc4518b3b47628604d7b5dad461dbf40bc2d18c3cafb",
+      "footer_offset": 7636,
       "seq": 1
     },
     {
       "checkpoint": false,
-      "commit_id": "61c3d9f2d879d383b97ba35c905cd90fddf08c8a94168a0e19640367306f14c8",
-      "footer_offset": 51592,
+      "commit_id": "0e4087c2f50f97961d469a27598b1359045e516b52363b9442a442889df087bb",
+      "footer_offset": 8923,
       "seq": 2
     },
     {
       "checkpoint": false,
-      "commit_id": "9f4b42e7362e11c77680b5504ae291f28743b4941892384097407643504b2062",
-      "footer_offset": 52879,
+      "commit_id": "3fb8ffce53f76b9345da6e16872b8c074661a425490d4fb5c1eea8dba04c06ad",
+      "footer_offset": 10210,
       "seq": 3
     },
     {
       "checkpoint": false,
-      "commit_id": "be27c400d376e111ee89fa3436f66299e59147ac906748b2702007d1c85e8849",
-      "footer_offset": 53355,
+      "commit_id": "878829335fc05b9b5ee9dfbdccf928caa21d25db916de0185744e33aa5fb6ccb",
+      "footer_offset": 10686,
       "seq": 4
     },
     {
       "checkpoint": false,
-      "commit_id": "69dcabb0a6c39ea64a625eaf44f3bc6a9554ef3a7b9b32b09e239ed3d3b1aeab",
-      "footer_offset": 54656,
+      "commit_id": "24fce2edccec4a3ca856d1dbd01895abbb6ebf47a0eda4783cba63f52c886efa",
+      "footer_offset": 11987,
       "seq": 5
     }
   ],

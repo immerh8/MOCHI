@@ -68,9 +68,9 @@ thread_local! {
 
 /// Test control: archives **created on this thread** carry `draft` in
 /// descriptor key 3 instead of null, until it is set back to `None`. It
-/// builds the draft-2 sources `mochi migrate` is tested on; nothing else
-/// about the layout differs between draft 2 and a ratified archive (spec
-/// B.2.14). Returns the previous value. Production code cannot call this.
+/// builds the draft-2 sources `mochi migrate` is tested on; the one other
+/// difference between draft 2 and a ratified archive is the catalog image,
+/// which draft 2 stores uncompressed (payload encoding 0; B.2.15). Returns the previous value. Production code cannot call this.
 #[cfg(any(test, feature = "test-controls"))]
 pub fn set_legacy_draft_for_tests(draft: Option<u64>) -> Option<u64> {
     LEGACY_DRAFT.with(|c| c.replace(draft))
