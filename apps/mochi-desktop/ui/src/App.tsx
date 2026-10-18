@@ -199,7 +199,15 @@ function SelfTest() {
 export function App() {
   return (
     <main>
-      <h1>{t("app.title")}</h1>
+      <header className="app-header">
+        <span className="mascot-face" aria-hidden="true" />
+        <div>
+          <h1>{t("app.title")}</h1>
+          <p className="tagline" aria-hidden="true">
+            {t("app.tagline")}
+          </p>
+        </div>
+      </header>
       <Browser
         toolsNav={<SectionNav />}
         tools={

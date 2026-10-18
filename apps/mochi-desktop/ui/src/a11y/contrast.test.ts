@@ -61,6 +61,20 @@ test("the focus ring and the borders that mark a control reach 3:1", () => {
   expect(contrast(c("accent"), c("surface"))).toBeGreaterThanOrEqual(3);
 });
 
+test("the primary button's text reaches 4.5:1 on the accent fill, in both its states", () => {
+  for (const fill of ["accent", "accent-hover"]) {
+    const ratio = contrast(c("on-strong"), c(fill));
+    expect(ratio, `white on --${fill} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("the edge of a control (button, field) reaches 3:1 on the page and on a panel", () => {
+  for (const surface of ["bg", "surface"]) {
+    const ratio = contrast(c("border-strong"), c(surface));
+    expect(ratio, `--border-strong on --${surface} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+  }
+});
+
 test("only PASS is green, and the failure fill is not the success fill", () => {
   expect(c("pass")).not.toBe(c("fail"));
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];

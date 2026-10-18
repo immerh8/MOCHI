@@ -118,6 +118,33 @@ test("with no archive open, three plain actions and one quiet sentence are on sc
   expect(screen.queryByTestId("recent")).toBeNull();
 });
 
+test("the start screen shows the tagline, and the mascot is not an img element", async () => {
+  backend();
+  const { container } = render(<App />);
+  const start = await screen.findByTestId("start-screen");
+  expect(within(start).getByText("Archive made simple")).toBeInTheDocument();
+  expect(within(start).getByText("Drag and drop files or an archive here")).toBeInTheDocument();
+  // The mascot is decoration (a CSS background); the hostile-name checks rely on there being no img at all.
+  expect(container.querySelectorAll("img")).toHaveLength(0);
+  expect(container.querySelectorAll("[href]")).toHaveLength(0);
+  expect(container.querySelectorAll(".mascot-face, .mascot-hero")).toHaveLength(2);
+  for (const mascot of container.querySelectorAll(".mascot-face, .mascot-hero")) {
+    expect(mascot).toHaveAttribute("aria-hidden", "true");
+  }
+});
+
+test("the settings gear opens Advanced and moves focus to the Settings heading", async () => {
+  const user = userEvent.setup();
+  backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  const advanced = screen.getByTestId("advanced");
+  expect(advanced).not.toHaveAttribute("open");
+  await user.click(screen.getByTestId("start-settings"));
+  expect(advanced).toHaveAttribute("open");
+  expect(document.activeElement).toBe(document.getElementById("settings-heading"));
+});
+
 test("the tools are behind a collapsed Advanced disclosure, still in the page for keyboard users", async () => {
   backend();
   render(<App />);

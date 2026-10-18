@@ -390,6 +390,16 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
     }
   };
 
+  // The gear on the start screen: open the Advanced area and land on Settings,
+  // as the section buttons do (a closed disclosure cannot take focus).
+  const advancedRef = useRef<HTMLDetailsElement>(null);
+  const showSettings = () => {
+    if (advancedRef.current) advancedRef.current.open = true;
+    const heading = document.getElementById("settings-heading");
+    heading?.focus();
+    heading?.scrollIntoView?.({ block: "start" });
+  };
+
   const showStart = open === null && !creating && waiting === null;
 
   // The start screen steps aside while the create panel is open; when the
@@ -404,7 +414,7 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
 
   return (
     <section aria-labelledby="browser-heading" className="browser">
-      <h2 id="browser-heading" tabIndex={-1}>
+      <h2 id="browser-heading" tabIndex={-1} className={showStart ? "sr-only" : undefined}>
         {open ? t("browser.heading") : t("start.heading")}
       </h2>
       {open && (
@@ -451,6 +461,7 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
           onForgetRecent={() => {
             forgetRecentArchives().then(refreshRecents, refreshRecents);
           }}
+          onSettings={showSettings}
         />
       )}
       <Writer
@@ -619,7 +630,7 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
           </div>
         </>
       )}
-      <details className="advanced" data-testid="advanced">
+      <details className="advanced" data-testid="advanced" ref={advancedRef}>
         <summary>{t("start.advanced")}</summary>
         <p className="note">{t("start.advancedHint")}</p>
         {toolsNav}

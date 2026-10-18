@@ -9,6 +9,8 @@ export const start = {
   "start.openHint": "Look inside an archive and pick what to take out.",
   "start.extract": "Extract archive",
   "start.extractHint": "Choose an archive and take everything out of it.",
+  "start.dropZone": "Drag and drop files or an archive here",
+  "start.settings": "Settings",
   "start.dropHint":
     "You can also drop files and folders here to put them in a new archive, or drop a .mochi file to open it.",
   "start.note":
