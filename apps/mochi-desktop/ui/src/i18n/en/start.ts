@@ -11,8 +11,7 @@ export const start = {
   "start.extractHint": "Choose an archive and take everything out of it.",
   "start.dropZone": "Drag and drop files or an archive here",
   "start.settings": "Settings",
-  "start.dropHint":
-    "You can also drop files and folders here to put them in a new archive, or drop a .mochi file to open it.",
+  "start.dropHint": "Files and folders go into a new archive. A .mochi file opens.",
   "start.note":
     "An archive packs files into one file. It is not a second copy of them: keep an independent copy of anything you cannot lose.",
   "start.recent": "Recent archives",

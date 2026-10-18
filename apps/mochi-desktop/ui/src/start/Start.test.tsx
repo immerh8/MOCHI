@@ -133,6 +133,17 @@ test("the start screen shows the tagline, and the mascot is not an img element",
   }
 });
 
+test("the drop hint adds to the title instead of repeating it", async () => {
+  backend();
+  render(<App />);
+  const zone = await screen.findByTestId("start-drop-hint");
+  expect(zone).toHaveTextContent("Drag and drop files or an archive here");
+  const hint = zone.querySelector(".note");
+  expect(hint).not.toBeNull();
+  expect(hint?.textContent).not.toMatch(/drag|drop/i);
+  expect(hint).toHaveTextContent("A .mochi file opens.");
+});
+
 test("the settings gear opens Advanced and moves focus to the Settings heading", async () => {
   const user = userEvent.setup();
   backend();

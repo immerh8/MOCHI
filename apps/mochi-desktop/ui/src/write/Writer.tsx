@@ -385,7 +385,7 @@ export function Writer({
 
   return (
     <section aria-labelledby="write-heading" className="writer" data-testid="writer">
-      <h2 id="write-heading" tabIndex={-1} className={showToolbar ? undefined : "sr-only"}>
+      <h2 id="write-heading" tabIndex={-1} className="sr-only">
         {t("write.heading")}
       </h2>
       {dragging && (

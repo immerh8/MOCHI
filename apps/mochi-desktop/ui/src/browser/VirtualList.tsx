@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode, UIEvent } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode, UIEvent } from "react";
 
 import { t } from "../i18n";
 
@@ -24,6 +24,13 @@ type Props<T> = {
    */
   renderRow: (row: T, index: number, tabIndex: 0 | -1) => ReactNode;
   label: string;
+  /**
+   * A column-header row drawn above the rows, outside the scrolling area so
+   * it stays put. It is presentational: the list itself is the control. The
+   * scrollbar's width is passed on as `--sbw` so the header's columns line up
+   * with the rows'.
+   */
+  head?: ReactNode;
   testId?: string;
   /** Id of an element that explains the keys; it describes the list. */
   hintId?: string;
@@ -44,6 +51,7 @@ export function VirtualList<T>({
   loadPage,
   renderRow,
   label,
+  head,
   testId,
   hintId,
   focusFirst = false,
@@ -55,6 +63,7 @@ export function VirtualList<T>({
   const requestedRef = useRef(new Set<number>());
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
+  const [scrollbar, setScrollbar] = useState(0);
   // The row that is the tab stop, and the row that should take focus once it
   // is on screen (set by the keyboard handler and by `focusFirst`).
   const [active, setActive] = useState(0);
@@ -71,7 +80,10 @@ export function VirtualList<T>({
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
-    const measure = () => setHeight(el.clientHeight);
+    const measure = () => {
+      setHeight(el.clientHeight);
+      setScrollbar(Math.max(0, el.offsetWidth - el.clientWidth));
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
@@ -184,26 +196,29 @@ export function VirtualList<T>({
   }
 
   return (
-    <div
-      ref={viewportRef}
-      className="vlist"
-      data-testid={testId}
-      data-total={total}
-      onScroll={(e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop)}
-    >
+    <div className="vtable" style={{ "--sbw": `${scrollbar}px` } as CSSProperties}>
+      {head}
       <div
-        role="list"
-        aria-label={label}
-        aria-describedby={hintId}
-        className="vspacer"
-        style={{ height: total * rowHeight }}
-        onKeyDown={onKeyDown}
-        onFocus={(e) => {
-          const row = e.target.closest("[data-row-index]");
-          if (row) setActive(Number(row.getAttribute("data-row-index")));
-        }}
+        ref={viewportRef}
+        className="vlist"
+        data-testid={testId}
+        data-total={total}
+        onScroll={(e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop)}
       >
-        {items}
+        <div
+          role="list"
+          aria-label={label}
+          aria-describedby={hintId}
+          className="vspacer"
+          style={{ height: total * rowHeight }}
+          onKeyDown={onKeyDown}
+          onFocus={(e) => {
+            const row = e.target.closest("[data-row-index]");
+            if (row) setActive(Number(row.getAttribute("data-row-index")));
+          }}
+        >
+          {items}
+        </div>
       </div>
     </div>
   );

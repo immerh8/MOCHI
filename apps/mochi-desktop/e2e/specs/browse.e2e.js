@@ -57,7 +57,10 @@ describe("archive browser", () => {
     expect(await countElements('[data-testid="entry"] .escaped')).toBe(2);
 
     expect(await countElements("img")).toBe(0);
-    expect(await countElements("svg")).toBe(0);
+    // The app's own icons are decorative inline svg; anything else, or any
+    // inline event handler, came from archive text.
+    expect(await countElements('svg:not([aria-hidden="true"][focusable="false"])')).toBe(0);
+    expect(await countElements("[onload], [onerror], [onmouseover], [onclick]")).toBe(0);
     // No script element came from a name. (Counting all scripts does not
     // work: WebView2 under msedgedriver adds one of its own on Windows.)
     expect(

@@ -93,3 +93,14 @@ test("focus is always drawn, and nothing turns the outline off", () => {
   expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--focus\)/);
   expect(css).not.toMatch(/outline:\s*(none|0)\b/);
 });
+
+test.each(["icon-folder", "icon-image", "icon-sheet", "icon-pdf"])(
+  "the file-type icon colour --%s reaches 3:1 on every surface, and none is the pass green",
+  (name) => {
+    for (const surface of SURFACES) {
+      const ratio = contrast(c(name), c(surface));
+      expect(ratio, `--${name} on --${surface} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    }
+    expect(c(name)).not.toBe(c("pass"));
+  },
+);

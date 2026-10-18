@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import type { RecentView } from "../ipc/start";
-import { ExtractIcon, FolderIcon, GearIcon, PlusIcon } from "./icons";
+import { ExtractIcon, FolderIcon, GearIcon, PlusIcon } from "../icons";
 
 export interface StartProps {
   busy: boolean;
@@ -44,7 +44,7 @@ export function Start({
       <hr className="divider" />
       <div className="drop-zone" data-testid="start-drop-hint">
         <p className="drop-zone-title">{t("start.dropZone")}</p>
-        <p className="note">{t("start.dropHint")}</p>
+        <p className="note quiet">{t("start.dropHint")}</p>
       </div>
       <div className="big-actions">
         <button type="button" className="big" data-testid="start-create" onClick={onCreate} disabled={busy}>

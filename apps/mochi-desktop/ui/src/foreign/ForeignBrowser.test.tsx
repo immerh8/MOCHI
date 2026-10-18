@@ -338,3 +338,23 @@ test("extracting the selected entry sends its key; cancelling is offered while i
   b.job({ event: "finished", job_id: 9, outcome: { status: "cancelled" } });
   expect(await screen.findByTestId("foreign-headline")).toHaveTextContent("Cancelled");
 });
+
+test("an archive that opens while the Advanced area is collapsed opens that area, and rows get icons from a fixed set", async () => {
+  backend();
+  const user = userEvent.setup();
+  const { container } = render(
+    <details data-testid="area">
+      <summary>Advanced</summary>
+      <ForeignBrowser />
+    </details>,
+  );
+  expect(screen.getByTestId("area")).not.toHaveAttribute("open");
+  await user.click(screen.getByTestId("foreign-open"));
+  await screen.findAllByTestId("foreign-entry");
+  expect(screen.getByTestId("area")).toHaveAttribute("open");
+  const entries = screen.getAllByTestId("foreign-entry");
+  expect(entries.map((e) => e.querySelector(".type")?.textContent)).toEqual(["Folder", "TXT", "File", "File"]);
+  expect(container.querySelector("img")).toBeNull();
+  for (const icon of container.querySelectorAll("svg")) expect(icon).toHaveAttribute("aria-hidden", "true");
+  expect(container.querySelectorAll('[data-testid="foreign-entry"] svg')).toHaveLength(entries.length);
+});

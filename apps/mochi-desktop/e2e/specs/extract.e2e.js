@@ -171,7 +171,10 @@ describe("extract", () => {
     }
     // Archive text is text: nothing was injected into the page.
     expect(await countElements("img")).toBe(0);
-    expect(await countElements("svg")).toBe(0);
+    // The app's own icons are decorative inline svg; anything else, or any
+    // inline event handler, came from archive text.
+    expect(await countElements('svg:not([aria-hidden="true"][focusable="false"])')).toBe(0);
+    expect(await countElements("[onload], [onerror], [onmouseover], [onclick]")).toBe(0);
   });
 
   it("shows the finished extraction's folder in the file manager, by asking Rust", async () => {
@@ -278,7 +281,10 @@ describe("extract", () => {
     expect(items.some((t) => t.includes(HOSTILE_ROOT))).toBe(true);
     await assertNoBannedWording();
     expect(await countElements("img")).toBe(0);
-    expect(await countElements("svg")).toBe(0);
+    // The app's own icons are decorative inline svg; anything else, or any
+    // inline event handler, came from archive text.
+    expect(await countElements('svg:not([aria-hidden="true"][focusable="false"])')).toBe(0);
+    expect(await countElements("[onload], [onerror], [onmouseover], [onclick]")).toBe(0);
   });
 
   it("closing the plan of a new folder removes it again, and never a folder with files in it", async () => {

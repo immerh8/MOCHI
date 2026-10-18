@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 
 import type { ArchiveSummary, EntryDetails, EntryRow } from "../ipc/browse";
-import { Browser } from "./Browser";
+import { Browser, ROW_HEIGHT } from "./Browser";
 import { formatMode, formatSize } from "./format";
 import { PAGE } from "./VirtualList";
 
@@ -150,9 +150,19 @@ test("opening shows the archive, its timeline, and the root, with hostile names 
   expect(entries[4]).toHaveTextContent("(escaped)");
   expect(entries[2]).not.toHaveTextContent("(escaped)");
   // Markup in names and labels stayed text: no element was created from it.
-  for (const tag of ["img", "script", "svg", "b"]) {
+  for (const tag of ["img", "script", "b"]) {
     expect(container.querySelector(tag)).toBeNull();
   }
+  // The only svg elements are the decorative icons the app draws itself: each
+  // is hidden from assistive technology, and none came from a name.
+  const icons = Array.from(container.querySelectorAll("svg"));
+  expect(icons.length).toBeGreaterThan(0);
+  for (const icon of icons) {
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    expect(icon.getAttribute("focusable")).toBe("false");
+    expect(icon.querySelector("script, foreignObject, image, a")).toBeNull();
+  }
+  expect(container.querySelectorAll('[data-testid="entry"] svg')).toHaveLength(entries.length);
   expect(screen.getByTestId("timeline")).toHaveTextContent('hold: <b onmouseover="x">hold</b>');
 });
 
@@ -175,7 +185,7 @@ test("a 100,000-entry folder is paged and only a window of rows is in the DOM", 
 
   // Scrolling far down fetches only the page there.
   const list = screen.getByTestId("entries");
-  list.scrollTop = 28 * 99_990;
+  list.scrollTop = ROW_HEIGHT * 99_990;
   list.dispatchEvent(new Event("scroll"));
   await screen.findByText("f099990");
   const deep = calls.filter((c) => c.cmd === "list_children" && (c.args.offset as number) >= 99_800);
@@ -223,6 +233,22 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   expect(calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
   expect(screen.getByTestId("commit-0")).toHaveAttribute("aria-current", "true");
   expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Version 0$/);
+});
+
+test("the top bar names the archive from facts the app has, and search opens Advanced at Search", async () => {
+  const { user } = await openIt();
+  const bar = screen.getByTestId("archive-meta");
+  expect(bar).toHaveTextContent("fake.mochi · 3 versions · 100,009 entries");
+  expect(screen.getByTestId("close-archive")).toHaveAccessibleName("Close");
+  const advanced = screen.getByTestId("advanced");
+  expect(advanced).not.toHaveAttribute("open");
+  await user.click(screen.getByTestId("search-archive"));
+  expect(advanced).toHaveAttribute("open");
+  expect(document.activeElement).toBe(document.getElementById("search-heading"));
+  // The table header is for the eye; the rows carry the names of their parts.
+  expect(document.querySelector(".table-head")).toHaveAttribute("aria-hidden", "true");
+  const types = (await screen.findAllByTestId("entry")).map((e) => e.querySelector(".type")?.textContent);
+  expect(types).toEqual(["Folder", "Folder", "File", "File", "File"]);
 });
 
 test("a cancelled dialog changes nothing; a refused archive shows its code", async () => {

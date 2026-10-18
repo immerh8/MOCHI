@@ -31,7 +31,7 @@ export function Help() {
   };
 
   return (
-    <section aria-labelledby="help-heading">
+    <section aria-labelledby="help-heading" className="help">
       <h2 id="help-heading" tabIndex={-1}>
         {t("help.heading")}
       </h2>

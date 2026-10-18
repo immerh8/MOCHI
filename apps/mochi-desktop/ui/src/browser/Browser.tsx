@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
-import { t, tn } from "../i18n";
+import { BackIcon, FolderIcon, SearchIcon } from "../icons";
+import { t, tc, tn } from "../i18n";
 
 import {
   closeArchive,
@@ -24,6 +25,7 @@ import { forgetRecentArchives, openDroppedArchive, openRecent, recentArchives } 
 import type { RecentView } from "../ipc/start";
 import { Start } from "../start/Start";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
+import { ListHead, EntryCells } from "./ListHead";
 import { Name } from "./Name";
 import { Tree } from "./Tree";
 import type { Crumb } from "./Tree";
@@ -37,8 +39,8 @@ import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 
-/** Row height of the file list, in pixels (must match `.vrow` in CSS). */
-export const ROW_HEIGHT = 28;
+/** Row height of the file list, in pixels. */
+export const ROW_HEIGHT = 40;
 
 function profileText(a: ArchiveSummary): string {
   const parts = [t("browser.profileCore")];
@@ -390,15 +392,18 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
     }
   };
 
-  // The gear on the start screen: open the Advanced area and land on Settings,
-  // as the section buttons do (a closed disclosure cannot take focus).
+  // The gear on the start screen and the search button in the archive's top
+  // bar: open the Advanced area and land on that section's heading, as the
+  // section buttons do (a closed disclosure cannot take focus).
   const advancedRef = useRef<HTMLDetailsElement>(null);
-  const showSettings = () => {
+  const showAdvanced = (headingId: string) => {
     if (advancedRef.current) advancedRef.current.open = true;
-    const heading = document.getElementById("settings-heading");
+    const heading = document.getElementById(headingId);
     heading?.focus();
     heading?.scrollIntoView?.({ block: "start" });
   };
+  const showSettings = () => showAdvanced("settings-heading");
+  const showSearch = () => showAdvanced("search-heading");
 
   const showStart = open === null && !creating && waiting === null;
 
@@ -414,17 +419,62 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
 
   return (
     <section aria-labelledby="browser-heading" className="browser">
-      <h2 id="browser-heading" tabIndex={-1} className={showStart ? "sr-only" : undefined}>
+      <h2 id="browser-heading" tabIndex={-1} className={showStart || open ? "sr-only" : undefined}>
         {open ? t("browser.heading") : t("start.heading")}
       </h2>
       {open && (
-        <div className="actions">
-          <button type="button" data-testid="open-archive" onClick={() => void doOpen()} disabled={busy}>
-            {t("browser.open")}
+        <div className="browser-bar">
+          <button
+            type="button"
+            className="icon-button"
+            data-testid="close-archive"
+            aria-label={t("browser.close")}
+            title={t("browser.back")}
+            onClick={doClose}
+            disabled={busy}
+          >
+            <BackIcon />
           </button>
-          <button type="button" data-testid="close-archive" onClick={doClose} disabled={busy}>
-            {t("browser.close")}
-          </button>
+          <div className="bar-text" data-testid="archive-meta">
+            <strong className="bar-title">{open.archive.file_name}</strong>
+            <span className="sr-only">{t("browser.metaSeparator")}</span>
+            <span className="bar-sub">
+              {tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
+                n: open.archive.commits.length,
+              })}
+              {t("browser.metaSeparator")}
+              {tc(open.snapshot.entries, "count.entryOne", "count.entryMany")}
+              {open.archive.profile.encrypted && (
+                <>
+                  {t("browser.metaSeparator")}
+                  {t("browser.profileEncrypted")}
+                </>
+              )}
+            </span>
+          </div>
+          <div className="bar-actions">
+            <button
+              type="button"
+              className="icon-button"
+              data-testid="search-archive"
+              aria-label={t("browser.search")}
+              title={t("browser.search")}
+              onClick={showSearch}
+            >
+              <SearchIcon />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              data-testid="open-archive"
+              aria-label={t("browser.open")}
+              title={t("browser.open")}
+              onClick={() => void doOpen()}
+              disabled={busy}
+            >
+              <FolderIcon />
+            </button>
+          </div>
         </div>
       )}
       {error && (
@@ -475,28 +525,130 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
         onArchiveDropped={() => void doOpenDropped()}
       />
       {open && (
-        <Extractor
-          archive={open.archive}
-          seq={open.snapshot.seq}
-          selected={details ? { key: details.key, name: details.path } : null}
-          autoPlan={autoExtract}
-        />
-      )}
-      {open && (
         <>
-          <p className="archive-meta" data-testid="archive-meta">
-            <strong>{open.archive.file_name}</strong>
-            {t("browser.metaSeparator")}
-            {tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
-              n: open.archive.commits.length,
-            })}
-            {open.archive.profile.encrypted && (
-              <>
-                {t("browser.metaSeparator")}
-                {t("browser.profileEncrypted")}
-              </>
-            )}
-          </p>
+          {open.archive.retention_error && (
+            <p role="note" className="warning">
+              {t("browser.retentionError", {
+                code: open.archive.retention_error.code,
+                message: open.archive.retention_error.message,
+              })}
+            </p>
+          )}
+          {open.snapshot.catalog_source.source === "snapshot_manifest" && (
+            <p role="note" className="warning" data-testid="catalog-note">
+              {t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}
+            </p>
+          )}
+          <div className="panes">
+            <div className="listing">
+              <div className="listing-head">
+                <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
+                  <button type="button" className="link" onClick={() => navigate([])}>
+                    {t("browser.commit", { seq: open.snapshot.seq })}
+                  </button>
+                  {path.map((c, i) => (
+                    <span key={c.key}>
+                      {t("common.nameSeparator")}
+                      <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
+                        <Name name={c.name} />
+                      </button>
+                    </span>
+                  ))}
+                </nav>
+                <p className="count" data-testid="entry-count" id="entry-count">
+                  {total === null
+                    ? t("common.loading")
+                    : t("browser.entryCount", {
+                        total: total.toLocaleString("en-US"),
+                        noun: t(total === 1 ? "common.entryOne" : "common.entryMany"),
+                        snapshot: open.snapshot.entries.toLocaleString("en-US"),
+                      })}
+                </p>
+              </div>
+              {total !== null && (
+                <VirtualList
+                  key={listingId}
+                  total={total}
+                  rowHeight={ROW_HEIGHT}
+                  loadPage={loadPage}
+                  label={t("browser.folderContents")}
+                  head={<ListHead />}
+                  hintId="entry-hint"
+                  focusFirst={focusList}
+                  testId="entries"
+                  onError={listError}
+                  renderRow={(row: EntryRow, _index: number, tabIndex: 0 | -1) => (
+                    <button
+                      type="button"
+                      className={row.key === selected ? "entry selected" : "entry"}
+                      data-testid="entry"
+                      data-kind={row.kind}
+                      aria-pressed={row.key === selected}
+                      tabIndex={tabIndex}
+                      onClick={() => select(row)}
+                      onDoubleClick={() => {
+                        if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && row.kind === "directory") {
+                          e.preventDefault();
+                          navigate([...path, { key: row.key, name: row.name }], true);
+                        }
+                      }}
+                    >
+                      <EntryCells
+                        kind={row.kind}
+                        name={row.name}
+                        kindLabel={row.kind === "directory" ? t("common.folder") : t("common.file")}
+                        size={
+                          row.kind === "directory"
+                            ? t("browser.itemsCount", {
+                                n: (row.child_dirs + row.child_files).toLocaleString("en-US"),
+                              })
+                            : shortSize(row.size)
+                        }
+                      />
+                    </button>
+                  )}
+                />
+              )}
+              <p className="note" id="entry-hint">
+                {t("browser.listHint")}
+              </p>
+            </div>
+            <Extractor
+              archive={open.archive}
+              seq={open.snapshot.seq}
+              selected={details ? { key: details.key, name: details.path } : null}
+              autoPlan={autoExtract}
+            />
+            <div className="side">
+              <div className="pane">
+                <p className="pane-title" aria-hidden="true">
+                  {t("browser.paneFolders")}
+                </p>
+                <Tree
+                  key={`${open.archive.handle}:${open.snapshot.seq}`}
+                  handle={open.archive.handle}
+                  seq={open.snapshot.seq}
+                  current={dir}
+                  onOpen={navigate}
+                  onError={listError}
+                />
+              </div>
+              <div className="pane">
+                <p className="pane-title" aria-hidden="true">
+                  {t("browser.paneVersions")}
+                </p>
+                <Timeline
+                  commits={open.archive.commits}
+                  selected={open.snapshot.seq}
+                  onSelect={(s) => void pickSnapshot(s)}
+                />
+              </div>
+              {details && <Details details={details} />}
+            </div>
+          </div>
           <details className="technical" data-testid="archive-technical">
             <summary>{t("start.technical")}</summary>
             <p data-testid="archive-technical-text">
@@ -527,107 +679,6 @@ export function Browser({ toolsNav, tools }: { toolsNav?: ReactNode; tools?: Rea
               <p>{NOT_SIGNED}</p>
             </details>
           )}
-          {open.archive.retention_error && (
-            <p role="note" className="warning">
-              {t("browser.retentionError", {
-                code: open.archive.retention_error.code,
-                message: open.archive.retention_error.message,
-              })}
-            </p>
-          )}
-          {open.snapshot.catalog_source.source === "snapshot_manifest" && (
-            <p role="note" className="warning" data-testid="catalog-note">
-              {t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}
-            </p>
-          )}
-          <div className="panes">
-            <Timeline
-              commits={open.archive.commits}
-              selected={open.snapshot.seq}
-              onSelect={(s) => void pickSnapshot(s)}
-            />
-            <Tree
-              key={`${open.archive.handle}:${open.snapshot.seq}`}
-              handle={open.archive.handle}
-              seq={open.snapshot.seq}
-              current={dir}
-              onOpen={navigate}
-              onError={listError}
-            />
-            <div className="listing">
-              <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
-                <button type="button" className="link" onClick={() => navigate([])}>
-                  {t("browser.commit", { seq: open.snapshot.seq })}
-                </button>
-                {path.map((c, i) => (
-                  <span key={c.key}>
-                    {t("common.nameSeparator")}
-                    <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
-                      <Name name={c.name} />
-                    </button>
-                  </span>
-                ))}
-              </nav>
-              <p className="count" data-testid="entry-count" id="entry-count">
-                {total === null
-                  ? t("common.loading")
-                  : t("browser.entryCount", {
-                      total: total.toLocaleString("en-US"),
-                      noun: t(total === 1 ? "common.entryOne" : "common.entryMany"),
-                      snapshot: open.snapshot.entries.toLocaleString("en-US"),
-                    })}
-              </p>
-              {total !== null && (
-                <VirtualList
-                  key={listingId}
-                  total={total}
-                  rowHeight={ROW_HEIGHT}
-                  loadPage={loadPage}
-                  label={t("browser.folderContents")}
-                  hintId="entry-hint"
-                  focusFirst={focusList}
-                  testId="entries"
-                  onError={listError}
-                  renderRow={(row: EntryRow, _index: number, tabIndex: 0 | -1) => (
-                    <button
-                      type="button"
-                      className={row.key === selected ? "entry selected" : "entry"}
-                      data-testid="entry"
-                      data-kind={row.kind}
-                      aria-pressed={row.key === selected}
-                      tabIndex={tabIndex}
-                      onClick={() => select(row)}
-                      onDoubleClick={() => {
-                        if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && row.kind === "directory") {
-                          e.preventDefault();
-                          navigate([...path, { key: row.key, name: row.name }], true);
-                        }
-                      }}
-                    >
-                      <span className="kind" aria-label={row.kind === "directory" ? t("common.folder") : t("common.file")}>
-                        {row.kind === "directory" ? "▣" : "▢"}
-                      </span>
-                      <span className="entry-name">
-                        <Name name={row.name} />
-                      </span>
-                      <span className="size">
-                        {row.kind === "directory"
-                          ? t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") })
-                          : shortSize(row.size)}
-                      </span>
-                    </button>
-                  )}
-                />
-              )}
-              <p className="note" id="entry-hint">
-                {t("browser.listHint")}
-              </p>
-            </div>
-            {details && <Details details={details} />}
-          </div>
         </>
       )}
       <details className="advanced" data-testid="advanced" ref={advancedRef}>

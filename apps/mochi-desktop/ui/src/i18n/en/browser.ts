@@ -49,6 +49,13 @@ export const browser = {
   "browser.listHint":
     "Arrow keys move between entries, Page Up, Page Down, Home and End jump, Space selects, and Enter opens a folder.",
   "browser.itemsCount": "{n} items",
+  "browser.colName": "Name",
+  "browser.colSize": "Size",
+  "browser.colType": "Type",
+  "browser.back": "Close this archive and go back",
+  "browser.search": "Search inside this archive",
+  "browser.paneFolders": "Folders",
+  "browser.paneVersions": "Versions",
   "browser.details": "Details",
   "browser.detailPath": "Path",
   "browser.detailKind": "Kind",

@@ -5,6 +5,7 @@ import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
+import { StatusBar } from "../browser/StatusBar";
 import { t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { planExtract } from "../ipc/extract";
@@ -226,12 +227,13 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
 
   return (
     <section aria-labelledby="extract-heading" className="extractor" data-testid="extractor">
-      <h2 id="extract-heading" tabIndex={-1}>
+      <h2 id="extract-heading" tabIndex={-1} className="sr-only">
         {t("extract.heading")}
       </h2>
-      <div className="actions">
+      <StatusBar selected={selected !== null}>
         <button
           type="button"
+          className={selected === null ? "primary" : undefined}
           data-testid="extract-all"
           onClick={() => planFor({ kind: "all" }, "default")}
           disabled={busy || archive === null || seq === null}
@@ -241,6 +243,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         </button>
         <button
           type="button"
+          className={selected === null ? undefined : "primary"}
           data-testid="extract-selected"
           onClick={() => selected && planFor({ kind: "selected", entry: selected }, "default")}
           disabled={busy || archive === null || seq === null || selected === null}
@@ -248,7 +251,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         >
           {t("extract.selected")}
         </button>
-      </div>
+      </StatusBar>
       {error && (
         <p role="alert" className="error" data-testid="extract-error">
           {error}
