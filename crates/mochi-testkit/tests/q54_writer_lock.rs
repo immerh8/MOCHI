@@ -274,3 +274,235 @@ fn q54_a_created_archive_is_locked_and_readable() {
     w.close().unwrap();
     writer(&file).unwrap().close().unwrap();
 }
+
+// ---- Orphan lock files (owner decision 2026-10-19; spec B.2.16) -------------
+
+/// `<name>.mochi-lock` in `dir`.
+fn lock_of(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("{name}{LOCK_FILE_SUFFIX}"))
+}
+
+/// An empty lock file for an archive that is not there.
+fn orphan(dir: &Path, name: &str) -> PathBuf {
+    let p = lock_of(dir, name);
+    std::fs::File::create(&p).unwrap();
+    p
+}
+
+/// Creates `name` in `dir` through the D13 path and returns its writer.
+fn create(dir: &Path, name: &str, seed: u64) -> mochi_core::Result<ArchiveWriter<OsStorage>> {
+    use mochi_core::storage::os::OsDir;
+    let steps = scripted_history();
+    ArchiveWriter::<OsStorage>::create_in(
+        &mut OsDir::open(dir).unwrap(),
+        name,
+        Box::new(SeqIds::new(seed)),
+        test_options(),
+        steps[0].tx.clone(),
+        &Job::new().ctx(),
+    )
+    .map(|(w, _)| w)
+}
+
+/// Trigger 1: a writer that opens an archive for appending removes the
+/// orphans beside it, and only those.
+#[cfg(unix)]
+#[test]
+fn orphan_is_removed_when_a_writer_appends() {
+    let (tmp, file, _) = archive(2);
+    let gone = orphan(tmp.path(), "gone.mochi");
+    let other = orphan(tmp.path(), "other.mochi");
+    let w = writer(&file).unwrap();
+    assert!(!gone.exists() && !other.exists());
+    assert!(
+        lock_path(tmp.path()).exists(),
+        "the writer's own file stays"
+    );
+    w.close().unwrap();
+    assert!(lock_path(tmp.path()).exists(), "closing never removes it");
+}
+
+/// Trigger 2: creating an archive does the same, once it is published.
+#[cfg(unix)]
+#[test]
+fn orphan_is_removed_when_an_archive_is_created() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gone = orphan(tmp.path(), "gone.mochi");
+    let w = create(tmp.path(), NAME, 7).unwrap();
+    assert!(!gone.exists());
+    assert!(lock_path(tmp.path()).exists());
+    w.close().unwrap();
+}
+
+/// A lock file whose archive exists is never removed, whatever else a sweep
+/// finds; neither is one held by another handle, one with bytes, a link, a
+/// directory, or anything that is not a lock file; sub-directories are not
+/// entered.
+#[cfg(unix)]
+#[test]
+fn only_unheld_empty_regular_orphans_go() {
+    let (tmp, file, _) = archive(2);
+    let dir = tmp.path();
+
+    // Archive present (a dangling symbolic link counts as present).
+    let kept = lock_of(dir, "kept.mochi");
+    std::fs::write(dir.join("kept.mochi"), b"x").unwrap();
+    std::fs::File::create(&kept).unwrap();
+    let dangling = lock_of(dir, "dangling.mochi");
+    std::os::unix::fs::symlink(dir.join("nowhere"), dir.join("dangling.mochi")).unwrap();
+    std::fs::File::create(&dangling).unwrap();
+
+    // Held by someone else.
+    let held = orphan(dir, "held.mochi");
+    let holder = std::fs::File::open(&held).unwrap();
+    holder.try_lock().unwrap();
+
+    // Not what a lock file is: bytes, a link, a directory, other names.
+    let bytes = lock_of(dir, "bytes.mochi");
+    std::fs::write(&bytes, b"user data").unwrap();
+    let link = lock_of(dir, "link.mochi");
+    std::os::unix::fs::symlink(&bytes, &link).unwrap();
+    let as_dir = lock_of(dir, "dir.mochi");
+    std::fs::create_dir(&as_dir).unwrap();
+    let bare = dir.join(LOCK_FILE_SUFFIX);
+    std::fs::File::create(&bare).unwrap();
+    let other = dir.join("notes.txt");
+    std::fs::File::create(&other).unwrap();
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let nested = orphan(&dir.join("sub"), "deep.mochi");
+
+    writer(&file).unwrap().close().unwrap();
+    for p in [
+        &kept, &dangling, &held, &bytes, &link, &as_dir, &bare, &other, &nested,
+    ] {
+        assert!(p.symlink_metadata().is_ok(), "{} was removed", p.display());
+    }
+
+    // Released, the held one is an orphan like any other.
+    drop(holder);
+    writer(&file).unwrap().close().unwrap();
+    assert!(!held.exists());
+    assert!(kept.exists() && nested.exists());
+}
+
+/// Cleanup never fails the user's operation: a sweep that cannot remove
+/// (read-only directory), cannot read the directory, or meets odd entries
+/// leaves the writer working.
+#[cfg(unix)]
+#[test]
+fn a_failing_sweep_never_fails_the_operation() {
+    use mochi_core::storage::os::sweep_orphan_lock_files;
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(sweep_orphan_lock_files(Path::new("/nonexistent/mochi")), 0);
+
+    let (tmp, file, steps) = archive(2);
+    let gone = orphan(tmp.path(), "gone.mochi");
+    let mode = std::fs::metadata(tmp.path()).unwrap().permissions().mode();
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Root ignores directory permissions, so only assert the failure path
+    // where it really is one.
+    let removable = std::fs::File::create(tmp.path().join("probe")).is_ok();
+    let mut w = writer(&file).unwrap();
+    w.commit(steps[2].tx.clone(), &Job::new().ctx()).unwrap();
+    w.close().unwrap();
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+    if !removable {
+        assert!(gone.exists(), "nothing could be removed");
+    }
+}
+
+/// B/C race (spec B.2.16): B opened the orphan, the cleaner unlinks it (B
+/// held no lock yet), then B locks the dead inode while C creates and locks
+/// a fresh file. B must not keep that lock: creators racing a sweeper end
+/// with exactly one winner and one lock holder, never two.
+#[cfg(unix)]
+#[test]
+fn creators_racing_a_sweeper_never_both_win() {
+    use mochi_core::storage::os::sweep_orphan_lock_files;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let tmp = tempfile::tempdir().unwrap();
+    for round in 0..60 {
+        let name = format!("r{round}.mochi");
+        let (dir, name) = (tmp.path(), &name);
+        orphan(tmp.path(), name);
+        let stop = AtomicBool::new(false);
+        let outcomes = std::thread::scope(|s| {
+            let sweeper = s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    sweep_orphan_lock_files(tmp.path());
+                }
+            });
+            let creators: Vec<_> = (0..4u64)
+                .map(|i| s.spawn(move || create(dir, name, 100 + i).map(|w| w.close().unwrap())))
+                .collect();
+            let out: Vec<_> = creators.into_iter().map(|c| c.join().unwrap()).collect();
+            stop.store(true, Ordering::Relaxed);
+            sweeper.join().unwrap();
+            out
+        });
+        let won = outcomes.iter().filter(|o| o.is_ok()).count();
+        assert_eq!(won, 1, "round {round}: {outcomes:?}");
+        for e in outcomes.iter().filter_map(|o| o.as_ref().err()) {
+            assert!(
+                matches!(
+                    e.code,
+                    ErrorCode::DestinationExists | ErrorCode::LockConflict
+                ),
+                "round {round}: {e}"
+            );
+        }
+        // The winner's archive is intact and its lock file is the only one.
+        let r = OsReadStorage::open(tmp.path().join(name)).unwrap();
+        open_head(&r, &ReadOptions::default()).unwrap();
+        assert!(lock_of(tmp.path(), name).exists());
+    }
+}
+
+// ---- Windows: hidden lock files, no sweep -----------------------------------
+
+#[cfg(windows)]
+fn attributes(p: &Path) -> u32 {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::metadata(p).unwrap().file_attributes()
+}
+
+#[cfg(windows)]
+const HIDDEN: u32 = 0x2;
+
+/// A lock file this build creates is hidden, for a created archive and for
+/// an append that has to create it; reopening the hidden file works and
+/// does not change it.
+#[cfg(windows)]
+#[test]
+fn windows_created_lock_file_is_hidden_and_reopens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let w = create(tmp.path(), NAME, 7).unwrap();
+    assert_ne!(attributes(&lock_path(tmp.path())) & HIDDEN, 0);
+    w.close().unwrap();
+    writer(&tmp.path().join(NAME)).unwrap().close().unwrap();
+    assert_ne!(attributes(&lock_path(tmp.path())) & HIDDEN, 0);
+    assert_eq!(std::fs::metadata(lock_path(tmp.path())).unwrap().len(), 0);
+
+    // Deleted by the user, an append creates it again, hidden.
+    std::fs::remove_file(lock_path(tmp.path())).unwrap();
+    writer(&tmp.path().join(NAME)).unwrap().close().unwrap();
+    assert_ne!(attributes(&lock_path(tmp.path())) & HIDDEN, 0);
+}
+
+/// A visible lock file from an earlier build keeps working and stays
+/// visible; an orphan is not swept on Windows.
+#[cfg(windows)]
+#[test]
+fn windows_visible_lock_file_still_works_and_nothing_is_swept() {
+    let (tmp, file, steps) = archive(2);
+    let lock = lock_path(tmp.path());
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::File::create(&lock).unwrap();
+    assert_eq!(attributes(&lock) & HIDDEN, 0);
+    let gone = orphan(tmp.path(), "gone.mochi");
+    let mut w = writer(&file).unwrap();
+    w.commit(steps[2].tx.clone(), &Job::new().ctx()).unwrap();
+    w.close().unwrap();
+    assert_eq!(attributes(&lock) & HIDDEN, 0, "attributes are not touched");
+    assert!(gone.exists(), "Windows has no orphan sweep");
+}

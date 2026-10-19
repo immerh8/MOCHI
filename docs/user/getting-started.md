@@ -155,3 +155,13 @@ The CLI keeps the last head it saw for each archive in a small state directory
 (`--state-dir`, or `$MOCHI_STATE_DIR`, or the platform default). It is how `verify` can tell
 that an older copy has replaced a newer archive. `--no-local-history` turns that off, and
 freshness is then `UNKNOWN` ([verification.md](verification.md)).
+
+## The `.mochi-lock` file
+
+Creating or changing an archive makes an empty file named `<archive name>.mochi-lock` beside it.
+It keeps two programs from writing the same archive at once; it holds no data, and the archive
+does not need it to be read or restored. On Windows MOCHI creates it hidden (lock files made by
+earlier versions stay visible). On Linux, when MOCHI next creates or changes an archive in the
+same folder, it removes lock files whose archive is gone (renamed or deleted). On Windows those
+are not cleaned up automatically; if you rename or delete an archive, you can delete its
+`.mochi-lock` file too. Never delete one while a program is writing that archive.
