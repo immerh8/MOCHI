@@ -1,1 +1,1 @@
-Test release for the 1.0 checklist, do not use. Minimal WinRAR-style window, writer lock file hidden on Windows.
+Pre-release of MOCHI 1.0. Minimal WinRAR-style window; the writer lock file is hidden on Windows, and leftover lock files are cleaned up on Unix.
