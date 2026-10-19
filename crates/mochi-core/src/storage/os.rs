@@ -89,9 +89,30 @@
 //! over the archive fails every other handle's reads (error 33), so nothing
 //! could verify or read an archive during an append.
 //! * **Existence is not ownership.** The lock file is created if missing,
-//!   never truncated, never written, and never removed, by unlock or
-//!   otherwise. Only the OS lock on it counts; the OS drops it when the
-//!   holder exits, so a crashed writer leaves nothing to clean up.
+//!   never truncated, never written, and never removed by unlock. Only the OS
+//!   lock on it counts; the OS drops it when the holder exits, so a crashed
+//!   writer leaves nothing to clean up. The one removal is the orphan sweep
+//!   below (owner decision 2026-10-19, spec B.2.16).
+//! * **Hidden on Windows.** A lock file this build *creates* carries
+//!   `FILE_ATTRIBUTE_HIDDEN` ([`WINDOWS_FILE_ATTRIBUTE_HIDDEN`]). The file is
+//!   opened with `OPEN_ALWAYS` semantics (`create(true)`, `truncate(false)`),
+//!   so an existing file is opened as is, hidden or not, and its attributes
+//!   are not touched: lock files made by earlier builds stay visible. Linux
+//!   keeps the plain name (it is fixed by spec B.2.7).
+//! * **Orphan sweep (Unix only; spec B.2.16).** An *orphan* is a
+//!   `<name>.mochi-lock` whose `<name>` is absent from the same directory.
+//!   When a writer takes an archive lock, or a created archive is published,
+//!   [`sweep_orphan_lock_files`] looks at that one directory (bounded, no
+//!   recursion, errors ignored) and removes each orphan it can lock, only
+//!   *under that lock* and after checking again that the archive is absent.
+//!   Soundness rests on one rule kept by **every** locker, the cleaner
+//!   included: after locking, the path must still name the file you locked
+//!   (`dev`/`ino`), else drop it and start over. A locker that opened the
+//!   file just before the cleaner unlinked it thus never keeps a lock on a
+//!   dead inode, so no two writers hold "the" lock at once. Windows has no
+//!   sweep: stable Rust has no safe file-identity API there
+//!   (`volume_serial_number`/`file_index` are unstable, `windows_by_handle`),
+//!   and its delete-while-open semantics are untested here.
 //! * **Aliases.** The path is canonicalized first (`std::fs::canonicalize`),
 //!   so relative paths, `.`/`..`, symbolic links, and Windows short (8.3)
 //!   names all reach one lock file; names a filesystem treats as equal (case,
@@ -258,22 +279,151 @@ fn try_lock_file(file: &File) -> Result<(), StorageError> {
     }
 }
 
-/// Open (creating if missing, never truncating) and lock a writer lock file.
+/// `FILE_ATTRIBUTE_HIDDEN` (Win32 `fileapi.h`/`winnt.h`): the attribute a
+/// newly created lock file gets on Windows (spec B.2.16).
+#[cfg(any(windows, test))]
+const WINDOWS_FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+
+/// How often a locker starts over when the file it locked is no longer the
+/// one the path names (an orphan sweep removed it in between). Each retry
+/// needs a sweep to win a race, so reaching the end is not a real case.
+const LOCK_OPEN_ATTEMPTS: usize = 8;
+
+/// Open a writer lock file, creating it if missing and never truncating: on
+/// Windows `OPEN_ALWAYS` (`create(true)` without `truncate`, not
+/// `CREATE_ALWAYS`, which fails on an existing hidden file). The hidden
+/// attribute applies only when the file is created.
+fn open_lock_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::attributes(&mut options, WINDOWS_FILE_ATTRIBUTE_HIDDEN);
+    options.open(path)
+}
+
+/// Whether `path` (followed through links, as the open was) still names the
+/// file `file` is open on. Unix compares `dev`/`ino`: `file` keeps its inode
+/// alive, so the number cannot have been reused. Windows has no stable safe
+/// identity, and nothing there unlinks a lock file, so it answers yes.
+#[cfg(unix)]
+fn names_same_file(file: &File, path: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let held = file.metadata()?;
+    match std::fs::metadata(path) {
+        Ok(named) => Ok((named.dev(), named.ino()) == (held.dev(), held.ino())),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(unix))]
+fn names_same_file(_: &File, _: &Path) -> io::Result<bool> {
+    Ok(true)
+}
+
+/// Open and lock a writer lock file, then verify the path still names it
+/// (spec B.2.16): the rule every locker keeps so an orphan sweep cannot
+/// leave two holders on different inodes under one name.
 fn acquire_lock_file(path: &Path) -> Result<File, StorageError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|e| {
-            StorageError::Io(io::Error::new(
-                e.kind(),
-                format!("writer lock file {}: {e}", path.display()),
-            ))
-        })?;
-    try_lock_file(&file)?;
-    Ok(file)
+    acquire_lock_file_with(path, || {})
+}
+
+/// [`acquire_lock_file`], calling `after_open` between each open and the
+/// lock attempt: the window of the B/C race, which tests fill on purpose.
+fn acquire_lock_file_with(path: &Path, mut after_open: impl FnMut()) -> Result<File, StorageError> {
+    let wrap = |e: io::Error| {
+        StorageError::Io(io::Error::new(
+            e.kind(),
+            format!("writer lock file {}: {e}", path.display()),
+        ))
+    };
+    for _ in 0..LOCK_OPEN_ATTEMPTS {
+        let file = open_lock_file(path).map_err(wrap)?;
+        after_open();
+        try_lock_file(&file)?;
+        if names_same_file(&file, path).map_err(wrap)? {
+            return Ok(file);
+        }
+        // Unlinked after we opened it: dropping `file` unlocks the dead
+        // inode. Open the name again (creating a fresh file).
+    }
+    Err(wrap(io::Error::other(
+        "the lock file was removed again and again while locking it",
+    )))
+}
+
+/// Most directory entries one sweep reads.
+#[cfg(unix)]
+const SWEEP_MAX_ENTRIES: usize = 4096;
+
+/// Remove orphaned writer lock files in `dir` (spec B.2.16), best effort:
+/// never recursive, never follows a link, bounded by [`SWEEP_MAX_ENTRIES`],
+/// and every error is ignored, so it cannot fail the caller's operation.
+/// Returns how many it removed.
+#[cfg(unix)]
+pub fn sweep_orphan_lock_files(dir: &Path) -> usize {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.take(SWEEP_MAX_ENTRIES).flatten() {
+        let file_name = entry.file_name();
+        let Some(stem) = file_name
+            .as_bytes()
+            .strip_suffix(LOCK_FILE_SUFFIX.as_bytes())
+        else {
+            continue;
+        };
+        if stem.is_empty() || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let archive = dir.join(std::ffi::OsString::from_vec(stem.to_vec()));
+        if remove_orphan(&dir.join(&file_name), &archive) {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Windows has no sweep (see "Locking").
+#[cfg(not(unix))]
+pub fn sweep_orphan_lock_files(_: &Path) -> usize {
+    0
+}
+
+/// One orphan: absent archive, then lock, then verify and re-check, then
+/// unlink while still holding the lock. Anything unexpected leaves the file.
+#[cfg(unix)]
+fn remove_orphan(lock: &Path, archive: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let absent = |p: &Path| matches!(std::fs::symlink_metadata(p), Err(e) if e.kind() == io::ErrorKind::NotFound);
+    if !absent(archive) {
+        return false;
+    }
+    // No `create`: a sweep never makes the file it is looking for.
+    let Ok(file) = OpenOptions::new().read(true).open(lock) else {
+        return false;
+    };
+    // Held by anyone else (or an error): not ours to remove.
+    if try_lock_file(&file).is_err() {
+        return false;
+    }
+    // Same rule as every locker: the name must still be the file we hold
+    // (and not a link, so `symlink_metadata`). A lock file is never written,
+    // so anything with bytes is not one of ours.
+    let (Ok(held), Ok(named)) = (file.metadata(), std::fs::symlink_metadata(lock)) else {
+        return false;
+    };
+    let same = (held.dev(), held.ino()) == (named.dev(), named.ino());
+    if !same || !named.file_type().is_file() || held.len() != 0 {
+        return false;
+    }
+    // Under the lock, the archive may have been created since the first look.
+    if !absent(archive) {
+        return false;
+    }
+    std::fs::remove_file(lock).is_ok()
 }
 
 /// What [`Storage::try_lock_exclusive`] locks for an [`OsStorage`].
@@ -418,7 +568,13 @@ impl Storage for OsStorage {
             LockRole::Archive if self.lock_file.is_some() => Ok(()),
             LockRole::Archive => {
                 let lock_path = lock_file_path(&self.path)?;
-                self.lock_archive_at(&lock_path)
+                self.lock_archive_at(&lock_path)?;
+                // Trigger 1 of the orphan sweep (B.2.16): an appender holds
+                // its archive's lock. Best effort; never fails the lock.
+                if let Some(dir) = lock_path.parent() {
+                    sweep_orphan_lock_files(dir);
+                }
+                Ok(())
             }
         }
     }
@@ -678,7 +834,8 @@ impl StorageDir for OsDir {
     }
 
     /// Takes `to`'s writer lock file for `file` first, so the archive is
-    /// never visible unlocked; then publishes. On Windows the temporary
+    /// never visible unlocked; then publishes, then sweeps orphaned lock
+    /// files of this directory (spec B.2.16, best effort). On Windows the temporary
     /// file's own lock is released afterwards: it is now the archive, and a
     /// lock on it would block readers (Q54).
     fn publish_archive(
@@ -702,6 +859,9 @@ impl StorageDir for OsDir {
         if cfg!(windows) {
             file.unlock_itself()?;
         }
+        // Trigger 2 of the orphan sweep (B.2.16): a creator published and
+        // still holds the new archive's lock. Best effort.
+        sweep_orphan_lock_files(&dir);
         Ok(())
     }
 
@@ -854,6 +1014,99 @@ mod tests {
             s.truncate(5),
             Err(StorageError::OutOfBounds { .. })
         ));
+    }
+
+    /// B/C of spec B.2.16, deterministic: B opens the orphan, a sweep unlinks
+    /// it (B holds no lock), and B can still lock the dead inode while C locks
+    /// a fresh file of the same name. The locker-side check refuses B's lock.
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_on_an_unlinked_inode_is_detected() {
+        let (_d, path) = tmp();
+        let lock = path.with_file_name("a.mochi.mochi-lock");
+        File::create(&lock).unwrap();
+        let b = open_lock_file(&lock).unwrap();
+        assert_eq!(sweep_orphan_lock_files(lock.parent().unwrap()), 1);
+        assert!(!lock.exists());
+        let c = acquire_lock_file(&lock).unwrap();
+        // Without the check both would hold "the" lock.
+        try_lock_file(&b).unwrap();
+        assert!(names_same_file(&c, &lock).unwrap());
+        assert!(!names_same_file(&b, &lock).unwrap());
+    }
+
+    /// The same race through `acquire_lock_file`: a sweep runs and C locks a
+    /// fresh file after B opened the orphan and before B locks. B must end up
+    /// on C's file (and so be refused), not on the dead inode.
+    #[cfg(unix)]
+    #[test]
+    fn a_locker_that_lost_the_race_starts_over() {
+        let (d, path) = tmp();
+        let lock = path.with_file_name("a.mochi.mochi-lock");
+        File::create(&lock).unwrap();
+        let mut c = None;
+        let mut first = true;
+        let b = acquire_lock_file_with(&lock, || {
+            if std::mem::take(&mut first) {
+                assert_eq!(sweep_orphan_lock_files(d.path()), 1);
+                c = Some(acquire_lock_file(&lock).unwrap());
+            }
+        });
+        assert!(matches!(b, Err(StorageError::LockHeld)), "{b:?}");
+        drop(c);
+        // With nobody holding, a locker whose file vanished locks the new one.
+        let mut first = true;
+        let b = acquire_lock_file_with(&lock, || {
+            if std::mem::take(&mut first) {
+                assert_eq!(sweep_orphan_lock_files(d.path()), 1);
+            }
+        })
+        .unwrap();
+        assert!(names_same_file(&b, &lock).unwrap());
+    }
+
+    /// Lockers racing a sweeper never overlap, orphan or not.
+    #[cfg(unix)]
+    #[test]
+    fn lockers_never_overlap_while_a_sweep_runs() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let (d, path) = tmp();
+        let lock = path.with_file_name("a.mochi.mochi-lock");
+        let (holders, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let entered = AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    sweep_orphan_lock_files(d.path());
+                }
+            });
+            let lockers: Vec<_> = (0..4)
+                .map(|_| {
+                    s.spawn(|| {
+                        for _ in 0..400 {
+                            let Ok(f) = acquire_lock_file(&lock) else {
+                                continue;
+                            };
+                            assert_eq!(holders.fetch_add(1, Ordering::SeqCst), 0);
+                            entered.fetch_add(1, Ordering::SeqCst);
+                            std::thread::yield_now();
+                            holders.fetch_sub(1, Ordering::SeqCst);
+                            drop(f);
+                        }
+                    })
+                })
+                .collect();
+            for l in lockers {
+                l.join().unwrap();
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+        assert!(entered.load(Ordering::SeqCst) > 0);
+    }
+
+    #[test]
+    fn hidden_attribute_is_the_win32_value() {
+        assert_eq!(WINDOWS_FILE_ATTRIBUTE_HIDDEN, 0x2);
     }
 
     #[test]
