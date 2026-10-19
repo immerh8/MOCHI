@@ -769,13 +769,15 @@ export function Browser({
           <div className="sheet" hidden={!helpOpen} data-testid="help-sheet">
             {help}
           </div>
+          {/* Outside the MOCHI stage: a launch can open a foreign archive and
+              then say why it did nothing more, so this must show in either. */}
+          {error && (
+            <p role="alert" className="error" data-testid="browse-error">
+              {error}
+            </p>
+          )}
           <SlotHost name="stage" className="stage-foreign" />
           <div className="stage-mochi" hidden={foreignOpen}>
-            {error && (
-              <p role="alert" className="error" data-testid="browse-error">
-                {error}
-              </p>
-            )}
             {waiting && (
               <Panel
                 label={t("browser.passphraseGroup")}

@@ -149,6 +149,20 @@ test("a launch that failed is shown as text, hostile markup inert", async () => 
   expect(container.querySelector("img")).toBeNull();
 });
 
+test("a problem reported while a foreign archive is open is still visible", async () => {
+  const b = backend();
+  // As in the app: the foreign browser is one of the window's tools, so its archive takes the stage.
+  render(<Browser tools={<ForeignBrowser />} />);
+  await screen.findByTestId("start-screen");
+  // An extract verb on a ZIP: Rust opens it for browsing, then says why nothing was extracted.
+  b.launch({ event: "foreign_opened", archive: foreignSummary(11, "verb.zip") });
+  expect(await screen.findByTestId("foreign-meta")).toHaveTextContent("verb.zip");
+  b.launch({ event: "problem", message: "verb.zip: extracting from the shell is for .mochi archives" });
+  const alert = await screen.findByTestId("browse-error");
+  expect(alert).toHaveTextContent("extracting from the shell is for .mochi");
+  expect(alert).toBeVisible();
+});
+
 test("a foreign archive opened by the shell shows the foreign browser, read-only, with names as text", async () => {
   const b = backend();
   const { container } = render(

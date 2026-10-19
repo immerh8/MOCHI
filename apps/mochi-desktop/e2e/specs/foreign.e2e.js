@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, $$, expect } from "@wdio/globals";
-import { closeInfo, openInfo } from "./_ui.js";
+import { closeInfo, openInfo, openMore } from "./_ui.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const foreign = path.resolve(here, "../../../../fixtures/foreign");
@@ -58,7 +58,9 @@ const entryNames = () =>
 
 async function openForeign(file) {
   queuePicks(file);
-  await press("foreign-open");
+  // As a person does: More > Other formats (the drawer's own Open button stays closed away).
+  await openMore();
+  await $('[data-testid="menu-foreign"]').click();
 }
 
 describe("foreign archives (ZIP and 7z, read-only)", () => {
