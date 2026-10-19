@@ -1,0 +1,1 @@
+Test release for the 1.0 checklist, do not use. Minimal WinRAR-style window, writer lock file hidden on Windows.
