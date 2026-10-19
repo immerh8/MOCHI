@@ -332,6 +332,17 @@ test("the path bar names the archive and lists its versions on request, at the v
   expect(b.calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
 });
 
+test("the versions button closes the list it opened", async () => {
+  const { user } = await openIt();
+  const toggle = screen.getByTestId("toggle-versions");
+  await user.click(toggle);
+  expect(screen.getByTestId("timeline")).toBeVisible();
+  // Its own pointer-down is not a press outside the list: closing must not reopen it.
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByTestId("timeline")).not.toBeVisible();
+});
+
 test("a foreign archive fills the window: its own Extract and Test, the rest off, and MOCHI's archive steps aside", async () => {
   const user = userEvent.setup();
   const b = backend();

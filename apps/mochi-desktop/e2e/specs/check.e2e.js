@@ -57,7 +57,9 @@ function withoutTimes(report) {
 
 async function press(testId) {
   const el = await $(`[data-testid="${testId}"]`);
-  await el.scrollIntoView({ block: "center" });
+  // The page's own scrollIntoView: WebKitWebDriver's wheel-based scroll can
+  // leave a control in the tools drawer under the drawer's sticky summary.
+  await browser.execute((e) => e.scrollIntoView({ block: "center" }), el);
   await el.click();
 }
 

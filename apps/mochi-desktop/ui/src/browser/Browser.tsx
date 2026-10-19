@@ -472,6 +472,7 @@ export function Browser({
   const moreRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const versionsRef = useRef<HTMLDivElement>(null);
+  const versionsButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // A choice closes the menu. Some items are drawn into it from other components
   // (a portal), whose clicks do not bubble through this element in React's tree, so
@@ -494,7 +495,10 @@ export function Browser({
     const onPointer = (e: PointerEvent) => {
       const target = e.target instanceof Node ? e.target : null;
       if (moreOpen && !moreRef.current?.contains(target)) setMoreOpen(false);
-      if (versionsOpen && !versionsRef.current?.contains(target)) setVersionsOpen(false);
+      // The versions button is outside the list; its own press toggles it.
+      if (versionsOpen && !versionsRef.current?.contains(target) && !versionsButtonRef.current?.contains(target)) {
+        setVersionsOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -702,6 +706,7 @@ export function Browser({
                     <button
                       type="button"
                       className="link version-button"
+                      ref={versionsButtonRef}
                       data-testid="toggle-versions"
                       aria-expanded={versionsOpen}
                       aria-controls="versions-pop"
