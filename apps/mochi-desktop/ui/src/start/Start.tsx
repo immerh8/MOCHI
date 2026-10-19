@@ -1,37 +1,25 @@
 import { t } from "../i18n";
 import type { RecentView } from "../ipc/start";
-import { ExtractIcon, FolderIcon, GearIcon, PlusIcon } from "../icons";
+import { FolderIcon, PlusIcon } from "../icons";
 
 export interface StartProps {
   busy: boolean;
   recents: RecentView[];
   onCreate: () => void;
   onOpen: () => void;
-  onExtract: () => void;
   onOpenRecent: (index: number) => void;
   onForgetRecent: () => void;
-  /** Open the Advanced area at its settings and move focus there. */
-  onSettings: () => void;
 }
 
 /**
- * The first screen (D10): the mascot and name, a quiet place to drop files,
- * three plain actions, the recent archives, and one quiet sentence about what
- * an archive is not. Everything technical is in the Advanced area below. The
- * mascot is a CSS background on an empty element, never an `img`; names from
- * the recent list come from file names on disk, so they are rendered as text
- * only.
+ * The empty window (D10): the mascot, a place to drop files, Create and Open,
+ * and the recent archives as a short quiet list. What an archive is not (a
+ * second copy) is in the Help panel and in the drop zone's tooltip; the
+ * technical tools are in the toolbar's More menu. The mascot is a CSS
+ * background on an empty element, never an `img`; names from the recent list
+ * come from file names on disk, so they are rendered as text only.
  */
-export function Start({
-  busy,
-  recents,
-  onCreate,
-  onOpen,
-  onExtract,
-  onOpenRecent,
-  onForgetRecent,
-  onSettings,
-}: StartProps) {
+export function Start({ busy, recents, onCreate, onOpen, onOpenRecent, onForgetRecent }: StartProps) {
   return (
     <div className="start" data-testid="start-screen">
       <div className="hero">
@@ -41,10 +29,8 @@ export function Start({
         </span>
         <p className="tagline">{t("app.tagline")}</p>
       </div>
-      <hr className="divider" />
-      <div className="drop-zone" data-testid="start-drop-hint">
+      <div className="drop-zone" data-testid="start-drop-hint" title={t("start.dropHint")}>
         <p className="drop-zone-title">{t("start.dropZone")}</p>
-        <p className="note quiet">{t("start.dropHint")}</p>
       </div>
       <div className="big-actions">
         <button type="button" className="big" data-testid="start-create" onClick={onCreate} disabled={busy}>
@@ -52,21 +38,12 @@ export function Start({
             <PlusIcon />
             {t("start.create")}
           </span>
-          <span className="big-hint">{t("start.createHint")}</span>
         </button>
         <button type="button" className="big primary" data-testid="open-archive" onClick={onOpen} disabled={busy}>
           <span className="big-title">
             <FolderIcon />
             {t("start.open")}
           </span>
-          <span className="big-hint">{t("start.openHint")}</span>
-        </button>
-        <button type="button" className="big" data-testid="start-extract" onClick={onExtract} disabled={busy}>
-          <span className="big-title">
-            <ExtractIcon />
-            {t("start.extract")}
-          </span>
-          <span className="big-hint">{t("start.extractHint")}</span>
         </button>
       </div>
       {recents.length > 0 && (
@@ -94,21 +71,6 @@ export function Start({
           </button>
         </section>
       )}
-      <div className="start-footer">
-        <p className="note quiet" data-testid="start-note">
-          {t("start.note")}
-        </p>
-        <button
-          type="button"
-          className="icon-button"
-          data-testid="start-settings"
-          aria-label={t("start.settings")}
-          title={t("start.settings")}
-          onClick={onSettings}
-        >
-          <GearIcon />
-        </button>
-      </div>
     </div>
   );
 }

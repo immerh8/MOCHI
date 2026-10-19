@@ -346,11 +346,45 @@ attach it to an issue.
 ## The simplified main path (D10)
 
 Owner test, 2026-10-16: nobody knew where to start, the words were technical, and create and
-extract were confusing. The window now opens on **What would you like to do?** with three
-actions (Create archive, Open archive, Extract archive), a recent list, and one quiet sentence
-that an archive is not a second copy. Everything else is under **Advanced** (a closed
-`<details>`, `data-testid="advanced"`): search, passphrases, test and repair, other formats,
-the job self-test, settings. Nothing was removed.
+extract were confusing. The window now opens on **What would you like to do?** with two
+actions (Create archive, Open archive) and a short recent list. Everything else is under
+**Advanced** (a closed `<details>`, `data-testid="advanced"`, a drawer at the bottom of the
+window): search, passphrases, test and repair, other formats, the job self-test, settings.
+Nothing was removed.
+
+### The window (WinRAR-like, minimal)
+
+Owner feedback, 2026-10-19: "too many texts; design it like WinRAR, but more minimalistic". The
+window is one fixed frame (it never scrolls; the minimum size is set where the window is built,
+`build_main` in `src-tauri/src/lib.rs`):
+
+- **Toolbar** (`role="group"`, one row of icon-over-label buttons): Add, Extract, Test, Remove,
+  Find, Info, then More and Help at the right. A button is disabled when it does not apply (no
+  archive open, nothing selected, a foreign archive is read-only); its tooltip holds the longer
+  explanation or the reason it is off. **More** is a disclosure (not a role=menu) with New archive,
+  Open and extract, Passphrases, Repair, Other formats, Settings, Self-test. **Help** opens the
+  Help panel: what an archive is not (a second copy), the keys of the file list, and the User guide.
+- **Path bar** (an archive is open): back, folders toggle, the archive name and `N versions` (a
+  button that lists them, with each version's time, retention and holds, when there is more than
+  one), the crumbs (`Version 2 / folder / folder`), and Open another archive.
+- **File list** fills the window: Name / Size / Type, compact rows, file-type icons. The folder
+  tree (path bar) and the **Info** panel (toolbar) are optional panes; narrow windows lay them over
+  the list. Info holds the selected entry's details, and the archive's technical details and
+  encrypted-archive note; for a foreign archive, the notes that it is not a MOCHI archive.
+- **Status line**: `437 items · 1 selected` (tooltip: entries in this version) and the
+  Extract-selected action.
+- **How the toolbar is wired.** The component that owns an action keeps its state, test ids and
+  focus handling and only draws its button into the toolbar with `ToolSlot` (`src/shell/Shell.tsx`,
+  a portal into an empty element the window provides); outside the window (a component's own
+  tests) the same buttons are drawn in place. The foreign browser draws its archive into the same
+  area (`stage` slot) and its own Extract and Test into the same buttons, so a ZIP/7z/RAR/tar looks
+  like a MOCHI archive and keeps its own labelling.
+- **Where the wording went.** An archive is not a second copy: Help (`start-note`). What deleting
+  does and what removing a passphrase does not: in the Remove and Remove-passphrase dialogs, where
+  the decision is made. A foreign archive is not a MOCHI archive and what its check covers: the
+  Info panel and the Test button's tooltip, plus the "(foreign format)" in the path bar, and the
+  partial-listing and ZipCrypto warnings stay in view. Keyboard help: Help (also the list's
+  accessible description).
 
 - **Plain words, precise terms secondary.** "Version" on the main path is a snapshot (one
   commit); IDs, hashes, checkpoint/delta, and the profile are in "Technical details"

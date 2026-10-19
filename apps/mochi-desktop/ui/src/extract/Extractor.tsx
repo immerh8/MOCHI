@@ -5,7 +5,8 @@ import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { StatusBar } from "../browser/StatusBar";
+import { ExtractIcon } from "../icons";
+import { ToolButton, ToolSlot } from "../shell/Shell";
 import { t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { planExtract } from "../ipc/extract";
@@ -230,17 +231,17 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
       <h2 id="extract-heading" tabIndex={-1} className="sr-only">
         {t("extract.heading")}
       </h2>
-      <StatusBar selected={selected !== null}>
-        <button
-          type="button"
-          className={selected === null ? "primary" : undefined}
-          data-testid="extract-all"
+      <ToolSlot name="extract">
+        <ToolButton
+          icon={<ExtractIcon />}
+          label={t("extract.toolbar")}
+          testId="extract-all"
           onClick={() => planFor({ kind: "all" }, "default")}
           disabled={busy || archive === null || seq === null}
-          title={archive ? undefined : t("extract.openFirst")}
-        >
-          {t("extract.all")}
-        </button>
+          title={archive ? t("extract.allTip") : t("extract.openFirst")}
+        />
+      </ToolSlot>
+      <ToolSlot name="primary">
         <button
           type="button"
           className={selected === null ? undefined : "primary"}
@@ -251,7 +252,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         >
           {t("extract.selected")}
         </button>
-      </StatusBar>
+      </ToolSlot>
       {error && (
         <p role="alert" className="error" data-testid="extract-error">
           {error}

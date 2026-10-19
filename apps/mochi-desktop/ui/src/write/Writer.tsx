@@ -20,6 +20,8 @@ import {
   watchDrops,
 } from "../ipc/write";
 import type { CompressionPreset, SourcePick, StagedView } from "../ipc/write";
+import { MinusIcon, PlusIcon } from "../icons";
+import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
 import {
   HIDDEN_WITH_KEY,
@@ -338,7 +340,7 @@ export function Writer({
 
   const stagedList = (
     <>
-      <div className="actions">
+      <div className="actions" title={t("write.dropHint")}>
         <button type="button" data-testid="stage-files" onClick={() => stage("files")} disabled={busy}>
           {t("write.addFiles")}
         </button>
@@ -349,7 +351,6 @@ export function Writer({
           {t("write.clear")}
         </button>
       </div>
-      <p className="note">{t("write.dropHint")}</p>
       {staged.items.length === 0 ? (
         <p data-testid="staged-empty">{t("write.nothingChosen")}</p>
       ) : (
@@ -394,37 +395,47 @@ export function Writer({
         </p>
       )}
       {showToolbar && (
-        <div className="actions">
-          <button type="button" data-testid="new-archive" onClick={() => open("create")} disabled={busy}>
-            {t("write.new")}
-          </button>
-          <button
-            type="button"
-            data-testid="add-to-archive"
-            onClick={() => open("add")}
-            disabled={busy || !canAdd}
-            title={canAdd ? undefined : t("write.openFirst")}
-          >
-            {t("write.add")}
-          </button>
-          <button
-            type="button"
-            data-testid="remove-entry"
-            onClick={() => open("remove")}
-            disabled={busy || !canRemove}
-            title={
-              !archive
-                ? t("write.openFirst")
-                : !viewingHead
-                  ? t("write.onlyLatest")
-                  : selected
-                    ? undefined
-                    : t("write.selectFirst")
-            }
-          >
-            {t("write.remove")}
-          </button>
-        </div>
+        <>
+          <ToolSlot name="new">
+            <button
+              type="button"
+              className="menu-item"
+              data-testid="new-archive"
+              onClick={() => open("create")}
+              disabled={busy}
+            >
+              {t("write.new")}
+            </button>
+          </ToolSlot>
+          <ToolSlot name="add">
+            <ToolButton
+              icon={<PlusIcon />}
+              label={t("write.add")}
+              testId="add-to-archive"
+              onClick={() => open("add")}
+              disabled={busy || !canAdd}
+              title={canAdd ? t("write.addTip") : t("write.openFirst")}
+            />
+          </ToolSlot>
+          <ToolSlot name="remove">
+            <ToolButton
+              icon={<MinusIcon />}
+              label={t("write.remove")}
+              testId="remove-entry"
+              onClick={() => open("remove")}
+              disabled={busy || !canRemove}
+              title={
+                !archive
+                  ? t("write.openFirst")
+                  : !viewingHead
+                    ? t("write.onlyLatest")
+                    : selected
+                      ? t("write.removeTip")
+                      : t("write.selectFirst")
+              }
+            />
+          </ToolSlot>
+        </>
       )}
       {error && (
         <p role="alert" className="error" data-testid="write-error">

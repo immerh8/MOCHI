@@ -200,7 +200,10 @@ fn build_main<M: tauri::Manager<tauri::Wry>>(manager: &M) -> tauri::Result<()> {
     let builder =
         tauri::WebviewWindowBuilder::new(manager, MAIN_LABEL, tauri::WebviewUrl::default())
             .title("MOCHI")
-            .inner_size(900.0, 640.0);
+            .inner_size(1000.0, 680.0)
+            // The toolbar is one row of buttons and the list needs room: below
+            // this the page would have to scroll sideways.
+            .min_inner_size(720.0, 480.0);
     automation::configure(builder).build()?;
     Ok(())
 }

@@ -95,7 +95,7 @@ const entryButtons = () => screen.queryAllByTestId("entry");
 async function openArchive(user: ReturnType<typeof userEvent.setup>) {
   screen.getByTestId("open-archive").focus();
   await user.keyboard("{Enter}");
-  await screen.findByText(/in this folder/);
+  await screen.findByText(/\d items/);
   await screen.findByText("a.txt");
 }
 

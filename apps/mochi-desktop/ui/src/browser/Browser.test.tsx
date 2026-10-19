@@ -124,7 +124,7 @@ async function openIt() {
   const calls = fakeBackend();
   const view = render(<Browser />);
   await user.click(screen.getByTestId("open-archive"));
-  await screen.findByText(/5 entries in this folder/);
+  await screen.findByText(/^5 items/);
   return { user, calls, ...view };
 }
 
@@ -171,7 +171,7 @@ test("a 100,000-entry folder is paged and only a window of rows is in the DOM", 
   const many = (await screen.findAllByTestId("entry")).at(0);
   if (!many) throw new Error("no entries");
   await user.dblClick(many);
-  await screen.findByText(/100,000 entries in this folder/);
+  await screen.findByText(/^100,000 items/);
   await screen.findByText("f000000");
 
   const rendered = screen.getAllByRole("listitem").filter((li) => li.closest('[data-testid="entries"]'));
@@ -216,6 +216,11 @@ test("selecting an entry shows its recorded details without verification wording
 
 test("the tree opens folders lazily and choosing a commit reopens at the root", async () => {
   const { user, calls } = await openIt();
+  // The folder tree is an optional pane (WinRAR-style): the path bar's Folders button opens it.
+  const toggle = screen.getByTestId("toggle-folders");
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
   const tree = screen.getByTestId("tree");
   await within(tree).findByText("sub");
   const treeCalls = calls.filter((c) => c.cmd === "list_children" && c.args.directoriesOnly);
@@ -225,20 +230,22 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   await user.click(within(subItem).getByRole("button", { name: "Expand sub" }));
   await within(tree).findByText("deeper");
   await user.click(within(tree).getByText("sub"));
-  await screen.findByText(/2 entries in this folder/);
+  await screen.findByText(/^2 items/);
   expect(screen.getByTestId("crumbs")).toHaveTextContent("Version 2 / sub");
 
   await user.click(screen.getByTestId("commit-0"));
-  await screen.findByText(/5 entries in this folder/);
+  await screen.findByText(/^5 items/);
   expect(calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
   expect(screen.getByTestId("commit-0")).toHaveAttribute("aria-current", "true");
   expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Version 0$/);
 });
 
-test("the top bar names the archive from facts the app has, and search opens Advanced at Search", async () => {
+test("the path bar names the archive from facts the app has, and Find opens Advanced at Search", async () => {
   const { user } = await openIt();
   const bar = screen.getByTestId("archive-meta");
-  expect(bar).toHaveTextContent("fake.mochi · 3 versions · 100,009 entries");
+  expect(bar).toHaveTextContent("fake.mochi · 3 versions");
+  // The size of the whole version moved from the top bar to the status line's tooltip.
+  expect(screen.getByTestId("entry-count")).toHaveAttribute("title", "100,009 entries in this version");
   expect(screen.getByTestId("close-archive")).toHaveAccessibleName("Close");
   const advanced = screen.getByTestId("advanced");
   expect(advanced).not.toHaveAttribute("open");
