@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, $$, expect } from "@wdio/globals";
+import { closeInfo, openInfo, openMore } from "./_ui.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const foreign = path.resolve(here, "../../../../fixtures/foreign");
@@ -26,7 +27,8 @@ const dir = (name) => {
 
 const BANNED = ["backed up", "backup", "safe", "preserved", "secure", "verified", "healthy"];
 const assertNoBannedWording = async () => {
-  const text = (await $('[data-testid="foreign"]').getText()).toLowerCase();
+  // The open archive is drawn in the window's own area (foreign-stage), not in the tools drawer.
+  const text = (await $('[data-testid="foreign-stage"]').getText()).toLowerCase();
   for (const word of BANNED) expect(text).not.toContain(word);
 };
 
@@ -56,7 +58,9 @@ const entryNames = () =>
 
 async function openForeign(file) {
   queuePicks(file);
-  await press("foreign-open");
+  // As a person does: More > Other formats (the drawer's own Open button stays closed away).
+  await openMore();
+  await $('[data-testid="menu-foreign"]').click();
 }
 
 describe("foreign archives (ZIP and 7z, read-only)", () => {
@@ -66,6 +70,8 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     await expect($('[data-testid="foreign-meta"]')).toHaveText(
       expect.stringContaining("ZIP archive (foreign format)"),
     );
+    // What the app says about the format is in the Info panel, which the toolbar's Info opens.
+    await openInfo();
     await expect($('[data-testid="foreign-label"]')).toHaveText(
       expect.stringContaining("not a MOCHI archive"),
     );
@@ -73,6 +79,7 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
       "Recoverability: UNSUPPORTED · Freshness: UNSUPPORTED · Retention: UNSUPPORTED",
     );
     await expect($('[data-testid="foreign-checks"]')).toHaveText(expect.stringContaining("CRC32"));
+    await closeInfo();
     await browser.waitUntil(async () => (await entryNames()).includes("a.txt"));
     expect(await entryNames()).toEqual(["empty", "sub", "a.txt"]);
     await assertNoBannedWording();

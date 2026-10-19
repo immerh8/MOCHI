@@ -112,8 +112,11 @@ export const config = {
   // The tools below "Advanced" are a closed disclosure on a fresh window (D10).
   // Specs that are about those tools just need them open; the specs about the
   // start screen and about keyboard use open it themselves, as a person would.
+  // The browser spec uses none of them: open, the drawer takes half the window
+  // and WebKitWebDriver does not scroll the start screen's own area to reach
+  // "Open archive" behind it.
   beforeTest: async (test) => {
-    if (/(start|a11y)\.e2e\.js$/.test(test.file ?? "")) return;
+    if (/(start|a11y|browse)\.e2e\.js$/.test(test.file ?? "")) return;
     // The first test of a file can start before the page has rendered.
     await $('details[data-testid="advanced"]').waitForExist({ timeout: 60_000 });
     await browser.execute(() => {

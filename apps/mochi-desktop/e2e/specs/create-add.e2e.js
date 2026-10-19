@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
+import { clickNewArchive, closeHelp, closeVersions, openHelp, openVersions } from "./_ui.js";
 
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
 const queuePicks = (...paths) => writeFileSync(pickFile, paths.join("\n"));
@@ -56,14 +57,16 @@ const assertNoBannedWording = async () => {
 };
 
 describe("create and add", () => {
-  it("starts from the start screen with three plain actions", async () => {
+  it("starts from the start screen with two plain actions; the note is in Help", async () => {
     await expect($('[data-testid="start-screen"]')).toBeExisting();
-    for (const id of ["start-create", "open-archive", "start-extract"]) {
+    for (const id of ["start-create", "open-archive"]) {
       await expect($(`[data-testid="${id}"]`)).toBeEnabled();
     }
+    await openHelp();
     await expect($('[data-testid="start-note"]')).toHaveText(
       expect.stringContaining("not a second copy of them"),
     );
+    await closeHelp();
     await assertNoBannedWording();
   });
 
@@ -129,7 +132,9 @@ describe("create and add", () => {
     await $('[data-testid="add-confirm"]').click();
     await waitForStatus("Added to main.mochi");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
+    await openVersions();
     await expect($('[data-testid="commit-1"]')).toHaveText(expect.stringContaining("(latest)"));
+    await closeVersions();
     await browser.waitUntil(async () => {
       const names = await entryNames();
       return names.includes("extra.txt") && names.includes("photos");
@@ -182,6 +187,7 @@ describe("create and add", () => {
     });
 
     // The earlier snapshot still has it; and only the latest can be changed.
+    await openVersions();
     await $('[data-testid="commit-1"]').click();
     await browser.waitUntil(async () => (await entryNames()).includes("extra.txt"));
     await assertNoBannedWording();
@@ -189,7 +195,7 @@ describe("create and add", () => {
 
   it("creates a TAR-compatible archive when asked, and shows it", async () => {
     queuePicks(path.join(src, "photos"), tarArchive);
-    await $('[data-testid="new-archive"]').click();
+    await clickNewArchive();
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="change-destination"]').click();
@@ -212,7 +218,7 @@ describe("create and add", () => {
 
   it("cancels a create midway: no archive appears and the archive on screen is unchanged", async () => {
     queuePicks(path.join(src, "bulk"), cancelled);
-    await $('[data-testid="new-archive"]').click();
+    await clickNewArchive();
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="change-destination"]').click();

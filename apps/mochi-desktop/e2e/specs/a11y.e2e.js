@@ -28,7 +28,7 @@ async function tabTo(testid, { back = false, max = 160 } = {}) {
 }
 
 describe("keyboard-only use", () => {
-  it("starts at the top of the page and the first stops are the three start actions", async () => {
+  it("starts at the top of the page: the toolbar's More and Help, then the two start actions", async () => {
     await $('[data-testid="start-screen"]').waitForExist();
     // WebView2 keeps its own sequential-focus starting point, so the first Tab of
     // a fresh session does not always begin at the top. Clicking the page title
@@ -36,14 +36,21 @@ describe("keyboard-only use", () => {
     // keyboard does everything after that.
     await $("h1").click();
     await browser.keys(["Tab"]);
+    // The toolbar comes first; with no archive open its archive actions are off (not tab stops),
+    // so the first stops are More and Help.
     const first = await active();
     expect(first.tag).toBe("BUTTON");
-    expect(first.testid).toBe("start-create");
-    expect(first.text).toContain("Create archive");
+    expect(first.testid).toBe("toolbar-more");
+    expect(first.text).toContain("More");
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("toolbar-help");
+    await browser.keys(["Tab"]);
+    const create = await active();
+    expect(create.testid).toBe("start-create");
+    expect(create.text).toContain("Create archive");
     await browser.keys(["Tab"]);
     expect((await active()).testid).toBe("open-archive");
-    await browser.keys(["Tab"]);
-    expect((await active()).testid).toBe("start-extract");
+    await browser.keys(["Shift", "Tab"]);
     await browser.keys(["Shift", "Tab"]);
     await browser.keys(["Shift", "Tab"]);
     // The focus ring is drawn (the stylesheet never turns the outline off).
@@ -122,7 +129,11 @@ describe("keyboard-only use", () => {
   });
 
   it("an opened panel takes focus, and Close gives it back to the button that opened it", async () => {
-    await tabTo("new-archive", { back: true });
+    // New archive is in the More menu: open it by keyboard and take its first item.
+    await tabTo("toolbar-more", { back: true });
+    await browser.keys(["Enter"]);
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("new-archive");
     await browser.keys(["Enter"]);
     await $('[data-testid="write-panel"]').waitForExist();
     const inPanel = await active();
@@ -134,7 +145,8 @@ describe("keyboard-only use", () => {
     await tabTo("write-close");
     await browser.keys(["Enter"]);
     await $('[data-testid="write-panel"]').waitForExist({ reverse: true });
-    expect((await active()).testid).toBe("new-archive");
+    // Choosing from the menu closed it and left focus on the More button, where the panel gives it back.
+    expect((await active()).testid).toBe("toolbar-more");
   });
 
   it("tests the open archive from the keyboard; the result is announced and focus stays put", async () => {

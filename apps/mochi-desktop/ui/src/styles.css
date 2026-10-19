@@ -1,44 +1,144 @@
-/* Neutral styling throughout: spec §23.3 allows success styling only for a
-   verification PASS. The one success style is .status-pass (D4), given only
-   to a PASS status; everything else stays neutral. Browsing
+/* Calm, warm, minimal. Neutral styling throughout: spec §23.3 allows success
+   styling only for a verification PASS. The one success style is .status-pass
+   (D4), given only to a PASS status; everything else stays neutral. Browsing
    (D1) shows recorded facts and warnings, never a green state. */
 :root {
   /* Colour tokens (plan D7 accessibility). Every colour in this file comes from
      here, so that src/a11y/contrast.test.ts can check each pairing against
      WCAG 2.1 AA (4.5:1 for text, 3:1 for focus rings and control borders).
      Text tokens must hold on all three surfaces below. */
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --accent-bg: #ddf4ff;
-  --fg: #1f2328;
-  --muted: #59636e;
+  --bg: #f7f4ef;
+  --surface: #fdfcfa;
+  --accent-bg: #efe6db;
+  --fg: #3a2e26;
+  --muted: #6b5d53;
   --error: #82071e;
-  --warning: #9a6700;
-  --accent: #0969da;
-  --border: #d1d9e0;
+  --warning: #8a5a00;
+  /* The muted brown of the primary button, and of links. */
+  --accent: #7a5a46;
+  --accent-hover: #634735;
+  /* A hairline between areas, and the stronger edge of a control. */
+  --border: #e3dcd2;
+  --border-strong: #8f7f70;
   /* Status badges: text on a strong fill. */
   --pass: #1a7f37;
   --fail: #82071e;
   --on-strong: #ffffff;
   /* The keyboard focus ring. */
-  --focus: #0550ae;
-  font-family: system-ui, sans-serif;
+  --focus: #8a3b12;
+  /* File-type icons in a listing: decorative, and never a status colour. */
+  --icon-folder: #9a6a14;
+  --icon-image: #3a6ea5;
+  --icon-sheet: #2b7a78;
+  --icon-pdf: #b03a2e;
+  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
   color: var(--fg);
   background: var(--bg);
+  accent-color: var(--accent);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+}
+/* The window is one fixed frame, like a file manager: toolbar, path bar, the
+   list (which takes the rest), and a status line. The page itself never
+   scrolls; a panel that opens inside the frame scrolls in its own area. */
+[hidden] {
+  display: none !important;
 }
 main {
-  max-width: 90rem;
-  margin: 1.5rem auto;
-  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.25;
+  font-weight: 600;
+}
+h2 {
+  font-size: 1.25rem;
+  margin: 1.5rem 0 0.75rem;
+}
+h3 {
+  font-size: 1.05rem;
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 1rem 0;
 }
+/* Buttons: quiet by default (a hairline edge on the surface); the one primary
+   action per area is filled with the accent. */
 button {
   font: inherit;
-  padding: 0.4rem 0.9rem;
+  padding: 0.45rem 1rem;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button:hover:not(:disabled):not(.primary) {
+  background: var(--accent-bg);
+}
+button:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+button.primary {
+  color: var(--on-strong);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+button.primary:disabled {
+  color: var(--muted);
+  background: var(--bg);
+  border-color: var(--border);
+}
+/* A button that is only an icon: no edge until it is pointed at. */
+button.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+  border-radius: 50%;
+}
+button.icon-button:hover:not(:disabled) {
+  color: var(--fg);
+}
+.icon {
+  flex: none;
+}
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.6rem;
+}
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
 }
 .progress {
   display: flex;
@@ -53,6 +153,8 @@ progress {
 }
 
 /* ---- D1: browsing ---------------------------------------------------------- */
+/* Calm: the file list is the window. Folders, details and versions are
+   optional panes the toolbar and the path bar open and close. */
 .hash {
   font-family: ui-monospace, monospace;
   font-size: 0.85em;
@@ -72,21 +174,245 @@ progress {
 .name {
   white-space: pre;
 }
-.panes {
-  display: grid;
-  grid-template-columns: 14rem 16rem minmax(18rem, 1fr) 20rem;
-  gap: 0.75rem;
-  align-items: start;
+.browser {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The toolbar: one row of icon-over-label buttons. */
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  gap: 0.15rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0.75rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.brand .mascot-face {
+  width: 2.4rem;
+  height: 1.8rem;
+}
+.tool-cell,
+.menu-cell,
+.statusbar-slot {
+  display: contents;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+button.tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  min-width: 3.6rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: var(--fg);
+  background: none;
+  border-color: transparent;
+  border-radius: 0.5rem;
+}
+button.tool:hover:not(:disabled),
+button.tool[aria-expanded="true"] {
+  background: var(--accent-bg);
+  border-color: var(--border);
+}
+button.tool:disabled {
+  color: var(--muted);
+  border-color: transparent;
+}
+.more {
+  position: relative;
+  display: flex;
+}
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 13rem;
+  padding: 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.6rem;
+}
+button.menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border-color: transparent;
+  border-radius: 0.4rem;
+}
+button.menu-item:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+button.menu-item:disabled {
+  color: var(--muted);
+}
+/* The path bar: back, folders, the archive and its versions, where you are. */
+.pathbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.pathbar button.icon-button {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.4rem;
+}
+.pathbar button.icon-button:hover:not(:disabled),
+.pathbar button.icon-button[aria-expanded="true"] {
+  background: var(--accent-bg);
+}
+.path-meta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.path-title {
+  font-weight: 600;
+}
+.path-sub {
+  color: var(--muted);
+}
+.versions {
+  position: relative;
+}
+.version-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0;
+  font-size: inherit;
+  text-decoration: none;
+}
+.popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  min-width: 15rem;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.25rem;
+  white-space: normal;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.6rem;
+}
+.crumbs {
+  flex: 1;
+  min-width: 0;
+  margin-left: 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.crumbs .link {
+  text-decoration: none;
+}
+.crumbs .link:hover {
+  text-decoration: underline;
+}
+/* The middle of the window. Sheets (panels that open) sit above the list and
+   scroll in the stage when they are tall; the list never goes below a few rows. */
+.stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0.75rem;
+}
+.stage-mochi,
+.foreign-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The foreign archive's area is empty (and takes no room) until it has an
+   archive, a password prompt, or an error to show. */
+.stage-foreign {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+}
+.stage-foreign:has(> .foreign-stage:not([hidden])) {
+  flex: 1;
+}
+.sheet {
+  flex: none;
+}
+.stage [role="status"]:empty {
+  min-height: 0;
+}
+.foreign-stage > .pathbar {
+  margin: 0 -0.75rem;
+}
+.workspace {
+  display: flex;
+  flex: 1 0 11rem;
+  min-height: 11rem;
+  margin: 0 -0.75rem;
+}
+.listing {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.folders,
+.info {
+  flex: none;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+.folders {
+  width: 13rem;
+  border-right: 1px solid var(--border);
+}
+.info {
+  width: 17rem;
+  border-left: 1px solid var(--border);
 }
 .timeline,
-.tree,
-.details {
-  max-height: 32rem;
-  overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 0.25rem;
+.tree {
   margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
 }
 .timeline {
   list-style: none;
@@ -98,6 +424,7 @@ progress {
   width: 100%;
   text-align: left;
   border: 1px solid transparent;
+  border-radius: 0.4rem;
   background: none;
   padding: 0.3rem 0.5rem;
 }
@@ -128,24 +455,56 @@ progress {
   padding: 0.1rem 0.25rem;
   text-align: left;
 }
+.tree-label {
+  border-radius: 0.4rem;
+}
 .twisty {
   width: 1.4rem;
 }
+.twisty:disabled {
+  border-color: transparent;
+}
 .link {
+  color: var(--accent);
   text-decoration: underline;
 }
-.crumbs {
-  margin-bottom: 0.25rem;
+/* The file table: a header row, then compact rows with a hairline between.
+   Name, Size and Type share these columns. */
+.table-head,
+.entry {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) 6rem 5.5rem;
+  column-gap: 0.5rem;
+  align-items: center;
 }
-.count {
-  margin: 0.25rem 0;
-  font-size: 0.9em;
+.table-head {
+  padding: 0.3rem 0.75rem;
+  padding-right: calc(0.75rem + var(--sbw, 0px));
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.col-name {
+  grid-column: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.col-size,
+.size {
+  text-align: right;
+}
+.vtable {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 .vlist {
-  height: 28rem;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
 }
 .vspacer {
   position: relative;
@@ -155,31 +514,75 @@ progress {
   left: 0;
   right: 0;
   box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
 }
 .entry {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 0 0.5rem;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
   background: none;
   border: 1px solid transparent;
+  border-radius: 0;
   text-align: left;
 }
+.entry:hover:not(.selected) {
+  background: var(--accent-bg);
+}
 .entry-name {
-  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.size {
+.size,
+.type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
   color: var(--muted);
-  font-size: 0.85em;
+}
+.kind {
+  display: inline-flex;
+  align-items: center;
+}
+/* A file-type icon is an outline with a faint fill, in one colour per kind. */
+.file-icon {
+  color: var(--muted);
+}
+.file-icon .fill {
+  fill: currentColor;
+  fill-opacity: 0.16;
+}
+.file-icon-folder {
+  color: var(--icon-folder);
+}
+.file-icon-image {
+  color: var(--icon-image);
+}
+.file-icon-sheet {
+  color: var(--icon-sheet);
+}
+.file-icon-pdf {
+  color: var(--icon-pdf);
+}
+.caret {
+  color: var(--muted);
 }
 .loading {
   color: var(--muted);
-  padding: 0 0.5rem;
+  padding: 0 0.75rem;
+}
+.details h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .details dl {
   margin: 0;
@@ -197,16 +600,92 @@ progress {
   font-size: 0.8em;
   color: var(--muted);
 }
+/* The status line: counts on the left, the primary action on the right. */
+.statusbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 -0.75rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.statusbar-text {
+  flex: 1;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.statusbar-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+.statusbar button {
+  padding: 0.25rem 0.9rem;
+  font-size: 0.9rem;
+  border-radius: 0.5rem;
+}
+.statusbar button:not(.primary) {
+  color: var(--accent);
+  background: none;
+  border-color: var(--border);
+}
+.statusbar button:not(.primary):disabled {
+  color: var(--muted);
+}
+details.technical > summary {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+/* In a narrow window the folder tree and the details lie over the list
+   instead of squeezing it. */
+@media (max-width: 56rem) {
+  .workspace {
+    position: relative;
+  }
+  .folders,
+  .info {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 3;
+    width: min(17rem, 80%);
+    background: var(--surface);
+  }
+  .folders {
+    left: 0;
+  }
+  .info {
+    right: 0;
+  }
+}
+@media (max-width: 44rem) {
+  .table-head,
+  .entry {
+    grid-template-columns: 1.5rem minmax(0, 1fr) 5.5rem;
+  }
+  .col-type,
+  .type {
+    display: none;
+  }
+}
 
 /* ---- D2: create and add ------------------------------------------------------
    Neutral, as everywhere: a commit is LOCAL_COMMITTED, which is not a
    verification result, so nothing here is green (spec §23.3 #2, #6). */
-.writer {
-  margin: 1rem 0;
+.writer,
+.extractor {
+  margin: 0;
+}
+.writer [role="status"]:empty {
+  min-height: 0;
 }
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: 0.7rem;
   padding: 0.5rem 1rem;
   margin: 0.5rem 0;
 }
@@ -238,6 +717,7 @@ progress {
 }
 .drop-overlay {
   border: 2px dashed var(--accent);
+  border-radius: 0.7rem;
   background: var(--accent-bg);
   padding: 0.75rem;
   text-align: center;
@@ -246,9 +726,6 @@ progress {
 /* ---- D3: extract ------------------------------------------------------------
    Neutral: an extraction is not a verification, so nothing here is green
    (spec §23.3 #2). Lists of names are text only. */
-.extractor {
-  margin: 1rem 0;
-}
 .extractor dl {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -292,7 +769,6 @@ progress {
 }
 .checker fieldset {
   margin: 1rem 0;
-  border: 1px solid var(--border);
 }
 .dimensions {
   border-collapse: collapse;
@@ -358,9 +834,6 @@ h3:focus {
   margin: 0 0 0 0.5rem;
   padding: 0;
 }
-.sections button {
-  color: var(--accent);
-}
 /* A status is its word first; the glyph and the border style repeat it for
    people who cannot tell the colours apart. The second declaration gives the
    glyph an empty spoken alternative where the engine supports it. */
@@ -378,9 +851,6 @@ h3:focus {
 /* Reflow (WCAG 1.4.10): narrow windows stack the panes instead of scrolling
    sideways. */
 @media (max-width: 64rem) {
-  .panes {
-    grid-template-columns: 1fr;
-  }
   progress {
     width: 100%;
     max-width: 20rem;
@@ -414,41 +884,100 @@ h3:focus {
   white-space: nowrap;
   border: 0;
 }
+/* A hidden heading that code moves focus to (the fallback after a panel
+   closes) shows itself while it has focus, so the focus ring is not clipped. */
+.sr-only:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+/* The mascot is a decorative background on an empty element: never an img, so
+   a page that holds hostile names has no img in it at all. */
+.mascot-face {
+  flex: none;
+  width: 3.5rem;
+  height: 2.5rem;
+  background: url("./assets/mochi.png") center / contain no-repeat;
+}
+.mascot-hero {
+  display: block;
+  width: min(11rem, 40vh);
+  aspect-ratio: 480 / 398;
+  background: url("./assets/mochi-hero.png") center / contain no-repeat;
+}
+.tagline {
+  color: var(--muted);
+}
+.start {
+  max-width: 34rem;
+  margin: auto;
+  padding: 1rem 0;
+}
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.5rem 0;
+  text-align: center;
+}
+.wordmark {
+  margin-top: 0.25rem;
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+}
+.hero .tagline {
+  margin: 0.25rem 0 0;
+  font-size: 1.05rem;
+}
+.drop-zone {
+  margin: 1rem 0;
+  padding: 1.25rem 1rem;
+  text-align: center;
+  border: 2px dashed var(--border-strong);
+  border-radius: 0.9rem;
+}
+.drop-zone p {
+  margin: 0.25rem 0;
+}
+.drop-zone-title {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
 .big-actions {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
   margin: 1rem 0;
 }
 button.big {
   display: flex;
+  flex: 1 1 9rem;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
-  padding: 1.25rem 1.25rem;
-  text-align: left;
-  background: var(--surface);
-  color: var(--fg);
-  border: 2px solid var(--accent);
-  border-radius: 0.5rem;
-  cursor: pointer;
-}
-button.big:hover:not(:disabled) {
-  background: var(--accent-bg);
-}
-button.big:disabled {
-  cursor: not-allowed;
-  border-color: var(--border);
-}
-button.big.primary {
   align-items: center;
-  background: var(--accent-bg);
+  gap: 0.2rem;
+  padding: 0.8rem 1rem;
+  text-align: center;
+  border-radius: 0.7rem;
 }
 .big-title {
-  font-size: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  gap: 0.5rem;
   font-weight: 600;
 }
-.big-hint {
+.recent h3 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
   color: var(--muted);
 }
 .note.quiet {
@@ -462,14 +991,94 @@ button.big.primary {
   margin: 0 0 0.25rem;
 }
 details.options,
-details.technical,
-details.advanced {
+details.technical {
   margin: 1rem 0;
 }
+/* The tools drawer at the bottom of the frame: one quiet word when closed,
+   a scrolling area (never more than half the window) when open. */
 details.advanced {
+  position: relative;
+  flex: none;
+  max-height: 50vh;
+  overflow: auto;
+  /* Whatever scrolls into view here (a focused control, a section heading)
+     stops below the sticky summary instead of under it. */
+  scroll-padding-top: 2.5rem;
+  padding: 0 0.75rem 0.5rem;
   border-top: 1px solid var(--border);
-  padding-top: 0.75rem;
+}
+details.advanced > summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.2rem 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  background: var(--bg);
+}
+.search form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+details.advanced > section {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 0.25rem;
 }
 summary {
   cursor: pointer;
+}
+
+/* ---- Quiet lower areas: Advanced and Help ----------------------------------
+   Below the main path: small muted headings, and buttons that show only a
+   hairline until they are pointed at. Fields keep their full edge. */
+.drop-zone .note {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+details.advanced h2,
+.help h2 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+details.advanced h3,
+.help h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+details.advanced .panel h3 {
+  color: var(--fg);
+}
+details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)),
+.help button {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.9rem;
+  color: var(--accent);
+  background: none;
+  border-color: var(--border);
+}
+details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)):hover:not(:disabled),
+.help button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)):disabled,
+.help button:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+}
+.help {
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.help .actions {
+  margin: 0.5rem 0;
+}
+.help p {
+  font-size: 0.9rem;
+  color: var(--muted);
 }

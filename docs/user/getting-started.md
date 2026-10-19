@@ -56,10 +56,12 @@ asks **What would you like to do?** and offers three buttons.
    created and keeps the precise status as a technical line.
 2. **Open archive** — look inside, pick an entry, then **Extract selected**, or add and remove
    entries. You can also drop a `.mochi` file on the window, or pick one from **Recent archives**.
-3. **Extract archive** (or **Extract all** inside an open archive) — extracts into a **new folder
-   next to the archive**, named after it. Nothing already on your computer is overwritten;
+3. **Extract** (in an open archive; or **More > Open and extract…** to choose an archive and
+   extract it at once) — extracts into a **new folder next to the archive**, named after it. Nothing already on your computer is overwritten;
    a name collision is listed first and skipped. **Show in folder** opens the result.
-4. **Advanced** — search, test and repair, passphrases, other archive formats, settings.
+4. **Test**, **Find** and **Info** in the toolbar test the open archive, search its names and
+   show details; **More** has passphrases, repair, other archive formats and settings; **?** has
+   help. The same tools are in the **Advanced** drawer at the bottom.
 
 Plain words on these screens map to the precise terms used below: a **version** is a snapshot
 (one commit); the **Technical details** areas hold IDs and hashes. Deleting removes an entry
@@ -155,3 +157,13 @@ The CLI keeps the last head it saw for each archive in a small state directory
 (`--state-dir`, or `$MOCHI_STATE_DIR`, or the platform default). It is how `verify` can tell
 that an older copy has replaced a newer archive. `--no-local-history` turns that off, and
 freshness is then `UNKNOWN` ([verification.md](verification.md)).
+
+## The `.mochi-lock` file
+
+Creating or changing an archive makes an empty file named `<archive name>.mochi-lock` beside it.
+It keeps two programs from writing the same archive at once; it holds no data, and the archive
+does not need it to be read or restored. On Windows MOCHI creates it hidden (lock files made by
+earlier versions stay visible). On Linux, when MOCHI next creates or changes an archive in the
+same folder, it removes lock files whose archive is gone (renamed or deleted). On Windows those
+are not cleaned up automatically; if you rename or delete an archive, you can delete its
+`.mochi-lock` file too. Never delete one while a program is writing that archive.

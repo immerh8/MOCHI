@@ -1,8 +1,8 @@
 // The window itself: title, section navigation, and the D0 job self-test.
 export const app = {
   "app.title": "MOCHI",
+  "app.tagline": "Archive made simple",
   "app.sections": "Sections",
-  "app.sectionsIntro": "Jump to:",
   "app.sectionSearch": "Search names",
   "app.sectionPassphrases": "Passphrases",
   "app.sectionCheck": "Test, health, and repair",

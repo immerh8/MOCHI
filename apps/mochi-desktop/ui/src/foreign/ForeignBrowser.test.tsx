@@ -7,6 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import type { ForeignArchiveSummary, ForeignRow } from "../ipc/foreign";
 import type { ExtractReport } from "../ipc/extract";
 import type { JobEvent } from "../ipc/jobs";
+import { Browser } from "../browser/Browser";
 import { ForeignBrowser } from "./ForeignBrowser";
 
 type Internals = { runCallback: (id: number, data: unknown) => void };
@@ -147,8 +148,13 @@ test("an opened archive is labelled foreign, with no MOCHI health vocabulary", a
   expect(screen.getByTestId("foreign-checks")).toHaveTextContent("CRC32 per entry");
   const text = document.body.textContent?.toLowerCase() ?? "";
   for (const w of BANNED) expect(text).not.toContain(w);
-  // The test button does not say "verify".
-  expect(screen.getByTestId("foreign-test")).toHaveTextContent("Read and check entries");
+  // The test button does not say "verify". Its label is one word now (the toolbar's); what the check
+  // is, and that it is not MOCHI's verification, is its tooltip (and the Info panel's note).
+  const test = screen.getByTestId("foreign-test");
+  expect(test).toHaveTextContent("Test");
+  expect(test.textContent?.toLowerCase()).not.toContain("verif");
+  expect(test).toHaveAttribute("title", expect.stringContaining("Reads every entry and runs the checks this format has"));
+  expect(test).toHaveAttribute("title", expect.stringContaining("does not verify the archive the way MOCHI verifies its own"));
 });
 
 test("names are text only, and a refused name cannot be selected for extraction", async () => {
@@ -337,4 +343,23 @@ test("extracting the selected entry sends its key; cancelling is offered while i
   expect(b.calls.some((c) => c.cmd === "cancel_job")).toBe(true);
   b.job({ event: "finished", job_id: 9, outcome: { status: "cancelled" } });
   expect(await screen.findByTestId("foreign-headline")).toHaveTextContent("Cancelled");
+});
+
+test("an archive opened while the Advanced area is collapsed shows in the main window, and rows get icons from a fixed set", async () => {
+  backend();
+  const user = userEvent.setup();
+  const { container } = render(<Browser tools={<ForeignBrowser />} />);
+  const area = screen.getByTestId("advanced");
+  expect(area).not.toHaveAttribute("open");
+  await user.click(screen.getByTestId("foreign-open"));
+  await screen.findAllByTestId("foreign-entry");
+  // The archive is drawn in the window's own area (the start screen steps aside), not inside the closed tools drawer.
+  expect(area).not.toHaveAttribute("open");
+  expect(area.contains(screen.getByTestId("foreign-meta"))).toBe(false);
+  expect(screen.queryByTestId("start-screen")).toBeNull();
+  const entries = screen.getAllByTestId("foreign-entry");
+  expect(entries.map((e) => e.querySelector(".type")?.textContent)).toEqual(["Folder", "TXT", "File", "File"]);
+  expect(container.querySelector("img")).toBeNull();
+  for (const icon of container.querySelectorAll("svg")) expect(icon).toHaveAttribute("aria-hidden", "true");
+  expect(container.querySelectorAll('[data-testid="foreign-entry"] svg')).toHaveLength(entries.length);
 });

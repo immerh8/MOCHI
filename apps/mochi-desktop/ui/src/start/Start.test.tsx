@@ -96,15 +96,23 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
 
 afterEach(() => clearMocks());
 
-test("with no archive open, three plain actions and one quiet sentence are on screen", async () => {
+test("with no archive open, two plain actions are on screen and the honest limit is one click away in Help", async () => {
+  const user = userEvent.setup();
   backend();
   render(<App />);
   const start = await screen.findByTestId("start-screen");
   expect(screen.getByRole("heading", { level: 2, name: "What would you like to do?" })).toBeInTheDocument();
-  for (const name of ["Create archive", "Open archive", "Extract archive"]) {
+  // Create and Open only: Extract is the toolbar's, and it waits for an archive.
+  for (const name of ["Create archive", "Open archive"]) {
     expect(within(start).getByRole("button", { name: new RegExp(`^${name}`) })).toBeEnabled();
   }
-  // The honest limit is stated once, quietly, and does not use success wording.
+  expect(within(start).queryByRole("button", { name: /^Extract/ })).toBeNull();
+  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  // The honest limit (an archive is not a second copy) moved off the first screen into the Help
+  // panel, which the toolbar's ? opens; it is stated once there, and does not use success wording.
+  expect(screen.getByTestId("start-note")).not.toBeVisible();
+  await user.click(screen.getByTestId("toolbar-help"));
+  expect(screen.getByTestId("start-note")).toBeVisible();
   expect(screen.getByTestId("start-note")).toHaveTextContent("not a second copy of them");
   const text = (start.textContent ?? "").toLowerCase();
   for (const banned of ["backed up", "backup", "safe", "preserved", "secure"]) {
@@ -118,13 +126,52 @@ test("with no archive open, three plain actions and one quiet sentence are on sc
   expect(screen.queryByTestId("recent")).toBeNull();
 });
 
+test("the start screen shows the tagline, and the mascot is not an img element", async () => {
+  backend();
+  const { container } = render(<App />);
+  const start = await screen.findByTestId("start-screen");
+  expect(within(start).getByText("Archive made simple")).toBeInTheDocument();
+  expect(within(start).getByText("Drag and drop files or an archive here")).toBeInTheDocument();
+  // The mascot is decoration (a CSS background); the hostile-name checks rely on there being no img at all.
+  expect(container.querySelectorAll("img")).toHaveLength(0);
+  expect(container.querySelectorAll("[href]")).toHaveLength(0);
+  expect(container.querySelectorAll(".mascot-face, .mascot-hero")).toHaveLength(2);
+  for (const mascot of container.querySelectorAll(".mascot-face, .mascot-hero")) {
+    expect(mascot).toHaveAttribute("aria-hidden", "true");
+  }
+});
+
+test("the drop zone is one line; what dropping does is its tooltip, which adds to the line instead of repeating it", async () => {
+  backend();
+  render(<App />);
+  const zone = await screen.findByTestId("start-drop-hint");
+  expect(zone).toHaveTextContent("Drag and drop files or an archive here");
+  expect(zone.querySelector(".note")).toBeNull();
+  const hint = zone.getAttribute("title");
+  expect(hint).not.toBeNull();
+  expect(hint).not.toMatch(/drag|drop/i);
+  expect(hint).toContain("A .mochi file opens.");
+});
+
+test("the settings gear opens Advanced and moves focus to the Settings heading", async () => {
+  const user = userEvent.setup();
+  backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  const advanced = screen.getByTestId("advanced");
+  expect(advanced).not.toHaveAttribute("open");
+  await user.click(screen.getByTestId("start-settings"));
+  expect(advanced).toHaveAttribute("open");
+  expect(document.activeElement).toBe(document.getElementById("settings-heading"));
+});
+
 test("the tools are behind a collapsed Advanced disclosure, still in the page for keyboard users", async () => {
   backend();
   render(<App />);
   await screen.findByTestId("start-screen");
   const advanced = screen.getByTestId("advanced");
   expect(advanced).not.toHaveAttribute("open");
-  expect(within(advanced).getByText(/^Advanced:/)).toBeInTheDocument();
+  expect(within(advanced).getByText(/^Advanced$/)).toBeInTheDocument();
   for (const id of ["search-heading", "rekey-heading", "check-heading", "foreign-heading", "self-test-heading", "settings-heading"]) {
     expect(advanced.querySelector(`#${id}`), id).not.toBeNull();
   }
@@ -253,6 +300,11 @@ test("the start screen is operable by keyboard alone", async () => {
   create.focus();
   await user.tab();
   expect(document.activeElement).toBe(screen.getByTestId("open-archive"));
+  // "Open and extract" is in the toolbar's More menu: open it by keyboard, take the item.
+  screen.getByTestId("toolbar-more").focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByTestId("toolbar-more")).toHaveAttribute("aria-expanded", "true");
+  await user.tab();
   await user.tab();
   expect(document.activeElement).toBe(screen.getByTestId("start-extract"));
   await user.keyboard("{Enter}");

@@ -139,7 +139,7 @@ scratch folder. Install the **0.9.0** setup from its published release.
 ### W-04. Start menu and first start
 
 1. Start → `MOCHI`; open it.
-- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds showing **What would you like to do?** with three large buttons *Create archive*, *Open archive*, *Extract archive*, a short sentence saying an archive is not a second copy of the files, and a closed **Advanced** disclosure (opening it shows the **Sections** links *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Job runner self-test*, *Settings*) above **Help** (the exact set may differ slightly; what matters is that the window is up and readable); no error text.
+- **Pass:** an entry **MOCHI** with the app icon; a window titled **MOCHI** within seconds showing a toolbar (*Add*, *Extract*, *Test*, *Remove*, *Find*, *Info*, *More*, *Help*), **What would you like to do?** with two large buttons *Create archive* and *Open archive*, and a closed **Advanced** disclosure at the bottom (opening it shows the **Sections** links *Search names*, *Passphrases*, *Test, health, and repair*, *Other archive formats*, *Job runner self-test*, *Settings*; the exact set may differ slightly; what matters is that the window is up and readable); no error text.
 - **Fail:** no entry, a blank window after 30 s, a missing-web-view message, a crash.
 2. Settings → Apps → Installed apps → **MOCHI**: **Pass:** version 0.9.0, publisher *The MOCHI Project contributors*.
 
@@ -196,12 +196,12 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 
 WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
 
-1. **Pass:** the window asks **What would you like to do?** with **Create archive**, **Open archive**, **Extract archive**; one quiet sentence says an archive is not a second copy; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed. **Fail:** more than those three actions at the top, jargon, or *backup/safe*.
+1. **Pass:** the window asks **What would you like to do?** with **Create archive** and **Open archive**; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed; the toolbar's *Add*, *Extract*, *Test*, *Remove*, *Find* and *Info* are greyed out. Press **Help** (?): **Pass:** one sentence says an archive is not a second copy. **Fail:** more than those two actions on the screen, jargon, or *backup/safe*.
 2. Drag the scratch file `Note é & more.txt` from Explorer onto the window. **Pass:** the **Create a new archive** panel opens with the file listed under step 1 and the full path of `Note é & more.mochi` (next to the file) under step 2; **Options** is closed. Press **Create archive**. **Pass:** the result says *Created Note é & more.mochi: 1 file…* and **Show in folder** opens Explorer on that folder. Repeat the drag and create again: **Pass:** the second archive is `Note é & more (2).mochi`; the first is untouched (never replaced).
 3. Close the archive, then drag `Second é & copy.mochi` onto the window. **Pass:** it opens (no panel to add it to a new archive). Drag it together with a text file: **Pass:** both go to the create panel instead.
-4. **Extract archive** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Run **Extract all** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
+4. **More > Open and extract…** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Press the toolbar's **Extract** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
 5. Close the archive. **Pass:** the start screen lists the archives you opened under **Recent archives**; one click reopens one; **Clear this list** empties it.
-6. Keyboard only (Tab, Enter): **Pass:** all three start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
+6. Keyboard only (Tab, Enter): **Pass:** the toolbar (including **More** and its items), both start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
 
 ---
 
