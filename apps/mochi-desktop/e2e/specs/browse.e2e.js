@@ -4,6 +4,7 @@
 // the d1_browse_fixtures example (wdio.conf.js): browse.mochi on the first
 // "Open archive" click, large.mochi on the second.
 import { $, $$, expect } from "@wdio/globals";
+import { closeVersions, openInfo, openVersions } from "./_ui.js";
 
 const countElements = (selector) =>
   browser.execute((s) => document.querySelectorAll(s).length, selector);
@@ -38,7 +39,9 @@ describe("archive browser", () => {
     await openNext();
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("4 versions"));
+    await openVersions();
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
+    await closeVersions();
 
     // Root of the head: the scripted history's hostile name, inert.
     await browser.waitUntil(async () => (await entryNames()).includes("<img src=x onerror=alert(1)>"), {
@@ -75,16 +78,21 @@ describe("archive browser", () => {
     // Details of one entry.
     const rows = await $$('[data-testid="entry"]');
     await rows[0].click();
+    // The details are in the Info panel, which the toolbar's Info opens.
+    await openInfo();
     await expect($('[data-testid="details"]')).toHaveText(expect.stringContaining("rw-r--r-- (0644)"));
   });
 
   it("switches snapshots from the timeline", async () => {
+    await openVersions();
     await $('[data-testid="commit-0"]').click();
     await expect($('[data-testid="crumbs"]')).toHaveText("Version 0");
     await browser.waitUntil(async () => (await entryNames()).includes("docs"));
     // `hostile/` arrived in commit 3; commit 0 does not have it.
     expect(await entryNames()).not.toContain("hostile");
+    await openVersions();
     await expect($('[data-testid="commit-0"]')).toHaveAttribute("aria-current", "true");
+    await closeVersions();
   });
 
   it("pages a 100,000-entry folder and keeps only a window of rows in the DOM", async () => {
@@ -94,7 +102,7 @@ describe("archive browser", () => {
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("large.mochi"));
     await enterFolder("many");
     await expect($('[data-testid="entry-count"]')).toHaveText(
-      expect.stringContaining("100,000 entries in this folder"),
+      expect.stringContaining("100,000 items"),
     );
     await browser.waitUntil(async () => (await entryNames()).includes("f000000"));
     expect(await countElements('[data-testid="entries"] [role="listitem"]')).toBeLessThan(150);

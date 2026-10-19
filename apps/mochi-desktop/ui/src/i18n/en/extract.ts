@@ -2,7 +2,8 @@
 // nothing here gets success styling.
 export const extract = {
   "extract.heading": "Extract",
-  "extract.all": "Extract all",
+  "extract.toolbar": "Extract",
+  "extract.allTip": "Extract everything in this version",
   "extract.selected": "Extract selected",
   "extract.openFirst": "Open an archive first",
   "extract.selectFirst": "Select an entry first",

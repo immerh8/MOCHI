@@ -12,6 +12,7 @@ import { help } from "./en/help";
 import { quick } from "./en/quick";
 import { settings } from "./en/settings";
 import { start } from "./en/start";
+import { toolbar } from "./en/toolbar";
 import { update } from "./en/update";
 import { write } from "./en/write";
 
@@ -27,6 +28,7 @@ export const en = {
   ...quick,
   ...settings,
   ...start,
+  ...toolbar,
   ...update,
   ...write,
 } as const;

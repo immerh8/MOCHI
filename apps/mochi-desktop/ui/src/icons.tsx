@@ -160,3 +160,65 @@ export function FileTypeIcon({ kind }: { kind: FileIconKind }) {
       );
   }
 }
+
+export function CheckIcon() {
+  return (
+    <Icon>
+      <path d="M12 3.5 5 6v5.5c0 4.2 2.8 7.4 7 9 4.2-1.6 7-4.8 7-9V6z" />
+      <path d="m8.8 12 2.4 2.4 4.2-4.6" />
+    </Icon>
+  );
+}
+
+export function MinusIcon() {
+  return (
+    <Icon>
+      <path d="M5 12h14" />
+    </Icon>
+  );
+}
+
+export function InfoIcon() {
+  return (
+    <Icon>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 11v5.2M12 7.8h.01" />
+    </Icon>
+  );
+}
+
+export function MoreIcon() {
+  return (
+    <Icon>
+      <circle cx="6" cy="12" r="1.2" />
+      <circle cx="12" cy="12" r="1.2" />
+      <circle cx="18" cy="12" r="1.2" />
+    </Icon>
+  );
+}
+
+export function HelpIcon() {
+  return (
+    <Icon>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.6a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 16.6h.01" />
+    </Icon>
+  );
+}
+
+export function FoldersIcon() {
+  return (
+    <Icon size={18}>
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M9.5 5v14" />
+    </Icon>
+  );
+}
+
+export function CaretDownIcon() {
+  return (
+    <Icon className="icon caret" size={14}>
+      <path d="m6 9 6 6 6-6" />
+    </Icon>
+  );
+}

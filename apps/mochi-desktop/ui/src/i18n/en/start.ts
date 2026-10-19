@@ -4,11 +4,7 @@
 export const start = {
   "start.heading": "What would you like to do?",
   "start.create": "Create archive",
-  "start.createHint": "Pack files and folders into one new file.",
   "start.open": "Open archive",
-  "start.openHint": "Look inside an archive and pick what to take out.",
-  "start.extract": "Extract archive",
-  "start.extractHint": "Choose an archive and take everything out of it.",
   "start.dropZone": "Drag and drop files or an archive here",
   "start.settings": "Settings",
   "start.dropHint": "Files and folders go into a new archive. A .mochi file opens.",
@@ -20,9 +16,8 @@ export const start = {
   "start.forgetRecent": "Clear this list",
   "start.openRecentFailed": "Could not open that archive",
   "start.openDroppedFailed": "Could not open the dropped archive",
-  "start.advanced": "Advanced: search, test and repair, passphrases, other formats, settings",
-  "start.advancedHint":
-    "Tools for checking an archive, repairing damage, changing passphrases, reading ZIP, 7z, RAR and tar files, and the app's settings.",
+  "start.advanced": "Advanced",
+  "start.extractOpen": "Open and extract…",
   "start.showInFolder": "Show in folder",
   "start.showInFolderFailed": "Could not show the folder",
   "start.technical": "Technical details",

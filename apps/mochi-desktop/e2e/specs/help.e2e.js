@@ -5,11 +5,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { $, expect } from "@wdio/globals";
+import { openHelp } from "./_ui.js";
 
 describe("help (User guide)", () => {
   it("says on the button that the guide is written for the command line", async () => {
     const button = await $('[data-testid="help-user-guide"]');
     await button.waitForExist({ timeout: 60_000 });
+    // The Help panel is closed until the toolbar's ? opens it.
+    await openHelp();
     await expect(button).toHaveText("User guide (command line)");
   });
 

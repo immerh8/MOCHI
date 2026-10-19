@@ -1,7 +1,7 @@
-// D10 on the real app: the start screen. A fresh window offers three plain
-// actions and a quiet note; the technical tools are a closed disclosure;
-// Open archive and the recent list work; Extract archive goes straight to a
-// plan into a new folder next to the archive. WebDriver cannot drop files from
+// D10 on the real app: the start screen. A fresh window offers two plain
+// actions (Create, Open) under a toolbar; the note that an archive is not a second copy is in
+// the Help panel; the technical tools are a closed disclosure; Open archive and the recent list
+// work; More > Open and extract goes straight to a plan into a new folder next to the archive. WebDriver cannot drop files from
 // a file manager or drive a native dialog: the `e2e` build takes the archive
 // from MOCHI_E2E_PICK_FILE, and dropping is covered by the Rust drop tests and
 // the UI tests (and the release checklist).
@@ -9,6 +9,7 @@ import { copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
+import { closeHelp, openHelp, openMore } from "./_ui.js";
 
 const fixtures = process.env.MOCHI_E2E_FIXTURES;
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
@@ -21,12 +22,18 @@ copyFileSync(path.join(fixtures, "browse.mochi"), archive);
 const BANNED = ["backed up", "backup", "safe", "preserved", "secure"];
 
 describe("the start screen", () => {
-  it("offers three plain actions, a quiet note, and keeps the technical tools closed", async () => {
+  it("offers two plain actions, keeps the note in Help, and keeps the technical tools closed", async () => {
     await $('[data-testid="start-screen"]').waitForExist({ timeout: 60_000 });
-    for (const id of ["start-create", "open-archive", "start-extract"]) {
+    for (const id of ["start-create", "open-archive"]) {
       await expect($(`[data-testid="${id}"]`)).toBeDisplayed();
     }
+    // The toolbar is there; its archive actions wait for an archive.
+    await expect($('[data-testid="extract-all"]')).toBeDisabled();
+    await expect($('[data-testid="toolbar-more"]')).toBeEnabled();
+    // The honest limit moved from the first screen into the Help panel.
+    await openHelp();
     await expect($('[data-testid="start-note"]')).toHaveText(expect.stringContaining("not a second copy"));
+    await closeHelp();
     await expect($('[data-testid="advanced"]')).not.toHaveAttribute("open");
     // The start screen itself (the closed Advanced area is not part of it; some
     // engines report a closed disclosure's text, and it names the tools plainly).
@@ -60,8 +67,9 @@ describe("the start screen", () => {
     await $('[data-testid="start-screen"]').waitForExist();
   });
 
-  it("Extract archive: choose an archive, then a plan into a new folder next to it", async () => {
+  it("Open and extract: choose an archive, then a plan into a new folder next to it", async () => {
     queuePicks(archive);
+    await openMore();
     await $('[data-testid="start-extract"]').click();
     const panel = await $('[data-testid="extract-panel"]');
     await panel.waitForExist({ timeout: 60_000 });

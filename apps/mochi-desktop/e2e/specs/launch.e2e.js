@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, expect } from "@wdio/globals";
+import { closeVersions, openVersions } from "./_ui.js";
 
 // Set by wdio.conf.js to the binary it launches.
 const application = process.env.MOCHI_DESKTOP_BINARY;
@@ -99,7 +100,9 @@ describe("a second launch", () => {
     expect(ended.code).toBe(0);
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await openVersions();
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
+    await closeVersions();
   });
 
   it("takes a bare path, which is what a file manager passes", async () => {

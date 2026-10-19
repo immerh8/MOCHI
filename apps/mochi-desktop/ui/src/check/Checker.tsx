@@ -43,6 +43,12 @@ import { Prose, Report, StatusBadge } from "./Report";
 export interface CheckerProps {
   /** The archive open in the browser, if any ("Use the open archive"). */
   archive: ArchiveSummary | null;
+  /**
+   * Changes when the toolbar's Test is pressed: use the open archive as the
+   * subject and run the test with the level and options chosen here. An
+   * encrypted archive that is still locked waits for its passphrase.
+   */
+  testRequest?: number;
 }
 
 type Kind = "test" | "plan" | "apply";
@@ -77,7 +83,7 @@ const FAILED_WHAT: Record<Kind, () => string> = {
  * through a reviewed plan into a new file, re-verified. Every file is chosen
  * in a native dialog that Rust shows; this component never holds a path.
  */
-export function Checker({ archive }: CheckerProps) {
+export function Checker({ archive, testRequest = 0 }: CheckerProps) {
   const [subject, setSubject] = useState<SubjectView | null>(null);
   const [level, setLevel] = useState<CheckLevel>("restoration");
   const [deep, setDeep] = useState(false);
@@ -265,6 +271,23 @@ export function Checker({ archive }: CheckerProps) {
       accept_retention_loss: acceptRetentionLoss,
     });
   };
+
+  // The toolbar's Test: the same two steps as "Use the open archive" and
+  // "Test", from the latest state. Each request runs once.
+  const latestRef = useRef({ archive, busy, choose, test });
+  useEffect(() => {
+    latestRef.current = { archive, busy, choose, test };
+  });
+  const seenTestRef = useRef(testRequest);
+  useEffect(() => {
+    if (testRequest === seenTestRef.current) return;
+    seenTestRef.current = testRequest;
+    const { archive: open, busy: working, choose: pick } = latestRef.current;
+    if (open === null || working) return;
+    void pick({ from: "open_archive", handle: open.handle }).then((s) => {
+      if (s !== null && !(s.encrypted && !s.unlocked)) latestRef.current.test(s.id);
+    });
+  }, [testRequest]);
 
   const testNewArchive = async () => {
     const s = await choose({ from: "repair_output" });

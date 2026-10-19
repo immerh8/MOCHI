@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
+import { clickNewArchive } from "./_ui.js";
 
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
 const queuePicks = (...paths) => writeFileSync(pickFile, paths.join("\n"));
@@ -68,9 +69,7 @@ const assertNoPassphraseOnPage = async () => {
 // save-as dialog is the "Change…" one (the default place would be next to the
 // folder), and the options are opened as a person would.
 const stageFolderAndOpenCreate = async () => {
-  const toolbar = await $('[data-testid="new-archive"]');
-  if (await toolbar.isExisting()) await toolbar.click();
-  else await $('[data-testid="start-create"]').click();
+  await clickNewArchive();
   await $('[data-testid="stage-folder"]').click();
   await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
   await $('[data-testid="change-destination"]').click();

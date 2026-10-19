@@ -3,7 +3,6 @@ export const app = {
   "app.title": "MOCHI",
   "app.tagline": "Archive made simple",
   "app.sections": "Sections",
-  "app.sectionsIntro": "Jump to:",
   "app.sectionSearch": "Search names",
   "app.sectionPassphrases": "Passphrases",
   "app.sectionCheck": "Test, health, and repair",

@@ -70,7 +70,6 @@ const SECTIONS: { id: string; name: () => string }[] = [
 function SectionNav() {
   return (
     <nav aria-label={t("app.sections")} className="sections">
-      <span>{t("app.sectionsIntro")}</span>
       <ul>
         {SECTIONS.map((s) => (
           <li key={s.id}>
@@ -199,17 +198,9 @@ function SelfTest() {
 export function App() {
   return (
     <main>
-      <header className="app-header">
-        <span className="mascot-face" aria-hidden="true" />
-        <div>
-          <h1>{t("app.title")}</h1>
-          <p className="tagline" aria-hidden="true">
-            {t("app.tagline")}
-          </p>
-        </div>
-      </header>
       <Browser
         toolsNav={<SectionNav />}
+        help={<Help />}
         tools={
           <>
             <ForeignBrowser />
@@ -220,7 +211,6 @@ export function App() {
           </>
         }
       />
-      <Help />
     </main>
   );
 }

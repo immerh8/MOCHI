@@ -493,8 +493,9 @@ test("the browser shows the extract buttons and 'selected' follows the details p
   });
   const user = userEvent.setup();
   render(<Browser />);
-  // No archive, no Extract section: the start screen offers it instead.
-  expect(screen.queryByTestId("extract-all")).toBeNull();
+  // No archive: the toolbar's Extract is there but off (the Extract section itself is not mounted).
+  expect(screen.getByTestId("extract-all")).toBeDisabled();
+  expect(screen.queryByTestId("extract-selected")).toBeNull();
   await user.click(screen.getByTestId("open-archive"));
   await screen.findByTestId("archive-meta");
   expect(screen.getByTestId("extract-all")).toBeEnabled();
