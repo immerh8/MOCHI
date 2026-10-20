@@ -14,6 +14,9 @@ import {
   type QuickEvent,
 } from "../ipc/quick";
 import { isIpcError } from "../ipc/jobs";
+import { attentionHint, cautionCount, countParts, joinParts, logRecord } from "../result/details";
+import type { DetailRow, ResultDetails } from "../result/details";
+import { InlineDetails } from "../result/Result";
 import { LOCAL_COMMIT_NOTE, progressText as writeProgress } from "../write/messages";
 import "./quick.css";
 
@@ -27,7 +30,15 @@ type View =
   | { kind: "waiting" }
   | { kind: "running"; progress: { phase: string; completed: number; total: number | null } | null }
   | { kind: "passphrase"; wrong: boolean }
-  | { kind: "done"; lines: string[]; folder: boolean; failed: boolean };
+  | {
+      kind: "done";
+      lines: string[];
+      folder: boolean;
+      failed: boolean;
+      warn: boolean;
+      details: ResultDetails | null;
+      record: string | null;
+    };
 
 function title(job: Job): string {
   switch (job.action) {
@@ -46,35 +57,62 @@ function title(job: Job): string {
 function finished(event: QuickEvent): View | null {
   switch (event.event) {
     case "done": {
-      const counts = t("quick.counts", {
-        files: tc(event.files, "count.fileOne", "count.fileMany"),
-        folders: tc(event.directories, "count.folderOne", "count.folderMany"),
-      });
-      const lines: string[] = [];
-      if (event.action === "add") {
-        lines.push(
-          t("quick.doneAdd", { name: event.name.text }),
-          t("quick.doneAddDetail", {
-            counts,
-            size: formatSize(String(event.bytes)),
-            status: event.status ?? "",
-          }),
-        );
-        if (event.skipped > 0) {
-          lines.push(t("quick.skippedAdd", { n: event.skipped, note: event.note ?? "" }));
-        }
-        if (event.durability_note) lines.push(t("write.degraded", { note: event.durability_note }));
-        lines.push(LOCAL_COMMIT_NOTE);
-      } else {
-        lines.push(t("quick.doneExtract", { counts, name: event.name.text }));
-        lines.push(t("quick.doneExtractIn", { location: event.location.text }));
-        if (event.skipped > 0) {
-          lines.push(t("quick.skippedExtract", { n: event.skipped, note: event.note ?? "" }));
-        }
-        if (event.durability_note) lines.push(t("write.degraded", { note: event.durability_note }));
-        lines.push(t("quick.extractNote"));
+      const parts = joinParts(countParts(event.files, event.directories, event.bytes));
+      const add = event.action === "add";
+      const rows: DetailRow[] = [
+        { label: t("quick.rowLocation"), value: event.location.text },
+        { label: t("quick.rowFiles"), value: event.files.toLocaleString("en-US") },
+        { label: t("quick.rowFolders"), value: event.directories.toLocaleString("en-US") },
+        { label: t("quick.rowSize"), value: formatSize(String(event.bytes)) },
+      ];
+      if (add) {
+        rows.push({
+          label: t("quick.rowStatus"),
+          value: t("write.statusCommitted"),
+          ...(event.status ? { sub: event.status } : {}),
+        });
       }
-      return { kind: "done", lines, folder: true, failed: false };
+      if (event.durability_note) {
+        rows.push({
+          label: t("quick.rowFolderEntry"),
+          value: t("quick.notConfirmed"),
+          sub: t("quick.degradedMark"),
+          note: event.durability_note,
+          caution: true,
+        });
+      }
+      if (event.skipped > 0) {
+        rows.push({
+          label: t(add ? "quick.rowNotStored" : "quick.rowNotExtracted"),
+          value: tc(event.skipped, "common.itemOne", "common.itemMany"),
+          ...(event.note ? { note: t("quick.firstReason", { note: event.note }) } : {}),
+          caution: true,
+        });
+      }
+      const head = add
+        ? t("quick.doneAdd", { name: event.name.text, parts })
+        : t("quick.doneExtract", { parts, name: event.name.text });
+      const line =
+        event.skipped > 0
+          ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: event.skipped.toLocaleString("en-US") })}`
+          : head;
+      const record = [
+        add ? `add commit ${event.status ?? ""}` : "extract",
+        `files ${event.files}, folders ${event.directories}, bytes ${event.bytes}`,
+        `skipped ${event.skipped}`,
+        event.durability_note
+          ? `directory entry not confirmed durable (${event.durability_note})`
+          : "directory entry confirmed",
+      ].join("; ");
+      return {
+        kind: "done",
+        lines: [line],
+        folder: true,
+        failed: false,
+        warn: event.skipped > 0,
+        details: { rows, notes: [add ? LOCAL_COMMIT_NOTE : t("quick.extractNote")] },
+        record,
+      };
     }
     case "fallback":
       return {
@@ -87,6 +125,9 @@ function finished(event: QuickEvent): View | null {
         ],
         folder: false,
         failed: false,
+        warn: false,
+        details: null,
+        record: null,
       };
     case "cancelled":
       return {
@@ -94,6 +135,9 @@ function finished(event: QuickEvent): View | null {
         lines: [t(event.action === "add" ? "write.cancelledCreate" : "quick.cancelledExtract")],
         folder: false,
         failed: false,
+        warn: false,
+        details: null,
+        record: null,
       };
     case "failed":
       return {
@@ -101,6 +145,9 @@ function finished(event: QuickEvent): View | null {
         lines: [t("common.failed", { code: event.code, message: event.message })],
         folder: false,
         failed: true,
+        warn: false,
+        details: null,
+        record: null,
       };
     case "aborted":
       return {
@@ -108,6 +155,9 @@ function finished(event: QuickEvent): View | null {
         lines: [t("common.stoppedUnexpectedly", { message: event.message })],
         folder: false,
         failed: true,
+        warn: false,
+        details: null,
+        record: null,
       };
     default:
       return null;
@@ -150,7 +200,11 @@ export function QuickWindow() {
           return;
         }
         const end = finished(event);
-        if (end) setView(end);
+        if (end) {
+          setView(end);
+          // The technical record goes to the console, once per result.
+          if (end.kind === "done" && end.record) logRecord(end.record);
+        }
       }),
     [],
   );
@@ -245,11 +299,17 @@ export function QuickWindow() {
             data-state={view.failed ? "failed" : "finished"}
           >
             {view.lines.map((line, i) => (
-              <p key={line} className={i === 0 ? undefined : "note"}>
+              <p key={line} className={view.warn && i === 0 ? "warning" : i === 0 ? undefined : "note"}>
                 {line}
               </p>
             ))}
+            {view.details && cautionCount(view.details) > 0 && (
+              <span className="sr-only" data-testid="quick-attention">
+                {attentionHint(cautionCount(view.details))}
+              </span>
+            )}
           </div>
+          {view.details && <InlineDetails prefix="quick" details={view.details} />}
           <div className="actions">
             {view.folder && (
               <button type="button" data-testid="quick-show-folder" onClick={() => showQuickFolder().catch(report)}>

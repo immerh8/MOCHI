@@ -12,7 +12,7 @@ use mochi_core::publish::{
     PublishDurability, ReadOptions,
 };
 use mochi_core::storage::os::OsReadStorage;
-use mochi_core::storage::os::{OsDir, OsStorage, LOCK_FILE_SUFFIX};
+use mochi_core::storage::os::{OsDir, OsStorage};
 use mochi_core::storage::{RemoveOutcome, StorageDir};
 use mochi_core::ErrorCode;
 use mochi_testkit::archive::{read_state, scripted_history, test_options, Job};
@@ -125,11 +125,9 @@ fn t22_creation_on_the_os() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    // The writer lock file stays after the writer closes (Q54: existence is
-    // not ownership, so it is never removed), and it holds no bytes.
-    let lock = format!("{NAME}{LOCK_FILE_SUFFIX}");
-    assert_eq!(names, [NAME.to_string(), lock.clone()]);
-    assert_eq!(std::fs::metadata(tmp.path().join(lock)).unwrap().len(), 0);
+    // The writer lock is on the archive itself (spec B.2.17): nothing but the
+    // archive is left beside it.
+    assert_eq!(names, [NAME.to_string()]);
     let r = OsReadStorage::open(tmp.path().join(NAME)).unwrap();
     let head = open_head(&r, &opts()).unwrap();
     assert_eq!(read_state(&r, &head).unwrap(), steps[0].after);
@@ -161,13 +159,12 @@ fn t22_an_existing_destination_is_never_replaced() {
     .unwrap_err();
     assert_eq!(e.code, ErrorCode::DestinationExists);
     assert_eq!(std::fs::read(tmp.path().join(NAME)).unwrap(), b"precious");
-    // No temporary file is left. The final name's lock file (Q54), taken
-    // before publication was attempted, may stay: it is empty and unlocked.
-    let lock = tmp.path().join(format!("{NAME}{LOCK_FILE_SUFFIX}"));
-    assert_eq!(std::fs::metadata(&lock).unwrap().len(), 0);
-    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
-    let held = std::fs::File::open(&lock).unwrap();
-    held.try_lock().unwrap();
+    // No temporary file is left and no lock file was made.
+    assert_eq!(
+        std::fs::read_dir(tmp.path()).unwrap().count(),
+        1,
+        "only the existing file is left"
+    );
 }
 
 /// D13 outcomes for the directory flush.

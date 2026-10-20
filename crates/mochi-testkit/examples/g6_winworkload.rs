@@ -51,7 +51,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use mochi_core::publish::{open_head, ArchiveWriter, PublishDurability, ReadOptions};
-use mochi_core::storage::os::{OsDir, OsReadStorage, OsStorage, LOCK_FILE_SUFFIX};
+use mochi_core::storage::os::{OsDir, OsReadStorage, OsStorage};
 use mochi_core::storage::{
     DirectoryDurability, ReadStorage, RemoveOutcome, Storage, StorageDir, StorageError,
 };
@@ -294,7 +294,6 @@ fn check(dir: &Path, acks_file: &Path) -> bool {
     let mut known = Vec::new();
     for i in 0..ARCHIVES {
         let n = name_of(i);
-        known.push(format!("{n}{LOCK_FILE_SUFFIX}"));
         known.push(n);
     }
     for n in &names {
@@ -388,14 +387,6 @@ fn check(dir: &Path, acks_file: &Path) -> bool {
         match d.remove_if_unlocked(n) {
             Ok(RemoveOutcome::Removed) => removed += 1,
             other => hard.push(format!("temporary file {n} not removable: {other:?}")),
-        }
-    }
-    for i in 0..ARCHIVES {
-        let lock = dir.join(format!("{}{LOCK_FILE_SUFFIX}", name_of(i)));
-        if let Ok(m) = std::fs::metadata(&lock) {
-            if m.len() != 0 {
-                hard.push(format!("{} is not empty", lock.display()));
-            }
         }
     }
 

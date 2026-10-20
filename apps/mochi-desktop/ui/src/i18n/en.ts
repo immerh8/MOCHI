@@ -10,6 +10,7 @@ import { extract } from "./en/extract";
 import { foreign } from "./en/foreign";
 import { help } from "./en/help";
 import { quick } from "./en/quick";
+import { result } from "./en/result";
 import { settings } from "./en/settings";
 import { start } from "./en/start";
 import { toolbar } from "./en/toolbar";
@@ -26,6 +27,7 @@ export const en = {
   ...foreign,
   ...help,
   ...quick,
+  ...result,
   ...settings,
   ...start,
   ...toolbar,

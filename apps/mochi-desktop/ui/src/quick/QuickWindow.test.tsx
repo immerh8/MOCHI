@@ -61,8 +61,16 @@ test("an extraction shows its progress, then a plain result with Show in folder 
     durability_note: null,
   });
   const result = await screen.findByTestId("quick-result");
-  expect(result).toHaveTextContent("Extracted 3 files and 1 folder into Pictures.");
-  expect(result).toHaveTextContent("Extracting is not a verification");
+  expect(result).toHaveTextContent(/^Extracted 3 files · 1 folder · 12 bytes into Pictures$/);
+  // The rest is behind a small Details disclosure, closed by default.
+  const toggle = screen.getByRole("button", { name: "Details" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByTestId("quick-details")).not.toBeVisible();
+  await userEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByTestId("quick-details")).toBeVisible();
+  expect(screen.getByTestId("quick-details")).toHaveTextContent("/home/me/Pictures");
+  expect(screen.getByTestId("quick-details")).toHaveTextContent("Extracting is not a verification");
   expect(result).toHaveAttribute("data-state", "finished");
   await userEvent.click(screen.getByTestId("quick-show-folder"));
   await userEvent.click(screen.getByTestId("quick-close"));
@@ -90,10 +98,17 @@ test("a new archive is reported as a local commit and never as backed up or safe
     status: "LOCAL_COMMITTED",
     durability_note: null,
   });
-  const text = (await screen.findByTestId("quick-result")).textContent ?? "";
-  expect(text).toContain("Archive created: notes.mochi.");
-  expect(text).toContain("LOCAL_COMMITTED");
-  expect(text).toContain("1 not added");
+  const result = await screen.findByTestId("quick-result");
+  expect(result).toHaveTextContent("Archive created: notes.mochi · 3 files · 1.5 KiB · 1 not added");
+  expect(result).not.toHaveTextContent("LOCAL_COMMITTED");
+  // Something was not stored: the line is a warning and the Details button carries a badge.
+  expect(result.querySelector("p")).toHaveClass("warning");
+  const toggle = screen.getByRole("button", { name: "Details, 1 item needs attention" });
+  await userEvent.click(toggle);
+  const details = screen.getByTestId("quick-details");
+  expect(details).toHaveTextContent("LOCAL_COMMITTED");
+  expect(details).toHaveTextContent("First reason: x: not stored");
+  const text = (document.body.textContent ?? "");
   for (const word of ["backed up", "safe", "preserved", "verified"]) {
     expect(text.toLowerCase()).not.toContain(word);
   }
@@ -149,4 +164,34 @@ test("a window that mounts after the job began still hears all of it", async () 
   first.unmount();
   render(<QuickWindow />);
   expect(await screen.findByTestId("quick-result")).toHaveTextContent("Cancelled. No archive was created.");
+});
+
+test("a degraded directory entry is a note in the details, not in the line, and gets no success styling", async () => {
+  const b = backend();
+  const { container } = render(<QuickWindow />);
+  b.send({ event: "started", action: "add", subject: name("a.txt"), items: 1 });
+  b.send({
+    event: "done",
+    action: "add",
+    name: name("a.mochi"),
+    location: name("/home/me/a.mochi"),
+    files: 1,
+    directories: 0,
+    bytes: 10,
+    skipped: 0,
+    note: null,
+    status: "LOCAL_COMMITTED",
+    durability_note: "directory flush ran, but Windows does not document it as durable",
+  });
+  const result = await screen.findByTestId("quick-result");
+  expect(result).toHaveTextContent("Archive created: a.mochi · 1 file · 10 bytes");
+  expect(result).not.toHaveTextContent(/degraded|durable/i);
+  expect(result.querySelector("p")).not.toHaveClass("warning");
+  expect(screen.getByTestId("quick-attention")).toHaveClass("sr-only");
+  expect(result).toContainElement(screen.getByTestId("quick-attention"));
+  expect(screen.getByTestId("quick-attention")).toHaveTextContent("1 item needs attention, see Details");
+  await userEvent.click(screen.getByRole("button", { name: "Details, 1 item needs attention" }));
+  expect(screen.getByTestId("quick-details")).toHaveTextContent("Not confirmed");
+  expect(screen.getByTestId("quick-details")).toHaveTextContent("Windows does not document it as durable");
+  expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
 });

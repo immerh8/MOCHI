@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-cli"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "blake3",
  "clap",
@@ -3022,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-core"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "getrandom 0.3.4",
  "mochi-format",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-desktop"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "blake3",
  "drag",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-foreign"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "flate2",
  "mochi-foreign",
@@ -3077,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-format"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "argon2",
  "blake3",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-sys"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
@@ -3100,7 +3100,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-testkit"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "blake3",
  "cddl",

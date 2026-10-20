@@ -411,8 +411,21 @@ window is one fixed frame (it never scrolls; the minimum size is set where the w
 
 - **Plain words, precise terms secondary.** "Version" on the main path is a snapshot (one
   commit); IDs, hashes, checkpoint/delta, and the profile are in "Technical details"
-  disclosures. Results keep their honest status as a last "Technical detail" line
-  (`LOCAL_COMMITTED`); deleting still says earlier versions keep the content.
+  disclosures. A finished create, add, remove, or extract is **one short line** with
+  "Show in folder", a **Details** button, and a dismiss button on the same row
+  (`ui/src/result/`; release 0.9.3). Details open in a closed-by-default side panel (Esc or
+  Close shuts it) as label/value rows: counts, the status with its precise value
+  (`commit 0 · LOCAL_COMMITTED`), the directory-entry dimension (DEGRADED shows as "Not
+  confirmed" with a caution marker), what was not stored or extracted, and the one-file note.
+  Items not stored or not extracted, and an archive that could not be reopened, are also in the
+  line (warning bar). A degraded directory entry is deliberately **not** in the line (the owner
+  wants no durability wording upfront, and on Windows every create is degraded by policy): it
+  is in the panel, marked by a dot on the Details button, whose accessible name becomes
+  "Details, N items need attention", and by visually hidden text in the result's live region
+  ("N item needs attention, see Details") so a screen reader announces it. Nothing is
+  success-styled. A removal's line still says earlier versions keep the
+  content. The compact quick-verb window has the same rows behind an inline Details button.
+  The technical record is also written once per result to the console (`console.info`).
 - **Create** is a guided panel: choose items, see where it will be saved (default: next to the
   first item, named after it, `name (2).mochi` if taken; Rust computes it, `Staging`,
   `StagedView.default_destination`; `create_archive` never replaces), a closed **Options**

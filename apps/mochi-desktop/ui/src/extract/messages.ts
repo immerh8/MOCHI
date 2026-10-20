@@ -6,6 +6,8 @@ import { formatSize } from "../browser/format";
 import { t, tc } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type { ExtractReport } from "../ipc/extract";
+import { countParts, joinParts } from "../result/details";
+import type { DetailRow, ResultDetails } from "../result/details";
 
 /** Shown with every extraction: what the engine checked, and what it did not. */
 export const CHECK_NOTE = t("extract.checkNote");
@@ -26,6 +28,12 @@ export interface Described {
   notes: string[];
   /** Whether the extraction ran to its end (it may still list exceptions). */
   completed: boolean;
+  /** The Details panel of a finished extraction; `null` for a cancel or a failure. */
+  details: ResultDetails | null;
+  /** Some entries were not extracted: the line gets warning styling. */
+  warn: boolean;
+  /** The technical record, for the console. */
+  record: string | null;
 }
 
 /** Codes that end a job before it wrote anything. */
@@ -42,15 +50,32 @@ export function describe(outcome: JobOutcome): Described {
     case "completed": {
       const r = outcome.extract;
       if (!r) {
-        return { headline: t("common.completed", { summary: outcome.summary }), notes: [], completed: true };
+        return {
+          headline: t("common.completed", { summary: outcome.summary }),
+          notes: [],
+          completed: true,
+          details: null,
+          warn: false,
+          record: null,
+        };
       }
-      return { headline: extractedLine(r), notes: reportNotes(r), completed: true };
+      return {
+        headline: extractedLine(r),
+        notes: [],
+        completed: true,
+        details: reportDetails(r),
+        warn: r.not_extracted_total > 0,
+        record: reportRecord(r),
+      };
     }
     case "cancelled":
       return {
         headline: t("extract.cancelled"),
         notes: [t("extract.cancelledNote1"), t("extract.cancelledNote2")],
         completed: false,
+        details: null,
+        warn: false,
+        record: null,
       };
     case "failed":
       return {
@@ -59,41 +84,98 @@ export function describe(outcome: JobOutcome): Described {
           t(BEFORE_WRITING.has(outcome.code) ? "extract.nothingWritten" : "extract.mayHaveExtracted"),
         ],
         completed: false,
+        details: null,
+        warn: false,
+        record: null,
       };
     case "aborted":
       return {
         headline: t("common.stoppedUnexpectedly", { message: outcome.message }),
         notes: [t("extract.mayHaveExtracted")],
         completed: false,
+        details: null,
+        warn: false,
+        record: null,
       };
   }
 }
 
+/**
+ * One short line: what was extracted, and (so an overall line does not hide
+ * it) how many entries were not. Where it went is in the details and on the
+ * "Show in folder" button.
+ */
 function extractedLine(r: ExtractReport): string {
-  const what = t("extract.what2", {
-    files: tc(r.files, "count.fileOne", "count.fileMany"),
-    size: formatSize(String(r.bytes)),
-    folders: tc(r.directories, "count.folderOne", "count.folderMany"),
-  });
-  const line = t("extract.extractedAll", { what, seq: r.seq, dest: r.destination });
+  const line = t("extract.line", { parts: joinParts(countParts(r.files, r.directories, r.bytes)) });
   if (r.not_extracted_total === 0) return line;
-  const n = r.not_extracted_total.toLocaleString("en-US");
-  return `${line} ${t(r.not_extracted_total === 1 ? "extract.notExtractedOne" : "extract.notExtractedMany", { n })}`;
+  const n = tc(r.not_extracted_total, "extract.lineNotExtractedOne", "extract.lineNotExtractedMany");
+  return `${line}${t("common.statusSeparator")}${n}`;
 }
 
-function reportNotes(r: ExtractReport): string[] {
-  const notes: string[] = [];
-  if (r.attributes_unavailable) {
-    notes.push(t("extract.attributesUnavailable", { reason: r.attributes_unavailable.text }));
-  }
+function reportDetails(r: ExtractReport): ResultDetails {
+  const rows: DetailRow[] = [
+    { label: t("extract.rowFolder"), value: r.destination, testId: "extract-destination-result" },
+    { label: t("extract.rowVersion"), value: String(r.seq) },
+    { label: t("extract.rowFiles"), value: r.files.toLocaleString("en-US") },
+    { label: t("extract.rowFolders"), value: r.directories.toLocaleString("en-US") },
+    { label: t("extract.rowSize"), value: formatSize(String(r.bytes)) },
+  ];
   if (r.durability_note) {
-    notes.push(t("extract.durabilityNote", { note: r.durability_note }));
+    rows.push({
+      label: t("extract.rowFolderEntries"),
+      value: t("extract.notConfirmed"),
+      sub: t("extract.degradedMark"),
+      note: r.durability_note,
+      caution: true,
+    });
   }
-  if (r.case_insensitive) {
-    notes.push(t("extract.caseInsensitive"));
+  if (r.not_extracted.length > 0 || r.not_extracted_total > 0) {
+    rows.push({
+      label: t("extract.rowNotExtracted"),
+      value: tc(r.not_extracted_total, "count.entryOne", "count.entryMany"),
+      items: r.not_extracted.map((e) => ({
+        name: e.path,
+        code: e.code,
+        text: `${e.reason.text}${e.reason.verbatim ? "" : t("common.escapedMarker")}`,
+      })),
+      more: r.not_extracted_total - r.not_extracted.length,
+      caution: true,
+      testId: "extract-not-extracted",
+      itemTestId: "extract-not-extracted-item",
+    });
   }
+  if (r.attributes_unavailable) {
+    rows.push({
+      label: t("extract.rowAttributes"),
+      value: t("extract.attributesNotApplied"),
+      note: t("extract.attributesUnavailable", { reason: r.attributes_unavailable.text }),
+      caution: true,
+    });
+  }
+  if (r.attribute_notes.length > 0) {
+    rows.push({
+      label: t("extract.rowAttributeNotes"),
+      value: tc(r.attribute_notes.length, "common.itemOne", "common.itemMany"),
+      items: r.attribute_notes.map((n) => ({ text: attributeLine(n) })),
+      caution: true,
+      testId: "extract-attributes",
+      itemTestId: "extract-attribute-note",
+    });
+  }
+  const notes: string[] = [];
+  if (r.case_insensitive) notes.push(t("extract.caseInsensitive"));
   notes.push(CHECK_NOTE);
-  return notes;
+  return { rows, notes };
+}
+
+function reportRecord(r: ExtractReport): string {
+  return [
+    `extract version ${r.seq}`,
+    `files ${r.files}, folders ${r.directories}, bytes ${r.bytes}`,
+    `not extracted ${r.not_extracted_total}`,
+    r.durability_note ? `directory entries not confirmed durable (${r.durability_note})` : "directory entries confirmed",
+    ...(r.attributes_unavailable ? ["attributes unavailable"] : []),
+  ].join("; ");
 }
 
 /** One attribute note as a sentence. */
