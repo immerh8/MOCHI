@@ -204,7 +204,7 @@ The repository had no `.gitattributes`. Git on Windows, including GitHub's `wind
 
 Recorded once; reopened only for a concrete correctness, compatibility, or specification blocker. **Deferred never means passed or waived.**
 
-1. **Q54 (writer lock):** separate lock file with an OS lock through a safe API; existence is not ownership; never removed on unlock; naming and aliases defined (spec Annex B D17, B.2.7). Implemented; see Q54 above.
+1. **Q54 (writer lock):** separate lock file with an OS lock through a safe API; existence is not ownership; never removed on unlock; naming and aliases defined (spec Annex B D17, B.2.7). Implemented; see Q54 above. **[Amendment, B.2.17 D27, owner 2026-10-20]** The separate lock file is gone: the lock is on the archive itself (spec B.2.17); the text above is kept as history.
 2. **Q10 (`create --exceed-default-limits`):** deferred and removed from this milestone; limits unchanged; the flag is refused by name; the specification gap is spec Annex B D16. **Superseded 2026-10-08 [delegated, K3]:** not in 1.0; the flag exits 4 `UNSUPPORTED_FEATURE`; G4 is judged on its other items.
 3. **C6:** race-resistant restore, destination case detection, and collision preflight before writing; where safe restoration is unsupported, fail before writing (Windows: refused); exactly the §27 read benchmarks, recorded. See plan C6 "C6 safety" and `docs/benchmarks/c6-read.md`.
 3a. **Windows restore (delegated to the implementer, 2026-10-06):** restore with pinned directory handles, `std` only, no `unsafe`, with the concessions W1–W6 in `docs/c6-restore-platforms.md` and a separate-crate remedy recorded there. This replaces the earlier refusal on Windows.

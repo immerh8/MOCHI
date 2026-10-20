@@ -477,6 +477,83 @@ fn creators_racing_end_with_one_winner() {
     assert_eq!(names_in(tmp.path()).len(), 30);
 }
 
+/// A FIFO named like a lock file does not block a writer: the sweep neither
+/// opens it blocking nor removes it (spec B.2.17 item 5).
+#[cfg(unix)]
+#[test]
+fn a_fifo_named_like_a_lock_file_does_not_block_a_writer() {
+    let (tmp, file, _) = archive(2);
+    let fifo = tmp.path().join("x.mochi-lock");
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let f = file.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(writer(&f).map(|w| w.close().unwrap()).map_err(|e| e.code));
+    });
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(30)),
+        Ok(Ok(())),
+        "the writer was blocked or failed"
+    );
+    assert!(fifo.symlink_metadata().is_ok(), "the FIFO is kept");
+}
+
+/// **Windows, any filesystem.** CI formats FAT32, exFAT and ReFS volumes and
+/// NTFS is the runner's own; for each it sets `MOCHI_LOCK_TEST_DIR` to a
+/// directory on that volume (`.github/workflows/ci.yml`, "Writer lock on other
+/// filesystems"). On such a volume: create an archive, append, read while a
+/// writer holds the lock, and a second writer gets `LOCK_CONFLICT`. This
+/// checks that a one-byte `LockFileEx` at offset 2^62 works there (spec
+/// B.2.17 item 2); without the variable (an ordinary `cargo test`) there is
+/// nothing to point at and the test returns at once, because the CI step
+/// always sets it.
+#[cfg(windows)]
+#[test]
+fn q54_windows_writer_lock_on_the_volume_named_by_the_environment() {
+    let Some(root) = std::env::var_os("MOCHI_LOCK_TEST_DIR") else {
+        eprintln!("MOCHI_LOCK_TEST_DIR is not set; the per-filesystem lock check is run by CI");
+        return;
+    };
+    let dir = PathBuf::from(root);
+    eprintln!("writer lock check in {}", dir.display());
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(NAME);
+    let steps = scripted_history();
+    let read = |want: &Step, seq: u64| {
+        let r = OsReadStorage::open(&file).unwrap();
+        let head = open_head(&r, &ReadOptions::default()).unwrap();
+        assert_eq!(head.seq(), seq);
+        assert_eq!(read_state(&r, &head).unwrap(), want.after);
+    };
+
+    // Create: the temporary file is locked, renamed, and stays locked.
+    let w = create(&dir, NAME, 7).unwrap();
+    assert_eq!(
+        writer(&file).map(|_| ()).unwrap_err().code,
+        ErrorCode::LockConflict
+    );
+    read(&steps[0], 0);
+    w.close().unwrap();
+
+    // Append while a reader reads and a second writer is refused.
+    let mut w = writer_seeded(&file, 11).unwrap();
+    assert_eq!(
+        writer(&file).map(|_| ()).unwrap_err().code,
+        ErrorCode::LockConflict
+    );
+    read(&steps[0], 0);
+    w.commit(steps[1].tx.clone(), &Job::new().ctx()).unwrap();
+    read(&steps[1], 1);
+    assert_eq!(
+        writer(&file).map(|_| ()).unwrap_err().code,
+        ErrorCode::LockConflict
+    );
+    w.close().unwrap();
+    writer(&file).unwrap().close().unwrap();
+}
+
 /// **Windows.** A lock file 0.9.2 created is hidden; it is removed like any
 /// other. And the writer lock is a byte range: a whole-file lock by another
 /// handle (what `std` takes) is refused while a writer holds the archive, yet

@@ -91,7 +91,7 @@
 //!   LOCKFILE_FAIL_IMMEDIATELY)` on **one byte at offset 2^62**
 //!   ([`WINDOWS_LOCK_OFFSET`]), released with `UnlockFileEx`, both through
 //!   `mochi-sys`. Windows byte-range locks are mandatory, but only for the
-//!   bytes they cover: a lock far beyond any possible file size conflicts with
+//!   bytes they cover: a lock far beyond any practical file size conflicts with
 //!   no read and no write of the real contents, so readers keep working while
 //!   a writer holds it. (`File::try_lock` locks the whole range, which is why
 //!   B.2.7 had used a separate file; that was error 33 on every other
@@ -103,13 +103,18 @@
 //!   ([`StorageDir::create_exclusive`]) before it is published. The lock is on
 //!   the open handle, so it carries across the no-replace rename and the new
 //!   archive is never visible unlocked; nothing else is taken.
-//! * **The locker checks the name.** After locking an existing archive, on
-//!   Unix the path must still name the file that was locked (`dev`/`ino` of
-//!   the handle against `metadata(path)`); if not (the archive was replaced
-//!   by hand), the handle is dropped and the path opened again, a bounded
-//!   number of times (`LOCK_ATTEMPTS`, 8). **Windows has no stable, safe file
-//!   identity in `std`** (`volume_serial_number`/`file_index` are unstable),
-//!   so the check is skipped there: a limitation, not a guarantee. MOCHI
+//! * **The locker checks the name.** After locking an existing archive, the
+//!   path (canonicalized when the handle was opened, so a later change of the
+//!   working directory cannot redirect the check) must still name the file
+//!   that was locked: on Unix `dev`/`ino` of the handle against
+//!   `metadata(path)`; on Windows the volume serial number and file index
+//!   (`GetFileInformationByHandle`, through `mochi-sys`, because `std`'s
+//!   `volume_serial_number`/`file_index` are unstable) of the held handle
+//!   against a second handle opened on the path for attribute access only,
+//!   sharing everything. If they differ (the archive was replaced by hand),
+//!   the handle is dropped and the path opened again, a bounded number of
+//!   times (`LOCK_ATTEMPTS`, 8). A Windows filesystem that reports file
+//!   index 0 has no identity to compare, so the check answers yes there. MOCHI
 //!   never replaces or renames an archive itself.
 //! * **Aliases.** Relative paths, `.`/`..`, symbolic links, short names,
 //!   case on a case-insensitive filesystem and hard links all reach the same
@@ -199,6 +204,14 @@ fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> 
     Ok(())
 }
 
+/// `path` canonicalized (symbolic links, `.`/`..` and, on Windows, short names
+/// resolved), else as given. A handle keeps this so a later change of the
+/// working directory cannot make its path name a different file than the one
+/// it opened (the check after locking, spec B.2.17 item 4).
+fn absolute(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
 fn parent_dir(path: &Path) -> &Path {
     match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
@@ -260,7 +273,7 @@ impl ReadStorage for OsReadStorage {
 pub const LEGACY_LOCK_FILE_SUFFIX: &str = ".mochi-lock";
 
 /// The byte the writer lock covers on Windows: offset 2^62 (spec B.2.17 item
-/// 2). It is far beyond any possible file size, so the lock conflicts with no
+/// 2). It is far beyond any practical file size, so the lock conflicts with no
 /// read or write of the archive's real bytes. Every implementation that
 /// writes the same archives must use this byte.
 pub const WINDOWS_LOCK_OFFSET: u64 = 0x4000_0000_0000_0000;
@@ -300,7 +313,16 @@ fn lock_file_handle(file: &File) -> Result<(), StorageError> {
     match mochi_sys::try_lock_byte(file, WINDOWS_LOCK_OFFSET) {
         Ok(true) => Ok(()),
         Ok(false) => Err(StorageError::LockHeld),
-        Err(e) => Err(StorageError::Io(e)),
+        // Anything but a lock violation is a problem with the volume, not a
+        // second writer: say which lock and why it may fail.
+        Err(e) => Err(StorageError::Io(io::Error::new(
+            e.kind(),
+            format!(
+                "cannot take the writer lock (a one-byte LockFileEx at offset 2^62): {e}. \
+                 The filesystem of this volume may not support byte-range locks that far \
+                 beyond the end of a file; archives are not supported there"
+            ),
+        ))),
     }
 }
 
@@ -316,8 +338,7 @@ fn unlock_file_handle(file: &File) -> io::Result<()> {
 
 /// Whether `path` (followed through links, as the open was) still names the
 /// file `file` is open on. Unix compares `dev`/`ino`: `file` keeps its inode
-/// alive, so the number cannot have been reused. Windows has no stable safe
-/// identity (module docs, "The locker checks the name"), so it answers yes.
+/// alive, so the number cannot have been reused.
 #[cfg(unix)]
 fn names_same_file(file: &File, path: &Path) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
@@ -329,9 +350,30 @@ fn names_same_file(file: &File, path: &Path) -> io::Result<bool> {
     }
 }
 
-#[cfg(not(unix))]
-fn names_same_file(_: &File, _: &Path) -> io::Result<bool> {
-    Ok(true)
+/// Windows: the volume serial number and file index of the held handle
+/// against those of a second handle opened on the path (`mochi-sys`,
+/// `GetFileInformationByHandle`). The second handle asks for attribute access
+/// only and shares everything, so it never blocks a reader, a writer, a
+/// delete or a rename. A filesystem that reports file index 0 has no identity
+/// to compare; the check then answers yes.
+#[cfg(windows)]
+fn names_same_file(file: &File, path: &Path) -> io::Result<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    /// `FILE_READ_ATTRIBUTES`, and `FILE_SHARE_READ | WRITE | DELETE`.
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    let held = mochi_sys::file_identity(file)?;
+    let named = match OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(SHARE_ALL)
+        .open(path)
+    {
+        Ok(named) => named,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let named = mochi_sys::file_identity(&named)?;
+    Ok(held.1 == 0 || held == named)
 }
 
 /// The directory a legacy sweep looks at for the archive at `archive`: the
@@ -382,6 +424,17 @@ pub fn sweep_legacy_lock_files(dir: &Path) -> usize {
     removed
 }
 
+/// `O_NOFOLLOW | O_NONBLOCK` for the sweep's open (Linux: from `rustix`, as
+/// the values differ between architectures).
+#[cfg(target_os = "linux")]
+const SWEEP_OPEN_FLAGS: i32 =
+    (rustix::fs::OFlags::NOFOLLOW.bits() | rustix::fs::OFlags::NONBLOCK.bits()) as i32;
+
+/// The same on the other Unixes (macOS and the BSDs agree on these values;
+/// neither is a supported platform, plan O11).
+#[cfg(all(unix, not(target_os = "linux")))]
+const SWEEP_OPEN_FLAGS: i32 = 0x100 | 0x4;
+
 /// `FILE_FLAG_OPEN_REPARSE_POINT` (Win32 `winbase.h`): open a link itself,
 /// not its target.
 #[cfg(windows)]
@@ -401,6 +454,10 @@ fn remove_legacy_lock_file(path: &Path) -> bool {
     options.read(true);
     #[cfg(windows)]
     std::os::windows::fs::OpenOptionsExt::custom_flags(&mut options, FILE_FLAG_OPEN_REPARSE_POINT);
+    // Unix: never follow a link (`ELOOP`), and never block opening a FIFO
+    // that was swapped in after the directory was read.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, SWEEP_OPEN_FLAGS);
     let Ok(file) = options.open(path) else {
         return false;
     };
@@ -416,7 +473,9 @@ fn remove_legacy_lock_file(path: &Path) -> bool {
     if !held.is_file() || held.len() != 0 || !names_exactly(&file, path) {
         return false;
     }
-    std::fs::remove_file(path).is_ok()
+    let removed = std::fs::remove_file(path).is_ok();
+    let _ = file.unlock();
+    removed
 }
 
 /// Whether `path`, **without** following a link, is the very file `file` is
@@ -484,14 +543,14 @@ impl OsStorage {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        Ok(Self::new(file, path, LockRole::Archive))
+        Ok(Self::new(file, absolute(path), LockRole::Archive))
     }
 
     /// Open an existing file for reading and writing.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new().read(true).write(true).open(&path)?;
-        Ok(Self::new(file, path, LockRole::Archive))
+        Ok(Self::new(file, absolute(path), LockRole::Archive))
     }
 
     fn new(file: File, path: PathBuf, role: LockRole) -> Self {
@@ -868,7 +927,7 @@ impl StorageDir for OsDir {
         file.lock_handle()?;
         let mechanism = publish_no_replace_at(&src, &dst, to)?;
         self.record_publish(mechanism);
-        file.path = dst;
+        file.path = absolute(dst);
         file.role = LockRole::Archive;
         // Trigger b of the legacy sweep: a creator published and still holds
         // the new archive's lock.
@@ -897,8 +956,12 @@ impl StorageDir for OsDir {
             Err(StorageError::LockHeld) => return Ok(RemoveOutcome::Locked),
             Err(e) => return Err(e),
         }
-        std::fs::remove_file(&path)?;
+        let removed = std::fs::remove_file(&path);
+        // Released on every path, not left to the close (on Windows that
+        // happens after a delay the OS does not bound).
+        let _ = unlock_file_handle(&file);
         drop(file);
+        removed?;
         Ok(RemoveOutcome::Removed)
     }
 
@@ -1153,6 +1216,81 @@ mod tests {
             b.try_lock_exclusive(),
             Err(StorageError::LockHeld)
         ));
+    }
+
+    /// **Windows (spec B.2.17 item 4).** The archive is replaced by a rename
+    /// between opening and locking: the writer ends up locking the new file
+    /// (the identity check found the held handle is not what the path names),
+    /// and a second writer on the path is refused.
+    #[cfg(windows)]
+    #[test]
+    fn windows_a_replaced_archive_is_followed() {
+        let (d, path) = tmp();
+        std::fs::write(&path, b"old").unwrap();
+        let mut a = OsStorage::open_existing(&path).unwrap();
+        let replacement = d.path().join("new");
+        std::fs::write(&replacement, b"newer contents").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        a.try_lock_exclusive().unwrap();
+        assert_eq!(a.size().unwrap(), 14, "a follows the file at the path");
+        let mut b = OsStorage::open_existing(&path).unwrap();
+        assert!(matches!(
+            b.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
+        assert!(names_same_file(&a.file, &path).unwrap(), "and now names it");
+    }
+
+    /// **Windows.** Two hard-link names are the same file for the identity
+    /// check; two files are not.
+    #[cfg(windows)]
+    #[test]
+    fn windows_identity_follows_the_file_not_the_name() {
+        let (d, path) = tmp();
+        std::fs::write(&path, b"x").unwrap();
+        let link = d.path().join("link.mochi");
+        std::fs::hard_link(&path, &link).unwrap();
+        let other = d.path().join("other.mochi");
+        std::fs::write(&other, b"x").unwrap();
+        let held = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(names_same_file(&held, &link).unwrap());
+        assert!(!names_same_file(&held, &other).unwrap());
+        assert!(!names_same_file(&held, &d.path().join("missing")).unwrap());
+    }
+
+    /// The legacy sweep's open never follows a link and never blocks on a
+    /// FIFO that was swapped in after the directory was read (spec B.2.17
+    /// item 5). The call is made directly, because the sweep's own
+    /// `file_type` filter would hide the race.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_open_never_blocks_on_a_fifo_or_follows_a_link() {
+        let td = tempfile::tempdir().unwrap();
+        let fifo = td.path().join("x.mochi-lock");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.is_ok_and(|s| s.success()), "mkfifo");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(remove_legacy_lock_file(&p));
+        });
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(20)),
+            Ok(false),
+            "the open of a FIFO blocked or removed it"
+        );
+        assert!(fifo.symlink_metadata().is_ok());
+
+        let target = td.path().join("target");
+        File::create(&target).unwrap();
+        let link = td.path().join("y.mochi-lock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(!remove_legacy_lock_file(&link));
+        assert!(link.symlink_metadata().is_ok() && target.exists());
     }
 
     /// An archive deleted after it was opened cannot be locked: an error,
