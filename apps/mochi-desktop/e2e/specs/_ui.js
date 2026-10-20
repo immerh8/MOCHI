@@ -18,13 +18,18 @@ async function collapse(testId) {
  * the compact window). A side panel over the window's right edge: close it with its own Close
  * button before clicking in the window, since it covers the result's buttons while it is open.
  */
-export const openResultDetails = (prefix) => expand(`${prefix}-details-toggle`);
+export async function openResultDetails(prefix) {
+  await expand(`${prefix}-details-toggle`);
+  // The panel renders on the next frame: wait until it shows before a spec reads its text.
+  await $(`[data-testid="${prefix}-details"]`).waitForDisplayed({ timeoutMsg: `${prefix} Details did not open` });
+}
 export async function closeResultDetails(prefix) {
   const button = await $(`[data-testid="${prefix}-details-toggle"]`);
   if ((await button.getAttribute("aria-expanded")) !== "true") return;
   const close = await $(`[data-testid="${prefix}-details-close"]`);
   if (await close.isExisting()) await close.click();
   else await button.click();
+  await $(`[data-testid="${prefix}-details"]`).waitForDisplayed({ reverse: true, timeoutMsg: `${prefix} Details did not close` });
 }
 
 /** The Info panel (entry details; for a foreign archive, what the app says about the format). */
