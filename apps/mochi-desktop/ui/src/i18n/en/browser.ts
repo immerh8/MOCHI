@@ -66,4 +66,10 @@ export const browser = {
   "browser.detailModified": "Modified",
   "browser.detailAttributes": "Attributes",
   "browser.detailAttributesError": "Not available ({code}): {message}",
+  "menu.label": "Entries",
+  "menu.selectAll": "Select all",
+  "menu.copyNames": "Copy full names",
+  "menu.extractTo": "Extract to...",
+  "menu.delete": "Delete",
+  "browser.copyFailed": "Could not copy the names",
 } as const;

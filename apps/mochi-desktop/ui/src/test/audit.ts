@@ -22,6 +22,7 @@ const NAMED_SELECTOR = [
   "summary",
   "progress",
   "[role=button]",
+  "[role=menuitem]",
   "[role=checkbox]",
   "[role=radio]",
   "[role=switch]",
@@ -45,6 +46,10 @@ const ALLOWED_ROLES = new Set([
   "status",
   "search",
   "button",
+  // The file list's context menu (list/ContextMenu.tsx).
+  "menu",
+  "menuitem",
+  "none",
 ]);
 
 const FOCUSABLE = "button,a[href],input:not([type=hidden]),select,textarea,summary,[tabindex]";

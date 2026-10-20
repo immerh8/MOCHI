@@ -15,6 +15,9 @@ export function rowHandlers<T extends { key: string | null }>(
 ) {
   return {
     onClick: (e: MouseEvent) => sel.click(row, index, e),
+    // A right-click on a row outside the selection selects it first, as in a
+    // file manager. The list around the rows opens the menu.
+    onContextMenu: () => sel.ensure(row, index),
     onDoubleClick: open,
     onKeyDown: (e: KeyboardEvent) => {
       if (e.key === "Enter" && opensOnEnter) {

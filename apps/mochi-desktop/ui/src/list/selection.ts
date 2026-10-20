@@ -9,6 +9,24 @@ export interface Keyed {
 /** Most rows one selection holds (an extract or a remove names at most this many). */
 export const MAX_SELECTED = 10_000;
 
+/** Most rows one `load` call is asked for (the backend refuses a page above 1,000). */
+export const LOAD_CHUNK = 1000;
+
+/** Rows `offset .. offset + count`, fetched in pages the backend accepts. */
+async function loadAll<T>(
+  load: (offset: number, limit: number) => Promise<T[]>,
+  offset: number,
+  count: number,
+): Promise<T[]> {
+  const out: T[] = [];
+  while (out.length < count) {
+    const got = await load(offset + out.length, Math.min(LOAD_CHUNK, count - out.length));
+    if (got.length === 0) break;
+    out.push(...got);
+  }
+  return out;
+}
+
 export interface Selection<T extends Keyed> {
   /** The selected rows, in the order they were selected. */
   rows: readonly T[];
@@ -46,7 +64,7 @@ export function useSelection<T extends Keyed>(
     (from: number, to: number) => {
       const lo = Math.min(from, to);
       const hi = Math.min(Math.max(from, to), lo + MAX_SELECTED - 1);
-      load(lo, hi - lo + 1).then((got) => setRows(got.filter((r) => r.key !== null)), onError);
+      loadAll(load, lo, hi - lo + 1).then((got) => setRows(got.filter((r) => r.key !== null)), onError);
     },
     [load, onError],
   );

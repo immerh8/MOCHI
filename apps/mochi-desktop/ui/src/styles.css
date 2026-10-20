@@ -439,10 +439,12 @@ button.menu-item .icon {
   height: 16px;
   color: var(--muted);
 }
-button.menu-item:hover:not(:disabled) {
+button.menu-item:hover:not(:disabled):not([aria-disabled="true"]),
+button.menu-item:focus-visible:not([aria-disabled="true"]) {
   background: var(--accent-bg);
 }
-button.menu-item:disabled {
+button.menu-item:disabled,
+button.menu-item[aria-disabled="true"] {
   color: var(--muted);
 }
 /* The path bar: back, folders, the archive and its version, where you are. */
@@ -1542,4 +1544,12 @@ button.recent-item {
 /* ---- The compact window of the shell's quick verbs ---------------------------- */
 .quick {
   padding: 0.75rem 1rem;
+}
+/* The right-click menu of a file list: a fixed menu at the pointer. */
+.context-menu {
+  z-index: 60;
+  min-width: 12rem;
+}
+.context-menu hr {
+  margin: 0.2rem 0;
 }
