@@ -299,6 +299,22 @@ impl Staging {
         lock(&self.dropped_archive).take()
     }
 
+    /// Stage the dropped archive file as an ordinary source (to add it to an
+    /// archive) instead of opening it. Takes the held file, once. If it cannot
+    /// be staged (for example another source has the same name) that is the
+    /// error, and nothing is staged.
+    pub(crate) fn stage_dropped_archive(&self) -> std::result::Result<StagedView, IpcError> {
+        let path = self.take_dropped_archive().ok_or_else(|| IpcError {
+            code: ErrorCode::InvalidArgument.as_str().to_owned(),
+            message: "no dropped file is waiting".to_owned(),
+        })?;
+        let StageOutcome { staged, problems } = self.add(&[path]);
+        match problems.into_iter().next() {
+            Some(problem) => Err(problem),
+            None => Ok(staged),
+        }
+    }
+
     pub fn set_destination(&self, path: PathBuf) -> StagedView {
         let mut set = lock(&self.inner);
         set.destination = Some(path);
@@ -382,14 +398,13 @@ impl DropWatch {
     }
 }
 
-/// A single dropped file that names a MOCHI archive (by its extension): the
-/// window opens it instead of adding it to a new archive. The extension is
-/// only a hint; opening checks the contents.
+/// A single dropped file that is an archive: a `.mochi` file, or a ZIP, 7z,
+/// RAR, tar, tar.gz or tar.zst file by its name (`route::dropped_archive`;
+/// MOCHI wins by its magic). The window opens it, or stages it to add it to an
+/// open archive, instead of adding it to a new archive. The name is only a
+/// hint; opening checks the contents.
 fn is_archive_file(path: &Path) -> bool {
-    path.is_file()
-        && path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("mochi"))
+    crate::route::dropped_archive(path).is_some()
 }
 
 /// Translate the window's drag-and-drop event: hovering lights the drop
@@ -408,6 +423,8 @@ pub fn on_drag_drop(event: &DragDropEvent, staging: &Staging, watch: &DropWatch)
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default(),
+                        foreign: crate::route::dropped_archive(only)
+                            == Some(crate::route::Route::Foreign),
                     });
                     return;
                 }
@@ -1773,5 +1790,78 @@ mod tests {
         assert_eq!(fx.svc.staging.take_dropped_archive(), Some(archive));
         assert_eq!(fx.svc.staging.take_dropped_archive(), None, "once");
         assert!(fx.svc.staging.view().items.is_empty());
+    }
+
+    #[test]
+    fn dropped_foreign_archives_are_held_and_flagged_and_can_be_staged_instead() {
+        use crate::ipc::DropEvent;
+        use std::sync::Mutex;
+        struct Events(Mutex<Vec<DropEvent>>);
+        impl DropSink for Events {
+            fn send(&self, event: DropEvent) -> bool {
+                self.0.lock().unwrap().push(event);
+                true
+            }
+        }
+        let fx = fixture();
+        let zip = fx.out.join("pack.zip");
+        std::fs::write(&zip, b"PK\x03\x04").unwrap();
+        let tzst = fx.out.join("pack.TAR.ZST");
+        std::fs::write(&tzst, b"x").unwrap();
+        let mochi = fx.out.join("a.mochi");
+        std::fs::write(&mochi, b"x").unwrap();
+        // A lone .gz, a .docx and a folder are ordinary things to add.
+        let gz = fx.out.join("notes.gz");
+        std::fs::write(&gz, b"x").unwrap();
+        let docx = fx.out.join("letter.docx");
+        std::fs::write(&docx, b"PK\x03\x04").unwrap();
+        assert!(is_archive_file(&zip) && is_archive_file(&tzst) && is_archive_file(&mochi));
+        assert!(!is_archive_file(&gz) && !is_archive_file(&docx) && !is_archive_file(&fx.out));
+
+        let events = Arc::new(Events(Mutex::new(Vec::new())));
+        let watch = DropWatch::default();
+        watch.set(events.clone());
+        let drop = |paths: Vec<PathBuf>| DragDropEvent::Drop {
+            paths,
+            position: tauri::PhysicalPosition::new(0.0, 0.0),
+        };
+        let archive_events = |events: &Events| -> Vec<(String, bool)> {
+            events
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|e| match e {
+                    DropEvent::Archive { name, foreign } => Some((name.clone(), *foreign)),
+                    _ => None,
+                })
+                .collect()
+        };
+        on_drag_drop(&drop(vec![zip.clone()]), &fx.svc.staging, &watch);
+        on_drag_drop(&drop(vec![mochi.clone()]), &fx.svc.staging, &watch);
+        assert_eq!(
+            archive_events(&events),
+            vec![("pack.zip".to_owned(), true), ("a.mochi".to_owned(), false)]
+        );
+        // Two files at once, or an ordinary file, are staged as before.
+        on_drag_drop(
+            &drop(vec![zip.clone(), gz.clone()]),
+            &fx.svc.staging,
+            &watch,
+        );
+        on_drag_drop(&drop(vec![docx.clone()]), &fx.svc.staging, &watch);
+        assert_eq!(archive_events(&events).len(), 2);
+        assert_eq!(fx.svc.staging.view().items.len(), 3);
+        fx.svc.staging.clear();
+
+        // The held file (the last archive dropped) is staged instead of opened.
+        on_drag_drop(&drop(vec![zip.clone()]), &fx.svc.staging, &watch);
+        let staged = fx.svc.staging.stage_dropped_archive().unwrap();
+        assert_eq!(staged.items.len(), 1);
+        assert_eq!(staged.items[0].name.text, "pack.zip");
+        assert_eq!(staged.items[0].kind, StagedKind::File);
+        let e = fx.svc.staging.stage_dropped_archive().unwrap_err();
+        assert_eq!(e.code, "INVALID_ARGUMENT", "once; nothing is waiting now");
+        assert_eq!(fx.svc.staging.view().items.len(), 1);
     }
 }

@@ -36,6 +36,8 @@ pub enum ForeignFormat {
     Zip,
     Tar,
     TarGz,
+    /// A tar stream inside one or more Zstandard frames (`.tar.zst`, `.tzst`).
+    TarZst,
     SevenZ,
     /// RAR 4 and RAR 5 (one library reads both; the per-entry checks differ
     /// and are reported per entry).
@@ -50,6 +52,7 @@ impl ForeignFormat {
             ForeignFormat::TarGz => 3,
             ForeignFormat::SevenZ => 4,
             ForeignFormat::Rar => 5,
+            ForeignFormat::TarZst => 6,
         }
     }
     pub fn from_code(c: u8) -> Option<Self> {
@@ -59,6 +62,7 @@ impl ForeignFormat {
             3 => Some(ForeignFormat::TarGz),
             4 => Some(ForeignFormat::SevenZ),
             5 => Some(ForeignFormat::Rar),
+            6 => Some(ForeignFormat::TarZst),
             _ => None,
         }
     }
@@ -69,6 +73,7 @@ impl ForeignFormat {
             ForeignFormat::TarGz => "tar.gz",
             ForeignFormat::SevenZ => "7z",
             ForeignFormat::Rar => "RAR",
+            ForeignFormat::TarZst => "tar.zst",
         }
     }
 }
@@ -246,6 +251,9 @@ pub enum CheckKind {
     GzipStreamCrc32,
     /// RAR 5's BLAKE2sp file hash (used in place of CRC32 by some writers).
     Blake2sp,
+    /// The 32-bit content checksum of a Zstandard frame (low bits of XXH64 of
+    /// the decompressed bytes), present only when the writer asked for it.
+    ZstdFrameChecksum,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -265,6 +273,7 @@ impl CheckSet {
             CheckKind::AesAuthCode => 2,
             CheckKind::GzipStreamCrc32 => 4,
             CheckKind::Blake2sp => 8,
+            CheckKind::ZstdFrameChecksum => 16,
         }
     }
     pub fn contains(self, k: CheckKind) -> bool {
@@ -283,6 +292,9 @@ impl CheckSet {
         }
         if self.contains(CheckKind::Blake2sp) {
             parts.push("BLAKE2sp");
+        }
+        if self.contains(CheckKind::ZstdFrameChecksum) {
+            parts.push("zstd frame checksum");
         }
         parts.join(" + ")
     }

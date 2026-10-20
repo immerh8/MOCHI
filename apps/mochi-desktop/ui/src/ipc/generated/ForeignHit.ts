@@ -2,4 +2,21 @@
 import type { ForeignRow } from "./ForeignRow";
 import type { NameText } from "./NameText";
 
-export type ForeignHit = { row: ForeignRow, path: NameText, parent: string | null, };
+/**
+ * One entry of a foreign archive whose full path matched a search.
+ */
+export type ForeignHit = { 
+/**
+ * Exactly the row `foreign_children` returns for this entry, so its key
+ * selects, extracts, and drags like any listed row.
+ */
+row: ForeignRow, 
+/**
+ * The full path inside the archive, escaped for display.
+ */
+path: NameText, 
+/**
+ * Key of the containing folder (what `foreign_children` takes as `dir`);
+ * `null` for an entry at the root, and for one whose name was refused.
+ */
+parent: string | null, };

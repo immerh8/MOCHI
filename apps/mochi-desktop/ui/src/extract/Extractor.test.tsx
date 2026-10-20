@@ -136,7 +136,7 @@ test("extract all: a new folder next to the archive, no dialog, the plan is show
   expect(b.defaultCalls()).toEqual([{ handle: 3, seq: 1, keys: [] }]);
   expect(b.planCalls()).toEqual([]);
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/out");
-  expect(screen.getByTestId("extract-new-folder-note")).toHaveTextContent("A new folder was made");
+  expect(screen.getByTestId("extract-notes")).toHaveTextContent("A new folder was made");
   expect(screen.getByTestId("extract-scope")).toHaveTextContent("Everything in version 1 (5 entries)");
   expect(panel).toHaveTextContent("Extract into a folder only you can modify.");
   expect(screen.getByTestId("extract-no-conflicts")).toBeInTheDocument();
@@ -244,7 +244,7 @@ test("choose a different folder asks Rust to pick again; check again re-plans th
   await user.click(screen.getByTestId("extract-change-folder"));
   await screen.findByTestId("extract-no-conflicts");
   // A folder the user picked is not "a new folder made for this".
-  expect(screen.queryByTestId("extract-new-folder-note")).toBeNull();
+  expect(screen.getByTestId("extract-notes")).not.toHaveTextContent("A new folder was made");
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/other");
   expect(screen.getByTestId("extract-confirm")).toHaveTextContent(/^Extract$/);
 

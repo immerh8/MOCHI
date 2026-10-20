@@ -1,5 +1,5 @@
 //! Read-only foreign archive formats for MOCHI (plan D8): ZIP, tar, tar.gz,
-//! 7z, and RAR.
+//! tar.zst, 7z, and RAR.
 //!
 //! All parsing happens in the `mochi-foreign-helper` process; the app talks to
 //! it through [`client::ForeignClient`]. This crate never writes a file, never
@@ -33,6 +33,8 @@ mod tarfmt;
 pub mod volumes;
 #[cfg(feature = "engine")]
 mod zipfmt;
+#[cfg(feature = "engine")]
+pub(crate) mod zstdread;
 
 pub use client::{
     default_helper_path, ForeignClient, ListReport, ReadManyReport, ReadManySink, ReadReport,

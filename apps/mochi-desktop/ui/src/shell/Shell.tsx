@@ -2,6 +2,8 @@ import { createContext, use, useCallback } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import type { ForeignArchiveSummary } from "../ipc/foreign";
+
 /** Which archive the window is showing: a MOCHI one, or a ZIP/7z/RAR/tar one. */
 export type Owner = "mochi" | "foreign";
 
@@ -41,7 +43,17 @@ export interface Shell {
   query: string;
   /** Empty the search field (a folder was opened from the results). */
   clearQuery: () => void;
+  /**
+   * A foreign archive the window's own Open (or a drop) opened, or one that
+   * needs its password: the foreign browser shows it when `token` changes.
+   */
+  foreignHandoff: ForeignHandoff | null;
 }
+
+/** What the window's Open hands to the foreign browser. */
+export type ForeignHandoff =
+  | { token: number; kind: "opened"; archive: ForeignArchiveSummary }
+  | { token: number; kind: "password"; wrong: boolean };
 
 export const ShellContext = createContext<Shell | null>(null);
 

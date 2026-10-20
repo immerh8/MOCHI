@@ -9,7 +9,17 @@ export type HitView = { seq: number,
 /**
  * The stored path, escaped.
  */
-path: NameText, kind: EntryKindView, 
+path: NameText, 
+/**
+ * The same key `list_children` returns for this entry. It is valid for
+ * selecting and extracting in the hit's own snapshot (`seq`), which may
+ * not be the one the window is showing.
+ */
+key: string, 
+/**
+ * Key of the containing folder; `null` for an entry at the root.
+ */
+parent: string | null, kind: EntryKindView, 
 /**
  * Decimal string.
  */

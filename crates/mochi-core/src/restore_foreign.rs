@@ -988,6 +988,13 @@ impl ForeignTree {
         self.nodes.get(path)
     }
 
+    /// Every row the tree holds, for a search over the whole listing: the
+    /// entries and the folders they imply in path byte order, then the rows
+    /// whose names were refused (they have no path, only the raw name).
+    pub fn rows(&self) -> impl Iterator<Item = &TreeRow> {
+        self.nodes.values().chain(self.refused.iter())
+    }
+
     /// The row for a refused entry by its source index.
     pub fn refused_by_index(&self, index: u64) -> Option<&TreeRow> {
         self.refused.iter().find(|r| r.index == Some(index))

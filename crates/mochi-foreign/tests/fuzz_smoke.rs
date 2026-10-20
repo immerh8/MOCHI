@@ -35,6 +35,7 @@ fn all(data: &[u8]) {
     exercise_zip_listing(data);
     exercise_tar_listing(data);
     exercise_targz_listing(data);
+    exercise_tarzst_listing(data);
     exercise_sevenz_listing(data);
     exercise_detect(data);
     exercise_protocol(data);

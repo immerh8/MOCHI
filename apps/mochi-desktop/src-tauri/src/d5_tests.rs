@@ -1236,6 +1236,73 @@ fn hostile_names_in_hits_cross_as_escaped_text() {
 }
 
 #[test]
+fn a_hit_carries_the_key_of_its_entry_and_of_its_folder() {
+    use mochi_core::catalog::path::ArchivePath;
+    use mochi_core::manifest::Attributes;
+    use mochi_core::publish::{ArchiveWriter, Transaction};
+    use mochi_core::storage::os::OsStorage;
+    let f = fx();
+    let path = f.at("nested.mochi");
+    {
+        let mut w = ArchiveWriter::create(
+            OsStorage::create_new(&path).unwrap(),
+            Box::new(mochi_testkit::SeqIds::new(5)),
+            mochi_testkit::archive::test_options(),
+        )
+        .unwrap();
+        let mut tx = Transaction::new();
+        for dir in ["a", "a/b"] {
+            tx.put_dir(
+                ArchivePath::from_stored(dir.as_bytes()).unwrap(),
+                Attributes::default(),
+            );
+        }
+        for name in ["top-note.txt", "a/b/deep-note.txt", "a/mid-note.txt"] {
+            tx.put_file(
+                ArchivePath::from_stored(name.as_bytes()).unwrap(),
+                b"x".to_vec(),
+                Attributes::default(),
+            );
+        }
+        w.commit(tx, &Job::new().ctx()).unwrap();
+        w.close().unwrap();
+    }
+    let hex = |s: &str| -> String { s.bytes().map(|b| format!("{b:02x}")).collect() };
+    let a = f.svc.archives.open(&path, ReadOptions::default()).unwrap();
+    let r = search(&f, a.handle, "note", SearchScopeChoice::Head, None, false).unwrap();
+    let hit = |name: &str| r.hits.iter().find(|h| h.path.text == name).unwrap();
+    let top = hit("top-note.txt");
+    assert_eq!(top.key, hex("top-note.txt"));
+    assert_eq!(top.parent, None, "a root-level entry has no parent");
+    let deep = hit("a/b/deep-note.txt");
+    assert_eq!(deep.key, hex("a/b/deep-note.txt"));
+    assert_eq!(deep.parent, Some(hex("a/b")));
+    assert_eq!(hit("a/mid-note.txt").parent, Some(hex("a")));
+    // The folder hits come back too, and a folder's parent is its parent.
+    let dirs = search(
+        &f,
+        a.handle,
+        "b",
+        SearchScopeChoice::Head,
+        Some(EntryKindView::Directory),
+        false,
+    )
+    .unwrap();
+    let b = dirs.hits.iter().find(|h| h.path.text == "a/b").unwrap();
+    assert_eq!(
+        (b.key.as_str(), b.parent.as_deref()),
+        (hex("a/b").as_str(), Some(hex("a").as_str()))
+    );
+    // The key is the one list_children returns, in the hit's own snapshot.
+    let page = f
+        .svc
+        .archives
+        .children(a.handle, deep.seq, deep.parent.as_deref(), false, 0, 100)
+        .unwrap();
+    assert!(page.entries.iter().any(|e| e.key == deep.key));
+}
+
+#[test]
 fn an_encrypted_archive_is_searched_with_the_key_session_it_was_opened_with() {
     let f = fx();
     let (path, _) = f

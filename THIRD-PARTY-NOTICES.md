@@ -84,9 +84,10 @@ legal advice.
 
 ## Other foreign-format libraries (all MIT or Apache-2.0 compatible)
 
-The foreign-archive helper also links, for reading ZIP, 7z, tar and gzip:
+The foreign-archive helper also links, for reading ZIP, 7z, tar, gzip and zstd:
 `zip` (MIT), `sevenz-rust2` (Apache-2.0, decoders only: its compressor feature
 is off), `lzma-rust2` (Apache-2.0), `bzip2` (MIT OR Apache-2.0) with
 `libbz2-rs-sys` (bzip2-1.0.6, a BSD-style license), `ppmd-rust` (CC0-1.0 OR
-MIT-0), `flate2`, `tar`, and their dependencies. The generated list that ships
+MIT-0), `flate2`, `tar`, `ruzstd` (MIT, a pure-Rust Zstandard decoder, with
+`twox-hash`, MIT), and their dependencies. The generated list that ships
 with each release (plan D7) names every one.

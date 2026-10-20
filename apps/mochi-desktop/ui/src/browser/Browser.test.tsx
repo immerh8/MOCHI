@@ -133,7 +133,7 @@ test("opening shows the archive, its timeline, and the root, with hostile names 
   expect(calls.map((c) => c.cmd).slice(0, 2)).toEqual(["open_archive", "open_snapshot"]);
   expect(calls[1]?.args).toEqual({ handle: 3, seq: 2 });
   expect(screen.getByTestId("archive-meta")).toHaveTextContent("fake.mochi");
-  expect(screen.getByTestId("archive-meta")).toHaveTextContent("3 versions");
+  expect(screen.getByTestId("toggle-versions")).toHaveAttribute("title", "3 versions");
 
   const timeline = screen.getByTestId("timeline");
   expect(within(timeline).getByTestId("commit-2")).toHaveTextContent("Version 2 (latest)");
@@ -191,7 +191,8 @@ test("a 100,000-entry folder is paged and only a window of rows is in the DOM", 
   const deep = calls.filter((c) => c.cmd === "list_children" && (c.args.offset as number) >= 99_800);
   expect(deep.length).toBeGreaterThan(0);
   expect(screen.queryByText("f000000")).toBeNull();
-  expect(screen.getByTestId("crumbs")).toHaveTextContent("Version 2 / many");
+  expect(screen.getByTestId("crumbs")).toHaveTextContent("many");
+  expect(screen.getByTestId("toggle-versions")).toHaveTextContent(/^v2$/);
 });
 
 test("selecting an entry shows its recorded details without verification wording", async () => {
@@ -204,7 +205,6 @@ test("selecting an entry shows its recorded details without verification wording
   expect(details).toHaveTextContent("1.5 KiB (1,536 bytes)");
   expect(details).toHaveTextContent("rw-r--r-- (0644), owner 1000, group 1000");
   expect(details).toHaveTextContent("d".repeat(64));
-  expect(details).toHaveTextContent("does not read or check file content");
   expect(container.querySelector("img")).toBeNull();
   const text = (container.textContent ?? "").toLowerCase();
   for (const banned of ["backed up", "safe", "preserved", "verified"]) {
@@ -231,7 +231,7 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   await within(tree).findByText("deeper");
   await user.click(within(tree).getByText("sub"));
   await screen.findByText(/^2 items/);
-  expect(screen.getByTestId("crumbs")).toHaveTextContent("Version 2 / sub");
+  expect(screen.getByTestId("crumbs")).toHaveTextContent("sub");
 
   await user.click(screen.getByTestId("commit-0"));
   await screen.findByText(/^5 items/);

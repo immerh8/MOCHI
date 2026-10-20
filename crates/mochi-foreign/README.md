@@ -6,7 +6,7 @@ phase D8, decision O9): browse, test, and stream entries out of **ZIP**,
 **RAR 4 and RAR 5** (read-only, always; including encrypted headers; multi-volume
 sets are read but, in 1.0, not tested as a complete set, and RAR has no
 hostile-input fixtures: see "Not done" below), **tar**, and
-**tar.gz / .tgz**.
+**tar.gz / .tgz**, and **tar.zst / .tzst**.
 
 These formats are outside the MOCHI specification. Nothing here touches the
 `.mochi` wire format.
@@ -15,7 +15,7 @@ These formats are outside the MOCHI specification. Nothing here touches the
 
 ```
 app / CLI                         mochi-foreign-helper (child process)
-  mochi_foreign::ForeignClient  ── stdin/stdout, protocol v1 ──▶  engine: detect, zip, tar, gzip
+  mochi_foreign::ForeignClient  ── stdin/stdout, protocol v1 ──▶  engine: detect, zip, tar, gzip, zstd
   (no parser linked)                                              (all parsing happens here)
                                                                   zip, sevenz-rust2 (7z), UnRAR via unrar_sys (RAR)
 ```
@@ -23,8 +23,17 @@ app / CLI                         mochi-foreign-helper (child process)
 * **All parsing runs in the helper process**, under memory, time, and output
   limits. `mochi-core` and `mochi-format` never depend on this crate, and the
   app/CLI name it with `default-features = false`, which leaves out the
-  `engine` feature (the `zip`, `tar`, and `flate2` crates). Both are checked by
+  `engine` feature (the `zip`, `tar`, `flate2`, and `ruzstd` crates). Both are checked by
   `ci/check-invariants.sh`.
+* **tar.zst** is read by `ruzstd` (pure Rust, MIT; no C decoder in the helper).
+  Frames are read one after another (concatenated and skippable frames are
+  handled), the window is capped at 128 MiB, and a dictionary-compressed
+  stream is refused. The decoder holds a window of output back until a frame
+  ends, so a stream cut inside its first window reports "damaged or cut short
+  before its first tar header", not a partial listing. A `.mochi` archive made
+  with the TAR-compatible profile is also a valid tar.zst stream; the desktop
+  routes MOCHI archives to the MOCHI reader first (magic wins over extension),
+  so the foreign reader never sees them in the app.
 * **The helper never writes a file** and no library's extract-to-disk function
   is used. It streams entry bytes; the C6 restore engine is the only writer, so
   every §10.4 protection (traversal, reserved names, symlink escapes, ...)
@@ -38,7 +47,7 @@ app / CLI                         mochi-foreign-helper (child process)
 
 | Op | What it does |
 |---|---|
-| `list` | Entry metadata only. For `.tar.gz` this still decompresses the whole stream (tar has no index), under the same limits, which also reaches the gzip trailer check. |
+| `list` | Entry metadata only. For `.tar.gz` and `.tar.zst` this still decompresses the whole stream (tar has no index), under the same limits, which also reaches the gzip trailer check (or the zstd frame checksums). |
 | `test` | Streams every entry through its decompressor, runs the format's own check, discards the bytes. |
 | `read` | Streams one entry's bytes to the caller's sink. |
 | `read_many` | (protocol 2) Streams the named entries **in one pass**, in the order the archive stores them, each announced, streamed, and closed with its outcome. A solid 7z or RAR block is decoded once, not once per entry. This is what the desktop's extraction uses; the C6 restore engine (`mochi_core::restore_foreign`) is the only writer. |
@@ -50,6 +59,7 @@ app / CLI                         mochi-foreign-helper (child process)
 | ZIP | CRC32 ("CRC32 matched"); AES entries: the AES authentication code (AE-2 has no CRC32) | none |
 | tar | none ("read without error; this format has no per-entry check") | none |
 | tar.gz | none | gzip trailer CRC-32 + length; if it fails, **no** entry read from the stream is vouched for |
+| tar.zst | none | each Zstandard frame's content checksum (XXH64, low 32 bits), **when the writer asked for one**: all frames checksummed and matching is "zstd frame checksum matched"; a frame without a checksum leaves the stream "no whole-stream check"; a mismatch fails the stream and no entry read from it is vouched for |
 | 7z | CRC32 when the archive recorded one ("CRC32 matched"); an entry with no stream (directory, empty file) is "no data stream" | none (the start header and header have CRCs, which the library checks while opening: a statement about the header, not any entry) |
 | RAR 4 | CRC32 | none |
 | RAR 5 | CRC32 **or** BLAKE2sp, as the entry's header says; the outcome names which ("BLAKE2sp matched") | none |
@@ -109,7 +119,7 @@ or codes, short bodies, and trailing bytes are errors.
 |---|---|---|
 | `0x01 REQUEST` | parent → helper | `u16` version (1), `u8` op (1 list, 2 test, 3 read), `u64` read index, limits (`u64` total, entry, entries, ratio, ratio-min-output; `u32` name length), opt `u64` address-space limit, opt `u64` CPU seconds, *bytes* archive path (raw bytes on Unix, UTF-16LE on Windows), opt *bytes* password |
 | `0x80 HELLO` | helper → parent | `u16` version, text id |
-| `0x81 FORMAT` | h → p | `u8` 1 ZIP, 2 tar, 3 tar.gz |
+| `0x81 FORMAT` | h → p | `u8` 1 ZIP, 2 tar, 3 tar.gz, 4 7z, 5 RAR, 6 tar.zst |
 | `0x82 ENTRY` | h → p | `u64` index, *bytes* name, `u8` kind, opt `u64` size, opt `u64` compressed size, encryption (`u8` + `u16` bits), text method, opt *bytes* link target, opt `u64` mode, opt `i64` mtime, `u8` UTF-8-flag state, opt text error |
 | `0x83 RESULT` | h → p | `u64` index, outcome (tag `u8` + payload) |
 | `0x84 DATA` | h → p | raw entry bytes (≤ 64 KiB per frame), `read` only |
@@ -131,7 +141,7 @@ explanation in its README). `tests/`: `zip_fixtures`, `tar_fixtures`,
 surviving; helper fault hooks behind the `test-faults` feature, enabled only by
 this crate's dev-dependency on itself), `protocol`, `sevenz_fixtures`, `rar_fixtures`, `corpus_interop`, `volumes`, `fuzz_smoke` (stable-Rust
 exerciser over the corpus, truncations, and seeded flips; the cargo-fuzz targets
-`foreign_zip`, `foreign_tar`, `foreign_targz`, `foreign_protocol` call the same
+`foreign_zip`, `foreign_tar`, `foreign_targz`, `foreign_tarzst`, `foreign_protocol` call the same
 functions in `mochi_foreign::fuzz`).
 
 ## 7z (`sevenz-rust2`, decoders only)
@@ -215,6 +225,11 @@ an edit of the one above, so the v1 text stays as the base):
   entries may arrive in any order, each requested index exactly once unless
   `DONE` says the operation stopped early. `DATA` is bounded per entry by
   `max_entry_size` and overall by `max_total_output`.
+
+Additive vocabulary since (still version 2: the app and the helper are built
+from one tree and shipped together, and a peer that predates it rejects the new
+code as a typed protocol error): `FORMAT` `6 = tar.zst`; check sets gain bit
+`16 = zstd frame checksum`.
 
 ## Cancelling, progress, and the Windows memory limit
 

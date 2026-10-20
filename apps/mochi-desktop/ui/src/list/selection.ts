@@ -93,7 +93,7 @@ export function useSelection<T extends Keyed>(
   );
 
   const clear = useCallback(() => {
-    setRows([]);
+    setRows((prev) => (prev.length === 0 ? prev : []));
     setFocus(null);
     setAnchor(null);
   }, []);

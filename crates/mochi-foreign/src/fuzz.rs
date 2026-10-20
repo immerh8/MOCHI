@@ -105,7 +105,7 @@ pub fn exercise_zip_listing(data: &[u8]) {
 pub fn exercise_tar_listing(data: &[u8]) {
     let len = data.len() as u64;
     run_ops(data, |req, out| {
-        tarfmt::run(Cursor::new(data), len, false, req, out).map(|_| ())
+        tarfmt::run(Cursor::new(data), len, tarfmt::Layer::None, req, out).map(|_| ())
     });
 }
 
@@ -113,7 +113,15 @@ pub fn exercise_tar_listing(data: &[u8]) {
 pub fn exercise_targz_listing(data: &[u8]) {
     let len = data.len() as u64;
     run_ops(data, |req, out| {
-        tarfmt::run(Cursor::new(data), len, true, req, out).map(|_| ())
+        tarfmt::run(Cursor::new(data), len, tarfmt::Layer::Gzip, req, out).map(|_| ())
+    });
+}
+
+/// tar.zst path (Zstandard decoding included).
+pub fn exercise_tarzst_listing(data: &[u8]) {
+    let len = data.len() as u64;
+    run_ops(data, |req, out| {
+        tarfmt::run(Cursor::new(data), len, tarfmt::Layer::Zstd, req, out).map(|_| ())
     });
 }
 

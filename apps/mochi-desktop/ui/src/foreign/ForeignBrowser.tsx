@@ -32,7 +32,7 @@ import { listKeys, rowHandlers } from "../list/rows";
 import { ResultBar } from "../result/Result";
 import { SearchResults } from "../search/SearchResults";
 import type { HitRow, SearchView } from "../search/SearchResults";
-import { foundText } from "../search/useArchiveSearch";
+import { foundText, IDLE, RUNNING } from "../search/useArchiveSearch";
 import { describeOutcome, EXTRACT_NOTE, needsPassword, progressText, TEST_NOTE, WEAK_NOTE } from "./messages";
 
 /** Row height of the list, in pixels (the same as the MOCHI browser's). */
@@ -114,10 +114,8 @@ function useForeignSearch(handle: number | null, query: string): SearchView<Fore
     };
   }, [handle, query]);
   if (handle === null || query === "") return IDLE;
-  return found?.id === id ? found.view : { state: "running", statusText: t("search.searching") };
+  return found?.id === id ? found.view : RUNNING;
 }
-
-const IDLE = { state: "idle", statusText: "" } as const;
 
 /**
  * Plan D8: open a ZIP, 7z, RAR, tar, tar.gz, or tar.zst archive read-only;
@@ -279,6 +277,17 @@ export function ForeignBrowser() {
     clearQuery?.();
     navigate([]);
   };
+
+  // The window's own Open (or a drop) opened a foreign archive, or it needs its password.
+  const handoff = shell?.foreignHandoff ?? null;
+  const seenHandoffRef = useRef(0);
+  useEffect(() => {
+    if (handoff === null || handoff.token === seenHandoffRef.current) return;
+    seenHandoffRef.current = handoff.token;
+    setError(null);
+    if (handoff.kind === "opened") void launchedRef.current?.show(handoff.archive);
+    else launchedRef.current?.ask(handoff.wrong);
+  }, [handoff]);
 
   const closeToken = shell?.closeForeignToken ?? 0;
   const openToken = shell?.openForeignToken ?? 0;
@@ -559,7 +568,7 @@ export function ForeignBrowser() {
                     data-kind={h.kind}
                     aria-pressed={hitSel.has(h)}
                     tabIndex={tabIndex}
-                    {...rowHandlers(hitSel, h, index, () => openHit(h), hitDrag)}
+                    {...rowHandlers(hitSel, h, index, () => openHit(h), hitDrag, h.kind === "directory")}
                   >
                     <EntryCells kind={h.kind} name={h.name} kindLabel={kindLabel(h)} size={h.size} folder={h.folder} />
                   </button>
@@ -596,6 +605,7 @@ export function ForeignBrowser() {
                           navigate([...path, { key: row.key, name: row.name }]);
                       },
                       folderDrag,
+                      row.kind === "directory",
                     )}
                   >
                     <EntryCells

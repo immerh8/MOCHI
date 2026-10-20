@@ -174,7 +174,7 @@ test("a foreign archive opened by the shell shows the foreign browser, read-only
   await screen.findByTestId("start-screen");
   b.launch({ event: "foreign_opened", archive: foreignSummary(11, "photos.zip") });
   expect(await screen.findByTestId("foreign-meta")).toHaveTextContent("photos.zip");
-  expect(screen.getByTestId("foreign-label")).toBeInTheDocument();
+  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("(read-only)");
   expect(await screen.findByTestId("foreign-entry")).toHaveTextContent('<img src=x onerror="alert(1)">');
   expect(container.querySelector("img")).toBeNull();
   // The MOCHI browser is untouched, and nothing asked for a dialog or a path.

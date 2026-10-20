@@ -150,7 +150,7 @@ test("an encrypted archive asks for its passphrase, warns about loss, and a wron
   const wrongCarrying = b.calls.filter((c) => JSON.stringify(c.args).includes(WRONG));
   expect(wrongCarrying.map((c) => c.cmd)).toEqual(["unlock_archive"]);
   // What stays visible without the key is explained.
-  expect(screen.getByTestId("encrypted-note")).toHaveTextContent("Compressed sizes");
+  expect(screen.getByTestId("encrypted-note").getAttribute("title")).toContain("Compressed sizes");
 });
 
 test("cancelling the prompt tells Rust to forget the archive", async () => {

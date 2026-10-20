@@ -60,7 +60,7 @@ import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
-import type { Shell, SlotName } from "../shell/Shell";
+import type { ForeignHandoff, Shell, SlotName } from "../shell/Shell";
 import { ToolSheet } from "../shell/ToolSheet";
 import type { ToolId } from "../shell/ToolSheet";
 
@@ -245,6 +245,7 @@ export function Browser({
   const [openForeignToken, setOpenForeignToken] = useState(0);
   const [testRequest, setTestRequest] = useState(0);
   const [query, setQuery] = useState("");
+  const [foreignHandoff, setForeignHandoff] = useState<ForeignHandoff | null>(null);
   const [clearSearch, setClearSearch] = useState(0);
   const [slots, setSlots] = useState<Partial<Record<SlotName, HTMLElement>>>({});
   const register = useCallback((name: SlotName, el: HTMLElement | null) => {
@@ -373,6 +374,21 @@ export function Browser({
       if (outcome.status === "needs_passphrase") {
         setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
         setExtractAfterUnlock(extract);
+        return;
+      }
+      // A ZIP, 7z, RAR, or tar: the foreign browser shows it (read-only).
+      if (outcome.status === "foreign") {
+        if (open) {
+          await closeArchive(open.archive.handle).catch(() => false);
+          setOpen(null);
+        }
+        const archive = outcome.archive;
+        setForeignHandoff((h) => ({ token: (h?.token ?? 0) + 1, kind: "opened", archive }));
+        return;
+      }
+      if (outcome.status === "foreign_password") {
+        const wrong = outcome.wrong;
+        setForeignHandoff((h) => ({ token: (h?.token ?? 0) + 1, kind: "password", wrong }));
         return;
       }
       await show(outcome.archive);
@@ -602,6 +618,7 @@ export function Browser({
     infoOpen,
     query,
     clearQuery,
+    foreignHandoff,
   };
 
   // Drag entries out of the list into a folder on the computer.
@@ -961,7 +978,7 @@ export function Browser({
                             data-kind={hit.kind}
                             aria-pressed={hitSel.has(hit)}
                             tabIndex={tabIndex}
-                            {...rowHandlers(hitSel, hit, index, () => openHit(hit), hitDrag)}
+                            {...rowHandlers(hitSel, hit, index, () => openHit(hit), hitDrag, hit.kind === "directory")}
                           >
                             <EntryCells
                               kind={hit.kind}
@@ -1002,6 +1019,7 @@ export function Browser({
                                   if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
                                 },
                                 folderDrag,
+                                row.kind === "directory",
                               )}
                             >
                               <EntryCells

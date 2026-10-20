@@ -8,6 +8,10 @@ import type { HitView } from "../ipc/crypt";
 import { splitPath } from "../list/keys";
 import type { HitRow, SearchView } from "./SearchResults";
 
+/** No search: one value, so that effects keyed on the view do not run again. */
+export const IDLE: { state: "idle"; statusText: string } = { state: "idle", statusText: "" };
+export const RUNNING: { state: "running"; statusText: string } = { state: "running", statusText: t("search.searching") };
+
 /** A MOCHI search hit as a list row. */
 export function hitRow(h: HitView): HitRow {
   const { name, folder } = splitPath(h.path);
@@ -81,6 +85,6 @@ export function useArchiveSearch(handle: number | null, seq: number | null, quer
     };
   }, [handle, seq, query]);
 
-  if (handle === null || seq === null || query === "") return { state: "idle", statusText: "" };
-  return found?.id === id ? found.view : { state: "running", statusText: t("search.searching") };
+  if (handle === null || seq === null || query === "") return IDLE;
+  return found?.id === id ? found.view : RUNNING;
 }

@@ -142,6 +142,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "foreign_tarzst"
+path = "fuzz_targets/foreign_tarzst.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "foreign_protocol"
 path = "fuzz_targets/foreign_protocol.rs"
 test = false

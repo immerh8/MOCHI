@@ -23,6 +23,7 @@ targets, via `exercise_all`) `c2_golden.rs::fuzz_smoke_over_mutated_objects`, an
 | `foreign_zip` | D8 | ZIP list/test/read path of `mochi-foreign` (plan D8): every message survives the wire round trip, names and entry counts stay within the limits, data frames stay within the chunk size | written; seed with `../fixtures/foreign` |
 | `foreign_tar` | D8 | plain tar list/test/read path, same assertions | written; seed with `../fixtures/foreign` |
 | `foreign_targz` | D8 | tar.gz path (gzip decoding, ratio and total-output guards), same assertions | written; seed with `../fixtures/foreign` |
+| `foreign_tarzst` | D8 | tar.zst path (pure-Rust ruzstd decoding, frame checksums, ratio and total-output guards), same assertions | written; seed with `../fixtures/foreign` (`basic.tar.zst`) |
 | `foreign_sevenz` | D8 | 7z list/test/read path (sevenz-rust2): same assertions | written; seed with `../fixtures/foreign/7z` |
 | `foreign_rar` | D8 | RAR 4/5 path (UnRAR, driven through a temporary file the harness writes) | written; seed with `../fixtures/foreign/rar` |
 | `foreign_protocol` | D8 | the helper protocol's frame and message decoders (the parent treats the helper as untrusted): no panic, decode then encode then decode is stable | written; seed with `../fixtures/foreign` |

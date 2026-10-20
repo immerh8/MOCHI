@@ -10,7 +10,7 @@ import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { IpcError, JobEvent, JobRequest } from "../ipc/jobs";
-import { showInFolder } from "../ipc/start";
+import { showInFolder, stageDroppedArchive } from "../ipc/start";
 import {
   chooseDestination,
   clearStaged,
@@ -156,6 +156,24 @@ export function Writer({
         return;
       }
       if (event.event === "archive") {
+        // A ZIP (or other foreign archive) dropped on an open MOCHI archive is added to it,
+        // as any file is; otherwise the dropped archive is opened.
+        const now = latestRef.current;
+        if (event.foreign && now.archive && !now.busy) {
+          if (!now.viewingHead) {
+            setError(t("write.onlyLatest"));
+            return;
+          }
+          const handle = now.archive.handle;
+          stageDroppedArchive().then(
+            (view) => {
+              setStaged(view);
+              runRef.current("add", { kind: "add_to_archive", handle });
+            },
+            (e: unknown) => setError(errorText(t("write.addSelectionFailed"), e)),
+          );
+          return;
+        }
         onArchiveDroppedRef.current?.();
         return;
       }
@@ -470,7 +488,7 @@ export function Writer({
                   ? t("write.openFirst")
                   : !viewingHead
                     ? t("write.onlyLatest")
-                    : selected
+                    : selected.length > 0
                       ? t("write.removeTip")
                       : t("write.selectFirst")
               }

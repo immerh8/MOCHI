@@ -126,12 +126,12 @@ test("with no archive open, two plain actions are on screen and the honest limit
   expect(screen.queryByTestId("recent")).toBeNull();
 });
 
-test("the start screen shows the tagline, and the mascot is not an img element", async () => {
+test("the start screen has no tagline or wordmark, and the mascot is not an img element", async () => {
   backend();
   const { container } = render(<App />);
   const start = await screen.findByTestId("start-screen");
-  expect(within(start).getByText("Archive made simple")).toBeInTheDocument();
-  expect(within(start).getByText("Drag and drop files or an archive here")).toBeInTheDocument();
+  expect(within(start).queryByText("Archive made simple")).toBeNull();
+  expect(within(start).getByText("Drop files or an archive here")).toBeInTheDocument();
   // The mascot is decoration (a CSS background); the hostile-name checks rely on there being no img at all.
   expect(container.querySelectorAll("img")).toHaveLength(0);
   expect(container.querySelectorAll("[href]")).toHaveLength(0);
@@ -205,7 +205,7 @@ test("Extract archive: pick an archive, then a plan into a new folder next to it
   expect(plan?.args).toEqual({ handle: 4, seq: 0, keys: [] });
   expect(b.cmds()).not.toContain("plan_extract");
   expect(within(panel).getByTestId("extract-destination")).toHaveTextContent("/home/me/photos");
-  expect(within(panel).getByTestId("extract-new-folder-note")).toBeInTheDocument();
+  expect(within(panel).getByTestId("extract-notes")).toHaveTextContent("A new folder was made");
   expect(within(panel).getByTestId("extract-confirm")).toHaveTextContent("Extract");
   // Nothing is extracted until the user confirms.
   expect(b.cmds()).not.toContain("start_job");
@@ -258,7 +258,7 @@ test("dropping one .mochi file opens it, by asking Rust: the page names no path"
   const b = backend();
   render(<App />);
   await screen.findByTestId("start-screen");
-  b.drop({ event: "archive", name: "photos.mochi" });
+  b.drop({ event: "archive", name: "photos.mochi", foreign: false });
   await screen.findByTestId("archive-meta");
   expect(b.calls.find((c) => c.cmd === "open_dropped_archive")?.args).toEqual({});
   expect(screen.queryByTestId("start-screen")).toBeNull();
@@ -305,7 +305,6 @@ test("the start screen is operable by keyboard alone", async () => {
   screen.getByTestId("toolbar-more").focus();
   await user.keyboard("{Enter}");
   expect(screen.getByTestId("toolbar-more")).toHaveAttribute("aria-expanded", "true");
-  await user.tab();
   await user.tab();
   expect(document.activeElement).toBe(screen.getByTestId("start-extract"));
   await user.keyboard("{Enter}");

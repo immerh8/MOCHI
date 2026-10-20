@@ -10,12 +10,14 @@ export function rowHandlers<T extends { key: string | null }>(
   index: number,
   open: () => void,
   drag: DragOut<T>,
+  /** Enter opens the row (a folder); otherwise Enter, like Space, selects it. */
+  opensOnEnter: boolean,
 ) {
   return {
     onClick: (e: MouseEvent) => sel.click(row, index, e),
     onDoubleClick: open,
     onKeyDown: (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
+      if (e.key === "Enter" && opensOnEnter) {
         e.preventDefault();
         open();
       }
