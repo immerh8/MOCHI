@@ -446,6 +446,37 @@ export function Writer({
     </>
   );
 
+  // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
+  const progressLine = (job.state === "starting" || job.state === "running") && (
+    <div className="progress" data-testid="write-running">
+      {job.state === "running" && (
+        <>
+          <ProgressMeter
+            completed={job.completed}
+            total={job.total}
+            text={
+              (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+              (job.cancelRequested ? t("common.cancelling") : "")
+            }
+            textTestId="write-progress"
+          />
+        </>
+      )}
+      {job.state === "starting" && <span>{t("common.starting")}</span>}
+      <button
+        type="button"
+        className="icon-button"
+        data-testid="write-cancel"
+        aria-label={t("common.cancel")}
+        title={t("common.cancel")}
+        onClick={cancel}
+        disabled={job.state !== "running" || job.cancelRequested}
+      >
+        <CloseIcon />
+      </button>
+    </div>
+  );
+
   return (
     <section aria-labelledby="write-heading" className="writer" data-testid="writer">
       <h2 id="write-heading" tabIndex={-1} className="sr-only">
@@ -640,6 +671,7 @@ export function Writer({
             </fieldset>
           </details>
           {errorLine}
+          {progressLine}
           <div className="actions dialog-actions">
             <button
               type="button"
@@ -667,6 +699,7 @@ export function Writer({
         >
           {stagedList}
           {errorLine}
+          {progressLine}
           <div className="actions dialog-actions">
             <Hint text={t("write.addNote") + (archive.profile.tar_compatible ? t("write.addNoteTar") : "")} />
             <button
@@ -702,6 +735,7 @@ export function Writer({
             {DELETE_NOTE}
           </p>
           {errorLine}
+          {progressLine}
           <div className="actions dialog-actions">
             <button
               type="button"
@@ -727,35 +761,7 @@ export function Writer({
 
       <ToolSlot name="status" owner="any">
       {mode === "closed" && errorLine}
-      {(job.state === "starting" || job.state === "running") && (
-        <div className="progress" data-testid="write-running">
-          {job.state === "running" && (
-            <>
-              <ProgressMeter
-                completed={job.completed}
-                total={job.total}
-                text={
-                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-                  (job.cancelRequested ? t("common.cancelling") : "")
-                }
-                textTestId="write-progress"
-              />
-            </>
-          )}
-          {job.state === "starting" && <span>{t("common.starting")}</span>}
-          <button
-            type="button"
-            className="icon-button"
-            data-testid="write-cancel"
-            aria-label={t("common.cancel")}
-            title={t("common.cancel")}
-            onClick={cancel}
-            disabled={job.state !== "running" || job.cancelRequested}
-          >
-            <CloseIcon />
-          </button>
-        </div>
-      )}
+      {mode === "closed" && progressLine}
       <ResultBar
         prefix="write"
         statusTestId="write-status"

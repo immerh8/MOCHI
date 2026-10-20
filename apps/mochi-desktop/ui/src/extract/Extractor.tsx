@@ -232,6 +232,37 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
   const report = job.state === "done" && job.outcome.status === "completed" ? job.outcome.extract : undefined;
   const hasConflicts = plan !== null && plan.conflicts_total > 0;
 
+  // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
+  const progressLine = busy && (
+    <div className="progress" data-testid="extract-running">
+      {job.state === "running" && (
+        <>
+          <ProgressMeter
+            completed={job.completed}
+            total={job.total}
+            text={
+              (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+              (job.cancelRequested ? t("common.cancelling") : "")
+            }
+            textTestId="extract-progress"
+          />
+        </>
+      )}
+      {job.state === "starting" && <span>{t("common.starting")}</span>}
+      <button
+        type="button"
+        className="icon-button"
+        data-testid="extract-cancel"
+        aria-label={t("common.cancel")}
+        title={t("common.cancel")}
+        onClick={cancel}
+        disabled={job.state !== "running" || job.cancelRequested}
+      >
+        <CloseIcon />
+      </button>
+    </div>
+  );
+
   return (
     <section aria-labelledby="extract-heading" className="extractor" data-testid="extractor">
       <h2 id="extract-heading" tabIndex={-1} className="sr-only">
@@ -314,6 +345,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
               {error}
             </p>
           )}
+          {progressLine}
           <div className="actions dialog-actions">
             <Hint
               testId="extract-notes"
@@ -365,35 +397,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           {error}
         </p>
       )}
-      {busy && (
-        <div className="progress" data-testid="extract-running">
-          {job.state === "running" && (
-            <>
-              <ProgressMeter
-                completed={job.completed}
-                total={job.total}
-                text={
-                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-                  (job.cancelRequested ? t("common.cancelling") : "")
-                }
-                textTestId="extract-progress"
-              />
-            </>
-          )}
-          {job.state === "starting" && <span>{t("common.starting")}</span>}
-          <button
-            type="button"
-            className="icon-button"
-            data-testid="extract-cancel"
-            aria-label={t("common.cancel")}
-            title={t("common.cancel")}
-            onClick={cancel}
-            disabled={job.state !== "running" || job.cancelRequested}
-          >
-            <CloseIcon />
-          </button>
-        </div>
-      )}
+      {plan === null && progressLine}
 
       <ResultBar
         prefix="extract"

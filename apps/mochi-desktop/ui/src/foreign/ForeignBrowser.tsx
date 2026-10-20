@@ -391,6 +391,34 @@ export function ForeignBrowser() {
   const hasConflicts = plan !== null && plan.plan.plan.conflicts_total > 0;
   const selectedCount = selectedRows.length;
 
+  // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
+  const progressLine = jobBusy && (
+    <div className="progress" data-testid="foreign-running">
+      {job.state === "running" && (
+        <ProgressMeter
+          completed={job.completed}
+          total={job.total}
+          text={
+            (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+            (job.cancelRequested ? t("common.cancelling") : "")
+          }
+          textTestId="foreign-progress"
+        />
+      )}
+      <button
+        type="button"
+        className="icon-button"
+        data-testid="foreign-cancel"
+        aria-label={t("common.cancel")}
+        title={t("common.cancel")}
+        onClick={cancel}
+        disabled={job.state !== "running" || job.cancelRequested}
+      >
+        <CloseIcon />
+      </button>
+    </div>
+  );
+
   const view = open && (
     <>
       <div className="pathbar">
@@ -505,6 +533,7 @@ export function ForeignBrowser() {
               </ul>
             </div>
           )}
+          {progressLine}
           <div className="actions dialog-actions">
             <Hint text={EXTRACT_NOTE} />
             <button
@@ -725,32 +754,7 @@ export function ForeignBrowser() {
             {error}
           </p>
         )}
-        {jobBusy && (
-          <div className="progress" data-testid="foreign-running">
-            {job.state === "running" && (
-              <ProgressMeter
-                completed={job.completed}
-                total={job.total}
-                text={
-                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-                  (job.cancelRequested ? t("common.cancelling") : "")
-                }
-                textTestId="foreign-progress"
-              />
-            )}
-            <button
-              type="button"
-              className="icon-button"
-              data-testid="foreign-cancel"
-              aria-label={t("common.cancel")}
-              title={t("common.cancel")}
-              onClick={cancel}
-              disabled={job.state !== "running" || job.cancelRequested}
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        )}
+        {plan === null && progressLine}
         <ResultBar
           prefix="foreign"
           statusTestId="foreign-status"
