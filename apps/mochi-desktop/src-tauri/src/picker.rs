@@ -10,17 +10,32 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::ipc::SourcePick;
 
-/// Show the open dialog and wait for the user. `None` if they cancelled.
-/// Blocks: call it off the async runtime.
+/// Extensions the foreign reader opens (a name is a hint; the helper decides).
+const FOREIGN_EXTENSIONS: [&str; 10] = [
+    "zip", "7z", "rar", "tar", "tgz", "gz", "tzst", "zst", "001", "z01",
+];
+
+/// Show the open dialog for any archive MOCHI opens (MOCHI, ZIP, 7z, RAR, tar,
+/// tar.gz, tar.zst) and wait for the user. `None` if they cancelled. The first
+/// filter lists them all; the others narrow it to one format. Blocks: call it
+/// off the async runtime.
 pub fn pick_archive<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     #[cfg(feature = "e2e")]
     if let Some(path) = crate::automation::next_pick() {
         return Some(path);
     }
+    let mut all = vec!["mochi"];
+    all.extend(FOREIGN_EXTENSIONS);
     app.dialog()
         .file()
-        .set_title("Open a MOCHI archive")
+        .set_title("Open an archive")
+        .add_filter("Archives", &all)
         .add_filter("MOCHI archive", &["mochi"])
+        .add_filter("ZIP", &["zip"])
+        .add_filter("7z", &["7z", "001"])
+        .add_filter("RAR", &["rar"])
+        .add_filter("tar, tar.gz, tar.zst", &["tar", "tgz", "gz", "tzst", "zst"])
+        .add_filter("All files", &["*"])
         .blocking_pick_file()?
         .into_path()
         .ok()
@@ -36,10 +51,7 @@ pub fn pick_foreign_archive<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     app.dialog()
         .file()
         .set_title("Open a ZIP, 7z, RAR or tar archive (read-only)")
-        .add_filter(
-            "ZIP, 7z, RAR, tar",
-            &["zip", "7z", "rar", "tar", "tgz", "gz", "001"],
-        )
+        .add_filter("ZIP, 7z, RAR, tar", &FOREIGN_EXTENSIONS)
         .blocking_pick_file()?
         .into_path()
         .ok()

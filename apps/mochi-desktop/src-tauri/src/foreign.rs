@@ -1,5 +1,5 @@
 //! Foreign archives in the desktop app (plan D8): ZIP, 7z, RAR, tar, tar.gz,
-//! opened **read-only** to browse, test, and extract. Thin over two crates
+//! tar.zst, opened **read-only** to browse, test, and extract. Thin over two crates
 //! (AGENTS.md "No format logic in the UI or in Tauri commands"):
 //!
 //! * `mochi-foreign` parses the archive in an isolated helper process. This
@@ -33,7 +33,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::job::JobContext;
@@ -55,8 +55,8 @@ use crate::extract::{Destination, MAX_CONFLICTS_SHOWN, MAX_NOT_EXTRACTED_SHOWN};
 use crate::ipc::{
     AttributeNote, CheckCount, ConflictChoice, ConflictView, ExtractPlan, ExtractReport,
     ForeignArchiveSummary, ForeignChildrenPage, ForeignDimensionsView, ForeignExtractPlan,
-    ForeignKindView, ForeignProblem, ForeignRow, ForeignTestReport, IpcError, JobRequest, NameText,
-    NotExtractedView, PathKey,
+    ForeignHit, ForeignKindView, ForeignProblem, ForeignRow, ForeignSearchResult,
+    ForeignTestReport, IpcError, JobRequest, NameText, NotExtractedView, PathKey,
 };
 use crate::write::JobDone;
 
@@ -68,6 +68,12 @@ pub const MAX_KEYS: usize = 10_000;
 
 /// Problems a test report lists (the total is always given).
 pub const MAX_PROBLEMS_SHOWN: usize = 1_000;
+
+/// Hits a search returns (the total is always given).
+pub const MAX_SEARCH_HITS: usize = 1_000;
+
+/// The longest search text accepted, in bytes (as for a MOCHI search).
+pub const MAX_SEARCH_QUERY_BYTES: usize = crate::search::MAX_QUERY_BYTES;
 
 fn invalid(what: impl Into<String>) -> MochiError {
     MochiError::new(ErrorCode::InvalidArgument, what)
@@ -118,6 +124,8 @@ pub struct Foreign {
     inner: Mutex<Registry>,
     /// Where the helper binary is, when not next to the executable (tests).
     helper: Mutex<Option<PathBuf>>,
+    /// The recent-archives list a successful open is recorded in.
+    recents: OnceLock<Arc<crate::recent::Recents>>,
 }
 
 fn checks_text(f: ForeignFormat) -> &'static str {
@@ -129,6 +137,9 @@ fn checks_text(f: ForeignFormat) -> &'static str {
         ForeignFormat::Rar => "CRC32 or BLAKE2sp per entry, as each entry records",
         ForeignFormat::Tar => "no per-entry check",
         ForeignFormat::TarGz => "gzip CRC-32 over the whole stream; no per-entry check",
+        ForeignFormat::TarZst => {
+            "zstd frame checksum, when the archive has one; no per-entry check"
+        }
     }
 }
 
@@ -185,6 +196,11 @@ impl Foreign {
     #[cfg(any(test, feature = "e2e"))]
     pub fn set_helper(&self, path: PathBuf) {
         *lock(&self.helper) = Some(path);
+    }
+
+    /// Record the foreign archives opened from now on in `recents` (once).
+    pub fn set_recents(&self, recents: Arc<crate::recent::Recents>) {
+        let _ = self.recents.set(recents);
     }
 
     fn helper_path(&self) -> PathBuf {
@@ -266,6 +282,9 @@ impl Foreign {
             .entries
             .iter()
             .any(|e| e.encryption == mochi_foreign::Encryption::ZipCryptoWeak);
+        if let Some(recents) = self.recents.get() {
+            recents.record(path);
+        }
         let mut g = lock(&self.inner);
         g.pending = None;
         g.last = g.last.wrapping_add(1);
@@ -327,6 +346,65 @@ impl Foreign {
             total,
             offset,
             entries,
+        })
+    }
+
+    /// Entries (folders and files) whose full path contains `query` as a byte
+    /// substring, in path order. Names only: nothing is read from the archive.
+    /// `ignore_case` folds ASCII letters only. An empty query finds nothing.
+    /// Each hit carries the row `children` would return for it (same key), the
+    /// full escaped path, and its folder's key.
+    pub fn search(
+        &self,
+        handle: u32,
+        query: &str,
+        ignore_case: bool,
+    ) -> Result<ForeignSearchResult> {
+        if query.len() > MAX_SEARCH_QUERY_BYTES {
+            return Err(invalid(format!(
+                "a search takes at most {MAX_SEARCH_QUERY_BYTES} bytes of text"
+            )));
+        }
+        let s = self.session(handle)?;
+        let needle = query.as_bytes();
+        if needle.is_empty() {
+            return Ok(ForeignSearchResult {
+                hits: Vec::new(),
+                total_hits: 0,
+            });
+        }
+        let found = |hay: &[u8]| {
+            if ignore_case {
+                hay.windows(needle.len())
+                    .any(|w| w.eq_ignore_ascii_case(needle))
+            } else {
+                hay.windows(needle.len()).any(|w| w == needle)
+            }
+        };
+        let mut hits = Vec::new();
+        let mut total: u32 = 0;
+        for r in s.tree.rows() {
+            // A refused name has no path: its raw name is what is shown.
+            let full: &[u8] = r.path.as_ref().map_or(&r.name, |p| p.as_stored());
+            if !found(full) {
+                continue;
+            }
+            total = total.saturating_add(1);
+            if hits.len() < MAX_SEARCH_HITS {
+                hits.push(ForeignHit {
+                    row: row(&s, r),
+                    path: NameText::of(full),
+                    parent: r
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.parent())
+                        .map(|p| hex(p.as_stored())),
+                });
+            }
+        }
+        Ok(ForeignSearchResult {
+            hits,
+            total_hits: total,
         })
     }
 
@@ -1268,5 +1346,149 @@ mod tests {
         assert_eq!(e.code, "LIMIT_EXCEEDED");
         assert!(f.close(handles[0]));
         assert!(f.open(&fx("basic.tar"), None).is_ok());
+    }
+
+    #[test]
+    fn a_tar_zst_opens_with_its_own_label_and_honest_checks() {
+        let f = service();
+        let s = f.open(&fx("basic.tar.zst"), None).unwrap();
+        assert_eq!(s.format, "tar.zst");
+        assert_eq!(s.entries, 3);
+        assert!(s.complete);
+        assert!(s.checks.contains("zstd frame checksum") && s.checks.contains("no per-entry"));
+        for banned in BANNED {
+            assert!(!s.checks.contains(banned), "{banned}");
+        }
+        let root = f.children(s.handle, None, 0, 100).unwrap();
+        assert_eq!(names(&root), vec!["d", "a.txt"]);
+    }
+
+    #[test]
+    fn recent_foreign_archives_are_recorded_once_opened() {
+        let f = service();
+        let recents = Arc::new(crate::recent::Recents::default());
+        f.set_recents(Arc::clone(&recents));
+        // A failed open records nothing.
+        assert!(f.open(&fx("garbage.bin"), None).is_err());
+        assert!(recents.view().is_empty());
+        f.open(&fx("basic.tar"), None).unwrap();
+        assert_eq!(recents.view()[0].name, "basic.tar");
+    }
+
+    fn hit_paths(r: &ForeignSearchResult) -> Vec<String> {
+        r.hits.iter().map(|h| h.path.text.clone()).collect()
+    }
+
+    #[test]
+    fn a_search_finds_entries_by_full_path_with_the_listing_rows_and_folder_keys() {
+        let f = service();
+        let s = f.open(&fx("basic_infozip.zip"), None).unwrap();
+        let r = f.search(s.handle, "b.txt", false).unwrap();
+        assert_eq!(
+            (r.total_hits, hit_paths(&r)),
+            (1, vec!["sub/b.txt".to_owned()])
+        );
+        let hit = &r.hits[0];
+        assert_eq!(hit.parent, Some(hex_key("sub")));
+        // The row is exactly what foreign_children returns for the entry.
+        let sub = f.children(s.handle, hit.parent.as_deref(), 0, 100).unwrap();
+        assert_eq!(sub.entries, vec![hit.row.clone()]);
+        assert_eq!(hit.row.key, Some(hex_key("sub/b.txt")));
+        // A match in a folder name finds the folder and what is in it, in
+        // path order; a root-level entry has no parent.
+        let r = f.search(s.handle, "sub", false).unwrap();
+        assert_eq!(hit_paths(&r), vec!["sub", "sub/b.txt"]);
+        assert_eq!(r.hits[0].parent, None);
+        assert_eq!(r.hits[0].row.key, Some(hex_key("sub")));
+        assert_eq!(r.hits[0].row.child_files, 1);
+        // A path separator is part of the path being searched.
+        assert_eq!(
+            hit_paths(&f.search(s.handle, "ub/b", false).unwrap()),
+            vec!["sub/b.txt"]
+        );
+        // Case: exact unless asked, and ASCII only.
+        assert_eq!(f.search(s.handle, "SUB", false).unwrap().total_hits, 0);
+        assert_eq!(f.search(s.handle, "SUB", true).unwrap().total_hits, 2);
+        // An empty query finds nothing; nothing matching is an empty result.
+        let none = f.search(s.handle, "", true).unwrap();
+        assert_eq!((none.total_hits, none.hits.len()), (0, 0));
+        assert_eq!(f.search(s.handle, "zzz", true).unwrap().total_hits, 0);
+        // Bad requests are refused.
+        assert!(f.search(99, "a", false).is_err());
+        assert!(f
+            .search(s.handle, &"a".repeat(MAX_SEARCH_QUERY_BYTES + 1), false)
+            .is_err());
+    }
+
+    #[test]
+    fn a_search_returns_refused_names_unselectable() {
+        let f = service();
+        let s = f.open(&fx("traversal.zip"), None).unwrap();
+        let r = f.search(s.handle, "evil", false).unwrap();
+        assert!(r.total_hits >= 1);
+        let evil = r
+            .hits
+            .iter()
+            .find(|h| h.path.text.contains("evil.txt"))
+            .unwrap();
+        assert!(evil.row.key.is_none() && evil.parent.is_none());
+        assert!(evil.row.note.is_some());
+        // The same row the root listing shows for it.
+        let root = f.children(s.handle, None, 0, 1000).unwrap();
+        assert!(root.entries.contains(&evil.row));
+    }
+
+    #[test]
+    fn a_search_returns_at_most_a_thousand_hits_and_counts_them_all() {
+        // A tar of 1,100 empty files, written by hand (ustar headers).
+        fn header(name: &str) -> [u8; 512] {
+            let mut h = [0u8; 512];
+            h[..name.len()].copy_from_slice(name.as_bytes());
+            h[100..107].copy_from_slice(b"0000644");
+            h[108..115].copy_from_slice(b"0000000");
+            h[116..123].copy_from_slice(b"0000000");
+            h[124..135].copy_from_slice(b"00000000000");
+            h[136..147].copy_from_slice(b"00000000000");
+            h[156] = b'0';
+            h[257..263].copy_from_slice(b"ustar\0");
+            h[263..265].copy_from_slice(b"00");
+            h[148..156].copy_from_slice(b"        ");
+            let sum: u32 = h.iter().map(|&b| u32::from(b)).sum();
+            h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+            h[155] = b' ';
+            h
+        }
+        let mut tar = Vec::new();
+        for i in 0..1100 {
+            tar.extend_from_slice(&header(&format!("many/file-{i:04}.dat")));
+        }
+        tar.extend_from_slice(&[0u8; 1024]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("many.tar");
+        std::fs::write(&p, tar).unwrap();
+        let f = service();
+        let s = f.open(&p, None).unwrap();
+        assert_eq!(s.entries, 1100);
+        let r = f.search(s.handle, "file-", false).unwrap();
+        assert_eq!((r.hits.len(), r.total_hits), (MAX_SEARCH_HITS, 1100));
+        assert_eq!(r.hits[0].path.text, "many/file-0000.dat");
+        assert_eq!(r.hits[999].path.text, "many/file-0999.dat");
+        // The folder is a hit of its own when the text matches it.
+        let r = f.search(s.handle, "many", true).unwrap();
+        assert_eq!(r.total_hits, 1101);
+        assert_eq!(r.hits[0].path.text, "many");
+    }
+
+    #[test]
+    fn a_search_never_reads_file_contents() {
+        // basic.tar's b.txt holds "second file"; its name does not.
+        let f = service();
+        let s = f.open(&fx("basic.tar"), None).unwrap();
+        assert_eq!(
+            f.search(s.handle, "second file", true).unwrap().total_hits,
+            0
+        );
+        assert_eq!(f.search(s.handle, "hello", true).unwrap().total_hits, 0);
+        assert_eq!(f.search(s.handle, "A.TXT", true).unwrap().total_hits, 1);
     }
 }

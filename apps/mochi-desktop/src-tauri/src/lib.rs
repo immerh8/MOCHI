@@ -23,6 +23,7 @@ mod picker;
 pub mod quick;
 pub mod recent;
 pub mod rekey;
+pub mod route;
 pub mod search;
 pub mod self_test;
 pub mod update;
@@ -39,6 +40,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let drops = Arc::new(write::DropWatch::default());
     let destination = Arc::new(extract::Destination::default());
     let foreign = Arc::new(foreign::Foreign::default());
+    foreign.set_recents(Arc::clone(&recents));
     let checks = Arc::new(check::Checks::default());
     let updates = Arc::new(update::Updates::default());
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
@@ -133,10 +135,12 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::forget_recent_archives,
             commands::open_recent,
             commands::open_dropped_archive,
+            commands::stage_dropped_archive,
             commands::show_in_folder,
             commands::open_foreign_archive,
             commands::close_foreign_archive,
             commands::foreign_children,
+            commands::foreign_search,
             commands::plan_extract_foreign,
             commands::watch_launches,
             commands::watch_quick,

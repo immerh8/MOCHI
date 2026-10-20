@@ -8,6 +8,7 @@ import type { ExtractPlan } from "./generated/ExtractPlan";
 import type { OpenOutcome } from "./generated/OpenOutcome";
 import type { RecentView } from "./generated/RecentView";
 import type { ShowTarget } from "./generated/ShowTarget";
+import type { StagedView } from "./generated/StagedView";
 
 export type { RecentView, ShowTarget };
 
@@ -23,9 +24,21 @@ export function openRecent(index: number): Promise<OpenOutcome> {
   return invoke<OpenOutcome>("open_recent", { index });
 }
 
-/** Open the `.mochi` file just dropped on the window; `null` if none waits. */
+/**
+ * Open the archive file just dropped on the window (a `.mochi` file or a
+ * foreign archive, routed in Rust); `null` if none waits.
+ */
 export function openDroppedArchive(): Promise<OpenOutcome | null> {
   return invoke<OpenOutcome | null>("open_dropped_archive");
+}
+
+/**
+ * Stage the archive file just dropped on the window as an ordinary source to
+ * add, instead of opening it (for example a .zip dropped on an open MOCHI
+ * archive). Rejects if no dropped file waits or it cannot be staged.
+ */
+export function stageDroppedArchive(): Promise<StagedView> {
+  return invoke<StagedView>("stage_dropped_archive");
 }
 
 export function showInFolder(what: ShowTarget): Promise<null> {

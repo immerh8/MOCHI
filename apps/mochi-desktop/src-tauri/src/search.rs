@@ -15,7 +15,7 @@ use mochi_core::search::{search, Coverage, Hit, Query, SearchResult, SnapshotSco
 use mochi_core::storage::os::OsReadStorage;
 use mochi_core::{ErrorCode, MochiError, Result};
 
-use crate::browse::{kind, Archives};
+use crate::browse::{hex, kind, Archives};
 use crate::ipc::{
     HitView, JobRequest, NameText, SearchCoverageView, SearchResultView, SearchScopeChoice,
     SeqRange, UnavailableView,
@@ -129,6 +129,8 @@ fn hit_view(h: &Hit) -> HitView {
     HitView {
         seq: h.seq,
         path: NameText::of(h.path.as_stored()),
+        key: hex(h.path.as_stored()),
+        parent: h.path.parent().map(|p| hex(p.as_stored())),
         kind: kind(h.kind),
         size: h.logical_len.to_string(),
     }

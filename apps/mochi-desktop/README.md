@@ -22,9 +22,10 @@ apps/mochi-desktop/
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── crashlog.rs # D7: the opt-in local crash log (panic hook, settings, rotation)
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
-│       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar read-only through the isolated helper
+│       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar, tar.gz, tar.zst read-only through the isolated helper; name search
 │       ├── help.rs     # Help, User guide: opens the bundled guide offline (F8)
 │       ├── launch.rs   # D6: the shell's open, extract, and add verbs, parsed in Rust
+│       ├── route.rs    # One Open for every format: MOCHI magic wins, then foreign by name or first bytes
 │       ├── rekey.rs    # D5: key envelopes and passphrase changes
 │       ├── search.rs   # D5: name search
 │       ├── update.rs   # T13: the in-app updater, driven from Rust
@@ -338,10 +339,18 @@ attach it to an issue.
 - Foreign archives (D8): opened read-only, parsed in the helper process, extracted only
   through the shared restore engine, and tested with CRC wording, never MOCHI verification wording.
   The same holds when the shell starts the app with one (T20): `launch.rs` sends a ZIP, 7z, RAR,
-  tar, or tar.gz path to the in-app open path in Rust, the window shows the foreign browser (an
+  tar, tar.gz, or tar.zst path to the in-app open path in Rust, the window shows the foreign browser (an
   encrypted archive asks for its password there, once), and the shell's "Extract here" /
   "Extract to a new folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
   for browsing with a plain note.
+  **One Open (`route.rs`):** Open archive, the recent list, a dropped file, and the shell's open verb
+  all go through one router. A file that starts with the MOCHI descriptor frame is a MOCHI archive
+  whatever its name (a TAR-compatible `.mochi` is also a valid tar.zst stream, so a name cannot decide);
+  otherwise a foreign name or first bytes send it to the helper. `open_archive`, `open_recent` and
+  `open_dropped_archive` return `foreign` or `foreign_password` beside the MOCHI outcomes; foreign
+  archives are recorded in the recent list. A dropped single archive file is announced with
+  `foreign: bool` and can be opened or, with `stage_dropped_archive`, staged as an ordinary source to
+  add. `foreign_search` looks up entry names (never contents) in an open foreign archive.
 
 ## The simplified main path (D10)
 
@@ -415,6 +424,6 @@ returns a path and no `fs`, `shell`, `opener`, or `dialog` permission was added.
 ## Foreign-format helper in the installers
 
 Both installers ship `mochi-foreign-helper` next to the app (T16), so a packaged
-build opens ZIP, 7z, RAR, and tar archives. How it is built, staged, licensed, and
+build opens ZIP, 7z, RAR, tar, tar.gz, and tar.zst archives. How it is built, staged, licensed, and
 smoke-tested: `crates/mochi-foreign/README.md` "Shipping the helper". Dev runs are
 unchanged (the helper is built into `target/<profile>`).

@@ -11,7 +11,7 @@ export type ForeignArchiveSummary = { handle: number,
  */
 file_name: string, 
 /**
- * `ZIP`, `7z`, `RAR`, `tar`, or `tar.gz`.
+ * `ZIP`, `7z`, `RAR`, `tar`, `tar.gz`, or `tar.zst`.
  */
 format: string, entries: number, 
 /**
