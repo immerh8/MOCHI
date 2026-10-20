@@ -62,6 +62,8 @@ fn main() {
         "open_recent",
         "open_dropped_archive",
         "show_in_folder",
+        "drag_out",
+        "drag_out_foreign",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

@@ -172,6 +172,29 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   changed them. Sizes cross as decimal strings, because an archive may claim values
   above 2^53. Encrypted archives are refused with `KEY_UNAVAILABLE` until passphrase
   entry (D5).
+- **Dragging entries out to the file manager (`dragout.rs`).** `drag_out` (a MOCHI
+  archive) and `drag_out_foreign` (ZIP, 7z, RAR, tar) take only an archive handle, the
+  snapshot, and entry keys; each is granted by its own permission (`allow-drag-out`,
+  `allow-drag-out-foreign`). Rust makes a fresh folder with a random 128-bit name under
+  `<app cache>/drag-out/` (owner-only on Unix), extracts the selection into it through the
+  Extract code itself (`extract::run`, `Foreign::run`, so the C6 restore engine writes every
+  byte, an Encrypted archive uses the passphrase already given in its session, and a foreign
+  archive is read only by the isolated helper), moves each selected entry to the top level of
+  the folder's `items` directory under its own name (`a/b/c.txt` is dragged as `c.txt`), and
+  starts the operating system's drag of those items with the `drag` crate (Apache-2.0 OR MIT,
+  CrabNebula; OLE `DoDragDrop` on Windows, a GTK drag source on Linux). `tauri-plugin-drag`
+  is not used and the webview gets no plugin, fs, shell, or dialog permission, so it never
+  sees a path. A selection above 8 GiB of declared size is refused (`LIMIT_EXCEEDED`; the UI
+  offers Extract); so is one with no keys, too many keys, an unparseable key, or one the
+  archive lacks (`INVALID_ARGUMENT`), and so is a selection from which any entry could not
+  be extracted (nothing partial is offered). The folder is deleted when the drag ends without
+  a drop, when anything fails before it starts, and by a sweep at start-up and at exit for
+  folders over an hour old; the sweep removes only directories directly inside `drag-out`
+  whose name is 32 lowercase hex digits, and never follows a symbolic link. A dropped-on
+  folder is left for the sweep because the file manager may still be copying from it.
+  Extraction happens before the drag starts, so the interface should call the command as the
+  drag gesture begins. Not covered by headless tests: the native drag itself (the E2E job
+  cannot drive an OS drag; the release checklist covers it by hand on Windows and Ubuntu).
 - **CSP.** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none';
   form-action 'none'; frame-ancestors 'none'`. `connect-src` names Tauri's IPC

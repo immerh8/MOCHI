@@ -782,6 +782,40 @@ fn report_view(report: &mochi_core::restore::RestoreReport, folder: &Path) -> Ex
     }
 }
 
+impl Foreign {
+    /// Drag-out (`dragout`): the bytes the helper declares for the files at
+    /// or under `keys`, before anything is extracted. Declared sizes are the
+    /// archive's own claim, so this bounds the work only as far as the
+    /// helper's limits hold it to them. `INVALID_ARGUMENT` for a key the
+    /// listing lacks.
+    pub fn declared_bytes(&self, handle: u32, keys: &[PathKey]) -> Result<u64> {
+        let s = self.session(handle)?;
+        let wanted = selection(keys)?;
+        if let Some(missing) = wanted.iter().find(|w| s.tree.get(w).is_none()) {
+            return Err(invalid(format!(
+                "no entry {:?} in this archive",
+                String::from_utf8_lossy(missing.as_stored())
+            )));
+        }
+        let wanted: std::collections::HashSet<ArchivePath> = wanted.into_iter().collect();
+        let mut total = 0u64;
+        for e in s.entries.iter().filter(|e| e.kind == EntryKind::File) {
+            let Ok(Some(path)) = mochi_core::restore_foreign::parse_name(&e.name) else {
+                continue;
+            };
+            let mut at = Some(path);
+            while let Some(p) = at {
+                if wanted.contains(&p) {
+                    total = total.saturating_add(e.size.unwrap_or(0));
+                    break;
+                }
+                at = p.parent();
+            }
+        }
+        Ok(total)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

@@ -13,6 +13,7 @@ pub mod commands;
 pub mod crashlog;
 #[cfg(test)]
 mod d5_tests;
+pub mod dragout;
 pub mod extract;
 pub mod foreign;
 pub mod help;
@@ -156,7 +157,9 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::read_crash_log,
             commands::export_crash_log,
             commands::clear_crash_log,
-            commands::open_user_guide
+            commands::open_user_guide,
+            dragout::drag_out,
+            dragout::drag_out_foreign
         ])
         .setup(move |app| {
             // The opt-in crash log (D7): off until the user turns it on.
@@ -183,9 +186,18 @@ pub fn run() -> Result<(), tauri::Error> {
                 );
             }
             first_launches.submit(first);
+            // Drag-out folders left by an earlier run (an hour old or more).
+            dragout::sweep_in_background(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            // The same sweep at exit.
+            if matches!(event, tauri::RunEvent::Exit) {
+                dragout::sweep_on_exit(app);
+            }
+        });
+    Ok(())
 }
 
 /// The main window's label, which `capabilities/main.json` grants.
