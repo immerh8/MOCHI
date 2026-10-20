@@ -247,6 +247,7 @@ test("dropping files with nothing open goes to the create panel", async () => {
     event: "dropped",
     staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: "/home/me/x.mochi" },
     problems: [],
+    from_shell: false,
   });
   const panel = await screen.findByRole("group", { name: "Create a new archive" });
   expect(within(panel).getByTestId("staged-item")).toHaveTextContent(HOSTILE);

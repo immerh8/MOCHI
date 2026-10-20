@@ -219,7 +219,8 @@ describe("create and add", () => {
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="change-destination"]').click();
     await $('[data-testid="create-options"] summary').click();
-    await expect($('[data-testid="tar-notes"]')).toHaveText(
+    await expect($('[data-testid="tar-notes"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("not the latest snapshot"),
     );
     await $('[data-testid="preset-fast"]').click();

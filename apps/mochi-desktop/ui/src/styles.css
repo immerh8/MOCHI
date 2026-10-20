@@ -72,7 +72,9 @@ body.drag-preparing,
 body.drag-preparing * {
   cursor: progress !important;
 }
-/* Thin scroll bars, only where a list or a dialog scrolls; the window never does. */
+/* Thin scroll bars, only where a list or a dialog scrolls; the window never does.
+   Text that is cut short with an ellipsis uses `overflow: clip`, not `hidden`:
+   the same look, and WebKit's WebDriver still reads the text (the E2E specs). */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -469,7 +471,7 @@ button.menu-item:disabled {
   white-space: nowrap;
 }
 .path-title {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   font-weight: 600;
 }
@@ -546,7 +548,7 @@ button.version-button:disabled {
   align-items: center;
   min-width: 0;
   margin-left: 0.25rem;
-  overflow: hidden;
+  overflow: clip;
   white-space: nowrap;
   color: var(--muted);
 }
@@ -558,7 +560,7 @@ button.version-button:disabled {
 button.crumb {
   min-height: 1.5rem;
   max-width: 14rem;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   padding: 0 0.3rem;
   color: var(--fg);
@@ -752,14 +754,14 @@ button.crumb {
 }
 .entry-name {
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .size,
 .type,
 .folder {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
@@ -844,7 +846,7 @@ button.crumb {
   gap: 0.75rem;
   height: 1.75rem;
   padding: 0 0.6rem;
-  overflow: hidden;
+  overflow: clip;
   font-size: 0.92em;
   color: var(--muted);
   background: var(--surface);
@@ -887,7 +889,7 @@ button.crumb {
 .status-line,
 .statusbar-error {
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -898,7 +900,7 @@ button.crumb {
   color: var(--error);
 }
 .statusbar-error-text {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 .row-flag {
@@ -1086,13 +1088,13 @@ button.crumb {
 .staged li .name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 .kind-label {
   flex: none;
   width: 3.5rem;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.9em;
@@ -1125,7 +1127,7 @@ button.crumb {
 .save-row [data-testid="save-location"] {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1368,7 +1370,7 @@ button.recent-item {
   border-color: transparent;
 }
 .recent-name {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1396,7 +1398,7 @@ button.recent-item {
 }
 .result-text {
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--fg);

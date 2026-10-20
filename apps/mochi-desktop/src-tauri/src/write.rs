@@ -388,6 +388,7 @@ impl DropWatch {
         let event = DropEvent::Dropped {
             staged: outcome.staged,
             problems: outcome.problems,
+            from_shell: true,
         };
         let sink = lock(&self.sink).clone();
         let delivered = sink.is_some_and(|s| s.send(event.clone()));
@@ -431,7 +432,11 @@ pub fn on_drag_drop(event: &DragDropEvent, staging: &Staging, watch: &DropWatch)
             }
             let StageOutcome { staged, problems } = staging.add(paths);
             watch.emit(DropEvent::Hover { active: false });
-            watch.emit(DropEvent::Dropped { staged, problems });
+            watch.emit(DropEvent::Dropped {
+                staged,
+                problems,
+                from_shell: false,
+            });
         }
         _ => {}
     }
@@ -1687,7 +1692,12 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0], DropEvent::Hover { active: true });
         assert_eq!(events[1], DropEvent::Hover { active: false });
-        let DropEvent::Dropped { staged, problems } = &events[2] else {
+        let DropEvent::Dropped {
+            staged,
+            problems,
+            from_shell: false,
+        } = &events[2]
+        else {
             panic!("{:?}", events[2])
         };
         assert_eq!(staged.items.len(), 1);

@@ -1367,7 +1367,12 @@ mod tests {
         l.inner.drops.set(drops.clone());
         let got = drops.0.lock().unwrap().clone();
         assert_eq!(got.len(), 1);
-        let crate::ipc::DropEvent::Dropped { staged, problems } = &got[0] else {
+        let crate::ipc::DropEvent::Dropped {
+            staged,
+            problems,
+            from_shell: true,
+        } = &got[0]
+        else {
             panic!("{got:?}")
         };
         assert_eq!(staged.items.len(), 1);

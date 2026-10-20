@@ -181,7 +181,8 @@ export function Writer({
       setProblems(event.problems);
       const now = latestRef.current;
       if (now.busy) return;
-      if (now.archive && event.staged.items.length > 0 && event.problems.length === 0) {
+      // Dropped on an open archive: added at once. The shell's "Add to archive" asks first.
+      if (now.archive && !event.from_shell && event.staged.items.length > 0 && event.problems.length === 0) {
         if (!now.viewingHead) {
           setError(t("write.onlyLatest"));
           return;

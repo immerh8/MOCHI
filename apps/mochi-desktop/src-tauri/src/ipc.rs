@@ -497,6 +497,10 @@ pub enum DropEvent {
     Dropped {
         staged: StagedView,
         problems: Vec<IpcError>,
+        /// Staged by the shell's "Add to archive" (D6), not dropped on the
+        /// window: the window asks before it adds, where a drop on an open
+        /// archive adds at once.
+        from_shell: bool,
     },
     /// One archive file was dropped: a `.mochi` file or a ZIP, 7z, RAR, tar,
     /// tar.gz or tar.zst file (`foreign`). It is not staged yet: the window

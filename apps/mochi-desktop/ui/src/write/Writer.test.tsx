@@ -488,6 +488,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
     event: "dropped",
     staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: null },
     problems: [{ code: "INVALID_ARGUMENT", message: "x would be stored under the same name as y" }],
+    from_shell: false,
   });
   b.drop({ event: "hover", active: false });
   expect(screen.queryByTestId("drop-overlay")).toBeNull();
@@ -505,9 +506,24 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
     event: "dropped",
     staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
     problems: [],
+    from_shell: false,
   });
   expect(screen.queryByTestId("write-panel")).toBeNull();
   await waitFor(() => expect(b.request()).toEqual({ kind: "add_to_archive", handle: 3 }));
+});
+
+test("the shell's Add to archive opens the add dialog instead of adding at once", () => {
+  const b = backend();
+  render(<Writer archive={summary(3, 2)} viewingHead selected={[]} onCommitted={() => undefined} />);
+  b.drop({
+    event: "dropped",
+    staged: { items: [{ name: { text: "note.txt", verbatim: true }, kind: "file" }], destination: null, default_destination: null },
+    problems: [],
+    from_shell: true,
+  });
+  expect(screen.getByRole("group", { name: "Add to archive" })).toBeInTheDocument();
+  expect(screen.getByTestId("staged-item")).toHaveTextContent("note.txt");
+  expect(b.cmds()).not.toContain("start_job");
 });
 
 test("a drop on an older version adds nothing and says only the latest can be changed", async () => {
@@ -517,6 +533,7 @@ test("a drop on an older version adds nothing and says only the latest can be ch
     event: "dropped",
     staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
     problems: [],
+    from_shell: false,
   });
   expect(await screen.findByTestId("write-error")).toHaveTextContent("Only the latest version can be changed");
   expect(b.cmds()).not.toContain("start_job");

@@ -88,7 +88,9 @@ describe("passphrases, rekey, recovery record, and search", () => {
       expect.stringContaining("no recovery"),
     );
     await expect($('[data-testid="dedup-leak"]')).toHaveText(expect.stringContaining("stored once"));
-    await expect($('[data-testid="visible-without-key"]')).toHaveText(
+    // What stays visible without the key is the "i" note's: read its text, not what is drawn.
+    await expect($('[data-testid="visible-without-key"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("key envelopes"),
     );
     // TAR-compatible and encrypted exclude each other.
@@ -186,10 +188,12 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await stageFolderAndOpenCreate();
     // The previous create's choices were not carried over.
     await expect($('[data-testid="encrypt"]')).not.toBeSelected();
-    await expect($('[data-testid="recovery-notes"]')).toHaveText(
+    await expect($('[data-testid="recovery-notes"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("not a second copy"),
     );
-    await expect($('[data-testid="recovery-notes"]')).toHaveText(
+    await expect($('[data-testid="recovery-notes"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("Damage beyond that is reported and left as it is"),
     );
     await $('[data-testid="recovery-10"]').click();
