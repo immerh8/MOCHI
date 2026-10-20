@@ -65,8 +65,8 @@ Defined in `tauri.conf.json` (`bundle.fileAssociations`, the NSIS `installerHook
 `src-tauri/src/launch.rs`.
 
 **The command line** (`mochi-desktop [VERB] [--] PATH...`): no verb or `--open` opens
-`PATH` read-only (what a file manager passes); `--add` stages paths and shows the add
-panel. The **quick verbs** work at once in a small compact window and do not open the main
+`PATH` read-only (what a file manager passes); `--add` opens the compact "Add to archive"
+form (name, format, level, `.mochi` options; owner decision 2026-10-20). The **quick verbs** work at once in a small compact window and do not open the main
 window (owner decision 2026-10-16; spec Annex B.3 item 9): `--extract-here` and
 `--extract-to-folder` extract the whole snapshot into the archive's folder, or into a new
 folder named for it (`<name>`, `<name> (2)`, ...); `--add-now` makes `<name>.mochi` next
@@ -101,18 +101,46 @@ remembers the folder; no path crosses) and `allow-quick-close`. Nothing is added
 | What | Where | Removed by uninstall |
 |---|---|---|
 | `.mochi` association (ProgID `MOCHI.Archive`) | Tauri's `fileAssociations`; the hooks also remove the `.mochi` key and `MOCHI.Archive_backup` value that Tauri's own removal leaves | yes |
-| Classic Explorer submenu "MOCHI" on `.mochi` files: Open with MOCHI, Extract here, Extract to a new folder, Add to archive, Add to archive... | `Software\Classes\SystemFileAssociations\.mochi\shell\MochiMenu` (value `MUIVerb`, empty `SubCommands`; entries in its `shell\10Open`, `20ExtractHere`, `30ExtractToFolder`, `40Add`, `50AddPanel`) | yes |
-| The same submenu with Add to archive, Add to archive... on every file and folder | `Software\Classes\*\shell\MochiMenu`, `...\Directory\shell\MochiMenu` | yes |
-| The flat verbs of 0.1.0 (`Mochi*` verb keys) | removed by install (an update) and uninstall | n/a |
+| Explorer menu on every file and folder (flat, two entries): "Add to archive..." and Add to "<Name>.mochi" (a label that changes with the selection) | The shell extension `crates/mochi-shellext` (classic `IContextMenu`, in-process COM DLL), installed as `mochi-shellext-<version>.dll` next to the app; `Software\Classes\CLSID\{508772cd-d924-4b90-8b87-37fd5d593932}\InprocServer32` (default = the DLL, `ThreadingModel` = `Apartment`) and `Software\Classes\*\shellex\ContextMenuHandlers\MOCHI`, `...\Directory\shellex\ContextMenuHandlers\MOCHI` | yes |
+| Flat static verbs on `.mochi` files: Open with MOCHI, Extract here, Extract to a new folder | `Software\Classes\SystemFileAssociations\.mochi\shell\MochiOpen`, `MochiExtractHere`, `MochiExtractToFolder` | yes |
+| The cascade "MOCHI" submenu (`MochiMenu`, 0.9.x) and the flat verbs of 0.1.0 (`MochiAdd`) | removed by install (an update) and uninstall | n/a |
 | Opt-in "Open with" for ZIP, 7z, RAR, TAR, TGZ, GZ | ProgID `MOCHI.Foreign`; the value `MOCHI.Foreign` under each `.ext\OpenWithProgids` | yes |
 
-Each entry runs `"<app>" --verb -- "%1"`; Explorer starts one process per selected item. The opt-in is a question at the end of a
+**The two Add entries (owner decision 2026-10-20, amending the cascade of 2026-10-16).**
+No "MOCHI" submenu: "Add to archive..." runs `mochi-desktop --add -- PATH...` (the compact
+"Add to archive" form) and Add to "<Name>.mochi" runs
+`--add-now -- PATH...`. The DLL starts the app once, with every selected path, through
+`std::process::Command` (never a shell string; `--` ends the options). `<Name>` follows the
+rule `--add-now` names the archive by (`quick::add_target`): one item gives its name
+without the extension (a folder keeps its whole name), several give their parent folder's
+name, and `archive` if there is none; `&` is shown as `&&`, names over 40 characters end in
+an ellipsis, and a name already taken becomes `<Name> (2).mochi` in the app (the label shows
+the first choice). The rule lives in `mochi_shellext::plan` with its tests (they run on
+Linux). The DLL parses no archive and writes nothing; it has no menu icon (a menu bitmap
+needs GDI code for little gain). Selections whose command line could not fit in Windows'
+32,767 characters show no MOCHI entries. The Windows 11 top-level menu (`IExplorerCommand`
+in a signed sparse package) stays 1.x because there is no code-signing certificate: on
+Windows 11 both entries sit under "Show more options" (Shift+F10).
+
+**A loaded DLL cannot be replaced.** Explorer keeps a shell extension loaded, so the
+installer never overwrites it: the file name carries the app version, the registration
+points at it, an older DLL is deleted if it can be, and a locked one is renamed aside (a
+loaded DLL can be renamed) and the renamed file is scheduled for deletion at the next
+restart (`packaging/nsis/hooks.nsh`; the scheduled name is never reused, so a restart
+cannot delete a newer DLL). A same-version reinstall moves the old file aside the same way.
+An Explorer that is already running keeps the old DLL until it restarts or the user signs
+out; the old DLL starts the same app with the same arguments. Nothing needs elevation:
+everything is under `HKCU`. (Group policy "enforce shell-extension security" would need
+the CLSID on the approved list; MOCHI does not write there.) The release build puts the DLL
+in the installer through the overlay in `packaging/build-installer.sh`, as the helper is
+bundled, and `packaging/licenses.py` lists the DLL's `windows` crates.
+
+The three `.mochi` verbs run `"<app>" --verb -- "%1"`; Explorer starts one process per selected item. The opt-in is a question at the end of a
 normal install, **default No**, never asked by a silent (`/S`) or passive install, and
 `/ASSOCIATE_FOREIGN` on the setup's command line says yes (CI uses it). It adds MOCHI to
 "Open with"; it never writes a type's default value and never touches the user's
 choice, because Windows lets only the user make an app the default. Verbs sit under
-"Show more options" on Windows 11; the top-level Windows 11 menu (`IExplorerCommand`,
-package identity) and Nautilus extensions are 1.x (O10), not built.
+"Show more options" on Windows 11; Nautilus extensions are 1.x (O10), not built.
 
 A foreign archive that arrives from the shell (the opt-in "Open with", a double-click
 once MOCHI is the user's default, or a second launch) is opened for **browsing** in the
@@ -267,14 +295,21 @@ by `apt install ./mochi_*.deb`, start from the launcher, remove.
 context menu, and no second user setting defaults, so on the same clean Windows 10 22H2
 and Windows 11 client machines check by hand:
 
-- Right-click a `.mochi` file: a submenu "MOCHI" (Windows 11: under "Show more options")
-  lists "Open with MOCHI", "Extract here", "Extract to a new folder", "Add to archive",
-  "Add to archive..."; "Open with MOCHI" shows the archive; "Extract here" and "Extract to
-  a new folder" extract at once in a small window and replace nothing (see
-  `docs/release-runbook.md` W-06).
-- Right-click a file, several files, and a folder: "MOCHI" > "Add to archive" makes one
-  archive next to them in a small window; "Add to archive..." opens the add panel with
-  them staged (several files make several launches that collect in one set).
+- Windows 11 client, **Show more options** (Shift+F10; the short menu has no MOCHI entry,
+  expected): right-click one file `Note é & more.txt`: exactly two MOCHI entries, flat, no
+  "MOCHI" submenu: "Add to archive..." and `Add to "Note é && more.mochi"` shown as
+  `Note é & more.mochi`. Right-click a folder `Folder & ü`: the label names the folder. Select
+  three files in `trip`: the label names `trip`. "Add to archive..." opens the small "Add to archive"
+  form (name, format, level) with the selection, and the main window stays closed; the other makes **one** archive next to it in the small window (a
+  second time: `... (2).mochi`, the first untouched). **Fail:** a cascade, a third entry, three
+  windows or archives for three files, or a label that differs from the archive's name.
+- Right-click a `.mochi` file: the two Add entries plus the flat "Open with MOCHI",
+  "Extract here" and "Extract to a new folder" (see `docs/release-runbook.md` W-06).
+- Update with Explorer running (install 0.9.x over 0.9.y, then over the same version
+  again): the installer finishes without a "file in use" prompt, the menu still works at
+  once, and after signing out and in only the new `mochi-shellext-<version>.dll` remains in
+  `%LOCALAPPDATA%\MOCHI`. Uninstall: both entries vanish (Explorer may need a restart) and
+  no `mochi-shellext-*` file remains after a restart.
 - Double-click a `.mochi` file with MOCHI already running: no second window or process.
 - Install interactively: the foreign-format question defaults to No; with No, a `.zip`'s
   "Open with" list does not offer MOCHI; with Yes it does, and ZIP still opens in the

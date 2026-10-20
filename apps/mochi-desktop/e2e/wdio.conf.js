@@ -20,7 +20,7 @@
 // launching a browser, the path the Help action opens:
 //   python3 packaging/guide.py target/guide     (MOCHI_E2E_GUIDE_DIR overrides)
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,14 @@ process.env.MOCHI_E2E_OPEN_LOG = path.join(os.tmpdir(), "mochi-e2e-opened.txt");
 // "Show in folder" records the folder it was asked to show here (src/help.rs `open_folder`).
 process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt");
 
+// The cold-start spec (specs/add-cold.e2e.js) needs the app started WITH arguments, as Explorer
+// starts it for "Add to archive...": a second session whose capabilities carry them. Each
+// capability runs its own specs, so the other specs never see these arguments and this one never
+// shares an app with them. Three files in one folder, in one launch.
+const coldDir = path.join(os.tmpdir(), "mochi-e2e-cold", "trip");
+process.env.MOCHI_E2E_COLD_DIR = coldDir;
+const coldSpec = path.resolve(here, "specs/add-cold.e2e.js");
+
 let tauriDriver;
 
 /** The spec files that are about one tool, and the More menu item that opens it. */
@@ -92,7 +100,16 @@ export const config = {
   capabilities: [
     {
       maxInstances: 1,
+      "wdio:exclude": [coldSpec],
       "tauri:options": { application },
+    },
+    {
+      maxInstances: 1,
+      "wdio:specs": [coldSpec],
+      "tauri:options": {
+        application,
+        args: ["--add", "--", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))],
+      },
     },
   ],
   logLevel: "warn",
@@ -102,6 +119,10 @@ export const config = {
   waitforTimeout: 15_000,
 
   onPrepare: () => {
+    // The files the cold start adds, made fresh.
+    rmSync(path.dirname(coldDir), { recursive: true, force: true });
+    mkdirSync(coldDir, { recursive: true });
+    for (const n of ["a.txt", "b.txt", "c.txt"]) writeFileSync(path.join(coldDir, n), n);
     // No pick left over from an earlier run.
     writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
     writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");

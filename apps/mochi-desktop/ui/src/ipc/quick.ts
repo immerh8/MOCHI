@@ -8,10 +8,13 @@
 // mounts twice in development) still hears the whole job.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import type { ArchiveFormat } from "./generated/ArchiveFormat";
 import type { QuickAction } from "./generated/QuickAction";
+import type { QuickAddRequest } from "./generated/QuickAddRequest";
 import type { QuickEvent } from "./generated/QuickEvent";
+import type { QuickLocation } from "./generated/QuickLocation";
 
-export type { QuickAction, QuickEvent };
+export type { ArchiveFormat, QuickAction, QuickAddRequest, QuickEvent, QuickLocation };
 
 const listeners = new Set<(event: QuickEvent) => void>();
 let log: QuickEvent[] = [];
@@ -19,6 +22,8 @@ let registered = false;
 
 function remember(event: QuickEvent): void {
   if (event.event === "started") log = [];
+  // A form sent again (another item joined it) replaces the one before.
+  if (event.event === "add_prompt") log = log.filter((e) => e.event !== "add_prompt");
   const last = log[log.length - 1];
   if (event.event === "progress" && last?.event === "progress") log.pop();
   log.push(event);
@@ -60,6 +65,24 @@ export function showQuickFolder(): Promise<null> {
 
 export function closeQuick(): Promise<null> {
   return invoke<null>("quick_close");
+}
+
+/**
+ * The Add form's Browse…: Rust shows the save dialog and keeps the folder.
+ * Resolves with the folder's display text and the file name, or `null` when
+ * the dialog was cancelled.
+ */
+export function chooseQuickLocation(name: string, format: ArchiveFormat): Promise<QuickLocation | null> {
+  return invoke<QuickLocation | null>("quick_choose_location", { name, format });
+}
+
+/**
+ * OK on the Add form. Rust checks the request; a refusal (a name that exists,
+ * a bad name) rejects with an `IpcError` and the form stays open. A passphrase
+ * crosses here, once.
+ */
+export function submitQuickAdd(request: QuickAddRequest): Promise<null> {
+  return invoke<null>("quick_add_submit", { request });
 }
 
 /** Forget what was heard (tests). */

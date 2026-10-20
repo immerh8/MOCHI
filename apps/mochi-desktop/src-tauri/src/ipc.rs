@@ -46,6 +46,15 @@ pub enum JobRequest {
         #[ts(optional)]
         recovery_percent: Option<u16>,
     },
+    /// Plan O31: write the staged sources as a plain ZIP, `.tar`, `.tar.gz`, or
+    /// `.tar.zst` file at the destination the user chose (`mochi-export`; a
+    /// temporary file, then a no-replace rename; an existing file is never
+    /// replaced). `format` must not be `mochi`. `level` is ignored for `.tar`.
+    /// The webview names no path.
+    ExportArchive {
+        format: ArchiveFormat,
+        level: CompressionPreset,
+    },
     /// D2: add the staged sources to an open archive as one new commit.
     AddToArchive { handle: ArchiveHandle },
     /// D2: remove entries from an open archive's current snapshot as one
@@ -203,6 +212,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         foreign_test: Option<Box<ForeignTestReport>>,
+        /// Set by the export job (plan O31): what was written, no more.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        export: Option<Box<ExportReportView>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -470,6 +483,9 @@ pub struct StagedView {
     /// to the first item, never over an existing file. `None` when nothing is
     /// staged, a destination was chosen, or no default can be made.
     pub default_destination: Option<String>,
+    /// The format the next new archive is written in (plan O31); `mochi` until
+    /// the user chooses another. Names above follow its extension.
+    pub format: ArchiveFormat,
 }
 
 /// A folder the window asks Rust to show in the file manager. The window
@@ -482,6 +498,8 @@ pub enum ShowTarget {
     ExtractDestination,
     /// The folder that holds an open archive.
     Archive { handle: ArchiveHandle },
+    /// The folder the last ZIP / tar export was written into (plan O31).
+    LastExport,
 }
 
 /// What reaches the webview about drag and drop (Rust handles the window's
@@ -556,6 +574,48 @@ pub struct CommitReport {
     /// could not be reopened; `reopen_error` says why.
     pub archive: Option<ArchiveSummary>,
     pub reopen_error: Option<IpcError>,
+}
+
+/// The format of a new archive the desktop app writes (plan O31, owner
+/// decision 2026-10-20): `.mochi`, or one of four plain formats written by
+/// `mochi-export`. RAR is never written; 7z is not written now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ArchiveFormat {
+    #[default]
+    Mochi,
+    Zip,
+    Tar,
+    TarGz,
+    TarZst,
+}
+
+/// What an export wrote (plan O31). It says what ran and no more: no commit
+/// status, no health dimension, no verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ExportReportView {
+    pub format: ArchiveFormat,
+    /// The new file's name.
+    pub name: NameText,
+    /// Its full path, as display text.
+    pub location: NameText,
+    #[ts(type = "number")]
+    pub files: u64,
+    #[ts(type = "number")]
+    pub directories: u64,
+    /// Content bytes read from the sources.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The size of the new file.
+    #[ts(type = "number")]
+    pub output_bytes: u64,
+    /// Entries left out (a link, a device, a name the format cannot hold, an
+    /// unreadable file) and why.
+    pub skipped: Vec<SkippedView>,
+    /// The directory entry is not confirmed durable (degraded).
+    pub durability_note: Option<String>,
 }
 
 /// The staged set after `stage_sources`, and any source that could not be

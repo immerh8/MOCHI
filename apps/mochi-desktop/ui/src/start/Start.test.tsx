@@ -43,7 +43,7 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
       case "staged_sources":
-        return { items: [], destination: null, default_destination: null };
+        return { items: [], destination: null, default_destination: null, format: "mochi" };
       case "watch_drops":
         dropChannel = a.onDrop as Channel<DropEvent>;
         return null;
@@ -245,7 +245,7 @@ test("dropping files with nothing open goes to the create panel", async () => {
   await screen.findByTestId("start-screen");
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: "/home/me/x.mochi" },
+    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: "/home/me/x.mochi", format: "mochi" },
     problems: [],
     from_shell: false,
   });

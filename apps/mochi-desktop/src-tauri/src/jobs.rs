@@ -112,6 +112,7 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
     match request {
         JobRequest::CreateArchive { .. }
         | JobRequest::AddToArchive { .. }
+        | JobRequest::ExportArchive { .. }
         | JobRequest::DeleteFromArchive { .. }
         | JobRequest::ExtractArchive { .. }
         | JobRequest::TestForeign { .. }
@@ -223,6 +224,7 @@ fn run_job(
                 check: None,
                 search: None,
                 rekey: None,
+                export: None,
             }),
         write => registry.services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
@@ -240,6 +242,7 @@ fn run_job(
             check,
             search,
             rekey,
+            export,
         }) => JobOutcome::Completed {
             summary,
             commit,
@@ -248,6 +251,7 @@ fn run_job(
             check,
             search,
             rekey,
+            export,
         },
         Err(e) if e.code == ErrorCode::Cancelled => JobOutcome::Cancelled,
         Err(e) => JobOutcome::Failed {

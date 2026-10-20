@@ -4,13 +4,14 @@
 // snapshot, with a clear statement that the content stays in history (#5).
 // Nothing here is a verification, so none of it gets success styling.
 import { t, tc } from "../i18n";
-import type { CommitReport } from "../ipc/write";
+import type { CommitReport, ExportReportView } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
 import { formatSize } from "../browser/format";
 import { countParts, joinParts } from "../result/details";
+import { formatLabel } from "./format";
 import type { DetailRow, ResultView } from "../result/details";
 
-export type Operation = "create" | "add" | "delete";
+export type Operation = "create" | "add" | "delete" | "export";
 
 /** Shown with every commit: the honest limit of a local commit (spec §5.3). */
 export const LOCAL_COMMIT_NOTE = t("write.localCommitNote");
@@ -21,19 +22,33 @@ export const DELETE_NOTE = t("write.deleteNote");
 /** The trade-offs of the TAR-compatible option (plan O4, spec D4, D19). */
 export const TAR_NOTES = [t("write.tar1"), t("write.tar2"), t("write.tar3"), t("write.tar4")];
 
-/** What a finished job shows: plain lines (a cancel or a failure), or a compact commit result. */
-export type WriteResult = { kind: "text"; lines: string[] } | ({ kind: "commit" } & ResultView);
+/**
+ * What a finished job shows: plain lines (a cancel or a failure), a compact commit result, or
+ * (plan O31) what a ZIP or tar export wrote.
+ */
+export type WriteResult = { kind: "text"; lines: string[] } | ({ kind: "commit" | "export" } & ResultView);
 
 /** The result of a job. A commit is one short line plus details; the rest are plain lines. */
 export function outcomeResult(operation: Operation, outcome: JobOutcome): WriteResult {
   switch (outcome.status) {
     case "completed":
+      if (outcome.export) return { kind: "export", ...exportView(outcome.export) };
       return outcome.commit
         ? { kind: "commit", ...commitView(outcome.commit) }
         : { kind: "text", lines: [t("common.completed", { summary: outcome.summary })] };
     case "cancelled":
-      return { kind: "text", lines: [t(operation === "create" ? "write.cancelledCreate" : "write.cancelledOther")] };
+      return {
+        kind: "text",
+        lines: [t(operation === "create" || operation === "export" ? "write.cancelledCreate" : "write.cancelledOther")],
+      };
     case "failed": {
+      if (operation === "export") {
+        // Nothing but a file was being written, under a temporary name until the end.
+        return {
+          kind: "text",
+          lines: [t("common.failed", { code: outcome.code, message: outcome.message }), t("write.nothingWritten")],
+        };
+      }
       // A commit that could not be confirmed may or may not have been
       // published (spec §12.4): do not claim either.
       const unsure = outcome.code === "COMMIT_UNCONFIRMED" || outcome.code === "WRITER_POISONED";
@@ -137,8 +152,64 @@ export function commitView(c: CommitReport): ResultView {
   return { line, warn, details: { rows, notes }, record };
 }
 
+/**
+ * What an export wrote, as one short line and a Details panel (plan O31). It says what ran
+ * and no more: no commit status, no health dimension, nothing about the file being checked.
+ */
+export function exportView(e: ExportReportView): ResultView {
+  const warn = e.skipped.length > 0;
+  const head = t("write.exportLine", {
+    parts: joinParts(countParts(e.files, e.directories, e.bytes)),
+    name: e.name.text,
+  });
+  const line =
+    e.skipped.length === 0
+      ? head
+      : `${head}${t("common.statusSeparator")}${tc(e.skipped.length, "write.lineNotStoredOne", "write.lineNotStoredMany")}`;
+  const rows: DetailRow[] = [
+    { label: t("write.rowFormat"), value: formatLabel(e.format) },
+    { label: t("write.rowFiles"), value: e.files.toLocaleString("en-US") },
+    { label: t("write.rowFolders"), value: e.directories.toLocaleString("en-US") },
+    { label: t("write.rowSize"), value: formatSize(String(e.bytes)) },
+    { label: t("write.rowFileSize"), value: formatSize(String(e.output_bytes)) },
+  ];
+  if (e.durability_note) {
+    rows.push({
+      label: t("write.rowFolderEntry"),
+      value: t("write.folderEntryNotConfirmed"),
+      sub: t("write.degradedMark"),
+      note: e.durability_note,
+      caution: true,
+      testId: "write-durability",
+    });
+  }
+  if (e.skipped.length > 0) {
+    rows.push({
+      label: t("write.rowNotStored"),
+      value: tc(e.skipped.length, "common.itemOne", "common.itemMany"),
+      items: e.skipped.map((s) => ({ name: s.path, text: s.reason })),
+      caution: true,
+      testId: "write-not-stored",
+      itemTestId: "write-not-stored-item",
+    });
+  }
+  const record = [
+    `export ${e.format}`,
+    `files ${e.files}, folders ${e.directories}, bytes ${e.bytes}, file size ${e.output_bytes}`,
+    `not stored ${e.skipped.length}`,
+    e.durability_note ? `directory entry not confirmed durable (${e.durability_note})` : "directory entry confirmed",
+  ].join("; ");
+  return { line, warn, details: { rows, notes: [t("write.exportNote")] }, record };
+}
+
 /** How a running job's progress reads. */
 export function progressText(phase: string, completed: number, total: number | null): string {
+  if (phase === "export_scan") return t("write.progressScan", { n: completed.toLocaleString("en-US") });
+  if (phase === "export") {
+    return total === null
+      ? t("write.progressImport", { size: formatSize(String(completed)) })
+      : t("write.progressExport", { done: formatSize(String(completed)), total: formatSize(String(total)) });
+  }
   if (phase === "import") return t("write.progressImport", { size: formatSize(String(completed)) });
   if (phase === "delete") {
     return t("write.progressDelete", { completed, total: total ?? t("write.progressTotalUnknown") });

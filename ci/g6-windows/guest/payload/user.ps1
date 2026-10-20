@@ -5,9 +5,10 @@
 #   A: a silent install (/S): the foreign-format opt-in is OFF (its default).
 #      Checks the files, Start menu, association, verbs, the opt-in being off,
 #      WebView2, and that uninstall leaves nothing.
-#   B: /ASSOCIATE_FOREIGN. Launches the app, runs every entry of the "MOCHI"
-#      Explorer submenu as Explorer does (the entry's registered command with
-#      %1 replaced; quick entries extract or create at once and replace nothing)
+#   B: /ASSOCIATE_FOREIGN. Launches the app, runs every Explorer
+#      menu entry as Explorer does (a .mochi verb: its registered command with
+#      %1 replaced; the two Add entries of the shell extension DLL: the app with
+#      --add|--add-now -- PATH..., which the DLL cannot be right-clicked to do here; quick entries extract or create at once and replace nothing)
 #      with a path containing spaces, non-ASCII letters and an ampersand, a second launch while the app runs, the opt-in "Open with"
 #      handler, then uninstall and the leftovers check.
 #
@@ -141,20 +142,22 @@ $trickyName = "$([char]0x00C4)rchive & $([char]0x00E7)o.mochi"
 $trickyName2 = "Second $([char]0x00E9) & copy.mochi"
 $InstallDir = Join-Path $env:LOCALAPPDATA 'MOCHI'
 $Prep = Get-Content "$GuestState\prep.json" -Raw | ConvertFrom-Json
-# The Explorer menu (owner decision 2026-10-16, 7-Zip style): one cascading submenu "MOCHI" per
-# class, entries as subkeys of MochiMenu\shell. Each value: option, menu text.
-$addItems = [ordered]@{ '40Add' = @('--add-now', 'Add to archive'); '50AddPanel' = @('--add', 'Add to archive...') }
-$mochiItems = [ordered]@{
-  '10Open'            = @('--open', 'Open with MOCHI')
-  '20ExtractHere'     = @('--extract-here', 'Extract here')
-  '30ExtractToFolder' = @('--extract-to-folder', 'Extract to a new folder')
+# The Explorer menu (owner decision 2026-10-20, flat: no "MOCHI" cascade). Add to archive... and
+# Add to "<Name>.mochi" on every file and folder are drawn by the shell extension DLL
+# (mochi-shellext, a classic IContextMenu handler: CLSID below, ContextMenuHandlers\MOCHI under
+# * and Directory); only .mochi files carry static verbs. Each value: option, menu text.
+$shellExtClsid = '{508772cd-d924-4b90-8b87-37fd5d593932}'
+$mochiVerbs = [ordered]@{
+  'MochiOpen'            = @('--open', 'Open with MOCHI')
+  'MochiExtractHere'     = @('--extract-here', 'Extract here')
+  'MochiExtractToFolder' = @('--extract-to-folder', 'Extract to a new folder')
 }
-foreach ($n in $addItems.Keys) { $mochiItems[$n] = $addItems[$n] }
-$menuChecks = [ordered]@{
-  'SystemFileAssociations\.mochi' = $mochiItems
-  '*'                              = $addItems
-  'Directory'                      = $addItems
-}
+# Callers keep their item ids; this maps them to the static verb key, or (the DLL's two entries,
+# which have no registry command) to the option the DLL passes.
+$itemVerbKey = @{ '10Open' = 'MochiOpen'; '20ExtractHere' = 'MochiExtractHere'; '30ExtractToFolder' = 'MochiExtractToFolder' }
+$dllOptions = @{ '40Add' = '--add-now'; '50AddPanel' = '--add' }
+$legacyMenuKeys = @('SystemFileAssociations\.mochi\shell\MochiMenu', '*\shell\MochiMenu', 'Directory\shell\MochiMenu',
+                    '*\shell\MochiAdd', 'Directory\shell\MochiAdd')
 $foreignExts = 'zip', '7z', 'rar', 'tar', 'tgz', 'gz'
 $classesRoot = [Microsoft.Win32.Registry]::ClassesRoot
 $userClasses = [Microsoft.Win32.Registry]::CurrentUser
@@ -271,14 +274,21 @@ function Get-UiaText([int]$hwnd, [int]$timeoutSec = 60) {
 }
 function Get-DirSnapshot([string]$dir) { @(Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + '|' + $(if ($_.PSIsContainer) { 'd' } else { $_.Length }) } | Sort-Object) }
 
-# One entry of the "MOCHI" submenu, started the way Explorer starts it: the entry's registered
-# command with %1 replaced by the path (a submenu entry has no ShellExecute verb name of its own).
+# One menu entry, started the way Explorer (or the DLL) starts it. A .mochi verb: its registered
+# command with %1 replaced by the path. Add to archive... / Add to "<Name>.mochi": the DLL runs
+# "<app>" --add|--add-now -- PATH... in ONE process (it cannot be right-clicked on a Server guest),
+# so this does the same with the same arguments. `$path` may be several paths.
 # `$wait` seconds for a window, then the UI text. Returns what was seen and what changed on disk.
 $script:uiaNotes = New-Object System.Collections.Generic.List[string]
-function Start-MenuEntry([string]$path, [string]$class, [string]$item) {
-  $cmd = Get-ClassDefault $classesRoot "$class\shell\MochiMenu\shell\$item\command"
+function Start-MenuEntry([string[]]$path, [string]$class, [string]$item) {
+  if ($dllOptions.ContainsKey($item)) {
+    $argList = @($dllOptions[$item], '--') + @($path | ForEach-Object { '"' + $_ + '"' })
+    Start-Process -FilePath (Get-AppExe).FullName -ArgumentList $argList
+    return
+  }
+  $cmd = Get-ClassDefault $classesRoot "$class\shell\$($itemVerbKey[$item])\command"
   if (-not $cmd) { Fail "no command registered for $class / $item" }
-  $line = $cmd.Replace('%1', $path)
+  $line = $cmd.Replace('%1', $path[0])
   Start-Process -FilePath (Get-AppExe).FullName -ArgumentList ($line.Substring($line.IndexOf('" ') + 2))
 }
 function Invoke-MenuEntry([string]$path, [string]$class, [string]$item, [string]$expectText, [int]$settle = 6) {
@@ -350,35 +360,34 @@ function Assert-Registrations([bool]$foreign) {
     if (-not $q -or $q -ne $exe) { Fail "AssocQueryString(.mochi) is '$q', expected $exe" }
     $notes += 'AssocQueryString resolves .mochi to the installed app'
   }
-  $entries = 0
-  foreach ($class in $menuChecks.Keys) {
-    $menu = "$class\shell\MochiMenu"
-    $mk = $userClasses.OpenSubKey("Software\Classes\$menu")
-    if (-not $mk) { Fail "submenu $menu is not registered" }
-    try {
-      if ($mk.GetValue('MUIVerb') -ne 'MOCHI') { Fail "submenu $menu has text '$($mk.GetValue('MUIVerb'))', expected 'MOCHI'" }
-      if ($null -eq $mk.GetValue('SubCommands')) { Fail "submenu $menu has no SubCommands value (the cascade would not show)" }
-    } finally { $mk.Close() }
-    $items = $menuChecks[$class]
-    foreach ($item in $items.Keys) {
-      $k = "$menu\shell\$item"
-      $text = Get-ClassDefault $classesRoot $k
-      if ($text -ne $items[$item][1]) { Fail "entry $k has menu text '$text', expected '$($items[$item][1])'" }
-      $cmd = Get-ClassDefault $classesRoot "$k\command"
-      $expect = '"' + $exe + '" ' + $items[$item][0] + ' -- "%1"'
-      if ($cmd -ne $expect) { Fail "entry $k runs '$cmd', expected '$expect'" }
-      if ($cmd -match 'passphrase|password') { Fail "entry $k puts a secret option on the command line" }
-      $entries++
-    }
-    $sk = $userClasses.OpenSubKey("Software\Classes\$menu\shell")
-    try { $names = @($sk.GetSubKeyNames()) } finally { $sk.Close() }
-    if ($names.Count -ne $items.Count) { Fail "submenu $menu has entries [$($names -join ', ')], expected [$($items.Keys -join ', ')]" }
+  # Flat static verbs on .mochi files (no cascade).
+  $mochiShell = 'SystemFileAssociations\.mochi\shell'
+  foreach ($v in $mochiVerbs.Keys) {
+    $k = "$mochiShell\$v"
+    $text = Get-ClassDefault $classesRoot $k
+    if ($text -ne $mochiVerbs[$v][1]) { Fail "entry $k has menu text '$text', expected '$($mochiVerbs[$v][1])'" }
+    $cmd = Get-ClassDefault $classesRoot "$k\command"
+    $expect = '"' + $exe + '" ' + $mochiVerbs[$v][0] + ' -- "%1"'
+    if ($cmd -ne $expect) { Fail "entry $k runs '$cmd', expected '$expect'" }
+    if ($cmd -match 'passphrase|password') { Fail "entry $k puts a secret option on the command line" }
   }
-  foreach ($old in @('SystemFileAssociations\.mochi\shell\MochiOpen', 'SystemFileAssociations\.mochi\shell\MochiExtractHere',
-                     'SystemFileAssociations\.mochi\shell\MochiExtractToFolder', '*\shell\MochiAdd', 'Directory\shell\MochiAdd')) {
-    if ($userClasses.OpenSubKey("Software\Classes\$old")) { Fail "flat verb of 0.1.0 still registered: $old" }
+  $sk = $userClasses.OpenSubKey("Software\Classes\$mochiShell")
+  try { $names = @($sk.GetSubKeyNames()) } finally { $sk.Close() }
+  if ($names.Count -ne $mochiVerbs.Count) { Fail ".mochi has verbs [$($names -join ', ')], expected [$($mochiVerbs.Keys -join ', ')]" }
+  # The shell extension: a versioned DLL next to the app, an in-process COM server, and the
+  # context-menu handler under * and Directory, all per user.
+  $dlls = @(Get-ChildItem $InstallDir -Filter 'mochi-shellext-*.dll' -ErrorAction SilentlyContinue)
+  if ($dlls.Count -ne 1) { Fail "expected one mochi-shellext-<version>.dll in $InstallDir, found $($dlls.Count)" }
+  $inproc = Get-ClassDefault $userClasses "Software\Classes\CLSID\$shellExtClsid\InprocServer32"
+  if ($inproc -ne $dlls[0].FullName) { Fail "InprocServer32 is '$inproc', expected '$($dlls[0].FullName)'" }
+  foreach ($class in '*', 'Directory') {
+    $h = Get-ClassDefault $userClasses "Software\Classes\$class\shellex\ContextMenuHandlers\MOCHI"
+    if ($h -ne $shellExtClsid) { Fail "$class has context-menu handler '$h', expected $shellExtClsid" }
   }
-  $notes += "3 submenus 'MOCHI' with $entries entries, expected text and commands"
+  foreach ($old in $legacyMenuKeys) {
+    if ($userClasses.OpenSubKey("Software\Classes\$old")) { Fail "old menu key still registered: $old" }
+  }
+  $notes += "3 flat .mochi verbs with expected text and commands; shell extension $($dlls[0].Name) registered for * and Directory; no MochiMenu cascade"
   $notes -join '; '
 }
 
@@ -416,7 +425,7 @@ function Main {
     if ($sm.Count -eq 0) { Fail 'no .lnk under the per-user or common Start Menu\Programs resolves to the installed app' }
     ($sm | ForEach-Object { $_.Link }) -join '; '
   }
-  Check 'A-ASSOC-VERBS' '.mochi association and the MOCHI submenu entries are registered (as Windows sees them)' { Assert-Registrations $false }
+  Check 'A-ASSOC-VERBS' '.mochi association, the flat .mochi verbs and the Explorer shell extension are registered (as Windows sees them)' { Assert-Registrations $false }
   Check 'A-FOREIGN-OFF' 'The foreign-format "Open with" opt-in is off after a silent install' {
     $notes = @()
     foreach ($x in $foreignExts) {
@@ -488,7 +497,7 @@ function Main {
 
   $regBeforeB = Scan-Registry
   Check 'B-INSTALL' 'Silent install with /ASSOCIATE_FOREIGN' { Install-Mochi @('/S', '/ASSOCIATE_FOREIGN') }
-  Check 'B-ASSOC-VERBS' '.mochi association and the MOCHI submenu entries are registered again' { Assert-Registrations $true }
+  Check 'B-ASSOC-VERBS' '.mochi association, the flat .mochi verbs and the Explorer shell extension are registered again' { Assert-Registrations $true }
   Check 'B-FOREIGN-ON' 'The opt-in adds MOCHI under "Open with" for ZIP, 7z, RAR, TAR, TGZ, GZ and takes over no default' {
     $exe = (Get-AppExe).FullName
     foreach ($x in $foreignExts) {
@@ -616,21 +625,21 @@ function Main {
     if ($r.Added.Count -or $r.Removed.Count) { Fail "the folder changed: added $($r.Added -join '; ') removed $($r.Removed -join '; ')" }
     "main window up; nothing written; $($r.Seen)"
   }
-  Check 'B-VERB-ADD-MULTI' 'Menu entry "Add to archive" on several files (one launch each) collects in ONE archive named for the folder' {
+  Check 'B-VERB-ADD-MULTI' 'Menu entry "Add to archive" on several files (one launch with all paths, as the shell extension does) makes ONE archive named for the folder' {
     Stop-App
     $multi = Join-Path $trickyDir 'Multi & set'
     New-Item -ItemType Directory -Force $multi | Out-Null
     $files = @('one.txt', 'two.txt', 'three.txt') | ForEach-Object { $f = Join-Path $multi $_; Set-Content $f $_; $f }
-    foreach ($f in $files) { Start-MenuEntry $f '*' '40Add'; Start-Sleep -Milliseconds 300 }
+    Start-MenuEntry $files '*' '40Add'  # one launch with all three paths, as the DLL does
     $made = Join-Path $multi 'Multi & set.mochi'
     for ($i = 0; $i -lt 60 -and -not (Test-Path $made); $i++) { Start-Sleep 1 }
     if (-not (Test-Path $made)) { Fail "$made was not created within 60 s" }
     Start-Sleep 8
     $archives = @(Get-ChildItem $multi -Filter *.mochi)
-    if ($archives.Count -ne 1) { Fail "expected one archive for 3 launches, found $($archives.Count): $($archives.Name -join ', ')" }
+    if ($archives.Count -ne 1) { Fail "expected one archive for 3 files, found $($archives.Count): $($archives.Name -join ', ')" }
     $procs = @(Get-AppProcs | Where-Object { $_.Name -notlike 'msedgewebview2*' })
-    if ($procs.Count -gt 1) { Fail "expected at most one MOCHI process for 3 launches, found $($procs.Count)" }
-    "3 launches, 1 archive ($($archives[0].Name)), $($procs.Count) process"
+    if ($procs.Count -gt 1) { Fail "expected at most one MOCHI process for 3 files, found $($procs.Count)" }
+    "3 files, 1 launch, 1 archive ($($archives[0].Name)), $($procs.Count) process"
   }
   foreach ($x in @(@('zip', "Zip & $([char]0x00E7).zip", 'fx-basic.zip'), @('7z', "Seven & $([char]0x00E7).7z", 'fx-basic.7z'),
                    @('tar', "Tar & $([char]0x00E7).tar", 'fx-basic.tar'), @('tar.gz', "Tgz & $([char]0x00E7).tar.gz", 'fx-basic.tar.gz'))) {

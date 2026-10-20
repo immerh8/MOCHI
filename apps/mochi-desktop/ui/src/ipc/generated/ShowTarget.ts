@@ -4,4 +4,4 @@
  * A folder the window asks Rust to show in the file manager. The window
  * never names a path: Rust resolves the folder from its own state.
  */
-export type ShowTarget = { "kind": "extract_destination" } | { "kind": "archive", handle: number, };
+export type ShowTarget = { "kind": "extract_destination" } | { "kind": "archive", handle: number, } | { "kind": "last_export" };

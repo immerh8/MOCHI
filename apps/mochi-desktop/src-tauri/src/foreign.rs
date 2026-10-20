@@ -588,6 +588,7 @@ impl Foreign {
             foreign_test: Some(Box::new(view)),
             search: None,
             rekey: None,
+            export: None,
             check: None,
         })
     }
@@ -701,6 +702,7 @@ impl Foreign {
             foreign_test: None,
             search: None,
             rekey: None,
+            export: None,
             check: None,
         })
     }

@@ -67,7 +67,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
       case "staged_sources":
-        return { items: [], destination: null, default_destination: null };
+        return { items: [], destination: null, default_destination: null, format: "mochi" };
       case "watch_drops":
       case "watch_launches":
         return null;

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::ipc::SourcePick;
+use crate::ipc::{ArchiveFormat, SourcePick};
 
 /// Extensions the foreign reader opens (a name is a hint; the helper decides).
 const FOREIGN_EXTENSIONS: [&str; 10] = [
@@ -82,24 +82,33 @@ pub fn pick_sources<R: Runtime>(app: &AppHandle<R>, what: SourcePick) -> Option<
     }
 }
 
-/// Show the save dialog for a new archive (plan D2). `None` if the user
-/// cancelled. The `.mochi` extension is added when the name has none. The
-/// dialog starts in `suggested`'s folder with its name filled in, when given.
-/// Blocks: call it off the async runtime.
+/// Show the save dialog for a new archive (plan D2, O31). `None` if the user
+/// cancelled. The format's extension is applied to the chosen name (an archive
+/// extension of another format is replaced, never doubled). The dialog starts
+/// in `suggested`'s folder with its name filled in, when given. Blocks: call it
+/// off the async runtime.
 pub fn pick_destination<R: Runtime>(
     app: &AppHandle<R>,
     suggested: Option<&std::path::Path>,
+    format: ArchiveFormat,
 ) -> Option<PathBuf> {
     #[cfg(feature = "e2e")]
     if let Some(path) = crate::automation::next_pick() {
-        return Some(with_extension(path));
+        return Some(format.path_for(&path));
     }
+    let (label, filter): (&str, &[&str]) = match format {
+        ArchiveFormat::Mochi => ("MOCHI archive", &["mochi"]),
+        ArchiveFormat::Zip => ("ZIP archive", &["zip"]),
+        ArchiveFormat::Tar => ("tar archive", &["tar"]),
+        ArchiveFormat::TarGz => ("tar.gz archive", &["gz"]),
+        ArchiveFormat::TarZst => ("tar.zst archive", &["zst"]),
+    };
     let mut dialog = app
         .dialog()
         .file()
         .set_title("Save the new archive as")
-        .set_file_name("archive.mochi")
-        .add_filter("MOCHI archive", &["mochi"]);
+        .set_file_name(format!("archive{}", format.extension()))
+        .add_filter(label, filter);
     if let Some(suggested) = suggested {
         if let Some(dir) = suggested.parent() {
             dialog = dialog.set_directory(dir);
@@ -109,7 +118,7 @@ pub fn pick_destination<R: Runtime>(
         }
     }
     let path = dialog.blocking_save_file()?.into_path().ok()?;
-    Some(with_extension(path))
+    Some(format.path_for(&path))
 }
 
 /// Show the folder dialog for an extraction (plan D3). `None` if the user

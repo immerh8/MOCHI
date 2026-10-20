@@ -14,12 +14,13 @@ import { showInFolder, stageDroppedArchive } from "../ipc/start";
 import {
   chooseDestination,
   clearStaged,
+  setArchiveFormat,
   stageSources,
   stagedSources,
   unstageSource,
   watchDrops,
 } from "../ipc/write";
-import type { CompressionPreset, SourcePick, StagedView } from "../ipc/write";
+import type { ArchiveFormat, CompressionPreset, SourcePick, StagedView } from "../ipc/write";
 import { CloseIcon, NewArchiveIcon, PlusIcon, TrashIcon } from "../icons";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
@@ -33,15 +34,12 @@ import {
 } from "../crypt/messages";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
-import { commitView, DELETE_NOTE, outcomeResult, progressText, TAR_NOTES } from "./messages";
+import { commitView, DELETE_NOTE, exportView, outcomeResult, progressText, TAR_NOTES } from "./messages";
 import type { Operation, WriteResult } from "./messages";
+import { FormatSelect, PRESETS } from "./FormatFields";
+import { hasLevel, isMochi } from "./format";
 
-/** The compression presets, in the order shown. */
-export const PRESETS: { id: CompressionPreset; label: () => string; hint: () => string }[] = [
-  { id: "fast", label: () => t("write.presetFast"), hint: () => t("write.presetFastHint") },
-  { id: "balanced", label: () => t("write.presetBalanced"), hint: () => t("write.presetBalancedHint") },
-  { id: "smaller", label: () => t("write.presetSmaller"), hint: () => t("write.presetSmallerHint") },
-];
+export { PRESETS };
 
 /** An entry the list has selected, for the remove flow. */
 export type SelectedEntry = { key: string; name: NameText };
@@ -88,10 +86,17 @@ type JobView =
       total: number | null;
       cancelRequested: boolean;
     }
-  | { state: "done"; result: WriteResult; committed: boolean; archive: ArchiveSummary | null }
+  | {
+      state: "done";
+      result: WriteResult;
+      committed: boolean;
+      archive: ArchiveSummary | null;
+      /** A ZIP or tar file was written: no archive to open; "Show in folder" uses Rust's memory. */
+      exported: boolean;
+    }
   | { state: "error"; text: string };
 
-const EMPTY: StagedView = { items: [], destination: null, default_destination: null };
+const EMPTY: StagedView = { items: [], destination: null, default_destination: null, format: "mochi" };
 
 function kindLabel(kind: "file" | "folder" | "other"): string {
   return t(kind === "folder" ? "write.kindFolder" : kind === "file" ? "write.kindFile" : "write.kindOther");
@@ -128,6 +133,8 @@ export function Writer({
   const againRef = useRef<HTMLInputElement>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
+  // The format of the next new archive lives in Rust (it names the default file).
+  const format: ArchiveFormat = staged.format;
 
   // The drop listener is registered once; it reads the latest values here.
   const latestRef = useRef({ archive, viewingHead, busy: false });
@@ -148,8 +155,16 @@ export function Writer({
     onArchiveDroppedRef.current = onArchiveDropped;
   });
 
+  // An event heard from Rust is newer than the first look at the staged set: the answer to
+  // that look must not replace it (a replayed announcement made before the window listened).
+  const heardRef = useRef(false);
   useEffect(() => {
-    stagedSources().then(setStaged, () => undefined);
+    stagedSources().then(
+      (view) => {
+        if (!heardRef.current) setStaged(view);
+      },
+      () => undefined,
+    );
     watchDrops((event) => {
       if (event.event === "hover") {
         setDragging(event.active);
@@ -177,6 +192,7 @@ export function Writer({
         onArchiveDroppedRef.current?.();
         return;
       }
+      heardRef.current = true;
       setStaged(event.staged);
       setProblems(event.problems);
       const now = latestRef.current;
@@ -222,6 +238,7 @@ export function Writer({
             result: outcomeResult(operationRef.current, o),
             committed: o.status === "completed" && o.commit !== undefined,
             archive: o.status === "completed" ? (o.commit?.archive ?? null) : null,
+            exported: o.status === "completed" && o.export !== undefined,
           };
         }
       }
@@ -232,11 +249,19 @@ export function Writer({
       if (o.status === "completed" && o.commit) {
         logRecord(commitView(o.commit).record);
       }
+      if (o.status === "completed" && o.export) {
+        logRecord(exportView(o.export).record);
+      }
       stagedSources().then(setStaged, () => undefined);
       if (o.status === "completed" && o.commit) {
         setMode("closed");
         setProblems([]);
         onCommittedRef.current(o.commit.archive ?? null);
+      }
+      if (o.status === "completed" && o.export) {
+        // A plain ZIP or tar file: there is no archive to open, only a result to show.
+        setMode("closed");
+        setProblems([]);
       }
     }
   }, []);
@@ -275,7 +300,11 @@ export function Writer({
     // recovery record are chosen on purpose, never carried over.
     if (to === "create") {
       setEncrypt(false);
+      setTar(false);
       setRecovery(null);
+      setPreset("balanced");
+      // And the plain default format, `.mochi`, if an earlier archive used another.
+      if (staged.format !== "mochi") setArchiveFormat("mochi").then(setStaged, () => undefined);
     }
     setJob({ state: "idle" });
     setError(null);
@@ -319,7 +348,7 @@ export function Writer({
     rememberFocus();
     setError(null);
     let passphrase: string | undefined;
-    if (encrypt) {
+    if (encrypt && isMochi(format)) {
       const first = passRef.current?.value ?? "";
       if (first === "") {
         setError(t("write.enterPassphrase"));
@@ -332,6 +361,11 @@ export function Writer({
       passphrase = first;
     }
     const go = () => {
+      if (!isMochi(format)) {
+        // A plain ZIP or tar file: none of the MOCHI-only choices exist for it.
+        run("export", { kind: "export_archive", format, level: preset });
+        return;
+      }
       run("create", {
         kind: "create_archive",
         preset,
@@ -371,9 +405,9 @@ export function Writer({
   };
 
   const [folderError, setFolderError] = useState<string | null>(null);
-  const showFolder = (handle: number) => {
+  const showFolder = (target: { kind: "archive"; handle: number } | { kind: "last_export" }) => {
     setFolderError(null);
-    showInFolder({ kind: "archive", handle }).then(
+    showInFolder(target).then(
       () => undefined,
       (e: unknown) => setFolderError(errorText(t("start.showInFolderFailed"), e)),
     );
@@ -384,6 +418,17 @@ export function Writer({
     const { jobId } = job;
     setJob({ ...job, cancelRequested: true });
     cancelJob(jobId).catch(() => undefined);
+  };
+
+  /** Choose the format of the new archive: MOCHI-only choices are dropped, never carried over. */
+  const chooseFormat = (next: ArchiveFormat) => {
+    setError(null);
+    if (!isMochi(next)) {
+      setEncrypt(false);
+      setTar(false);
+      setRecovery(null);
+    }
+    setArchiveFormat(next).then(setStaged, (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)));
   };
 
   const canAdd = archive !== null;
@@ -566,109 +611,126 @@ export function Writer({
               {t("write.change")}
             </button>
           </section>
+          <section aria-labelledby="create-step-format" className="step format-row" data-testid="create-step-format">
+            <h4 id="create-step-format" className="sr-only">
+              {t("write.format")}
+            </h4>
+            <FormatSelect value={format} onChange={chooseFormat} disabled={busy} testId="create-format" />
+            {!isMochi(format) && <Hint testId="plain-note" text={t("write.plainNote")} />}
+          </section>
           <details className="options" data-testid="create-options">
             <summary>{t("write.options")}</summary>
-            <fieldset disabled={busy}>
-              <legend>{t("write.compression")}</legend>
-              {PRESETS.map((p) => (
-                <label key={p.id}>
-                  <input
-                    type="radio"
-                    name="preset"
-                    data-testid={`preset-${p.id}`}
-                    checked={preset === p.id}
-                    onChange={() => setPreset(p.id)}
-                  />{" "}
-                  <span title={p.hint()}>{p.label()}</span>
-                </label>
-              ))}
-            </fieldset>
-            <fieldset disabled={busy}>
-              <legend>{t("write.encryption")}</legend>
-              <label>
-                <input
-                  type="checkbox"
-                  data-testid="encrypt"
-                  checked={encrypt}
-                  disabled={tar}
-                  onChange={(e) => {
-                    setEncrypt(e.target.checked);
-                    if (e.target.checked) setTar(false);
-                  }}
-                />{" "}
-                {t("write.encrypt")}
-              </label>
-              {tar && <Hint text={NO_GENERIC_TOOLS} />}
-              {encrypt && (
-                <div data-testid="encrypt-panel">
-                  <label>
-                    {t("write.passphrase")}{" "}
+            {hasLevel(format) ? (
+              <fieldset disabled={busy}>
+                <legend>{t("write.compression")}</legend>
+                {PRESETS.map((p) => (
+                  <label key={p.id}>
                     <input
-                      ref={passRef}
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      data-testid="create-passphrase"
-                    />
+                      type="radio"
+                      name="preset"
+                      data-testid={`preset-${p.id}`}
+                      checked={preset === p.id}
+                      onChange={() => setPreset(p.id)}
+                    />{" "}
+                    <span title={p.hint()}>{p.label()}</span>
                   </label>
+                ))}
+              </fieldset>
+            ) : (
+              <p className="note" data-testid="no-level">
+                {t("write.levelNone")}
+              </p>
+            )}
+            {isMochi(format) && (
+              <>
+                <fieldset disabled={busy}>
+                  <legend>{t("write.encryption")}</legend>
                   <label>
-                    {t("write.repeat")}{" "}
                     <input
-                      ref={againRef}
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      data-testid="create-passphrase-again"
-                    />
+                      type="checkbox"
+                      data-testid="encrypt"
+                      checked={encrypt}
+                      disabled={tar}
+                      onChange={(e) => {
+                        setEncrypt(e.target.checked);
+                        if (e.target.checked) setTar(false);
+                      }}
+                    />{" "}
+                    {t("write.encrypt")}
                   </label>
-                  <EncryptionNotes creating />
-                  <Hint
-                    testId="visible-without-key"
-                    text={[HIDDEN_WITH_KEY, t("write.visibleIntro"), ...VISIBLE_WITHOUT_KEY, t("write.fixedAtCreation")]}
-                  />
-                </div>
-              )}
-            </fieldset>
-            <fieldset disabled={busy}>
-              <legend>{t("write.recoveryRecord")}</legend>
-              <label>
-                <input
-                  type="radio"
-                  name="recovery"
-                  data-testid="recovery-none"
-                  checked={recovery === null}
-                  onChange={() => setRecovery(null)}
-                />{" "}
-                {t("write.recoveryNone")}
-              </label>
-              {RECOVERY_CHOICES.map((p) => (
-                <label key={p}>
-                  <input
-                    type="radio"
-                    name="recovery"
-                    data-testid={`recovery-${p}`}
-                    checked={recovery === p}
-                    onChange={() => setRecovery(p)}
-                  />{" "}
-                  {recoveryLabel(p)}
-                </label>
-              ))}
-              <Hint testId="recovery-notes" text={RECOVERY_NOTES} />
-            </fieldset>
-            <fieldset disabled={busy}>
-              <legend>{t("write.compatibility")}</legend>
-              <label>
-                <input
-                  type="checkbox"
-                  data-testid="tar-compatible"
-                  checked={tar}
-                  disabled={encrypt}
-                  onChange={(e) => setTar(e.target.checked)}
-                />{" "}
-                {t("write.tarCompatible")}
-              </label>
-              <Hint testId="tar-notes" text={TAR_NOTES} />
-            </fieldset>
+                  {tar && <Hint text={NO_GENERIC_TOOLS} />}
+                  {encrypt && (
+                    <div data-testid="encrypt-panel">
+                      <label>
+                        {t("write.passphrase")}{" "}
+                        <input
+                          ref={passRef}
+                          type="password"
+                          autoComplete="off"
+                          spellCheck={false}
+                          data-testid="create-passphrase"
+                        />
+                      </label>
+                      <label>
+                        {t("write.repeat")}{" "}
+                        <input
+                          ref={againRef}
+                          type="password"
+                          autoComplete="off"
+                          spellCheck={false}
+                          data-testid="create-passphrase-again"
+                        />
+                      </label>
+                      <EncryptionNotes creating />
+                      <Hint
+                        testId="visible-without-key"
+                        text={[HIDDEN_WITH_KEY, t("write.visibleIntro"), ...VISIBLE_WITHOUT_KEY, t("write.fixedAtCreation")]}
+                      />
+                    </div>
+                  )}
+                </fieldset>
+                <fieldset disabled={busy}>
+                  <legend>{t("write.recoveryRecord")}</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="recovery"
+                      data-testid="recovery-none"
+                      checked={recovery === null}
+                      onChange={() => setRecovery(null)}
+                    />{" "}
+                    {t("write.recoveryNone")}
+                  </label>
+                  {RECOVERY_CHOICES.map((p) => (
+                    <label key={p}>
+                      <input
+                        type="radio"
+                        name="recovery"
+                        data-testid={`recovery-${p}`}
+                        checked={recovery === p}
+                        onChange={() => setRecovery(p)}
+                      />{" "}
+                      {recoveryLabel(p)}
+                    </label>
+                  ))}
+                  <Hint testId="recovery-notes" text={RECOVERY_NOTES} />
+                </fieldset>
+                <fieldset disabled={busy}>
+                  <legend>{t("write.compatibility")}</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      data-testid="tar-compatible"
+                      checked={tar}
+                      disabled={encrypt}
+                      onChange={(e) => setTar(e.target.checked)}
+                    />{" "}
+                    {t("write.tarCompatible")}
+                  </label>
+                  <Hint testId="tar-notes" text={TAR_NOTES} />
+                </fieldset>
+              </>
+            )}
           </details>
           {errorLine}
           {progressLine}
@@ -766,16 +828,18 @@ export function Writer({
         prefix="write"
         statusTestId="write-status"
         statusAttrs={{ "data-committed": job.state === "done" ? String(job.committed) : undefined }}
-        lines={job.state !== "done" ? [] : job.result.kind === "commit" ? [job.result.line] : job.result.lines}
+        lines={job.state !== "done" ? [] : job.result.kind === "text" ? job.result.lines : [job.result.line]}
         headlineTestId="write-headline"
-        warn={job.state === "done" && job.result.kind === "commit" && job.result.warn}
-        details={job.state === "done" && job.result.kind === "commit" ? job.result.details : null}
+        warn={job.state === "done" && job.result.kind !== "text" && job.result.warn}
+        details={job.state === "done" && job.result.kind !== "text" ? job.result.details : null}
         onShowFolder={
           job.state === "done" && job.archive !== null
             ? () => {
-                if (job.archive) showFolder(job.archive.handle);
+                if (job.archive) showFolder({ kind: "archive", handle: job.archive.handle });
               }
-            : undefined
+            : job.state === "done" && job.exported
+              ? () => showFolder({ kind: "last_export" })
+              : undefined
         }
         onDismiss={() => {
           setJob({ state: "idle" });

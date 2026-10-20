@@ -26,6 +26,9 @@ DESKTOP_MANIFEST = ROOT / "apps" / "mochi-desktop" / "src-tauri" / "Cargo.toml"
 # (zip, tar, flate2, sevenz-rust2, unrar_sys, ...) is not the desktop crate's: the app
 # names mochi-foreign with default-features = false. Built with the default `engine` feature.
 HELPER_MANIFEST = ROOT / "crates" / "mochi-foreign" / "Cargo.toml"
+# The Windows installer also ships mochi-shellext (the Explorer menu DLL; owner decision
+# 2026-10-20): its `windows` crates are listed even where the app's graph has other versions.
+SHELLEXT_MANIFEST = ROOT / "crates" / "mochi-shellext" / "Cargo.toml"
 UI = ROOT / "apps" / "mochi-desktop" / "ui"
 LICENSE_FILES = ("LICENSE", "LICENCE", "LICENSE.md", "LICENSE.txt", "LICENSE-MIT", "COPYING")
 
@@ -57,7 +60,7 @@ def run(cmd, cwd=None):
 
 def rust_entries():
     entries, seen = [], set()  # (name, version, spdx, text); a crate in both graphs once
-    for manifest in (DESKTOP_MANIFEST, HELPER_MANIFEST):
+    for manifest in (DESKTOP_MANIFEST, HELPER_MANIFEST, SHELLEXT_MANIFEST):
         out = run(["cargo", "about", "generate", "--config", str(ABOUT),
                    "--manifest-path", str(manifest), "--format", "json", "--fail"])
         for lic in json.loads(out)["licenses"]:

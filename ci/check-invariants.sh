@@ -117,9 +117,20 @@ hits="$hits$(grep -rnE --include='*.rs' 'mochi_foreign' crates/mochi-format/src 
 #     mochi-foreign only, so they cannot be linked into the app, the CLI, or
 #     the core. (The fuzz workspace uses mochi-foreign's exercisers, not the
 #     parsers directly.)
-hits=$(grep -nE '^\s*(zip|tar|flate2|sevenz-rust2?|unrar(_sys|-sys)?)\s*=' $(find crates apps fuzz -name Cargo.toml -not -path '*/node_modules/*' 2>/dev/null) 2>/dev/null \
-        | grep -v '^crates/mochi-foreign/Cargo.toml:' || true)
+#     The one exception is mochi-export (plan O31), which links zip, tar and
+#     flate2 to WRITE archives from local files and never reads one (checked
+#     below). The workspace table in the root Cargo.toml only pins versions.
+#     Both `name = ...` and `name.workspace = true` forms are matched.
+hits=$(grep -nE '^\s*(zip|tar|flate2|sevenz-rust2?|unrar(_sys|-sys)?)\s*(\.|=)' Cargo.toml $(find crates apps fuzz -name Cargo.toml -not -path '*/node_modules/*' 2>/dev/null) 2>/dev/null \
+        | grep -vE '^crates/mochi-(foreign|export)/Cargo.toml:' \
+        | grep -vE '^Cargo.toml:[0-9]+:\s*(zip|tar|flate2)\s*=' || true)
 [ -n "$hits" ] && report "foreign-format parser dependency outside crates/mochi-foreign (plan D8 rule 3)" "$hits"
+hits=$(grep -nE '^\s*(sevenz-rust2?|unrar(_sys|-sys)?)\s*(\.|=)' Cargo.toml crates/mochi-export/Cargo.toml 2>/dev/null || true)
+[ -n "$hits" ] && report "7z/RAR crate in the workspace table or mochi-export (plan O31: ZIP and tar only; RAR never)" "$hits"
+#     mochi-export writes only: no reader API outside its tests.
+hits=$(grep -rnE 'ZipArchive|GzDecoder|MultiGzDecoder|read::Decoder|decode_all|Archive::new|\.entries\(' \
+        --include='*.rs' crates/mochi-export/src 2>/dev/null | grep -vE '^crates/mochi-export/src/tests\.rs:' || true)
+[ -n "$hits" ] && report "archive reading in mochi-export (it writes only; reading is mochi-foreign's, in the helper)" "$hits"
 #     (c) Anything that reaches the helper through the client (the app, the
 #     CLI) names mochi-foreign with default-features = false, so the parsers
 #     (the "engine" feature) stay out of its process. Only the helper binary
@@ -156,21 +167,32 @@ hits=$(awk '
       if (!ok) print FILENAME ":" FNR ": " line
     }
     for (k=7;k>0;k--) w[k]=w[k-1]; w[0]=line }' \
-  crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs crates/mochi-sys/src/lib.rs || true)
-[ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign / mochi-sys)" "$hits"
+  crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs crates/mochi-sys/src/lib.rs \
+  crates/mochi-shellext/src/shell.rs || true)
+[ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign / mochi-sys / mochi-shellext)" "$hits"
 #     (f2) `unsafe` is allowed only in mochi-foreign (above) and mochi-sys, the
 #     Win32 calls mochi-core may not make itself: the no-replace move and the
 #     volume name (owner decision 2026-10-15, G6a), the one-byte writer lock
 #     and the file identity that checks its path (owner decision 2026-10-20,
-#     spec B.2.17). Library and app sources only;
+#     spec B.2.17), and mochi-shellext, the Explorer context-menu COM DLL
+#     (owner decision 2026-10-20, O10), whose unsafe is the COM boundary and
+#     lives only in src/shell.rs. Library and app sources only;
 #     the testkit's counting allocator example and the fuzz targets are not
 #     shipped.
 hits=$(grep -rnE --include='*.rs' '\bunsafe\b' crates/*/src apps/mochi-desktop/src-tauri/src 2>/dev/null \
-        | grep -vE '^crates/mochi-foreign/src/(rarfmt|jobobject)\.rs:|^crates/mochi-sys/src/lib\.rs:' \
+        | grep -vE '^crates/mochi-foreign/src/(rarfmt|jobobject)\.rs:|^crates/mochi-sys/src/lib\.rs:|^crates/mochi-shellext/src/shell\.rs:' \
         | grep -vE '^[^:]+:[0-9]+:\s*(//|\*)' || true)
-[ -n "$hits" ] && report "unsafe outside mochi-foreign's rarfmt.rs / jobobject.rs and mochi-sys/src/lib.rs (AGENTS.md)" "$hits"
+[ -n "$hits" ] && report "unsafe outside mochi-foreign's rarfmt.rs / jobobject.rs, mochi-sys/src/lib.rs and mochi-shellext/src/shell.rs (AGENTS.md)" "$hits"
 grep -q 'deny(unsafe_op_in_unsafe_fn)' crates/mochi-sys/src/lib.rs \
   || report "mochi-sys must keep #![deny(unsafe_op_in_unsafe_fn)]" "crates/mochi-sys/src/lib.rs"
+grep -q 'deny(unsafe_op_in_unsafe_fn)' crates/mochi-shellext/src/lib.rs \
+  || report "mochi-shellext must keep #![deny(unsafe_op_in_unsafe_fn)]" "crates/mochi-shellext/src/lib.rs"
+#     mochi-shellext depends only on the windows crates, Windows only; nothing of
+#     MOCHI's own (it parses no archive and writes nothing: it starts the app).
+hits=$(awk '/^\[/{sec=$0} sec ~ /dependencies\]$/ && NF && $0 !~ /^\[/ && $0 !~ /^#/ && $0 !~ /^windows(-core)? = / && !(sec ~ /^\[target\.'"'"'cfg\(windows\)'"'"'\.dependencies\]$/ && $0 ~ /^ /) && $0 !~ /^[ ]*"Win32_/ && $0 !~ /^\]/' crates/mochi-shellext/Cargo.toml)
+[ -n "$hits" ] && report "mochi-shellext depends on something other than the windows crates" "$hits"
+hits=$(awk '/^\[/{sec=$0} sec=="[dependencies]" && NF && $0 !~ /^\[/ && $0 !~ /^#/' crates/mochi-shellext/Cargo.toml)
+[ -n "$hits" ] && report "mochi-shellext has a dependency outside [target.'cfg(windows)'.dependencies]" "$hits"
 #     mochi-sys stays tiny: its only dependency is windows-sys, Windows only.
 hits=$(awk '/^\[/{sec=$0} sec=="[dependencies]" && NF && $0 !~ /^\[/ && $0 !~ /^#/' crates/mochi-sys/Cargo.toml)
 [ -n "$hits" ] && report "mochi-sys has a dependency outside [target.'cfg(windows)'.dependencies]" "$hits"

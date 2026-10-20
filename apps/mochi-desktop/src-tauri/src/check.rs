@@ -606,6 +606,7 @@ impl Checks {
             check: Some(Box::new(CheckResult::Test { report })),
             search: None,
             rekey: None,
+            export: None,
             foreign_test: None,
         })
     }
@@ -663,6 +664,7 @@ impl Checks {
             check: Some(Box::new(CheckResult::Plan { plan: view })),
             search: None,
             rekey: None,
+            export: None,
             foreign_test: None,
         })
     }
@@ -753,6 +755,7 @@ impl Checks {
             check: Some(Box::new(CheckResult::Repair { result: view })),
             search: None,
             rekey: None,
+            export: None,
             foreign_test: None,
         })
     }

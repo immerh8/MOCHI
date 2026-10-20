@@ -29,6 +29,8 @@ e2e = []
 [dependencies]
 mochi-core.workspace = true
 mochi-format.workspace = true
+# Writes ZIP / tar / tar.gz / tar.zst from the user's local files (plan O31).
+mochi-export.workspace = true
 zeroize.workspace = true
 # Random names for drag-out folders (`dragout`): the operating system's CSPRNG.
 getrandom.workspace = true

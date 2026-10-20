@@ -20,9 +20,20 @@
 //!   `<name> (2).mochi`, … and creation itself refuses an existing name
 //!   (`DESTINATION_EXISTS`), so a file that appears in between is not
 //!   replaced either.
-//! * **The default profile and preset only.** Core profile (not TAR
-//!   compatible, not encrypted, no recovery record), Balanced compression.
-//!   Choosing anything else is "Add to archive…", which opens the add panel.
+//! * **The default profile and preset only** for "Add to archive" (`--add-now`):
+//!   Core profile (not TAR compatible, not encrypted, no recovery record),
+//!   Balanced compression. Choosing anything else is "Add to archive…"
+//!   (`--add`), which opens the form below in this same window.
+//! * **The Add form (owner decision 2026-10-20, plan O31).** `--add` opens
+//!   a small WinRAR-style form here instead of the main window's add panel: a
+//!   name, Browse… (a save dialog shown from Rust), the format (`.mochi`, ZIP,
+//!   tar, tar.gz, tar.zst), the compression level, and, for `.mochi` only,
+//!   encryption and a recovery record. The folder is the one Rust chose (next
+//!   to the first item) or the one the dialog returned; the webview sends a
+//!   plain file name and never a path. Launches that arrive while the form is
+//!   open join it (their items are added to the same archive); the form waits
+//!   for OK or Cancel, and closing the window cancels it. An existing file is
+//!   never replaced: the form refuses the name and asks for another.
 //! * **No secret on a command line.** An Encrypted archive asks for its
 //!   passphrase in the compact window; it crosses IPC once, into a zeroizing
 //!   [`Secret`], and a wrong one asks again (`KEY_UNAVAILABLE`).
@@ -51,8 +62,11 @@ use ts_rs::TS;
 
 use crate::browse::{head_encrypted, Archives};
 use crate::extract::{self, Destination};
-use crate::ipc::{ArchiveSummary, CompressionPreset, ConflictChoice, JobRequest, NameText, Secret};
-use crate::write::{Services, Staging};
+use crate::ipc::{
+    ArchiveFormat, ArchiveSummary, CompressionPreset, ConflictChoice, IpcError, JobRequest,
+    NameText, Secret,
+};
+use crate::write::{JobDone, Services, Staging};
 
 /// Events kept for a window that is not listening yet.
 const MAX_PENDING: usize = 64;
@@ -86,6 +100,18 @@ pub enum QuickEvent {
     /// passphrase that did not open it.
     NeedPassphrase {
         wrong: bool,
+    },
+    /// "Add to archive…": show the form. `items` and `subject` describe what
+    /// was chosen (sent again, changed, when another launch joins the form);
+    /// `name`, `folder` and `format` are the form's starting values.
+    AddPrompt {
+        items: u32,
+        subject: NameText,
+        /// The suggested file name, with its extension.
+        name: String,
+        /// The folder the archive will be made in, as display text.
+        folder: NameText,
+        format: ArchiveFormat,
     },
     Progress {
         phase: String,
@@ -123,6 +149,14 @@ pub enum QuickEvent {
         status: Option<String>,
         /// The directory entry is not confirmed durable (degraded).
         durability_note: Option<String>,
+        /// What a new archive was written as (`mochi` for an extraction, which
+        /// has no archive format of its own). Not `mochi` means a plain ZIP or
+        /// tar file (plan O31): `status` is then `null` and nothing here is a
+        /// commit or a verification.
+        format: ArchiveFormat,
+        /// The size of the file written; `0` for an extraction.
+        #[ts(type = "number")]
+        output_bytes: u64,
     },
     Cancelled {
         action: QuickAction,
@@ -146,8 +180,8 @@ pub trait QuickSink: Send + Sync + 'static {
 /// The windows and the file manager, so that this module is tested without
 /// a display. Called from worker threads only (never the event loop).
 pub trait WindowHost: Send + Sync + 'static {
-    /// Show the compact window (create it if it is not open).
-    fn show_quick(&self);
+    /// Show the compact window (create it if it is not open) at `size`.
+    fn show_quick(&self, size: QuickSize);
     /// Close the compact window.
     fn close_quick(&self);
     /// Show the main window (create it if it is not open): the launch needs
@@ -155,6 +189,13 @@ pub trait WindowHost: Send + Sync + 'static {
     fn show_main(&self);
     /// Open a folder in the file manager.
     fn open_folder(&self, folder: &Path) -> std::io::Result<()>;
+}
+
+/// How big the compact window is: a job's progress and result, or the form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuickSize {
+    Compact,
+    Form,
 }
 
 /// What a quick job needs from the main window's side.
@@ -168,8 +209,62 @@ pub trait MainPort {
 /// A unit of work for the quick worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuickJob {
-    Extract { action: QuickAction, path: PathBuf },
-    Add { paths: Vec<PathBuf> },
+    Extract {
+        action: QuickAction,
+        path: PathBuf,
+    },
+    /// `--add-now`: a new `.mochi` archive at once, next to the items.
+    Add {
+        paths: Vec<PathBuf>,
+    },
+    /// `--add`: the form first, then the archive it describes.
+    AddDialog {
+        paths: Vec<PathBuf>,
+    },
+}
+
+/// What the form's OK sends (the webview names no path: `name` is one file
+/// name, and the folder is the one Rust holds).
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct QuickAddRequest {
+    pub name: String,
+    pub format: ArchiveFormat,
+    /// The compression level; ignored for plain `.tar`.
+    pub level: CompressionPreset,
+    /// Only for `.mochi`: crosses IPC once, into a zeroizing type.
+    #[serde(default)]
+    #[ts(optional)]
+    pub passphrase: Option<Secret>,
+    /// Only for `.mochi`: a recovery record of this many percent (1 to 100).
+    #[serde(default)]
+    #[ts(optional)]
+    pub recovery_percent: Option<u16>,
+}
+
+/// Where the form's Browse… put the archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct QuickLocation {
+    /// The folder, as display text.
+    pub folder: NameText,
+    /// The file name, with the chosen format's extension.
+    pub name: String,
+}
+
+/// The form while it waits: what was chosen and where the archive goes.
+struct Prompt {
+    paths: Vec<PathBuf>,
+    dir: PathBuf,
+    /// The worker waits on the other end; `None` means cancelled.
+    tx: Sender<Option<Submit>>,
+}
+
+/// What OK hands the worker.
+struct Submit {
+    paths: Vec<PathBuf>,
+    target: PathBuf,
+    request: QuickAddRequest,
 }
 
 #[derive(Default)]
@@ -183,6 +278,8 @@ struct Control {
     cancel: Option<CancellationToken>,
     /// Set while a passphrase is awaited; `None` sent means cancelled.
     passphrase: Option<Sender<Option<Secret>>>,
+    /// Set while the Add form waits for OK.
+    prompt: Option<Prompt>,
     /// What "Show in folder" opens.
     folder: Option<PathBuf>,
 }
@@ -314,8 +411,12 @@ impl Quick {
 
     fn emit(&self, event: QuickEvent) {
         let mut d = lock(&self.delivery);
-        if matches!(event, QuickEvent::Started { .. }) {
-            // A new job: what an earlier window never heard is obsolete.
+        if matches!(
+            event,
+            QuickEvent::Started { .. } | QuickEvent::AddPrompt { .. }
+        ) {
+            // A new job (or a changed form): what an earlier window never heard
+            // is obsolete.
             d.pending.clear();
         }
         if let Some(sink) = d.sink.clone() {
@@ -323,6 +424,12 @@ impl Quick {
                 return;
             }
             d.sink = None;
+        }
+        // A job that ended as cancelled with nobody to tell (the window was
+        // closed, which is what cancels it) leaves nothing to replay to the
+        // next window.
+        if matches!(event, QuickEvent::Cancelled { .. }) {
+            return;
         }
         let progress = matches!(event, QuickEvent::Progress { .. });
         if progress && matches!(d.pending.back(), Some(QuickEvent::Progress { .. })) {
@@ -366,6 +473,9 @@ impl Quick {
         if let Some(tx) = c.passphrase.take() {
             let _ = tx.send(None);
         }
+        if let Some(prompt) = c.prompt.take() {
+            let _ = prompt.tx.send(None);
+        }
     }
 
     /// The compact window went away: cancel and forget it.
@@ -407,6 +517,29 @@ impl Quick {
         rx.recv().ok().flatten()
     }
 
+    /// Show the compact window and tell it a job began.
+    fn begin(&self, action: QuickAction, subject: NameText, items: u32) {
+        if let Some(host) = self.host() {
+            host.show_quick(QuickSize::Compact);
+        }
+        self.emit(QuickEvent::Started {
+            action,
+            subject,
+            items,
+        });
+    }
+
+    fn begin_add(&self, paths: &[PathBuf]) {
+        self.begin(
+            QuickAction::Add,
+            paths
+                .first()
+                .map(|p| file_name_text(p))
+                .unwrap_or_else(|| NameText::of(b"")),
+            u32::try_from(paths.len()).unwrap_or(u32::MAX),
+        );
+    }
+
     /// Run one job to its end, reporting to the window. Never panics: an
     /// unwind becomes a `Failed` event, so the worker survives.
     pub fn run(&self, job: &QuickJob, main: &dyn MainPort) {
@@ -415,33 +548,33 @@ impl Quick {
             let mut c = lock(&self.control);
             c.cancel = Some(token.clone());
             c.passphrase = None;
+            c.prompt = None;
             c.folder = None;
         }
         let action = match job {
             QuickJob::Extract { action, .. } => *action,
-            QuickJob::Add { .. } => QuickAction::Add,
+            QuickJob::Add { .. } | QuickJob::AddDialog { .. } => QuickAction::Add,
         };
-        if let Some(host) = self.host() {
-            host.show_quick();
-        }
-        self.emit(match job {
-            QuickJob::Extract { path, .. } => QuickEvent::Started {
-                action,
-                subject: file_name_text(path),
-                items: 1,
-            },
-            QuickJob::Add { paths } => QuickEvent::Started {
-                action,
-                subject: paths
-                    .first()
-                    .map(|p| file_name_text(p))
-                    .unwrap_or_else(|| NameText::of(b"")),
-                items: u32::try_from(paths.len()).unwrap_or(u32::MAX),
-            },
-        });
         let outcome = catch_unwind(AssertUnwindSafe(|| match job {
-            QuickJob::Extract { action, path } => self.extract(main, *action, path, &token),
-            QuickJob::Add { paths } => self.add(paths, &token),
+            QuickJob::Extract { action, path } => {
+                self.begin(*action, file_name_text(path), 1);
+                self.extract(main, *action, path, &token)
+            }
+            QuickJob::Add { paths } => {
+                self.begin_add(paths);
+                self.add(paths, &token)
+            }
+            QuickJob::AddDialog { paths } => match self.prompt(paths) {
+                Ok(Some(submit)) => {
+                    self.begin_add(&submit.paths);
+                    self.add_chosen(submit, &token)
+                }
+                Ok(None) => Ok(QuickEvent::Cancelled { action }),
+                Err(e) => {
+                    self.begin_add(paths);
+                    Err(e)
+                }
+            },
         }));
         let event = match outcome {
             Ok(Ok(event)) => event,
@@ -454,8 +587,178 @@ impl Quick {
                 message: "the job stopped unexpectedly without a result".to_owned(),
             },
         };
-        lock(&self.control).cancel = None;
+        {
+            let mut c = lock(&self.control);
+            c.cancel = None;
+            c.prompt = None;
+        }
         self.emit(event);
+    }
+
+    // ---- the Add form (`--add`) ------------------------------------------------
+
+    /// The event that describes the form for `prompt`.
+    fn prompt_event(paths: &[PathBuf], dir: &Path, name: String) -> QuickEvent {
+        QuickEvent::AddPrompt {
+            items: u32::try_from(paths.len()).unwrap_or(u32::MAX),
+            subject: paths
+                .first()
+                .map(|p| file_name_text(p))
+                .unwrap_or_else(|| NameText::of(b"")),
+            name,
+            folder: path_text(dir),
+            format: ArchiveFormat::Mochi,
+        }
+    }
+
+    /// Show the form and wait for OK. `None` when the user cancelled or closed
+    /// the window. The items are looked at first, so a form is never shown for
+    /// nothing.
+    fn prompt(&self, paths: &[PathBuf]) -> Result<Option<Submit>> {
+        let staged = Staging::default().add(paths);
+        if staged.staged.items.is_empty() {
+            return Err(invalid(
+                staged
+                    .problems
+                    .first()
+                    .map(|p| p.message.clone())
+                    .unwrap_or_else(|| "nothing to add".to_owned()),
+            ));
+        }
+        let (dir, stem) = add_target(paths)?;
+        // The same naming rule as `--add-now`: next to the items, never a name
+        // that exists.
+        let name = unique_name(&stem, ArchiveFormat::Mochi.extension(), &|n| {
+            exists(&dir.join(n))
+        })
+        .ok_or_else(|| {
+            invalid(format!(
+                "no free archive name for {stem} in {}",
+                dir.display()
+            ))
+        })?;
+        let (tx, rx) = channel();
+        let event = Self::prompt_event(paths, &dir, name);
+        lock(&self.control).prompt = Some(Prompt {
+            paths: paths.to_vec(),
+            dir,
+            tx,
+        });
+        if let Some(host) = self.host() {
+            host.show_quick(QuickSize::Form);
+        }
+        self.emit(event);
+        Ok(rx.recv().ok().flatten())
+    }
+
+    /// Another launch arrived while the form is open: its items join the
+    /// archive being named. `false` when no form is open (the caller queues a
+    /// form of its own).
+    pub fn extend_prompt(&self, more: &[PathBuf]) -> bool {
+        let event = {
+            let mut c = lock(&self.control);
+            let Some(prompt) = c.prompt.as_mut() else {
+                return false;
+            };
+            for p in more {
+                if !prompt.paths.contains(p) {
+                    prompt.paths.push(p.clone());
+                }
+            }
+            // The name and folder in the event are only starting values; the
+            // window keeps what the user typed.
+            Self::prompt_event(&prompt.paths, &prompt.dir, String::new())
+        };
+        self.emit(event);
+        true
+    }
+
+    /// The suggested place for Browse…: the form's folder and a name in the
+    /// format asked for.
+    pub fn suggested_location(&self, name: &str, format: ArchiveFormat) -> Result<PathBuf> {
+        let c = lock(&self.control);
+        let prompt = c
+            .prompt
+            .as_ref()
+            .ok_or_else(|| invalid("no archive is waiting to be named"))?;
+        let typed = crate::formats::check_archive_name(name).unwrap_or("archive");
+        Ok(prompt.dir.join(format.name_for(typed)))
+    }
+
+    /// The user chose `path` with Browse…: the archive goes in its folder, and
+    /// the window is told the folder and the name.
+    pub fn set_location(&self, path: &Path, format: ArchiveFormat) -> Result<QuickLocation> {
+        let path = format.path_for(path);
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| invalid("that place has no folder"))?
+            .to_path_buf();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| invalid("that place has no file name"))?;
+        let mut c = lock(&self.control);
+        let prompt = c
+            .prompt
+            .as_mut()
+            .ok_or_else(|| invalid("no archive is waiting to be named"))?;
+        let folder = path_text(&dir);
+        prompt.dir = dir;
+        Ok(QuickLocation { folder, name })
+    }
+
+    /// OK on the form. The request is checked here, in Rust, and refused with a
+    /// reason the window shows (the form stays open); only a request that can
+    /// be carried out reaches the worker. Nothing is written yet.
+    pub fn submit_add(&self, request: QuickAddRequest) -> Result<()> {
+        let typed = crate::formats::check_archive_name(&request.name).map_err(invalid)?;
+        let file_name = request.format.name_for(typed);
+        if request.format != ArchiveFormat::Mochi
+            && (request.passphrase.is_some() || request.recovery_percent.is_some())
+        {
+            return Err(MochiError::new(
+                ErrorCode::UnsupportedFeature,
+                "encryption and a recovery record are for .mochi archives only; ZIP and tar \
+                 files are written without them",
+            ));
+        }
+        if let Some(secret) = &request.passphrase {
+            // The error never contains the passphrase.
+            secret.passphrase()?;
+        }
+        if let Some(p) = request.recovery_percent {
+            if !(1..=100).contains(&p) {
+                return Err(invalid("a recovery record takes 1 to 100 percent"));
+            }
+        }
+        let mut c = lock(&self.control);
+        let dir = c
+            .prompt
+            .as_ref()
+            .map(|p| p.dir.clone())
+            .ok_or_else(|| invalid("no archive is waiting to be named"))?;
+        let target = dir.join(&file_name);
+        if exists(&target) {
+            return Err(MochiError::new(
+                ErrorCode::DestinationExists,
+                format!(
+                    "{file_name} already exists in that folder. Choose another name; MOCHI does \
+                     not replace files."
+                ),
+            ));
+        }
+        let Some(prompt) = c.prompt.take() else {
+            return Err(invalid("no archive is waiting to be named"));
+        };
+        prompt
+            .tx
+            .send(Some(Submit {
+                paths: prompt.paths,
+                target,
+                request,
+            }))
+            .map_err(|_| invalid("the form is no longer waiting"))
     }
 
     /// Open the archive, asking for a passphrase if it is Encrypted.
@@ -600,6 +903,8 @@ impl Quick {
             note: view.not_extracted.first().map(|e| e.reason.text.clone()),
             status: None,
             durability_note: view.durability_note,
+            format: ArchiveFormat::Mochi,
+            output_bytes: 0,
         })
     }
 
@@ -627,39 +932,99 @@ impl Quick {
             passphrase: None,
             recovery_percent: None,
         };
-        let progress = Forward(self);
-        let ctx = JobContext {
-            progress: &progress,
-            cancel: token,
-        };
         for attempt in 1..=MAX_NAME_TRIES {
             let target = dir.join(candidate(&stem, ".mochi", attempt));
             if exists(&target) {
                 continue;
             }
-            staging.set_destination(target.clone());
-            services.validate(&request)?;
-            let done = match services.run(&request, &ctx) {
-                Some(Ok(done)) => done,
+            match self.create_at(&services, &request, &target, &staged.problems, token) {
                 // Created in the meantime by someone else: never replaced.
-                Some(Err(e)) if e.code == ErrorCode::DestinationExists => continue,
-                Some(Err(e)) => return Err(e),
-                None => return Err(invalid("the create job is not routed")),
-            };
-            let commit = done
-                .commit
-                .ok_or_else(|| invalid("the create produced no report"))?;
-            lock(&self.control).folder = Some(dir.clone());
-            let skipped = commit.skipped.len() as u64 + staged.problems.len() as u64;
+                Err(e) if e.code == ErrorCode::DestinationExists => continue,
+                other => return other,
+            }
+        }
+        Err(invalid(format!(
+            "no free archive name for {stem} in {}",
+            dir.display()
+        )))
+    }
+
+    /// OK on the form: write the archive it describes, at the name it chose.
+    fn add_chosen(&self, submit: Submit, token: &CancellationToken) -> Result<QuickEvent> {
+        let Submit {
+            paths,
+            target,
+            request,
+        } = submit;
+        let staging = Arc::new(Staging::default());
+        let staged = staging.add(&paths);
+        if staged.staged.items.is_empty() {
+            return Err(invalid(
+                staged
+                    .problems
+                    .first()
+                    .map(|p| p.message.clone())
+                    .unwrap_or_else(|| "nothing to add".to_owned()),
+            ));
+        }
+        staging.set_format(request.format);
+        let services = Services {
+            staging: Arc::clone(&staging),
+            ..Services::default()
+        };
+        let QuickAddRequest {
+            format,
+            level,
+            passphrase,
+            recovery_percent,
+            ..
+        } = request;
+        let job = if format == ArchiveFormat::Mochi {
+            JobRequest::CreateArchive {
+                preset: level,
+                tar_compatible: false,
+                passphrase,
+                recovery_percent,
+            }
+        } else {
+            JobRequest::ExportArchive { format, level }
+        };
+        self.create_at(&services, &job, &target, &staged.problems, token)
+    }
+
+    /// Run a create or export job into `target` and describe what it wrote.
+    fn create_at(
+        &self,
+        services: &Services,
+        request: &JobRequest,
+        target: &Path,
+        problems: &[IpcError],
+        token: &CancellationToken,
+    ) -> Result<QuickEvent> {
+        services.staging.set_destination(target.to_path_buf());
+        services.validate(request)?;
+        let progress = Forward(self);
+        let ctx = JobContext {
+            progress: &progress,
+            cancel: token,
+        };
+        let done: JobDone = match services.run(request, &ctx) {
+            Some(done) => done?,
+            None => return Err(invalid("the create job is not routed")),
+        };
+        let dir = target.parent().map(Path::to_path_buf).unwrap_or_default();
+        lock(&self.control).folder = Some(dir);
+        if let Some(commit) = done.commit {
+            let skipped = commit.skipped.len() as u64 + problems.len() as u64;
             let note = commit
                 .skipped
                 .first()
                 .map(|s| format!("{}: {}", s.path.text, s.reason))
-                .or_else(|| staged.problems.first().map(|p| p.message.clone()));
+                .or_else(|| problems.first().map(|p| p.message.clone()));
             return Ok(QuickEvent::Done {
                 action: QuickAction::Add,
-                name: file_name_text(&target),
-                location: path_text(&target),
+                name: file_name_text(target),
+                location: path_text(target),
                 files: commit.files,
                 directories: commit.directories,
                 bytes: commit.bytes,
@@ -667,12 +1032,33 @@ impl Quick {
                 note,
                 status: Some(commit.status),
                 durability_note: commit.durability_note,
+                format: ArchiveFormat::Mochi,
+                output_bytes: 0,
             });
         }
-        Err(invalid(format!(
-            "no free archive name for {stem} in {}",
-            dir.display()
-        )))
+        let export = done
+            .export
+            .ok_or_else(|| invalid("the create produced no report"))?;
+        let skipped = export.skipped.len() as u64 + problems.len() as u64;
+        let note = export
+            .skipped
+            .first()
+            .map(|s| format!("{}: {}", s.path.text, s.reason))
+            .or_else(|| problems.first().map(|p| p.message.clone()));
+        Ok(QuickEvent::Done {
+            action: QuickAction::Add,
+            name: export.name,
+            location: export.location,
+            files: export.files,
+            directories: export.directories,
+            bytes: export.bytes,
+            skipped,
+            note,
+            status: None,
+            durability_note: export.durability_note,
+            format: export.format,
+            output_bytes: export.output_bytes,
+        })
     }
 }
 
@@ -710,8 +1096,11 @@ mod tests {
     }
 
     impl WindowHost for Host {
-        fn show_quick(&self) {
-            self.calls.lock().unwrap().push("show_quick".into());
+        fn show_quick(&self, size: QuickSize) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("show_quick {size:?}"));
         }
         fn close_quick(&self) {
             self.calls.lock().unwrap().push("close_quick".into());
@@ -855,7 +1244,7 @@ mod tests {
         assert_eq!((files, skipped, status), (2, 0, None));
         assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"alpha");
         assert_eq!(main.archives.open_count(), 0, "the handle is closed");
-        assert_eq!(host.calls.lock().unwrap()[0], "show_quick");
+        assert_eq!(host.calls.lock().unwrap()[0], "show_quick Compact");
         // "Show in folder" opens the folder Rust remembers.
         q.show_folder().unwrap();
         assert_eq!(
@@ -1172,5 +1561,333 @@ mod tests {
         };
         services.run(&request, &ctx).unwrap().unwrap();
         dir.join(name)
+    }
+
+    // ---- the Add form ------------------------------------------------------
+
+    fn request(name: &str, format: ArchiveFormat) -> QuickAddRequest {
+        QuickAddRequest {
+            name: name.to_owned(),
+            format,
+            level: CompressionPreset::Fast,
+            passphrase: None,
+            recovery_percent: None,
+        }
+    }
+
+    /// Run the form on a worker thread, as the launch worker does; returns
+    /// once the form is showing.
+    fn open_form(q: &Arc<Quick>, sink: &Sink, paths: Vec<PathBuf>) -> std::thread::JoinHandle<()> {
+        let worker = Arc::clone(q);
+        let handle = std::thread::spawn(move || {
+            worker.run(&QuickJob::AddDialog { paths }, &Main::default());
+        });
+        wait_for(sink, |e| {
+            matches!(e, QuickEvent::AddPrompt { .. } | QuickEvent::Failed { .. })
+        });
+        handle
+    }
+
+    fn two_files() -> (tempfile::TempDir, Vec<PathBuf>) {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("notes.txt");
+        let b = dir.path().join("more.txt");
+        std::fs::write(&a, b"hello").unwrap();
+        std::fs::write(&b, b"world!").unwrap();
+        (dir, vec![a, b])
+    }
+
+    #[test]
+    fn the_form_waits_and_writes_nothing_until_ok() {
+        let (dir, paths) = two_files();
+        std::fs::write(dir.path().join("notes.mochi"), b"mine").unwrap();
+        let (q, host, sink) = quick();
+        let handle = open_form(&q, &sink, paths);
+        let QuickEvent::AddPrompt {
+            items,
+            subject,
+            name,
+            format,
+            ..
+        } = last(&sink)
+        else {
+            panic!("{:?}", sink.events())
+        };
+        // The name is the --add-now rule: the folder's name for several items.
+        assert_eq!(items, 2);
+        assert_eq!(subject.text, "notes.txt");
+        let folder = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(name, format!("{folder}.mochi"));
+        assert_eq!(format, ArchiveFormat::Mochi);
+        assert!(host
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&"show_quick Form".to_owned()));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+        assert!(!sink
+            .events()
+            .iter()
+            .any(|e| matches!(e, QuickEvent::Started { .. })));
+        q.submit_add(request("both", ArchiveFormat::Zip)).unwrap();
+        handle.join().unwrap();
+        let QuickEvent::Done {
+            name,
+            files,
+            bytes,
+            format,
+            status,
+            output_bytes,
+            ..
+        } = last(&sink)
+        else {
+            panic!("{:?}", sink.events())
+        };
+        assert_eq!(name.text, "both.zip");
+        assert_eq!(
+            (files, bytes, format, status),
+            (2, 11, ArchiveFormat::Zip, None)
+        );
+        assert_eq!(
+            output_bytes,
+            std::fs::metadata(dir.path().join("both.zip"))
+                .unwrap()
+                .len()
+        );
+        // The result window shrinks back to the compact size for the job.
+        assert!(host
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "show_quick Compact"));
+        q.show_folder().unwrap();
+    }
+
+    #[test]
+    fn every_format_is_written_with_its_own_extension_whatever_the_name_typed() {
+        for (format, typed, want) in [
+            (ArchiveFormat::Zip, "box", "box.zip"),
+            (ArchiveFormat::Tar, "box.zip", "box.tar"),
+            (ArchiveFormat::TarGz, "box.mochi", "box.tar.gz"),
+            (ArchiveFormat::TarZst, "box.tar.gz", "box.tar.zst"),
+            (ArchiveFormat::Mochi, "box.tar", "box.mochi"),
+        ] {
+            let (dir, paths) = two_files();
+            let (q, _host, sink) = quick();
+            let handle = open_form(&q, &sink, paths);
+            q.submit_add(request(typed, format)).unwrap();
+            handle.join().unwrap();
+            let QuickEvent::Done {
+                name,
+                files,
+                status,
+                format: written,
+                ..
+            } = last(&sink)
+            else {
+                panic!("{format:?}: {:?}", sink.events())
+            };
+            assert_eq!(name.text, want);
+            assert_eq!((files, written), (2, format));
+            // A commit status only for .mochi; a plain file claims no more.
+            assert_eq!(
+                status.is_some(),
+                format == ArchiveFormat::Mochi,
+                "{format:?}"
+            );
+            assert!(dir.path().join(want).is_file());
+        }
+    }
+
+    #[test]
+    fn a_name_in_the_way_is_refused_and_the_form_stays_open() {
+        let (dir, paths) = two_files();
+        std::fs::write(dir.path().join("taken.zip"), b"mine").unwrap();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, paths);
+        let e = q
+            .submit_add(request("taken", ArchiveFormat::Zip))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::DestinationExists);
+        assert!(e.message.contains("taken.zip") && e.message.contains("not replace"));
+        assert_eq!(
+            std::fs::read(dir.path().join("taken.zip")).unwrap(),
+            b"mine"
+        );
+        // Still waiting: another name works.
+        assert!(!handle.is_finished());
+        q.submit_add(request("free", ArchiveFormat::Zip)).unwrap();
+        handle.join().unwrap();
+        assert!(matches!(last(&sink), QuickEvent::Done { .. }));
+        assert_eq!(
+            std::fs::read(dir.path().join("taken.zip")).unwrap(),
+            b"mine"
+        );
+    }
+
+    #[test]
+    fn a_bad_request_is_refused_before_the_worker_hears_of_it() {
+        let (_dir, paths) = two_files();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, paths);
+        for bad in ["", "a/b", "..", "x*"] {
+            let e = q.submit_add(request(bad, ArchiveFormat::Zip)).unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument, "{bad:?}");
+        }
+        // Encryption and a recovery record are for .mochi only; ZIP says so.
+        let mut r = request("x", ArchiveFormat::Zip);
+        r.passphrase = Some(Secret::new("hunter2"));
+        let e = q.submit_add(r).unwrap_err();
+        assert_eq!(e.code, ErrorCode::UnsupportedFeature);
+        assert!(!e.message.contains("hunter2"));
+        let mut r = request("x", ArchiveFormat::TarGz);
+        r.recovery_percent = Some(10);
+        assert_eq!(
+            q.submit_add(r).unwrap_err().code,
+            ErrorCode::UnsupportedFeature
+        );
+        let mut r = request("x", ArchiveFormat::Mochi);
+        r.recovery_percent = Some(0);
+        assert_eq!(
+            q.submit_add(r).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let mut r = request("x", ArchiveFormat::Mochi);
+        r.passphrase = Some(Secret::new(""));
+        let e = q.submit_add(r).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(!handle.is_finished(), "the form is still open");
+        q.cancel();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn an_encrypted_mochi_archive_with_a_recovery_record_comes_from_the_form() {
+        let (dir, paths) = two_files();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, paths);
+        let mut r = request("secret", ArchiveFormat::Mochi);
+        r.passphrase = Some(Secret::new("correct horse"));
+        r.recovery_percent = Some(10);
+        q.submit_add(r).unwrap();
+        handle.join().unwrap();
+        let QuickEvent::Done { status, format, .. } = last(&sink) else {
+            panic!("{:?}", sink.events())
+        };
+        assert_eq!(status.as_deref(), Some("LOCAL_COMMITTED"));
+        assert_eq!(format, ArchiveFormat::Mochi);
+        assert!(crate::browse::head_encrypted(
+            &dir.path().join("secret.mochi")
+        ));
+    }
+
+    #[test]
+    fn cancel_and_closing_end_the_form_and_write_nothing() {
+        for close in [false, true] {
+            let (dir, paths) = two_files();
+            let (q, _host, sink) = quick();
+            let handle = open_form(&q, &sink, paths);
+            if close {
+                q.closed();
+            } else {
+                q.cancel();
+            }
+            handle.join().unwrap();
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+            // The form is gone: OK now has nothing to answer.
+            let e = q.submit_add(request("x", ArchiveFormat::Zip)).unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn browse_keeps_the_folder_and_the_extension_follows_the_format() {
+        let (dir, paths) = two_files();
+        let other = tempfile::tempdir().unwrap();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, paths);
+        let suggested = q.suggested_location("Pics", ArchiveFormat::TarZst).unwrap();
+        assert_eq!(suggested, dir.path().join("Pics.tar.zst"));
+        // A name that cannot be used falls back to a plain one for the dialog.
+        let suggested = q.suggested_location("a/b", ArchiveFormat::Zip).unwrap();
+        assert_eq!(suggested, dir.path().join("archive.zip"));
+        let at = q
+            .set_location(&other.path().join("Chosen.mochi"), ArchiveFormat::Zip)
+            .unwrap();
+        assert_eq!(at.name, "Chosen.zip");
+        assert!(at.folder.text.contains(&*other.path().to_string_lossy()));
+        q.submit_add(request("Chosen", ArchiveFormat::Zip)).unwrap();
+        handle.join().unwrap();
+        assert!(other.path().join("Chosen.zip").is_file());
+        assert!(!dir.path().join("Chosen.zip").exists());
+        // "Show in folder" opens the folder that was chosen.
+        assert!(matches!(last(&sink), QuickEvent::Done { .. }));
+    }
+
+    #[test]
+    fn items_that_join_the_open_form_are_in_the_archive_once() {
+        let (dir, paths) = two_files();
+        let third = dir.path().join("third.txt");
+        std::fs::write(&third, b"3").unwrap();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, vec![paths[0].clone()]);
+        assert!(q.extend_prompt(&[paths[1].clone(), paths[0].clone(), third]));
+        wait_for(&sink, |e| {
+            matches!(e, QuickEvent::AddPrompt { items: 3, .. })
+        });
+        q.submit_add(request("all", ArchiveFormat::Tar)).unwrap();
+        handle.join().unwrap();
+        assert!(matches!(last(&sink), QuickEvent::Done { files: 3, .. }));
+        // With no form open there is nothing to join.
+        assert!(!q.extend_prompt(&[paths[0].clone()]));
+    }
+
+    #[test]
+    fn a_form_for_nothing_that_exists_is_a_failure_not_a_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, vec![dir.path().join("gone")]);
+        handle.join().unwrap();
+        assert!(
+            matches!(last(&sink), QuickEvent::Failed { .. }),
+            "{:?}",
+            sink.events()
+        );
+        assert!(!q.extend_prompt(&[dir.path().join("x")]));
+    }
+
+    #[test]
+    fn a_cancelled_export_leaves_no_file_and_says_cancelled() {
+        // Cancelling after OK, while the archive is being written.
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.bin");
+        std::fs::write(&big, vec![7u8; 3_000_000]).unwrap();
+        let (q, _host, sink) = quick();
+        let handle = open_form(&q, &sink, vec![big]);
+        q.submit_add(request("big", ArchiveFormat::TarGz)).unwrap();
+        // Cancel as soon as the job has started (progress or not, the next safe
+        // point stops it).
+        wait_for(&sink, |e| matches!(e, QuickEvent::Started { .. }));
+        q.cancel();
+        handle.join().unwrap();
+        match last(&sink) {
+            QuickEvent::Cancelled { .. } => {
+                assert_eq!(
+                    std::fs::read_dir(dir.path()).unwrap().count(),
+                    1,
+                    "no archive, no temporary file"
+                );
+            }
+            // The job may win the race on a fast machine; then it is complete.
+            QuickEvent::Done { .. } => assert!(dir.path().join("big.tar.gz").is_file()),
+            other => panic!("{other:?}"),
+        }
     }
 }

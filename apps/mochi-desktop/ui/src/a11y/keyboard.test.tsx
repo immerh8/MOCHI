@@ -43,7 +43,7 @@ function backend(opts: { encrypted?: boolean } = {}) {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
       case "staged_sources":
-        return { items: [], destination: null, default_destination: null };
+        return { items: [], destination: null, default_destination: null, format: "mochi" };
       case "watch_drops":
       case "watch_launches":
         return null;
@@ -294,7 +294,7 @@ test("the self-test progress bar has a name and a spoken value", async () => {
   backend();
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
@@ -325,7 +325,7 @@ function jobBackend() {
   let index = 0;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };

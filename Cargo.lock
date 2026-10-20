@@ -3043,6 +3043,7 @@ dependencies = [
  "drag",
  "getrandom 0.3.4",
  "mochi-core",
+ "mochi-export",
  "mochi-foreign",
  "mochi-format",
  "mochi-testkit",
@@ -3057,6 +3058,19 @@ dependencies = [
  "tempfile",
  "ts-rs",
  "zeroize",
+]
+
+[[package]]
+name = "mochi-export"
+version = "0.9.5"
+dependencies = [
+ "flate2",
+ "getrandom 0.3.4",
+ "mochi-core",
+ "tar",
+ "tempfile",
+ "zip 9.0.3",
+ "zstd",
 ]
 
 [[package]]
@@ -3090,6 +3104,14 @@ dependencies = [
  "unicode-normalization",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "mochi-shellext"
+version = "0.9.5"
+dependencies = [
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

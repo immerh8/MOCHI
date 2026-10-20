@@ -13,8 +13,8 @@ use crate::crashlog::{CrashLog, Settings, MAX_READ_BYTES};
 use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView, DropEvent,
-    EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
+    ArchiveFormat, ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView,
+    DropEvent, EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
     ForeignExtractPlan, ForeignSearchResult, HealthView, IpcError, JobEvent, JobId, JobRequest,
     OpenOutcome, PathKey, PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret,
     ShowTarget, SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource,
@@ -22,7 +22,7 @@ use crate::ipc::{
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
-use crate::quick::{Quick, QuickEvent, QuickSink};
+use crate::quick::{Quick, QuickAddRequest, QuickEvent, QuickLocation, QuickSink};
 use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::write::{DropSink, DropWatch, Staging};
@@ -198,15 +198,23 @@ pub async fn show_in_folder(
     what: ShowTarget,
     archives: State<'_, Arc<Archives>>,
     destination: State<'_, Arc<Destination>>,
+    staging: State<'_, Arc<Staging>>,
 ) -> Result<(), IpcError> {
     let archives = Arc::clone(&archives);
     let destination = Arc::clone(&destination);
+    let staging = Arc::clone(&staging);
     tauri::async_runtime::spawn_blocking(move || {
         let folder = match what {
             ShowTarget::ExtractDestination => destination.get().ok_or_else(|| {
                 mochi_core::MochiError::new(
                     mochi_core::ErrorCode::InvalidArgument,
                     "no folder has been chosen yet",
+                )
+            }),
+            ShowTarget::LastExport => staging.last_export_folder().ok_or_else(|| {
+                mochi_core::MochiError::new(
+                    mochi_core::ErrorCode::InvalidArgument,
+                    "no archive has been written yet",
                 )
             }),
             ShowTarget::Archive { handle } => archives.path(handle).and_then(|p| {
@@ -372,6 +380,40 @@ pub fn quick_show_folder(quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
     quick.show_folder().map_err(IpcError::from)
 }
 
+/// The Add form's Browse…: show the save dialog (in Rust) for the format the
+/// form is set to, and keep the folder it returns. The webview learns only the
+/// folder's display text and the file name. `null` if the user cancelled.
+/// Only the `quick` window may call it.
+#[tauri::command]
+pub async fn quick_choose_location(
+    app: AppHandle,
+    name: String,
+    format: ArchiveFormat,
+    quick: State<'_, Arc<Quick>>,
+) -> Result<Option<QuickLocation>, IpcError> {
+    let quick = Arc::clone(&quick);
+    blocking(move || {
+        let suggested = quick.suggested_location(&name, format)?;
+        match crate::picker::pick_destination(&app, Some(&suggested), format) {
+            Some(path) => quick.set_location(&path, format).map(Some),
+            None => Ok(None),
+        }
+    })
+    .await
+}
+
+/// OK on the Add form. The request is checked in Rust; a refusal (a name that
+/// exists, a bad name, options the format does not have) is returned and the
+/// form stays open. The passphrase, if any, crosses IPC here, once. Only the
+/// `quick` window may call it.
+#[tauri::command]
+pub fn quick_add_submit(
+    request: QuickAddRequest,
+    quick: State<'_, Arc<Quick>>,
+) -> Result<(), IpcError> {
+    quick.submit_add(request).map_err(IpcError::from)
+}
+
 /// Close the compact window.
 #[tauri::command]
 pub fn quick_close(quick: State<'_, Arc<Quick>>) {
@@ -433,10 +475,22 @@ pub async fn choose_destination(
     let staging = Arc::clone(&staging);
     blocking(move || {
         let suggested = staging.suggested_destination();
-        Ok(crate::picker::pick_destination(&app, suggested.as_deref())
-            .map(|path| staging.set_destination(path)))
+        let format = staging.format();
+        Ok(
+            crate::picker::pick_destination(&app, suggested.as_deref(), format)
+                .map(|path| staging.set_destination(path)),
+        )
     })
     .await
+}
+
+/// Choose the format of the next new archive (plan O31). The names the window
+/// shows (the default and a destination already chosen) follow its extension.
+/// MOCHI-only options are the window's to show or hide; the jobs refuse a
+/// combination that does not exist.
+#[tauri::command]
+pub fn set_archive_format(format: ArchiveFormat, staging: State<'_, Arc<Staging>>) -> StagedView {
+    staging.set_format(format)
 }
 
 /// Plan an extraction (D3): optionally show the native folder dialog (in
