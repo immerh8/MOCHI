@@ -636,6 +636,12 @@ export function Browser({
   const viewingHead = open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1);
   const listKeyHandlers = {
     all: () => (searching ? hitSel.all(hits.length) : total !== null && folderSel.all(total)),
+    none: () => {
+      const sel = searching ? hitSel : folderSel;
+      if (sel.rows.length === 0) return false;
+      sel.clear();
+      return true;
+    },
     up: () => {
       if (!searching && path.length > 0) navigate(path.slice(0, -1), true);
     },

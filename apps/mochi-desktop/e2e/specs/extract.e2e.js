@@ -215,6 +215,12 @@ describe("extract", () => {
   });
 
   it("lists collisions before writing, skips them on request, and overwrites nothing", async () => {
+    // Nothing selected, so Extract takes the whole version: Escape in the list drops the selection.
+    await browser.execute(() => document.querySelector('[data-testid="entry"]')?.focus());
+    await browser.keys(["Escape"]);
+    await browser.waitUntil(async () => !(await $('[data-testid="entry-count"]').getText()).includes("selected"), {
+      timeoutMsg: "the selection was not dropped",
+    });
     mkdirSync(path.join(crowdedDir, "docs"), { recursive: true });
     writeFileSync(path.join(crowdedDir, "docs", "keep.txt"), "keep");
     writeFileSync(path.join(crowdedDir, "big"), "mine");
@@ -237,10 +243,12 @@ describe("extract", () => {
     expect(has("big", "NAME_COLLISION")).toBe(true);
     expect(has("docs", "NAME_COLLISION")).toBe(true);
     expect(has(HOSTILE_ROOT, windows ? "NAME_UNSUPPORTED" : "NAME_COLLISION")).toBe(true);
-    await expect($('[data-testid="extract-conflict-note"]')).toHaveText(
+    await expect($('[data-testid="extract-conflict-note"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("Nothing is overwritten and no name is changed"),
     );
-    await expect($('[data-testid="extract-not-offered"]')).toHaveText(
+    await expect($('[data-testid="extract-conflict-note"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("keeping both under a new name, is not available yet"),
     );
     // Listing the conflicts wrote nothing.
@@ -313,7 +321,8 @@ describe("extract", () => {
 
   it("cancels an extraction midway: files already extracted stay, none is partial, none is temporary", async () => {
     queuePicks(largeCopy);
-    await $('[data-testid="open-archive"]').click();
+    // An archive is open: the toolbar's Open opens another.
+    await $('[data-testid="toolbar-open"]').click();
     await browser.waitUntil(
       async () => (await $('[data-testid="archive-meta"]').getText()).includes("large.mochi"),
       { timeout: 60_000 },

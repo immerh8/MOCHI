@@ -28,13 +28,19 @@ export function rowHandlers<T extends { key: string | null }>(
   };
 }
 
-/** Ctrl+A selects the folder, Backspace goes up, Delete removes (MOCHI only). */
+/**
+ * Ctrl+A selects the folder, Escape selects nothing, Backspace goes up,
+ * Delete removes (MOCHI only).
+ */
 export function listKeys(
   e: KeyboardEvent,
-  handlers: { all: () => void; up: () => void; remove?: () => void },
+  handlers: { all: () => void; none: () => boolean; up: () => void; remove?: () => void },
 ) {
   if (e.target instanceof HTMLInputElement) return;
-  if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+  if (e.key === "Escape") {
+    // Only when there is a selection to drop: otherwise Escape is for whatever else listens.
+    if (handlers.none()) e.preventDefault();
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
     e.preventDefault();
     handlers.all();
   } else if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey) {

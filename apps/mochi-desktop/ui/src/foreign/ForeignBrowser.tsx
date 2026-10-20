@@ -544,6 +544,12 @@ export function ForeignBrowser() {
           onKeyDown={(e) =>
             listKeys(e, {
               all: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
+              none: () => {
+                const sel = searching ? hitSel : folderSel;
+                if (sel.rows.length === 0) return false;
+                sel.clear();
+                return true;
+              },
               up: () => {
                 if (!searching && path.length > 0) navigate(path.slice(0, -1));
               },

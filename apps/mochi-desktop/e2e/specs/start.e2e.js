@@ -53,7 +53,7 @@ describe("the start screen", () => {
     await $('[data-testid="start-screen"]').waitForExist();
     // The list is kept across app runs (and earlier specs opened archives), newest first.
     await browser.waitUntil(
-      async () => (await $$('[data-testid="recent-open"]')).length > 0 && (await $('[data-testid="recent-open"]').getText()) === "trip.mochi",
+      async () => (await $$('[data-testid="recent-open"]')).length > 0 && (await $('[data-testid="recent-open"] .recent-name').getText()) === "trip.mochi",
       { timeoutMsg: "the archive was not listed first among the recent ones" },
     );
   });

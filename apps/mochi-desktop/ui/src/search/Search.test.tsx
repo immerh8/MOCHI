@@ -240,6 +240,11 @@ test("Ctrl+A selects the whole folder and Extract takes all of it", async () => 
   (rows[0] as HTMLElement).focus();
   await user.keyboard("{Control>}a{/Control}");
   await waitFor(() => expect(screen.getByTestId("entry-count")).toHaveTextContent("4 items · 4 selected"));
+  // Escape selects nothing again; Ctrl+A once more for the extract.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.getByTestId("entry-count")).toHaveTextContent(/^4 items$/));
+  await user.keyboard("{Control>}a{/Control}");
+  await waitFor(() => expect(screen.getByTestId("entry-count")).toHaveTextContent("4 items · 4 selected"));
   await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-panel");
   expect(b.calls.find((c) => c.cmd === "plan_extract_default")?.args.keys).toEqual(ROOT.map((r) => r.key));
