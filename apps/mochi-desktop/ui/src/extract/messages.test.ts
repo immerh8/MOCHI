@@ -29,43 +29,65 @@ const BANNED = ["backed up", "backup", "safe", "preserved", "secure", "verified"
 
 function everything(outcome: JobOutcome): string {
   const d = describe(outcome);
-  return [d.headline, ...d.notes].join("\n").toLowerCase();
+  const rows = (d.details?.rows ?? []).flatMap((r) => [
+    r.label,
+    r.value ?? "",
+    r.sub ?? "",
+    r.note ?? "",
+    ...(r.items ?? []).map((i) => i.text ?? ""),
+  ]);
+  return [d.headline, ...d.notes, ...rows, ...(d.details?.notes ?? [])].join("\n").toLowerCase();
 }
 
-test("a completed extraction states what it extracted and that it is not a verification", () => {
+const row = (outcome: JobOutcome, label: string) => describe(outcome).details?.rows.find((r) => r.label === label);
+
+test("a completed extraction is one short line; the details say what it checked and that it is not a verification", () => {
   const d = describe(done(report()));
-  expect(d.headline).toBe(
-    "Extracted 4 files (2.0 KiB (2,048 bytes)) and 2 folders from version 3 to /home/me/out.",
-  );
+  expect(d.headline).toBe("Extracted 4 files · 2 folders · 2.0 KiB");
+  expect(d.headline).not.toContain("2,048");
   expect(d.completed).toBe(true);
-  expect(d.notes).toContain(CHECK_NOTE);
+  expect(d.warn).toBe(false);
+  expect(d.notes).toEqual([]);
+  expect(d.details?.notes).toContain(CHECK_NOTE);
   expect(CHECK_NOTE).toContain("not a verification of the archive");
+  expect(row(done(report()), "Folder")?.value).toBe("/home/me/out");
+  expect(row(done(report()), "From version")?.value).toBe("3");
+  expect(row(done(report()), "Size")?.value).toBe("2.0 KiB (2,048 bytes)");
+  expect(d.record).toContain("extract version 3");
 });
 
-test("exceptions change the headline: the extraction is not described as complete", () => {
+test("zero counts are left out of the line", () => {
+  expect(describe(done(report({ files: 5, directories: 0, bytes: 10 }))).headline).toBe("Extracted 5 files · 10 bytes");
+});
+
+test("exceptions are in the line, which turns to a warning: the extraction is not described as complete", () => {
   const d = describe(done(report({ not_extracted_total: 1, files: 1, directories: 0, bytes: 1 })));
-  expect(d.headline).toBe(
-    "Extracted 1 file (1 byte) and 0 folders from version 3 to /home/me/out. 1 entry was not extracted.",
-  );
+  expect(d.headline).toBe("Extracted 1 file · 1 byte · 1 entry not extracted");
+  expect(d.warn).toBe(true);
   const many = describe(done(report({ not_extracted_total: 12 })));
-  expect(many.headline).toContain("12 entries were not extracted.");
+  expect(many.headline).toContain("12 entries not extracted");
 });
 
-test("unavailable attributes, unconfirmed durability, and case folding are all said", () => {
-  const d = describe(
-    done(
-      report({
-        attributes_unavailable: text("snapshot manifest damaged"),
-        durability_note: "no directory sync",
-        case_insensitive: true,
-      }),
-    ),
+test("unavailable attributes, unconfirmed durability, and case folding are all in the details, as cautions", () => {
+  const o = done(
+    report({
+      attributes_unavailable: text("snapshot manifest damaged"),
+      durability_note: "no directory sync",
+      case_insensitive: true,
+    }),
   );
-  const all = d.notes.join("\n");
-  expect(all).toContain("No times, permissions, or other attributes were applied");
-  expect(all).toContain("snapshot manifest damaged");
-  expect(all).toContain("Degraded: the folder's entries are not confirmed durable");
-  expect(all).toContain("differ only in case");
+  const d = describe(o);
+  expect(d.headline).not.toMatch(/degraded|durable|attribute/i);
+  expect(row(o, "Times and permissions")).toMatchObject({ value: "Not applied", caution: true });
+  expect(row(o, "Times and permissions")?.note).toContain("No times, permissions, or other attributes were applied");
+  expect(row(o, "Times and permissions")?.note).toContain("snapshot manifest damaged");
+  expect(row(o, "Folder entries on disk")).toMatchObject({
+    value: "Not confirmed",
+    sub: "Degraded",
+    note: "no directory sync",
+    caution: true,
+  });
+  expect(d.details?.notes.join(" ")).toContain("differ only in case");
 });
 
 test("an attribute note names the kind, the count, the first entry and the reason", () => {

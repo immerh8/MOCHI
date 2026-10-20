@@ -15,6 +15,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
+import { closeResultDetails, openResultDetails } from "./_ui.js";
 
 // Set by wdio.conf.js (the d1_browse_fixtures directory).
 const fixtures = process.env.MOCHI_E2E_FIXTURES;
@@ -145,10 +146,15 @@ describe("extract", () => {
 
     await press("extract-confirm");
     await waitForState("completed");
+    // One short line; where it went and what was checked are in the Details panel.
     const status = await $('[data-testid="extract-status"]').getText();
-    expect(status).toContain("to " + allDir);
-    expect(status).toContain("Extracting is not a verification of the archive");
+    expect(status).toContain("Extracted ");
+    await openResultDetails("extract");
+    const details = await $('[data-testid="extract-details"]').getText();
+    expect(details).toContain(allDir);
+    expect(details).toContain("not a verification of the archive");
     await assertNoBannedWording();
+    await closeResultDetails("extract");
 
     // The head of the scripted history, byte for byte in size.
     expect(size(allDir, "docs", "a.txt")).toBe(130);

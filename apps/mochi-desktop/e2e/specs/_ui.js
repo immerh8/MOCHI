@@ -13,6 +13,20 @@ async function collapse(testId) {
   if ((await button.getAttribute("aria-expanded")) === "true") await button.click();
 }
 
+/**
+ * The Details panel of a finished create, add, remove, or extract (`write`, `extract`; `quick` in
+ * the compact window). A side panel over the window's right edge: close it with its own Close
+ * button before clicking in the window, since it covers the result's buttons while it is open.
+ */
+export const openResultDetails = (prefix) => expand(`${prefix}-details-toggle`);
+export async function closeResultDetails(prefix) {
+  const button = await $(`[data-testid="${prefix}-details-toggle"]`);
+  if ((await button.getAttribute("aria-expanded")) !== "true") return;
+  const close = await $(`[data-testid="${prefix}-details-close"]`);
+  if (await close.isExisting()) await close.click();
+  else await button.click();
+}
+
 /** The Info panel (entry details; for a foreign archive, what the app says about the format). */
 export const openInfo = () => expand("toolbar-info");
 export const closeInfo = () => collapse("toolbar-info");

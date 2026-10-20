@@ -215,6 +215,14 @@ export function FoldersIcon() {
   );
 }
 
+export function CloseIcon() {
+  return (
+    <Icon size={16}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </Icon>
+  );
+}
+
 export function CaretDownIcon() {
   return (
     <Icon className="icon caret" size={14}>

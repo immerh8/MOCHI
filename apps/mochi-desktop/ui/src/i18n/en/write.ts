@@ -72,7 +72,7 @@ export const write = {
   "write.deleteNote":
     "This removes the entry from the current version only. Its content stays in the archive's history: earlier versions still show it, and it is not erased until retention and garbage collection allow it. Deleting does not make the archive smaller.",
   "write.localCommitNote":
-    "This is saved in one file on this computer. Keep an independent copy of anything you cannot lose.",
+    "This archive is one file on this computer. Keep a separate copy of anything you cannot lose.",
   "write.tar1": "Standard zstd and tar tools can unpack the archive.",
   "write.tar2":
     "They unpack the history of every commit, not the latest snapshot: a file you delete later is still extracted, and a renamed file appears under both names.",
@@ -84,18 +84,27 @@ export const write = {
     "The commit may or may not have been published. Open the archive again to see what it holds.",
   "write.nothingCommitted": "Nothing was committed.",
   "write.openAgain": "Open the archive again to see what it holds.",
-  "write.committedDelete":
-    "Removed {entries} from the current version of {file}. Earlier versions still have {them}.",
-  "write.committedTechnical": "Technical detail: commit {seq} ({status}).",
-  "write.committedAdd":
-    "{verb} {file}: {files}, {folders}, {size}.",
+  "write.committedDelete": "Removed {items} from this version. Earlier versions still have {them}.",
+  "write.committedAdd": "{verb} {file} · {parts}",
   "write.verbCreated": "Created",
   "write.verbAdded": "Added to",
-  "write.notStored": "Not stored: {path}{escaped}: {reason}",
-  "write.degraded":
-    "Degraded: the new file's directory entry is not confirmed durable ({note}).",
-  "write.reopenError":
-    "The commit was made, but the archive could not be opened again for browsing ({code}): {message}",
+  "write.lineNotStoredOne": "{n} item not stored",
+  "write.lineNotStoredMany": "{n} items not stored",
+  "write.lineNotReopened": "could not be opened again",
+  "write.rowFiles": "Files",
+  "write.rowFolders": "Folders",
+  "write.rowSize": "Size",
+  "write.rowRemoved": "Removed",
+  "write.rowStatus": "Status",
+  "write.statusCommitted": "Committed on this computer",
+  "write.statusTechnical": "commit {seq} · {status}",
+  "write.rowFolderEntry": "Folder entry on disk",
+  "write.folderEntryNotConfirmed": "Not confirmed",
+  "write.degradedMark": "Degraded",
+  "write.rowNotStored": "Not stored",
+  "write.rowReopen": "Opening it again",
+  "write.reopenFailed": "Could not be opened again for browsing",
+  "write.reopenDetail": "The commit was made. {code}: {message}",
   "write.progressImport": "Reading files: {size} so far",
   "write.progressDelete": "Preparing removal: {completed} of {total}",
   "write.progressTotalUnknown": "?",

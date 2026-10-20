@@ -181,7 +181,10 @@ describe("a second launch", () => {
     expect(ended.map((e) => e.code)).toEqual([0, 0, 0]);
     await switchToWindowWith("quick-result");
     await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Archive created: trip.mochi"));
-    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("LOCAL_COMMITTED"));
+    // The technical status is behind the small Details disclosure.
+    await expect($('[data-testid="quick-result"]')).not.toHaveText(expect.stringContaining("LOCAL_COMMITTED"));
+    await $('[data-testid="quick-details-toggle"]').click();
+    await expect($('[data-testid="quick-details"]')).toHaveText(expect.stringContaining("LOCAL_COMMITTED"));
     const text = (await $('[data-testid="quick-result"]').getText()).toLowerCase();
     for (const word of ["backed up", "safe", "preserved"]) expect(text).not.toContain(word);
     expect(readdirSync(dir).filter((n) => n.endsWith(".mochi"))).toEqual(["trip.mochi"]);

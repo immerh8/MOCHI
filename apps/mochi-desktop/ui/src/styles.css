@@ -1082,3 +1082,157 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
   font-size: 0.9rem;
   color: var(--muted);
 }
+
+/* ---- Results: one short line, details in a side panel -------------------------
+   A finished create, add, remove, or extract is one line with its actions on
+   the same row (owner request, release 0.9.3). Neutral by design: nothing here
+   is a verification, so nothing is green (spec §23.3 #2). A line that is
+   partial gets the warning bar, and the Details button carries a badge while
+   the panel holds anything that is not fully good. */
+.result.has-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.result-text {
+  flex: 1 1 14rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.result-text p {
+  margin: 0.15rem 0;
+}
+.result-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+}
+.result-actions button:not(.icon-button) {
+  padding: 0.25rem 0.75rem;
+}
+.result-actions .icon-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: var(--fg);
+}
+.result-details-button {
+  position: relative;
+}
+/* A small solid dot on the corner of the Details button: there is a note in
+   the panel that needs a look. The accessible name says how many. */
+.result-badge {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  box-sizing: border-box;
+  background: var(--warning);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+}
+.result-inline-toggle {
+  position: relative;
+  align-self: flex-start;
+  padding: 0.2rem 1.4rem 0.2rem 0.75rem;
+  font-size: 0.9rem;
+}
+.result-inline-toggle .result-badge {
+  top: 50%;
+  right: 0.5rem;
+  margin-top: -0.275rem;
+}
+.result-inline {
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+/* The side panel: non-modal, over the right edge of the window. */
+.result-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  width: min(24rem, 100vw);
+  overflow: auto;
+  padding: 0.75rem 1rem 1rem;
+  background: var(--surface);
+  border-left: 1px solid var(--border-strong);
+  font-size: 0.95rem;
+}
+.result-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.result-drawer-head h3 {
+  margin: 0;
+}
+.result-drawer-head button {
+  padding: 0.25rem 0.75rem;
+}
+.result-list {
+  display: grid;
+  grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr);
+  gap: 0.6rem 1rem;
+  margin: 0.75rem 0;
+}
+.result-list dt {
+  color: var(--muted);
+}
+.result-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.result-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.result-reason {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.result-items {
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+.result-items li {
+  display: list-item;
+}
+/* A dimension that is not fully good: a bar and the word for it, never colour alone. */
+.result-list dd.result-caution {
+  border-left: 3px solid var(--warning);
+  padding-left: 0.5rem;
+}
+.result-list dd.result-caution .result-reason {
+  color: var(--fg);
+}
+@media (max-width: 30rem) {
+  .result-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
+  }
+  .result-list dd {
+    margin-bottom: 0.5rem;
+  }
+}
+.result-items .name {
+  white-space: pre-wrap;
+}
