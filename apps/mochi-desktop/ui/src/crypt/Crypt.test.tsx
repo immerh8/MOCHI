@@ -7,10 +7,9 @@ import { afterEach, expect, test } from "vitest";
 import { Browser } from "../browser/Browser";
 import { Checker } from "../check/Checker";
 import type { ArchiveSummary } from "../ipc/browse";
-import type { EnvelopeView, SearchResultView } from "../ipc/crypt";
+import type { EnvelopeView } from "../ipc/crypt";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import { Rekey } from "./Rekey";
-import { Search } from "../search/Search";
 import { Writer } from "../write/Writer";
 
 type Internals = { runCallback: (id: number, data: unknown) => void };
@@ -182,7 +181,7 @@ test("an empty passphrase is refused on the page and never sent", async () => {
 // ---- create: encryption and recovery record ---------------------------------------------------
 
 function renderWriter() {
-  return render(<Writer archive={null} viewingHead={false} selected={null} onCommitted={() => undefined} />);
+  return render(<Writer archive={null} viewingHead={false} selected={[]} onCommitted={() => undefined} />);
 }
 
 test("choosing encryption shows the loss, deduplication, and visibility warnings in plain text", async () => {
@@ -426,113 +425,6 @@ test("a refused rekey shows its code and says nothing was changed", async () => 
   const status = await screen.findByTestId("rekey-status");
   expect(status).toHaveTextContent("Failed (INVALID_ARGUMENT)");
   expect(status).toHaveTextContent("Nothing was changed");
-});
-
-// ---- search --------------------------------------------------------------------------------------
-
-const COMPLETE: SearchResultView = {
-  scope: { scope: "all" },
-  hits: [
-    { seq: 0, path: { text: '<img src=x onerror="alert(1)">.txt', verbatim: true }, kind: "file", size: "1536" },
-    { seq: 1, path: { text: "bad\\xffname (escaped)", verbatim: false }, kind: "file", size: "1" },
-  ],
-  total_hits: 2,
-  coverage: {
-    complete: true,
-    requested: [{ from: 0, to: 1 }],
-    searched: [{ from: 0, to: 1 }],
-    requested_count: 2,
-    searched_count: 2,
-    unavailable: [],
-    opened_separately: [],
-    entries_examined: 6,
-    indexed_seq: 1,
-    catalog_from_manifest: false,
-    content_not_searched: true,
-  },
-};
-
-async function runSearch(result: SearchResultView, extra: Partial<JobOutcome> = {}) {
-  const user = userEvent.setup();
-  const b = backend();
-  const view = render(<Search archive={summary(false)} />);
-  await user.type(screen.getByTestId("search-query"), "img");
-  await user.selectOptions(screen.getByTestId("search-scope"), "all");
-  await user.click(screen.getByTestId("search-go"));
-  await screen.findByTestId("search-running");
-  b.finish({ status: "completed", summary: "s", search: result, ...extra } as JobOutcome);
-  await screen.findByTestId("search-result");
-  return { b, view };
-}
-
-test("a search sends its query and scope, and shows complete coverage with the not-searched statement", async () => {
-  const { b } = await runSearch(COMPLETE);
-  expect(b.request()).toEqual({
-    kind: "search_archive",
-    handle: 3,
-    query: "img",
-    ignore_case: true,
-    scope: { scope: "all" },
-    entry_kind: null,
-  });
-  const cov = screen.getByTestId("search-coverage");
-  expect(cov).toHaveAttribute("data-complete", "true");
-  expect(cov).toHaveTextContent("Searched 2 of 2 requested snapshots (commits 0–1)");
-  expect(cov).toHaveTextContent("File contents were not searched");
-  expect(screen.getByTestId("search-count")).toHaveTextContent("2 matches");
-});
-
-test("hit paths render as inert text, however hostile", async () => {
-  const { view } = await runSearch(COMPLETE);
-  const hits = screen.getAllByTestId("search-hit");
-  expect(hits[0]).toHaveTextContent('<img src=x onerror="alert(1)">.txt');
-  expect(view.container.querySelector("img")).toBeNull();
-  expect(hits[1]).toHaveTextContent("bad\\xffname (escaped)");
-});
-
-test("partial coverage is flagged, lists the snapshot not searched, and has no success styling", async () => {
-  const partial: SearchResultView = {
-    ...COMPLETE,
-    hits: [],
-    total_hits: 0,
-    coverage: {
-      ...COMPLETE.coverage,
-      complete: false,
-      searched: [{ from: 0, to: 0 }],
-      searched_count: 1,
-      unavailable: [{ seq: 1, code: "CATALOG_INVALID", message: { text: "<b>damaged</b>", verbatim: true } }],
-    },
-  };
-  const { view } = await runSearch(partial);
-  const cov = screen.getByTestId("search-coverage");
-  expect(cov).toHaveAttribute("data-complete", "false");
-  expect(cov).toHaveTextContent("Coverage PARTIAL");
-  expect(cov).toHaveTextContent("finding nothing is not proof");
-  expect(cov).toHaveTextContent("Not searched: commit 1 (CATALOG_INVALID): <b>damaged</b>");
-  expect(cov.className).toContain("partial");
-  expect(cov.className).not.toMatch(/pass|success|ok/);
-  expect(cov).not.toHaveTextContent("Coverage is complete");
-  expect(screen.getByTestId("search-count")).toHaveTextContent("0 matches");
-  expect(view.container.querySelector("b")).toBeNull();
-});
-
-test("a search that cannot run says why and shows no result", async () => {
-  const user = userEvent.setup();
-  const b = backend();
-  render(<Search archive={summary(false)} />);
-  await user.click(screen.getByTestId("search-go"));
-  await screen.findByTestId("search-running");
-  b.finish({ status: "failed", code: "RETENTION_UNRESOLVED", message: "cannot rebuild" });
-  const failed = await screen.findByTestId("search-failed");
-  expect(failed).toHaveTextContent("RETENTION_UNRESOLVED");
-  expect(failed).toHaveTextContent("Search every snapshot instead");
-  expect(screen.queryByTestId("search-result")).toBeNull();
-});
-
-test("search needs an open archive", () => {
-  backend();
-  render(<Search archive={null} />);
-  expect(screen.getByTestId("search-go")).toBeDisabled();
 });
 
 // ---- test and repair of an encrypted archive ------------------------------------------------------

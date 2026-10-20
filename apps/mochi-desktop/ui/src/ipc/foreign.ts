@@ -9,7 +9,9 @@ import type { ForeignArchiveSummary } from "./generated/ForeignArchiveSummary";
 import type { ForeignChildrenPage } from "./generated/ForeignChildrenPage";
 import type { ForeignDimensionsView } from "./generated/ForeignDimensionsView";
 import type { ForeignExtractPlan } from "./generated/ForeignExtractPlan";
+import type { ForeignHit } from "./generated/ForeignHit";
 import type { ForeignRow } from "./generated/ForeignRow";
+import type { ForeignSearchResult } from "./generated/ForeignSearchResult";
 import type { ForeignTestReport } from "./generated/ForeignTestReport";
 
 export type {
@@ -18,7 +20,9 @@ export type {
   ForeignChildrenPage,
   ForeignDimensionsView,
   ForeignExtractPlan,
+  ForeignHit,
   ForeignRow,
+  ForeignSearchResult,
   ForeignTestReport,
 };
 
@@ -54,4 +58,9 @@ export function planExtractForeign(
   pick: boolean,
 ): Promise<ForeignExtractPlan | null> {
   return invoke<ForeignExtractPlan | null>("plan_extract_foreign", { handle, keys, pick });
+}
+
+/** Names in the open archive that contain `query` (names only, never contents). */
+export function foreignSearch(handle: number, query: string, ignoreCase: boolean): Promise<ForeignSearchResult> {
+  return invoke<ForeignSearchResult>("foreign_search", { handle, query, ignoreCase });
 }

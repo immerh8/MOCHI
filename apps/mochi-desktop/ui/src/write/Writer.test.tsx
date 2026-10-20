@@ -149,7 +149,7 @@ afterEach(() => clearMocks());
 function renderWriter(props: Partial<WriterProps> = {}) {
   const onCommitted = props.onCommitted ?? (() => undefined);
   return render(
-    <Writer archive={null} viewingHead selected={null} {...props} onCommitted={onCommitted} />,
+    <Writer archive={null} viewingHead selected={[]} {...props} onCommitted={onCommitted} />,
   );
 }
 
@@ -427,7 +427,7 @@ test("a removal says in one line that earlier versions keep the content, and the
   const user = userEvent.setup();
   const b = backend();
   const archive = summary(3, 2);
-  renderWriter({ archive, selected: { key: "6162", name: { text: "x", verbatim: true } } });
+  renderWriter({ archive, selected: [{ key: "6162", name: { text: "x", verbatim: true } }] });
   await user.click(screen.getByTestId("remove-entry"));
   await user.click(screen.getByTestId("delete-confirm"));
   await screen.findByTestId("write-running");
@@ -496,7 +496,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
 
   // With an archive open, a drop is an add to it.
   const open = summary(3, 2);
-  rerender(<Writer archive={open} viewingHead selected={null} onCommitted={() => undefined} />);
+  rerender(<Writer archive={open} viewingHead selected={[]} onCommitted={() => undefined} />);
   // The panel already open stays what it is; a closed one picks add.
   const user = userEvent.setup();
   await user.click(screen.getByTestId("write-close"));
@@ -533,7 +533,7 @@ test("remove: asks first, states that history keeps the content, and Keep starts
   const user = userEvent.setup();
   const b = backend();
   const archive = summary(3, 2);
-  renderWriter({ archive, selected: { key: "6162", name: { text: HOSTILE, verbatim: true } } });
+  renderWriter({ archive, selected: [{ key: "6162", name: { text: HOSTILE, verbatim: true } }] });
   await user.click(screen.getByTestId("remove-entry"));
   const panel = screen.getByTestId("write-panel");
   expect(panel).toHaveTextContent(`Remove ${HOSTILE} from the current version?`);
@@ -558,7 +558,7 @@ test("only the latest version can be changed", () => {
   renderWriter({
     archive: summary(3, 2),
     viewingHead: false,
-    selected: { key: "61", name: { text: "a", verbatim: true } },
+    selected: [{ key: "61", name: { text: "a", verbatim: true } }],
   });
   expect(screen.getByTestId("remove-entry")).toBeDisabled();
   expect(screen.getByTestId("remove-entry")).toHaveAttribute("title", "Only the latest version can be changed");

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { useJobFocus } from "./a11y/focus";
+import { Hint } from "./a11y/Hint";
 import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
@@ -44,52 +45,6 @@ export function outcomeText(outcome: JobOutcome): string {
     case "aborted":
       return t("selfTest.aborted", { message: outcome.message });
   }
-}
-
-/**
- * The sections inside "Advanced" in page order: their heading ids and names.
- * The main path (start, create, extract, browse) is above it and needs no jump list.
- */
-const SECTIONS: { id: string; name: () => string }[] = [
-  { id: "search-heading", name: () => t("app.sectionSearch") },
-  { id: "rekey-heading", name: () => t("app.sectionPassphrases") },
-  { id: "check-heading", name: () => t("app.sectionCheck") },
-  { id: "foreign-heading", name: () => t("app.sectionForeign") },
-  { id: "self-test-heading", name: () => t("app.sectionSelfTest") },
-  { id: "settings-heading", name: () => t("app.sectionSettings") },
-];
-
-/**
- * One tab stop per section so that a keyboard user can reach the part of this
- * long page they want without tabbing through everything above it. Each moves
- * focus to the section's heading (a programmatic focus target), which also
- * tells a screen reader where it landed. They are buttons, not anchors: the
- * window has no `href` at all (the browse E2E spec asserts it), so a name that
- * came from an archive can never end up in one.
- */
-function SectionNav() {
-  return (
-    <nav aria-label={t("app.sections")} className="sections">
-      <ul>
-        {SECTIONS.map((s) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className="link"
-              data-target={s.id}
-              onClick={() => {
-                const heading = document.getElementById(s.id);
-                heading?.focus();
-                heading?.scrollIntoView?.({ block: "start" });
-              }}
-            >
-              {s.name()}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
 }
 
 function SelfTest() {
@@ -154,7 +109,7 @@ function SelfTest() {
       <h2 id="self-test-heading" tabIndex={-1}>
         {t("selfTest.heading")}
       </h2>
-      <p>{t("selfTest.intro")}</p>
+      <Hint text={t("selfTest.intro")} />
       <div className="actions">
         <button type="button" data-testid="start" onClick={start} disabled={busy}>
           {t("selfTest.start")}
@@ -199,17 +154,16 @@ export function App() {
   return (
     <main>
       <Browser
-        toolsNav={<SectionNav />}
         help={<Help />}
-        tools={
-          <>
-            <ForeignBrowser />
-            <SelfTest />
+        foreign={<ForeignBrowser />}
+        tools={{
+          selfTest: <SelfTest />,
+          settings: (
             <CrashReports>
               <Updates />
             </CrashReports>
-          </>
-        }
+          ),
+        }}
       />
     </main>
   );

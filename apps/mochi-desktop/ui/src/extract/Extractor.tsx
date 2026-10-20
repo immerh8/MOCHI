@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useJobFocus } from "../a11y/focus";
+import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { ExtractIcon } from "../icons";
+import { CloseIcon, ExtractIcon, RefreshIcon } from "../icons";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { t, tc } from "../i18n";
 import { logRecord } from "../result/details";
@@ -24,7 +25,7 @@ import {
   progressText,
 } from "./messages";
 
-/** The entry the list has selected: "Extract selected" extracts it. */
+/** An entry the list has selected: Extract extracts the selection. */
 export type SelectedEntry = { key: string; name: NameText };
 
 export interface ExtractorProps {
@@ -32,7 +33,8 @@ export interface ExtractorProps {
   archive: ArchiveSummary | null;
   /** The snapshot on screen: the one extracted from. */
   seq: number | null;
-  selected: SelectedEntry | null;
+  /** What the list has selected; with nothing selected, Extract takes everything. */
+  selected: readonly SelectedEntry[];
   /**
    * The shell asked to extract this archive (D6): when `token` changes, show
    * the plan for the whole snapshot into the folder Rust already chose. Nothing
@@ -44,7 +46,7 @@ export interface ExtractorProps {
 /** Where the folder comes from: made next to the archive, picked, or the one already chosen. */
 type FolderMode = "default" | "pick" | "again";
 
-type Scope = { kind: "all" } | { kind: "selected"; entry: SelectedEntry };
+type Scope = { kind: "all" } | { kind: "selected"; entries: readonly SelectedEntry[] };
 
 type JobView =
   | { state: "idle" }
@@ -99,7 +101,7 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     setJob((j) => (j.state === "done" ? { state: "idle" } : j));
   }, [identity]);
 
-  const keysOf = (s: Scope): string[] => (s.kind === "all" ? [] : [s.entry.key]);
+  const keysOf = (s: Scope): string[] => (s.kind === "all" ? [] : s.entries.map((e) => e.key));
 
   /**
    * Plan into a new folder next to the archive (the default), after the
@@ -240,28 +242,19 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           icon={<ExtractIcon />}
           label={t("extract.toolbar")}
           testId="extract-all"
-          onClick={() => planFor({ kind: "all" }, "default")}
+          onClick={() =>
+            planFor(selected.length > 0 ? { kind: "selected", entries: [...selected] } : { kind: "all" }, "default")
+          }
           disabled={busy || archive === null || seq === null}
-          title={archive ? t("extract.allTip") : t("extract.openFirst")}
+          title={
+            !archive
+              ? t("extract.openFirst")
+              : selected.length > 0
+                ? t("extract.selectedTip", { n: selected.length.toLocaleString("en-US") })
+                : t("extract.allTip")
+          }
         />
       </ToolSlot>
-      <ToolSlot name="primary">
-        <button
-          type="button"
-          className={selected === null ? undefined : "primary"}
-          data-testid="extract-selected"
-          onClick={() => selected && planFor({ kind: "selected", entry: selected }, "default")}
-          disabled={busy || archive === null || seq === null || selected === null}
-          title={!archive ? t("extract.openFirst") : selected ? undefined : t("extract.selectFirst")}
-        >
-          {t("extract.selected")}
-        </button>
-      </ToolSlot>
-      {error && (
-        <p role="alert" className="error" data-testid="extract-error">
-          {error}
-        </p>
-      )}
 
       {scope !== null && plan !== null && (
         <Panel
@@ -269,37 +262,27 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           heading={t("extract.panelHeading")}
           testId="extract-panel"
           fallbackId="extract-heading"
+          onClose={busy ? undefined : close}
         >
           <dl>
             <dt>{t("extract.folder")}</dt>
-            <dd data-testid="extract-destination">{plan.destination}</dd>
+            <dd data-testid="extract-destination" title={plan.destination}>
+              {plan.destination}
+            </dd>
             <dt>{t("extract.what")}</dt>
             <dd data-testid="extract-scope">
               {scope.kind === "all" ? (
                 t("extract.wholeCommit", { seq: seq ?? "" })
+              ) : scope.entries.length === 1 && scope.entries[0] ? (
+                <Name name={scope.entries[0].name} />
               ) : (
-                <>
-                  <Name name={scope.entry.name} />
-                  {t("extract.entryFromCommit", { seq: seq ?? "" })}
-                </>
+                tc(scope.entries.length, "common.itemOne", "common.itemMany")
               )}
               {t("extract.entriesCount", {
                 count: tc(plan.entries, "count.entryOne", "count.entryMany"),
               })}
             </dd>
           </dl>
-          {scope.kind === "selected" && (
-            <p className="note">{t("extract.parentsNote")}</p>
-          )}
-          {madeFolder && (
-            <p className="note" data-testid="extract-new-folder-note">
-              {t("extract.newFolderNote")}
-            </p>
-          )}
-          <p className="note">{FOLDER_NOTE}</p>
-          {plan.case_insensitive && (
-            <p className="note">{t("extract.caseInsensitive")}</p>
-          )}
           {hasConflicts ? (
             <div data-testid="extract-conflicts">
               <p role="note" className="warning">
@@ -319,21 +302,31 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
                   {t("common.andMore", { n: (plan.conflicts_total - plan.conflicts.length).toLocaleString("en-US") })}
                 </p>
               )}
-              <p className="note" data-testid="extract-conflict-note">
-                {CONFLICT_NOTE}
-              </p>
-              <p className="note" data-testid="extract-not-offered">
-                {NOT_OFFERED_NOTE}
-              </p>
+              <Hint testId="extract-conflict-note" text={[CONFLICT_NOTE, NOT_OFFERED_NOTE]} />
             </div>
           ) : (
-            <p className="note" data-testid="extract-no-conflicts">
+            <span className="sr-only" data-testid="extract-no-conflicts">
               {t("extract.noConflicts")}
+            </span>
+          )}
+          {error && (
+            <p role="alert" className="error" data-testid="extract-error">
+              {error}
             </p>
           )}
-          <div className="actions">
+          <div className="actions dialog-actions">
+            <Hint
+              testId="extract-notes"
+              text={[
+                ...(scope.kind === "selected" ? [t("extract.parentsNote")] : []),
+                ...(madeFolder ? [t("extract.newFolderNote")] : []),
+                FOLDER_NOTE,
+                ...(plan.case_insensitive ? [t("extract.caseInsensitive")] : []),
+              ]}
+            />
             <button
               type="button"
+              className="primary"
               data-testid="extract-confirm"
               onClick={() => start(hasConflicts ? "skip_conflicts" : "stop")}
               disabled={busy}
@@ -350,19 +343,28 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
             </button>
             <button
               type="button"
+              className="icon-button"
               data-testid="extract-recheck"
+              aria-label={t("extract.recheck")}
+              title={t("extract.recheck")}
               onClick={() => planFor(scope, "again")}
               disabled={busy}
             >
-              {t("extract.recheck")}
+              <RefreshIcon />
             </button>
             <button type="button" data-testid="extract-close" onClick={close} disabled={busy}>
-              {t("common.close")}
+              {t("common.cancel")}
             </button>
           </div>
         </Panel>
       )}
 
+      <ToolSlot name="status" owner="any">
+      {error && plan === null && (
+        <p role="alert" className="error status-line" data-testid="extract-error">
+          {error}
+        </p>
+      )}
       {busy && (
         <div className="progress" data-testid="extract-running">
           {job.state === "running" && (
@@ -381,11 +383,14 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
           {job.state === "starting" && <span>{t("common.starting")}</span>}
           <button
             type="button"
+            className="icon-button"
             data-testid="extract-cancel"
+            aria-label={t("common.cancel")}
+            title={t("common.cancel")}
             onClick={cancel}
             disabled={job.state !== "running" || job.cancelRequested}
           >
-            {t("common.cancel")}
+            <CloseIcon />
           </button>
         </div>
       )}
@@ -413,10 +418,11 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         fallbackId="extract-heading"
       />
       {folderError && (
-        <p role="alert" className="error" data-testid="extract-folder-error">
+        <p role="alert" className="error status-line" data-testid="extract-folder-error">
           {folderError}
         </p>
       )}
+      </ToolSlot>
     </section>
   );
 }

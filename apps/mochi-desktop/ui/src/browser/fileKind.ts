@@ -10,6 +10,10 @@ import { t } from "../i18n";
 
 const GROUPS: [FileIconKind, string[]][] = [
   ["image", ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "svg", "ico", "heic", "raw"]],
+  ["audio", ["mp3", "wav", "flac", "ogg", "oga", "opus", "m4a", "aac", "wma", "aif", "aiff", "alac", "ape", "mid", "midi", "amr"]],
+  ["video", ["mp4", "m4v", "mkv", "mov", "avi", "wmv", "webm", "flv", "mpg", "mpeg", "3gp"]],
+  ["archive", ["zip", "7z", "rar", "tar", "gz", "tgz", "zst", "tzst", "xz", "bz2", "mochi", "iso", "cab"]],
+  ["code", ["rs", "ts", "tsx", "js", "jsx", "py", "c", "h", "cpp", "hpp", "cs", "go", "java", "kt", "rb", "php", "sh", "ps1", "bat", "html", "css", "sql", "lua", "swift"]],
   ["sheet", ["csv", "tsv", "xls", "xlsx", "xlsm", "ods"]],
   ["pdf", ["pdf"]],
   ["text", ["txt", "md", "rtf", "log", "doc", "docx", "odt", "json", "xml", "yaml", "yml", "toml", "ini"]],

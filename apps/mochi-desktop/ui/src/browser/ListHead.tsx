@@ -13,13 +13,14 @@ import { Name } from "./Name";
  * listing arrives folders first, then files, each in name order, which is what
  * the caret shows; nothing here sorts.
  */
-export function ListHead() {
+export function ListHead({ folder = false }: { folder?: boolean }) {
   return (
-    <div className="table-head" aria-hidden="true">
+    <div className={folder ? "table-head with-folder" : "table-head"} aria-hidden="true">
       <span className="col-name">
         {t("browser.colName")}
-        <CaretUpIcon />
+        {!folder && <CaretUpIcon />}
       </span>
+      {folder && <span className="col-folder">{t("browser.colFolder")}</span>}
       <span className="col-size">{t("browser.colSize")}</span>
       <span className="col-type">{t("browser.colType")}</span>
     </div>
@@ -37,12 +38,15 @@ export function EntryCells({
   name,
   kindLabel,
   size,
+  folder,
   after,
 }: {
   kind: "directory" | "file" | "link" | "special";
   name: NameText;
   kindLabel: string;
   size: string;
+  /** The folder a search hit is in (escaped text), for the results' Folder column. */
+  folder?: string;
   after?: ReactNode;
 }) {
   return (
@@ -54,6 +58,11 @@ export function EntryCells({
         <Name name={name} />
         {after}
       </span>
+      {folder !== undefined && (
+        <span className="folder" title={folder}>
+          {folder === "" ? "/" : folder}
+        </span>
+      )}
       <span className="size">{size}</span>
       <span className="type">{typeLabelOf(kind, name.text)}</span>
     </>

@@ -133,12 +133,17 @@ describe("extract", () => {
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
     await expect($('[data-testid="extract-destination"]')).toHaveText(allDir);
     expect(existsSync(allDir)).toBe(true);
-    await expect($('[data-testid="extract-new-folder-note"]')).toBeExisting();
     await expect($('[data-testid="extract-scope"]')).toHaveText(
       expect.stringContaining("Everything in version 3"),
     );
-    await expect($('[data-testid="extract-panel"]')).toHaveText(
+    // The notes are the "i" tooltip's: read the text, not what is drawn.
+    await expect($('[data-testid="extract-notes"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("Extract into a folder only you can modify."),
+    );
+    await expect($('[data-testid="extract-notes"]')).toHaveElementProperty(
+      "textContent",
+      expect.stringContaining("A new folder was made"),
     );
     // Nothing is written until the user confirms.
     expect(readdirSync(allDir)).toEqual([]);
@@ -196,10 +201,11 @@ describe("extract", () => {
     await selectEntry("docs");
     // The next free name next to the archive: nothing already there is reused.
     expect(existsSync(selectedDir)).toBe(false);
-    await press("extract-selected");
+    // With a selection, the toolbar's Extract takes the selection.
+    await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
     await expect($('[data-testid="extract-destination"]')).toHaveText(selectedDir);
-    await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs from version 3"));
+    await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs ("));
     await press("extract-confirm");
     await waitForState("completed");
     expect(readdirSync(selectedDir)).toEqual(["docs"]);

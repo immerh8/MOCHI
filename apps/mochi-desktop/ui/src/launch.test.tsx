@@ -152,7 +152,7 @@ test("a launch that failed is shown as text, hostile markup inert", async () => 
 test("a problem reported while a foreign archive is open is still visible", async () => {
   const b = backend();
   // As in the app: the foreign browser is one of the window's tools, so its archive takes the stage.
-  render(<Browser tools={<ForeignBrowser />} />);
+  render(<Browser foreign={<ForeignBrowser />} />);
   await screen.findByTestId("start-screen");
   // An extract verb on a ZIP: Rust opens it for browsing, then says why nothing was extracted.
   b.launch({ event: "foreign_opened", archive: foreignSummary(11, "verb.zip") });

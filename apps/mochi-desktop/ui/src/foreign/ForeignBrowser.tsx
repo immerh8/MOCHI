@@ -1,41 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useJobFocus } from "../a11y/focus";
-import { Live } from "../a11y/Live";
+import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
 import { EntryCells, ListHead } from "../browser/ListHead";
-import { StatusBar } from "../browser/StatusBar";
-import { BackIcon, CheckIcon, ExtractIcon } from "../icons";
+import { BackIcon, CheckIcon, CloseIcon, ExtractIcon, KeyIcon } from "../icons";
 import { ToolButton, ToolSlot, useShell } from "../shell/Shell";
 import { t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
+import { dragOutForeign } from "../ipc/dragout";
 import {
   closeForeignArchive,
   foreignChildren,
+  foreignSearch,
   openForeignArchive,
   planExtractForeign,
 } from "../ipc/foreign";
-import type { ForeignArchiveSummary, ForeignExtractPlan, ForeignRow } from "../ipc/foreign";
+import type { ForeignArchiveSummary, ForeignExtractPlan, ForeignHit, ForeignRow } from "../ipc/foreign";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
 import { subscribeLaunches } from "../ipc/launch";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import type { NameText } from "../ipc/browse";
-import {
-  describeOutcome,
-  dimensionsLine,
-  EXTRACT_NOTE,
-  FOREIGN_NOTE,
-  needsPassword,
-  progressText,
-  TEST_NOTE,
-  WEAK_NOTE,
-} from "./messages";
+import { useDragOut } from "../list/dragOut";
+import { ancestorsOf } from "../list/keys";
+import { useSelection } from "../list/selection";
+import type { Selection } from "../list/selection";
+import { listKeys, rowHandlers } from "../list/rows";
+import { ResultBar } from "../result/Result";
+import { SearchResults } from "../search/SearchResults";
+import type { HitRow, SearchView } from "../search/SearchResults";
+import { foundText } from "../search/useArchiveSearch";
+import { describeOutcome, EXTRACT_NOTE, needsPassword, progressText, TEST_NOTE, WEAK_NOTE } from "./messages";
 
 /** Row height of the list, in pixels (the same as the MOCHI browser's). */
-const ROW_HEIGHT = 30;
+const ROW_HEIGHT = 26;
 
 type Crumb = { key: string; name: NameText };
 
@@ -54,7 +55,7 @@ type JobView =
     }
   | { state: "done"; outcome: JobOutcome };
 
-function kindLabel(row: ForeignRow): string {
+function kindLabel(row: Pick<ForeignRow, "kind">): string {
   switch (row.kind) {
     case "directory":
       return t("foreign.kindFolder");
@@ -67,12 +68,64 @@ function kindLabel(row: ForeignRow): string {
   }
 }
 
+function sizeText(row: ForeignRow): string {
+  if (row.kind === "directory") {
+    return t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") });
+  }
+  return row.size === null ? "" : shortSize(row.size);
+}
+
+/** A foreign search hit, as the results list shows it. */
+type ForeignHitRow = HitRow & { row: ForeignRow };
+
+function hitRow(h: ForeignHit): ForeignHitRow {
+  const at = h.path.text.lastIndexOf("/");
+  return {
+    key: h.row.key,
+    name: h.row.name,
+    path: h.path,
+    folder: at < 0 ? "" : h.path.text.slice(0, at),
+    kind: h.row.kind,
+    size: sizeText(h.row),
+    row: h.row,
+  };
+}
+
+/** Names in the open foreign archive that contain `query`, kept in Rust. */
+function useForeignSearch(handle: number | null, query: string): SearchView<ForeignHitRow> {
+  const [found, setFound] = useState<{ id: string; view: SearchView<ForeignHitRow> } | null>(null);
+  const id = `${handle ?? ""}:${query}`;
+  useEffect(() => {
+    if (handle === null || query === "") return;
+    let live = true;
+    const done = (view: SearchView<ForeignHitRow>) => {
+      if (live) setFound({ id: `${handle}:${query}`, view });
+    };
+    foreignSearch(handle, query, true).then(
+      (r) =>
+        done({ state: "done", hits: r.hits.map(hitRow), statusText: foundText(r.hits.length, r.total_hits, true) }),
+      (e: unknown) => {
+        const text = errorText(t("search.startFailed"), e);
+        done({ state: "failed", text, statusText: text });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [handle, query]);
+  if (handle === null || query === "") return IDLE;
+  return found?.id === id ? found.view : { state: "running", statusText: t("search.searching") };
+}
+
+const IDLE = { state: "idle", statusText: "" } as const;
+
 /**
- * Plan D8: open a ZIP, 7z, RAR, tar, or tar.gz archive read-only; browse it,
- * read and check its entries, and extract from it. It is labelled as a
- * foreign format throughout and uses none of MOCHI's verification wording or
- * health dimensions. The archive and the folder come from native dialogs shown
- * by Rust; a password is typed here once and kept in Rust.
+ * Plan D8: open a ZIP, 7z, RAR, tar, tar.gz, or tar.zst archive read-only;
+ * browse and search it, read and check its entries, extract from it or drag
+ * entries out. Its format is named in the path bar; nothing here uses MOCHI's
+ * verification wording or health dimensions. The archive and the folder come
+ * from native dialogs shown by Rust; a password is typed here once and kept
+ * in Rust.
  */
 export function ForeignBrowser() {
   const [open, setOpen] = useState<ForeignArchiveSummary | null>(null);
@@ -81,13 +134,11 @@ export function ForeignBrowser() {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [path, setPath] = useState<Crumb[]>([]);
   const [total, setTotal] = useState<{ id: string; n: number } | null>(null);
-  const [selected, setSelected] = useState<ForeignRow | null>(null);
-  const [plan, setPlan] = useState<{ plan: ForeignExtractPlan; keys: string[]; what: NameText | null } | null>(
+  const [plan, setPlan] = useState<{ plan: ForeignExtractPlan; keys: string[]; what: NameText | null; n: number } | null>(
     null,
   );
   const [job, setJob] = useState<JobView>({ state: "idle" });
   const passwordRef = useRef<HTMLInputElement>(null);
-  const sectionRef = useRef<HTMLElement>(null);
 
   const handle = open?.handle ?? null;
   const dir = path.at(-1)?.key ?? null;
@@ -98,13 +149,14 @@ export function ForeignBrowser() {
 
   const listError = useCallback((e: unknown) => setError(errorText(t("foreign.listFailed"), e)), []);
 
-  // The window shows an open archive in its main area, not in the Advanced
-  // area where this section lives: tell it when there is one, and close this
-  // one when a MOCHI archive is shown instead. The toolbar's "Other formats"
-  // asks for the same dialog as the button below.
+  // The window shows an open archive in its main area: tell it when there is
+  // one, and close this one when a MOCHI archive is shown instead. The More
+  // menu's "Other formats" asks for the open dialog.
   const shell = useShell();
   const infoOpen = shell?.infoOpen ?? true;
   const setForeignOpen = shell?.setForeignOpen;
+  const query = shell?.active === "foreign" ? shell.query : "";
+  const clearQuery = shell?.clearQuery;
   const isOpen = open !== null;
   useEffect(() => {
     setForeignOpen?.(isOpen);
@@ -127,16 +179,34 @@ export function ForeignBrowser() {
 
   const loadPage = useCallback(
     (offset: number, limit: number) =>
-      handle === null
-        ? Promise.resolve([])
-        : foreignChildren(handle, dir, offset, limit).then((p) => p.entries),
+      handle === null ? Promise.resolve([]) : foreignChildren(handle, dir, offset, limit).then((p) => p.entries),
     [handle, dir],
   );
 
-  const navigate = (to: Crumb[]) => {
-    setPath(to);
-    setSelected(null);
-  };
+  const searching = open !== null && query !== "";
+  const search = useForeignSearch(searching ? handle : null, query);
+  const hits: ForeignHitRow[] = useMemo(() => (search.state === "done" ? search.hits : []), [search]);
+  const loadHits = useCallback(
+    (offset: number, limit: number) => Promise.resolve(hits.slice(offset, offset + limit)),
+    [hits],
+  );
+  const folderSel = useSelection<ForeignRow>(loadPage, listError);
+  const hitSel = useSelection<ForeignHitRow>(loadHits, listError);
+  const clearFolderSel = folderSel.clear;
+  const clearHitSel = hitSel.clear;
+  useEffect(() => {
+    clearHitSel();
+  }, [search, clearHitSel]);
+  const selectedRows: ForeignRow[] = searching ? hitSel.rows.map((h) => h.row) : [...folderSel.rows];
+  const focused: ForeignRow | null = searching ? (hitSel.focus?.row ?? null) : folderSel.focus;
+
+  const navigate = useCallback(
+    (to: Crumb[]) => {
+      setPath(to);
+      clearFolderSel();
+    },
+    [clearFolderSel],
+  );
 
   /** Show a freshly opened archive, closing the one on screen. */
   const show = async (summary: ForeignArchiveSummary) => {
@@ -149,6 +219,7 @@ export function ForeignBrowser() {
     setOpen(summary);
     setPlan(null);
     setJob({ state: "idle" });
+    clearQuery?.();
     navigate([]);
   };
   const launchedRef = useRef<{ show: typeof show; ask: (wrong: boolean) => void } | null>(null);
@@ -158,7 +229,7 @@ export function ForeignBrowser() {
     shownRef.current = open?.handle ?? null;
   });
   // The shell's "Open with MOCHI" for a ZIP, 7z, RAR, or tar. Rust opened the
-  // file through the same path as the button below, or remembers it for the
+  // file through the same path as the open dialog, or remembers it for the
   // password retry; no path crosses.
   useEffect(
     () =>
@@ -205,6 +276,7 @@ export function ForeignBrowser() {
     setPlan(null);
     setError(null);
     setJob({ state: "idle" });
+    clearQuery?.();
     navigate([]);
   };
 
@@ -261,16 +333,23 @@ export function ForeignBrowser() {
     });
   };
 
-  const planFor = (keys: string[], what: NameText | null, pick: boolean) => {
+  const planFor = (keys: string[], what: NameText | null, n: number, pick: boolean) => {
     if (handle === null) return;
     setError(null);
     setJob({ state: "idle" });
     planExtractForeign(handle, keys, pick).then(
       (p) => {
-        if (p !== null) setPlan({ plan: p, keys, what });
+        if (p !== null) setPlan({ plan: p, keys, what, n });
       },
       (e: unknown) => setError(errorText(t("foreign.folderFailed"), e)),
     );
+  };
+
+  /** Toolbar Extract: the selection if there is one, else everything. */
+  const extractNow = () => {
+    const keys = selectedRows.flatMap((r) => (r.key === null ? [] : [r.key]));
+    const only = selectedRows.length === 1 ? (selectedRows[0]?.name ?? null) : null;
+    planFor(keys, only, keys.length, true);
   };
 
   const cancel = () => {
@@ -280,9 +359,28 @@ export function ForeignBrowser() {
     cancelJob(jobId).catch(() => undefined);
   };
 
+  // Drag entries out onto the desktop or a folder.
+  const dragFrom =
+    <T extends { key: string | null }>(sel: Selection<T>) =>
+    (row: T) => {
+      if (handle === null || row.key === null) return null;
+      const inSel = sel.rows.some((x) => x.key === row.key);
+      const keys = inSel ? sel.rows.flatMap((x) => (x.key === null ? [] : [x.key])) : [row.key];
+      return dragOutForeign(handle, keys).catch((e: unknown) => setError(errorText(t("browser.dragFailed"), e)));
+    };
+  const folderDrag = useDragOut(dragFrom(folderSel));
+  const hitDrag = useDragOut(dragFrom(hitSel));
+
+  const openHit = (hit: ForeignHitRow) => {
+    if (hit.key === null) return;
+    const above = ancestorsOf(hit.key, hit.path);
+    clearQuery?.();
+    navigate(hit.kind === "directory" ? [...above, { key: hit.key, name: hit.name }] : above);
+  };
+
   const described = job.state === "done" ? describeOutcome(job.outcome) : null;
-  const done = job.state === "done" && job.outcome.status === "completed" ? job.outcome : null;
   const hasConflicts = plan !== null && plan.plan.plan.conflicts_total > 0;
+  const selectedCount = selectedRows.length;
 
   const view = open && (
     <>
@@ -292,64 +390,89 @@ export function ForeignBrowser() {
           className="icon-button"
           data-testid="foreign-close"
           aria-label={t("foreign.close")}
-          title={t("browser.back")}
+          title={t("foreign.close")}
           onClick={() => void doClose()}
           disabled={busy || jobBusy}
         >
           <BackIcon />
         </button>
         <div className="path-meta" data-testid="foreign-meta">
-          <strong className="path-title">{open.file_name}</strong>
-          <span className="path-sub">
-            {t("browser.metaSeparator")}
-            {t("foreign.meta", { format: open.format })}
-            {open.opened_with_password ? t("foreign.openedWithPassword") : ""}
+          <strong className="path-title" title={open.file_name}>
+            {open.file_name}
+          </strong>
+          <span className="badge format-badge" title={t("foreign.meta", { format: open.format })}>
+            {open.format}
+            <span className="sr-only">{t("foreign.readOnly")}</span>
           </span>
+          {open.opened_with_password && (
+            <span className="badge" data-testid="foreign-password-badge" title={t("foreign.openedWithPassword")}>
+              <KeyIcon />
+              <span className="sr-only">{t("foreign.openedWithPassword")}</span>
+            </span>
+          )}
+          {!open.complete && (
+            <span
+              role="note"
+              className="badge badge-warn"
+              data-testid="foreign-partial"
+              title={t("foreign.partial", { reason: open.stop_reason?.text ?? t("foreign.partialDefault") })}
+            >
+              {t("foreign.partialBadge")}
+              <span className="sr-only">
+                {t("foreign.partial", { reason: open.stop_reason?.text ?? t("foreign.partialDefault") })}
+              </span>
+            </span>
+          )}
+          {open.weak_encryption && (
+            <span role="note" className="path-warn" data-testid="foreign-weak" title={WEAK_NOTE}>
+              !<span className="sr-only">{WEAK_NOTE}</span>
+            </span>
+          )}
         </div>
         <nav aria-label={t("foreign.currentFolder")} className="crumbs" data-testid="foreign-crumbs">
-          <button type="button" className="link" onClick={() => navigate([])}>
-            {t("browser.archiveRoot")}
+          <button type="button" className="crumb" onClick={() => navigate([])} title={t("browser.archiveRoot")}>
+            <span aria-hidden="true">/</span>
+            <span className="sr-only">{t("browser.archiveRoot")}</span>
           </button>
           {path.map((c, i) => (
-            <span key={c.key}>
-              {t("common.nameSeparator")}
-              <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
+            <span key={c.key} className="crumb-part">
+              {i > 0 && <span aria-hidden="true">/</span>}
+              <button type="button" className="crumb" onClick={() => navigate(path.slice(0, i + 1))}>
                 <Name name={c.name} />
               </button>
             </span>
           ))}
         </nav>
       </div>
-      {open.weak_encryption && (
-        <p role="note" className="warning" data-testid="foreign-weak">
-          {WEAK_NOTE}
-        </p>
-      )}
-      {!open.complete && (
-        <p role="note" className="warning" data-testid="foreign-partial">
-          {t("foreign.partial", { reason: open.stop_reason?.text ?? t("foreign.partialDefault") })}
-        </p>
-      )}
       {plan && (
         <Panel
           label={t("foreign.planGroup")}
           heading={t("foreign.planHeading")}
           testId="foreign-plan"
           fallbackId="foreign-heading"
+          onClose={jobBusy ? undefined : () => setPlan(null)}
         >
           <dl>
             <dt>{t("foreign.folder")}</dt>
-            <dd data-testid="foreign-destination">{plan.plan.plan.destination}</dd>
+            <dd data-testid="foreign-destination" title={plan.plan.plan.destination}>
+              {plan.plan.plan.destination}
+            </dd>
             <dt>{t("foreign.what2")}</dt>
             <dd>
-              {plan.what ? <Name name={plan.what} /> : t("foreign.everything")} (
+              {plan.what ? (
+                <Name name={plan.what} />
+              ) : plan.n > 0 ? (
+                tc(plan.n, "common.itemOne", "common.itemMany")
+              ) : (
+                t("foreign.everything")
+              )}{" "}
+              (
               {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
                 n: plan.plan.plan.entries.toLocaleString("en-US"),
               })}
               )
             </dd>
           </dl>
-          <p className="note">{EXTRACT_NOTE}</p>
           {plan.plan.skipped_kinds > 0 && (
             <p role="note" className="warning" data-testid="foreign-skipped-kinds">
               {t(plan.plan.skipped_kinds === 1 ? "foreign.skippedKindsOne" : "foreign.skippedKindsMany", {
@@ -373,9 +496,11 @@ export function ForeignBrowser() {
               </ul>
             </div>
           )}
-          <div className="actions">
+          <div className="actions dialog-actions">
+            <Hint text={EXTRACT_NOTE} />
             <button
               type="button"
+              className="primary"
               data-testid="foreign-extract-confirm"
               disabled={jobBusy}
               onClick={() =>
@@ -393,7 +518,7 @@ export function ForeignBrowser() {
               type="button"
               data-testid="foreign-change-folder"
               disabled={jobBusy}
-              onClick={() => planFor(plan.keys, plan.what, true)}
+              onClick={() => planFor(plan.keys, plan.what, plan.n, true)}
             >
               {t("foreign.changeFolder")}
             </button>
@@ -404,230 +529,152 @@ export function ForeignBrowser() {
         </Panel>
       )}
 
-      {jobBusy && (
-        <div className="progress" data-testid="foreign-running">
-          {job.state === "running" && (
-            <ProgressMeter
-              completed={job.completed}
-              total={job.total}
-              text={
-                (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-                (job.cancelRequested ? t("common.cancelling") : "")
-              }
-              textTestId="foreign-progress"
-            />
-          )}
-          <button
-            type="button"
-            data-testid="foreign-cancel"
-            onClick={cancel}
-            disabled={job.state !== "running" || job.cancelRequested}
-          >
-            {t("common.cancel")}
-          </button>
-        </div>
-      )}
-
-      <Live data-testid="foreign-status" data-state={job.state === "done" ? job.outcome.status : undefined}>
-        {described && job.state === "done" && (
-          <>
-            <p data-testid="foreign-headline">{described.headline}</p>
-            {done?.foreign_test && (
-              <div data-testid="foreign-test-report">
-                <ul className="staged" aria-label={t("foreign.whatChecked")}>
-                  {done.foreign_test.checks.map((c) => (
-                    <li key={c.what} data-testid="foreign-check-count">
-                      {t("foreign.checkCount", { count: c.count.toLocaleString("en-US"), what: c.what })}
-                    </li>
-                  ))}
-                </ul>
-                <p className="note" data-testid="foreign-stream-check">
-                  {t("foreign.streamCheck", { check: done.foreign_test.stream_check })}
-                </p>
-                <p className="note">{dimensionsLine(done.foreign_test.dimensions)}</p>
-                {done.foreign_test.stop_reason && (
-                  <p className="warning">{t("foreign.stoppedEarly", { reason: done.foreign_test.stop_reason.text })}</p>
-                )}
-                {done.foreign_test.problems.length > 0 && (
-                  <ul className="staged" data-testid="foreign-problems" aria-label={t("foreign.problems")}>
-                    {done.foreign_test.problems.map((p) => (
-                      <li key={`${p.path.text}:${p.what.text}`} data-testid="foreign-problem">
-                        <Name name={p.path} /> — {p.what.text}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-            {done?.extract && done.extract.not_extracted.length > 0 && (
-              <>
-                <p className="warning">{t("foreign.notExtracted")}</p>
-                <ul className="staged" data-testid="foreign-not-extracted" aria-label={t("foreign.notExtractedList")}>
-                  {done.extract.not_extracted.map((e) => (
-                    <li key={`${e.code}:${e.path.text}`} data-testid="foreign-not-extracted-item">
-                      <Name name={e.path} /> <span className="meta">({e.code})</span> {e.reason.text}
-                    </li>
-                  ))}
-                </ul>
-                {done.extract.not_extracted_total > done.extract.not_extracted.length && (
-                  <p className="note">
-                    {t("common.andMore", {
-                      n: (done.extract.not_extracted_total - done.extract.not_extracted.length).toLocaleString("en-US"),
-                    })}
-                  </p>
-                )}
-              </>
-            )}
-            {described.notes.map((l) => (
-              <p key={l} className="note">
-                {l}
-              </p>
-            ))}
-          </>
-        )}
-      </Live>
-
       <div className="workspace">
-        <div className="listing">
+        <div
+          className="listing"
+          onKeyDown={(e) =>
+            listKeys(e, {
+              all: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
+              up: () => {
+                if (!searching && path.length > 0) navigate(path.slice(0, -1));
+              },
+            })
+          }
+        >
           <p id="foreign-entry-hint" className="sr-only">
             {t("help.keys")}
           </p>
-          {count !== null && (
-            <VirtualList
-              key={listingId}
-              total={count}
+          {searching ? (
+            <SearchResults
+              search={search}
               rowHeight={ROW_HEIGHT}
-              loadPage={loadPage}
-              label={t("foreign.folderContents")}
-              head={<ListHead />}
               hintId="foreign-entry-hint"
-              testId="foreign-entries"
-              onError={listError}
-              renderRow={(row: ForeignRow, _index: number, tabIndex: 0 | -1) => (
-                <button
-                  type="button"
-                  className={selected && row.key !== null && row.key === selected.key ? "entry selected" : "entry"}
-                  data-testid="foreign-entry"
-                  data-kind={row.kind}
-                  data-refused={row.note ? "true" : undefined}
-                  aria-pressed={selected !== null && row.key !== null && row.key === selected.key}
-                  tabIndex={tabIndex}
-                  onClick={() => setSelected(row)}
-                  onDoubleClick={() => {
-                    if (row.kind === "directory" && row.key !== null)
-                      navigate([...path, { key: row.key, name: row.name }]);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && row.kind === "directory" && row.key !== null) {
-                      e.preventDefault();
-                      navigate([...path, { key: row.key, name: row.name }]);
-                    }
-                  }}
-                >
-                  <EntryCells
-                    kind={row.kind}
-                    name={row.name}
-                    kindLabel={kindLabel(row)}
-                    size={
-                      row.kind === "directory"
-                        ? t("browser.itemsCount", {
-                            n: (row.child_dirs + row.child_files).toLocaleString("en-US"),
-                          })
-                        : row.size === null
-                          ? ""
-                          : shortSize(row.size)
-                    }
-                    after={
-                      <>
-                        {row.encryption && <span className="meta"> · {row.encryption}</span>}
-                        {row.note && <span className="meta"> · {row.note}</span>}
-                      </>
-                    }
-                  />
-                </button>
-              )}
+              testId="foreign-search-hits"
+              renderRow={(h: ForeignHitRow, index, tabIndex) => {
+                return (
+                  <button
+                    type="button"
+                    className={hitSel.has(h) ? "entry selected" : "entry"}
+                    data-testid="search-hit"
+                    data-kind={h.kind}
+                    aria-pressed={hitSel.has(h)}
+                    tabIndex={tabIndex}
+                    {...rowHandlers(hitSel, h, index, () => openHit(h), hitDrag)}
+                  >
+                    <EntryCells kind={h.kind} name={h.name} kindLabel={kindLabel(h)} size={h.size} folder={h.folder} />
+                  </button>
+                );
+              }}
             />
+          ) : (
+            count !== null && (
+              <VirtualList
+                key={listingId}
+                total={count}
+                rowHeight={ROW_HEIGHT}
+                loadPage={loadPage}
+                label={t("foreign.folderContents")}
+                head={<ListHead />}
+                hintId="foreign-entry-hint"
+                testId="foreign-entries"
+                onError={listError}
+                renderRow={(row: ForeignRow, index: number, tabIndex: 0 | -1) => (
+                  <button
+                    type="button"
+                    className={folderSel.has(row) ? "entry selected" : "entry"}
+                    data-testid="foreign-entry"
+                    data-kind={row.kind}
+                    data-refused={row.note ? "true" : undefined}
+                    aria-pressed={folderSel.has(row)}
+                    tabIndex={tabIndex}
+                    {...rowHandlers(
+                      folderSel,
+                      row,
+                      index,
+                      () => {
+                        if (row.kind === "directory" && row.key !== null)
+                          navigate([...path, { key: row.key, name: row.name }]);
+                      },
+                      folderDrag,
+                    )}
+                  >
+                    <EntryCells
+                      kind={row.kind}
+                      name={row.name}
+                      kindLabel={kindLabel(row)}
+                      size={sizeText(row)}
+                      after={
+                        (row.encryption || row.note) && (
+                          <span className="row-flag" title={[row.encryption, row.note].filter(Boolean).join(" · ")}>
+                            {row.encryption && <span className="meta"> · {row.encryption}</span>}
+                            {row.note && <span className="meta"> · {row.note}</span>}
+                          </span>
+                        )
+                      }
+                    />
+                  </button>
+                )}
+              />
+            )
           )}
         </div>
         <aside className="info" aria-label={t("foreign.info")} hidden={!infoOpen} data-testid="foreign-info">
-          <p className="note" data-testid="foreign-label">
-            {FOREIGN_NOTE}
-          </p>
-          <p className="note" data-testid="foreign-dimensions">
-            {dimensionsLine(open.dimensions)}
-          </p>
-          <p className="note" data-testid="foreign-checks">
-            {t("foreign.checks", { checks: open.checks })}
-          </p>
+          {focused && (
+            <section className="details" aria-labelledby="foreign-details-heading" data-testid="foreign-details">
+              <h3 id="foreign-details-heading">
+                <Name name={focused.name} />
+              </h3>
+              <dl>
+                <dt>{t("foreign.detailKind")}</dt>
+                <dd>{kindLabel(focused)}</dd>
+                {focused.size !== null && (
+                  <>
+                    <dt>{t("foreign.detailSize")}</dt>
+                    <dd>{formatSize(focused.size)}</dd>
+                  </>
+                )}
+                {focused.encryption && (
+                  <>
+                    <dt>{t("foreign.detailEncryption")}</dt>
+                    <dd>{focused.encryption}</dd>
+                  </>
+                )}
+                {focused.note && (
+                  <>
+                    <dt>{t("foreign.detailNote")}</dt>
+                    <dd>{focused.note}</dd>
+                  </>
+                )}
+              </dl>
+            </section>
+          )}
           {open.notes.length > 0 && (
-            <ul className="staged" aria-label={t("foreign.limitNotes")} data-testid="foreign-notes">
+            <ul className="staged warning" aria-label={t("foreign.limitNotes")} data-testid="foreign-notes">
               {open.notes.map((n) => (
                 <li key={n}>{n}</li>
               ))}
             </ul>
           )}
-          {selected && (
-            <section className="details" aria-label={t("foreign.details")} data-testid="foreign-details">
-              <h3>{t("foreign.details")}</h3>
-              <dl>
-                <dt>{t("foreign.detailName")}</dt>
-                <dd>
-                  <Name name={selected.name} />
-                </dd>
-                <dt>{t("foreign.detailKind")}</dt>
-                <dd>{kindLabel(selected)}</dd>
-                {selected.size !== null && (
-                  <>
-                    <dt>{t("foreign.detailSize")}</dt>
-                    <dd>{formatSize(selected.size)}</dd>
-                  </>
-                )}
-                {selected.encryption && (
-                  <>
-                    <dt>{t("foreign.detailEncryption")}</dt>
-                    <dd>{selected.encryption}</dd>
-                  </>
-                )}
-              </dl>
-              <p className="note">{t("foreign.detailsNote")}</p>
-            </section>
-          )}
         </aside>
       </div>
-      <StatusBar
-        testId="foreign-count"
-        text={
-          (count === null
-            ? t("common.loading")
-            : tc(count, "common.itemOne", "common.itemMany")) +
-          (selected ? t("common.statusSeparator") + t("common.selectedCount", { n: 1 }) : "")
-        }
-      >
-          <button
-            type="button"
-            className={selected === null ? undefined : "primary"}
-            data-testid="foreign-extract-selected"
-            disabled={jobBusy || selected === null || selected.key === null}
-            onClick={() => selected?.key && planFor([selected.key], selected.name, true)}
-            title={selected ? undefined : t("foreign.selectFirst")}
-          >
-            {t("foreign.extractSelected")}
-          </button>
-      </StatusBar>
+      <ToolSlot name="count" owner="foreign">
+        <span className="statusbar-text" data-testid="foreign-count">
+          {searching
+            ? search.statusText
+            : (count === null ? t("common.loading") : tc(count, "common.itemOne", "common.itemMany")) +
+              (selectedCount > 0
+                ? t("common.statusSeparator") + t("common.selectedCount", { n: selectedCount })
+                : "")}
+        </span>
+      </ToolSlot>
     </>
   );
 
   return (
-    <section aria-labelledby="foreign-heading" className="foreign" data-testid="foreign" ref={sectionRef}>
-      <h2 id="foreign-heading" tabIndex={-1}>
+    <section aria-labelledby="foreign-heading" className="foreign" data-testid="foreign">
+      <h2 id="foreign-heading" tabIndex={-1} className="sr-only">
         {t("foreign.heading")}
       </h2>
-      <div className="actions">
-        <button key="open" type="button" data-testid="foreign-open" onClick={() => void doOpen(false)} disabled={busy || jobBusy}>
-          {t("foreign.open")}
-        </button>
-      </div>
-      {!open && !error && !ask && <p data-testid="foreign-empty">{t("foreign.empty")}</p>}
       {open && (
         <ToolSlot name="extract" owner="foreign">
           <ToolButton
@@ -635,8 +682,12 @@ export function ForeignBrowser() {
             label={t("extract.toolbar")}
             testId="foreign-extract-all"
             disabled={jobBusy}
-            onClick={() => planFor([], null, true)}
-            title={t("foreign.extractAllTip")}
+            onClick={extractNow}
+            title={
+              selectedCount > 0
+                ? t("extract.selectedTip", { n: selectedCount.toLocaleString("en-US") })
+                : t("foreign.extractAllTip")
+            }
           />
         </ToolSlot>
       )}
@@ -652,19 +703,59 @@ export function ForeignBrowser() {
           />
         </ToolSlot>
       )}
+      <ToolSlot name="status" owner="any">
+        {error && (
+          <p role="alert" className="error status-line" data-testid="foreign-error" title={error}>
+            {error}
+          </p>
+        )}
+        {jobBusy && (
+          <div className="progress" data-testid="foreign-running">
+            {job.state === "running" && (
+              <ProgressMeter
+                completed={job.completed}
+                total={job.total}
+                text={
+                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+                  (job.cancelRequested ? t("common.cancelling") : "")
+                }
+                textTestId="foreign-progress"
+              />
+            )}
+            <button
+              type="button"
+              className="icon-button"
+              data-testid="foreign-cancel"
+              aria-label={t("common.cancel")}
+              title={t("common.cancel")}
+              onClick={cancel}
+              disabled={job.state !== "running" || job.cancelRequested}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        )}
+        <ResultBar
+          prefix="foreign"
+          statusTestId="foreign-status"
+          statusAttrs={{ "data-state": job.state === "done" ? job.outcome.status : undefined }}
+          lines={described ? [described.headline, ...described.notes] : []}
+          headlineTestId="foreign-headline"
+          warn={described?.warn ?? false}
+          details={described?.details ?? null}
+          onDismiss={() => setJob({ state: "idle" })}
+          fallbackId="foreign-heading"
+        />
+      </ToolSlot>
       <ToolSlot name="stage" owner="any">
-        <div className="foreign-stage" data-testid="foreign-stage" hidden={!open && !error && !ask}>
-          {error && (
-            <p role="alert" className="error" data-testid="foreign-error">
-              {error}
-            </p>
-          )}
+        <div className="foreign-stage" data-testid="foreign-stage" hidden={!open && !ask}>
           {ask && (
             <Panel
               label={t("foreign.passwordGroup")}
               heading={t("foreign.passwordGroup")}
               testId="foreign-password"
               fallbackId="foreign-heading"
+              onClose={() => setAsk(null)}
             >
               <form
                 onSubmit={(e) => {
@@ -679,8 +770,8 @@ export function ForeignBrowser() {
                   {t("foreign.password")}{" "}
                   <input ref={passwordRef} type="password" autoComplete="off" data-testid="foreign-password-input" />
                 </label>
-                <div className="actions">
-                  <button type="submit" data-testid="foreign-password-submit" disabled={busy}>
+                <div className="actions dialog-actions">
+                  <button type="submit" className="primary" data-testid="foreign-password-submit" disabled={busy}>
                     {t("foreign.passwordSubmit")}
                   </button>
                   <button type="button" data-testid="foreign-password-cancel" onClick={() => setAsk(null)}>

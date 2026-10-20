@@ -55,16 +55,34 @@ export const closeVersions = () => collapse("toggle-versions");
 /** The More menu; choosing an item closes it. */
 export const openMore = () => expand("toolbar-more");
 
-/** The Help panel (keyboard keys, what an archive is not, the user guide). */
-export const openHelp = () => expand("toolbar-help");
-export const closeHelp = () => collapse("toolbar-help");
+/**
+ * The tool window (Help, Passphrases, Test and repair, Settings, Self-test): one tool at a time
+ * over the list. It covers the window while it is open, so close it before clicking elsewhere.
+ */
+export async function openTool(menuTestId) {
+  await openMore();
+  await $(`[data-testid="${menuTestId}"]`).click();
+  await $('[data-testid="tool-sheet"]').waitForDisplayed({ timeoutMsg: `${menuTestId} did not open its tool` });
+}
+export async function closeTool() {
+  const sheet = await $('[data-testid="tool-sheet"]');
+  if (!(await sheet.isDisplayed())) return;
+  await $('[data-testid="tool-sheet-close"]').click();
+  await sheet.waitForDisplayed({ reverse: true, timeoutMsg: "the tool window did not close" });
+}
 
-/** Start a new archive: the start screen's button, or More > New archive when an archive is open. */
+/** The Help panel (keyboard keys, what an archive is not, the user guide). */
+export async function openHelp() {
+  await expand("toolbar-help");
+  await $('[data-testid="tool-sheet"]').waitForDisplayed();
+}
+export const closeHelp = closeTool;
+
+/** Start a new archive: the start screen's button, or the toolbar's New archive. */
 export async function clickNewArchive() {
   if (await $('[data-testid="start-screen"]').isExisting()) {
     await $('[data-testid="start-create"]').click();
     return;
   }
-  await openMore();
   await $('[data-testid="new-archive"]').click();
 }

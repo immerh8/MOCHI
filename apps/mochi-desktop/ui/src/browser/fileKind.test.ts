@@ -11,6 +11,11 @@ test("a known extension picks its icon, a folder is a folder, a link is a link",
   expect(iconKindOf("file", "species.csv")).toBe("sheet");
   expect(iconKindOf("file", "notes.pdf")).toBe("pdf");
   expect(iconKindOf("file", "readme.txt")).toBe("text");
+  expect(iconKindOf("file", "song.MP3")).toBe("audio");
+  expect(iconKindOf("file", "track.flac")).toBe("audio");
+  expect(iconKindOf("file", "clip.mkv")).toBe("video");
+  expect(iconKindOf("file", "photos.zip")).toBe("archive");
+  expect(iconKindOf("file", "main.rs")).toBe("code");
   expect(iconKindOf("file", "Makefile")).toBe("generic");
   expect(iconKindOf("link", "x.png")).toBe("link");
   expect(iconKindOf("special", "x.png")).toBe("generic");
@@ -42,7 +47,19 @@ test("only a short ASCII extension reaches the Type column, in capitals", () => 
 });
 
 test("every icon kind renders one decorative svg with no text from outside", () => {
-  for (const kind of ["folder", "image", "sheet", "pdf", "text", "generic", "link"] as const) {
+  for (const kind of [
+    "folder",
+    "image",
+    "audio",
+    "video",
+    "archive",
+    "code",
+    "sheet",
+    "pdf",
+    "text",
+    "generic",
+    "link",
+  ] as const) {
     const { container, unmount } = render(createElement(FileTypeIcon, { kind }));
     const svgs = container.querySelectorAll("svg");
     expect(svgs).toHaveLength(1);

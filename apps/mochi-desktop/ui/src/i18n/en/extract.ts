@@ -2,11 +2,10 @@
 // nothing here gets success styling.
 export const extract = {
   "extract.heading": "Extract",
+  "extract.selectedTip": "Extract the {n} selected",
   "extract.toolbar": "Extract",
   "extract.allTip": "Extract everything in this version",
-  "extract.selected": "Extract selected",
   "extract.openFirst": "Open an archive first",
-  "extract.selectFirst": "Select an entry first",
   "extract.folderFailed": "Could not check the folder",
   "extract.startFailed": "Could not start",
   "extract.group": "Extract to",
@@ -14,7 +13,6 @@ export const extract = {
   "extract.folder": "Folder",
   "extract.what": "What",
   "extract.wholeCommit": "Everything in version {seq}",
-  "extract.entryFromCommit": " from version {seq}",
   "extract.entriesCount": " ({count})",
   "extract.parentsNote": "The folders above a selected entry are created too.",
   "extract.folderNote": "Extract into a folder only you can modify.",
@@ -30,7 +28,7 @@ export const extract = {
     "Nothing in this folder conflicts with the entries to extract. Nothing is overwritten either way.",
   "extract.confirmSkip": "Extract the rest, skipping these",
   "extract.confirm": "Extract",
-  "extract.changeFolder": "Choose a different folder…",
+  "extract.changeFolder": "Change folder…",
   "extract.newFolderNote":
     "A new folder was made for this next to the archive, so nothing that is already on your computer can be replaced.",
   "extract.recheck": "Check again",

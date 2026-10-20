@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ArchiveSummary } from "./generated/ArchiveSummary";
 import type { EnvelopeList } from "./generated/EnvelopeList";
 import type { EnvelopeView } from "./generated/EnvelopeView";
+import type { HitView } from "./generated/HitView";
 import type { OpenOutcome } from "./generated/OpenOutcome";
 import type { RekeyReport } from "./generated/RekeyReport";
 import type { SearchCoverageView } from "./generated/SearchCoverageView";
@@ -16,6 +17,7 @@ import type { SubjectView } from "./generated/SubjectView";
 export type {
   EnvelopeList,
   EnvelopeView,
+  HitView,
   OpenOutcome,
   RekeyReport,
   SearchCoverageView,

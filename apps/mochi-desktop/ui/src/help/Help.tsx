@@ -40,12 +40,15 @@ export function Help() {
       </h2>
       <p data-testid="start-note">{t("start.note")}</p>
       <p data-testid="help-keys">{t("help.keys")}</p>
+      <p data-testid="help-shortcuts">{t("help.shortcuts")}</p>
       <div className="actions">
         <button type="button" data-testid="help-user-guide" aria-describedby={noteId} onClick={open}>
           {t("help.userGuide")}
         </button>
       </div>
-      <p id={noteId}>{t("help.userGuideNote")}</p>
+      <p id={noteId} className="note">
+        {t("help.userGuideNote")}
+      </p>
       <p role="status" data-testid="help-status" data-state={view.state}>
         {view.state === "requested" && t("help.requested")}
         {view.state === "failed" && view.text}

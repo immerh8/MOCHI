@@ -16,12 +16,10 @@ export type SlotName =
   | "remove"
   | "extract"
   | "test"
-  | "find"
-  | "info"
-  | "primary"
   | "new"
-  | "extractOpen"
-  | "stage";
+  | "stage"
+  | "count"
+  | "status";
 
 export interface Shell {
   /** Whose archive is on screen; a slot only shows what its owner draws. */
@@ -36,6 +34,13 @@ export interface Shell {
   openForeignToken: number;
   /** Whether the toolbar's Info panel is open. */
   infoOpen: boolean;
+  /**
+   * What the toolbar's search field holds, trimmed; empty when there is no
+   * search. The browser on screen lists what matches instead of a folder.
+   */
+  query: string;
+  /** Empty the search field (a folder was opened from the results). */
+  clearQuery: () => void;
 }
 
 export const ShellContext = createContext<Shell | null>(null);
@@ -78,8 +83,9 @@ export function SlotHost({ name, className }: { name: SlotName; className?: stri
 }
 
 /**
- * One toolbar button: an icon over a short label. The label is the accessible
- * name; `title` holds the longer explanation (or why the button is off).
+ * One toolbar button: an icon only, as in a desktop archiver. The label is the
+ * accessible name (kept as hidden text) and the tooltip unless `title` holds a
+ * longer one (or why the button is off).
  */
 export function ToolButton({
   icon,
@@ -107,14 +113,14 @@ export function ToolButton({
       type="button"
       className={primary ? "tool primary" : "tool"}
       data-testid={testId}
-      title={title}
+      title={title ?? label}
       disabled={disabled}
       aria-expanded={expanded}
       aria-pressed={pressed}
       onClick={onClick}
     >
       {icon}
-      <span className="tool-label">{label}</span>
+      <span className="sr-only">{label}</span>
     </button>
   );
 }

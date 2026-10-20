@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Hint } from "../a11y/Hint";
 
 import { formatSize } from "../browser/format";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
@@ -154,8 +155,7 @@ export function Updates() {
   return (
     <div role="group" aria-labelledby={headingId} data-testid="updates">
       <h3 id={headingId}>{t("update.heading")}</h3>
-      <p>{t("update.intro")}</p>
-      <p>{t("update.signing")}</p>
+      <Hint text={[t("update.intro"), t("update.signing")]} />
       {settings && <p data-testid="update-version">{t("update.version", { current: settings.current_version })}</p>}
       <div className="actions">
         <button type="button" data-testid="update-check" onClick={() => void runCheck(false)} disabled={busy}>

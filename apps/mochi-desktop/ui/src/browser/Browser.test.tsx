@@ -237,21 +237,19 @@ test("the tree opens folders lazily and choosing a commit reopens at the root", 
   await screen.findByText(/^5 items/);
   expect(calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
   expect(screen.getByTestId("commit-0")).toHaveAttribute("aria-current", "true");
-  expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Version 0$/);
+  expect(screen.getByTestId("toggle-versions")).toHaveTextContent(/^v0$/);
 });
 
-test("the path bar names the archive from facts the app has, and Find opens Advanced at Search", async () => {
+test("the path bar names the archive from facts the app has, and the search field finds names", async () => {
   const { user } = await openIt();
   const bar = screen.getByTestId("archive-meta");
-  expect(bar).toHaveTextContent("fake.mochi · 3 versions");
+  expect(bar).toHaveTextContent(/^fake\.mochi$/);
+  expect(screen.getByTestId("toggle-versions")).toHaveAttribute("title", "3 versions");
   // The size of the whole version moved from the top bar to the status line's tooltip.
   expect(screen.getByTestId("entry-count")).toHaveAttribute("title", "100,009 entries in this version");
   expect(screen.getByTestId("close-archive")).toHaveAccessibleName("Close");
-  const advanced = screen.getByTestId("advanced");
-  expect(advanced).not.toHaveAttribute("open");
-  await user.click(screen.getByTestId("search-archive"));
-  expect(advanced).toHaveAttribute("open");
-  expect(document.activeElement).toBe(document.getElementById("search-heading"));
+  expect(screen.getByTestId("search-query")).toBeEnabled();
+  void user;
   // The table header is for the eye; the rows carry the names of their parts.
   expect(document.querySelector(".table-head")).toHaveAttribute("aria-hidden", "true");
   const types = (await screen.findAllByTestId("entry")).map((e) => e.querySelector(".type")?.textContent);

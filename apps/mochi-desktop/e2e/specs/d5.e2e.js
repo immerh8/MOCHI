@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
-import { clickNewArchive, closeResultDetails, openResultDetails } from "./_ui.js";
+import { clickNewArchive, closeResultDetails, closeTool, openResultDetails, openTool } from "./_ui.js";
 
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
 const queuePicks = (...paths) => writeFileSync(pickFile, paths.join("\n"));
@@ -74,7 +74,7 @@ const stageFolderAndOpenCreate = async () => {
   await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
   await $('[data-testid="change-destination"]').click();
   await browser.waitUntil(async () =>
-    (await $('[data-testid="save-location"]').getText()).startsWith("Saved as"),
+    ((await $('[data-testid="save-location"]').getAttribute("title")) ?? "").startsWith("Saved as"),
   );
   await $('[data-testid="create-options"] summary').click();
 };
@@ -108,7 +108,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await openResultDetails("write");
     expect(await $('[data-testid="write-details"]').getText()).toContain("LOCAL_COMMITTED");
     await closeResultDetails("write");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("Encrypted"));
+    await expect($('[data-testid="encrypted-note"]')).toHaveAttribute("title", expect.stringContaining("Encrypted"));
     await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
     await assertNoBannedWording();
     await assertNoPassphraseOnPage();
@@ -149,6 +149,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
   });
 
   it("adds a passphrase, then removes one and is told removal is not revocation", async () => {
+    await openTool("menu-passphrases");
     await browser.waitUntil(async () => (await $$('[data-testid="envelope"]')).length === 1);
     await $('[data-testid="rekey-add"]').click();
     await $('[data-testid="rekey-add-form-input"]').setValue(OTHER);
@@ -157,7 +158,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await waitForRekey("a passphrase was added");
     expect(await $('[data-testid="rekey-status"]').getText()).toContain("LOCAL_COMMITTED");
     await browser.waitUntil(async () => (await $$('[data-testid="envelope"]')).length === 2);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "2 versions");
 
     await $('[data-testid="rekey-remove"]').click();
     await expect($('[data-testid="not-revocation"]')).toHaveText(
@@ -177,6 +178,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await expect($('[data-testid="rekey-remove"]')).toBeDisabled();
     await assertNoBannedWording();
     await assertNoPassphraseOnPage();
+    await closeTool();
   });
 
   it("creates an archive with a recovery record and states what it does and does not do", async () => {
@@ -203,28 +205,30 @@ describe("passphrases, rekey, recovery record, and search", () => {
     expect(existsSync(recovered)).toBe(true);
   });
 
-  it("searches names across all snapshots and shows what the search covered", async () => {
+  it("searches names from the toolbar and says what the search covered", async () => {
     await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
-    await $('[data-testid="search-query"]').setValue("payroll");
-    await $('[data-testid="search-scope"]').selectByAttribute("value", "all");
-    await $('[data-testid="search-go"]').click();
-    const result = await $('[data-testid="search-result"]');
-    await result.waitForExist({ timeout: 30_000 });
-    const cov = await $('[data-testid="search-coverage"]');
-    await expect(cov).toHaveAttribute("data-complete", "true");
-    await expect(cov).toHaveText(expect.stringContaining("Searched 1 of 1 requested snapshot"));
-    await expect(cov).toHaveText(expect.stringContaining("File contents were not searched"));
+    const field = await $('[data-testid="search-query"]');
+    await field.setValue("payroll");
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => (await $$('[data-testid="search-hit"]')).length === 1, {
+      timeout: 30_000,
+      timeoutMsg: "the search found no hit",
+    });
     const hits = await $$('[data-testid="search-hit"]');
-    expect(hits.length).toBe(1);
     await expect(hits[0]).toHaveText(expect.stringContaining("payroll-2026.txt"));
-    // File content is not searched: a word that is only inside a file finds nothing,
-    // and the coverage still says exactly that.
-    await $('[data-testid="search-query"]').setValue("QXZV");
-    await $('[data-testid="search-go"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="search-count"]').getText()).startsWith("0 matches"));
-    await expect($('[data-testid="search-coverage"]')).toHaveText(
-      expect.stringContaining("File contents were not searched"),
-    );
+    // The count is in the status bar; what was searched (and that contents were not) is its tooltip.
+    const count = await $('[data-testid="entry-count"]');
+    await expect(count).toHaveText("1 match");
+    await expect(count).toHaveAttribute("title", expect.stringContaining("File contents were not searched"));
+    // File content is not searched: a word that is only inside a file finds nothing.
+    await field.setValue("QXZV");
+    await browser.keys(["Enter"]);
+    await $('[data-testid="search-none"]').waitForExist({ timeout: 30_000 });
+    await expect(count).toHaveText("0 matches");
+    await expect(count).toHaveAttribute("title", expect.stringContaining("File contents were not searched"));
+    // Clearing the field shows the folder again.
+    await $('[data-testid="search-clear"]').click();
+    await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
     await assertNoBannedWording();
   });
 });
