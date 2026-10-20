@@ -23,7 +23,20 @@ describe("Add to archive... on a cold start", () => {
         return false;
       },
       { timeout: 50_000, interval: 500, timeoutMsg: "no window shows the quick form" },
-    );
+    ).catch(async (e) => {
+      // Say what the session could see, so a failure on Windows names its cause.
+      const seen = [];
+      for (const handle of await browser.getWindowHandles()) {
+        await browser.switchToWindow(handle);
+        const url = await browser.getUrl().catch((x) => `url? ${x.message}`);
+        const title = await browser.getTitle().catch((x) => `title? ${x.message}`);
+        const ids = await browser
+          .execute(() => [...document.querySelectorAll("[data-testid]")].slice(0, 15).map((n) => n.dataset.testid))
+          .catch((x) => [`ids? ${x.message}`]);
+        seen.push(`${handle} ${url} "${title}" [${ids.join(",")}]`);
+      }
+      throw new Error(`${e.message}; windows: ${seen.length ? seen.join(" | ") : "none"}`);
+    });
     // One window only: this verb never opens the main window.
     expect((await browser.getWindowHandles()).length).toBe(1);
     await expect($('[data-testid="start-screen"]')).not.toExist();
