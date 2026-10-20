@@ -394,9 +394,13 @@ window is one fixed frame (it never scrolls; the minimum size is set where the w
   Close shuts it) as label/value rows: counts, the status with its precise value
   (`commit 0 · LOCAL_COMMITTED`), the directory-entry dimension (DEGRADED shows as "Not
   confirmed" with a caution marker), what was not stored or extracted, and the one-file note.
-  Anything not fully good is never only in the panel: items not stored or extracted are in the
-  line too (warning bar), and a dot badge with an accessible "N notes" sits on the Details
-  button. Nothing is success-styled. A removal's line still says earlier versions keep the
+  Items not stored or not extracted, and an archive that could not be reopened, are also in the
+  line (warning bar). A degraded directory entry is deliberately **not** in the line (the owner
+  wants no durability wording upfront, and on Windows every create is degraded by policy): it
+  is in the panel, marked by a dot on the Details button, whose accessible name becomes
+  "Details, N items need attention", and by visually hidden text in the result's live region
+  ("N item needs attention, see Details") so a screen reader announces it. Nothing is
+  success-styled. A removal's line still says earlier versions keep the
   content. The compact quick-verb window has the same rows behind an inline Details button.
   The technical record is also written once per result to the console (`console.info`).
 - **Create** is a guided panel: choose items, see where it will be saved (default: next to the

@@ -103,7 +103,7 @@ test("a new archive is reported as a local commit and never as backed up or safe
   expect(result).not.toHaveTextContent("LOCAL_COMMITTED");
   // Something was not stored: the line is a warning and the Details button carries a badge.
   expect(result.querySelector("p")).toHaveClass("warning");
-  const toggle = screen.getByRole("button", { name: "Details, 1 note" });
+  const toggle = screen.getByRole("button", { name: "Details, 1 item needs attention" });
   await userEvent.click(toggle);
   const details = screen.getByTestId("quick-details");
   expect(details).toHaveTextContent("LOCAL_COMMITTED");
@@ -187,7 +187,10 @@ test("a degraded directory entry is a note in the details, not in the line, and 
   expect(result).toHaveTextContent("Archive created: a.mochi · 1 file · 10 bytes");
   expect(result).not.toHaveTextContent(/degraded|durable/i);
   expect(result.querySelector("p")).not.toHaveClass("warning");
-  await userEvent.click(screen.getByRole("button", { name: "Details, 1 note" }));
+  expect(screen.getByTestId("quick-attention")).toHaveClass("sr-only");
+  expect(result).toContainElement(screen.getByTestId("quick-attention"));
+  expect(screen.getByTestId("quick-attention")).toHaveTextContent("1 item needs attention, see Details");
+  await userEvent.click(screen.getByRole("button", { name: "Details, 1 item needs attention" }));
   expect(screen.getByTestId("quick-details")).toHaveTextContent("Not confirmed");
   expect(screen.getByTestId("quick-details")).toHaveTextContent("Windows does not document it as durable");
   expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();

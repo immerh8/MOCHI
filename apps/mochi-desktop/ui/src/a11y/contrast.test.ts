@@ -61,6 +61,16 @@ test("the focus ring and the borders that mark a control reach 3:1", () => {
   expect(contrast(c("accent"), c("surface"))).toBeGreaterThanOrEqual(3);
 });
 
+test("the dot on the Details button is the warning colour, visible on the page, and never the success green", () => {
+  const rule = /\.result-badge\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  expect(rule).toContain("background: var(--warning)");
+  expect(rule).not.toContain("--pass");
+  for (const surface of ["bg", "surface"]) {
+    expect(contrast(c("warning"), c(surface)), `--warning on --${surface}`).toBeGreaterThanOrEqual(3);
+  }
+  expect(c("warning")).not.toBe(c("pass"));
+});
+
 test("the primary button's text reaches 4.5:1 on the accent fill, in both its states", () => {
   for (const fill of ["accent", "accent-hover"]) {
     const ratio = contrast(c("on-strong"), c(fill));
