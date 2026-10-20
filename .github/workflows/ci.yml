@@ -71,7 +71,8 @@ jobs:
           function Invoke-LockTest([string]$label, [string]$dir) {
             Write-Host "::group::writer lock on $label ($dir)"
             $env:MOCHI_LOCK_TEST_DIR = $dir
-            cargo test --locked -p mochi-testkit --test q54_writer_lock $testName -- --nocapture --exact
+            # Out-Host: a function returns everything its commands print; only $ok may be returned.
+            cargo test --locked -p mochi-testkit --test q54_writer_lock $testName -- --nocapture --exact | Out-Host
             $ok = ($LASTEXITCODE -eq 0)
             Remove-Item Env:MOCHI_LOCK_TEST_DIR
             Write-Host '::endgroup::'
@@ -90,7 +91,7 @@ jobs:
               "assign letter=$letter"
             ) | Set-Content -Encoding ascii $script
             Write-Host "::group::diskpart: $name ($fs, $sizeMb MiB)"
-            diskpart /s $script
+            diskpart /s $script | Out-Host
             Write-Host '::endgroup::'
             if (-not (Test-Path "${letter}:\")) { return $null }
             return (Get-Volume -DriveLetter $letter).FileSystem
