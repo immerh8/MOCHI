@@ -479,7 +479,7 @@ fn enc_outcome(e: &mut Enc, o: &EntryOutcome) {
 }
 
 fn check_set(v: u8) -> Result<CheckSet, ProtocolError> {
-    if v == 0 || v > 15 {
+    if v == 0 || v > 31 {
         return Err(ProtocolError("bad check set"));
     }
     Ok(CheckSet(v))

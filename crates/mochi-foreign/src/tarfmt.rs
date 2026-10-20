@@ -1,9 +1,12 @@
-//! tar and tar.gz listing, testing and reading on `tar` + `flate2`.
+//! tar, tar.gz and tar.zst listing, testing and reading on `tar`, `flate2` and
+//! `ruzstd`.
 //!
 //! tar has no per-entry check and no index. For `.tar.gz` the only check is the
 //! gzip trailer (CRC-32 and length of the whole decompressed stream), which is
 //! reached only by reading the stream to its end, so listing a `.tar.gz` reads
-//! all of it, under the same limits as testing.
+//! all of it, under the same limits as testing. A `.tar.zst` is the same shape:
+//! its only check is each Zstandard frame's optional content checksum, compared
+//! as the frame ends.
 
 use std::cell::Cell;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -15,6 +18,7 @@ use tar::{Archive, Entries, EntryType};
 use crate::engine::{emit_breach, ratio_exceeded, truncate_text, EngineError, Out, Tally};
 use crate::protocol::{Message, Request, DATA_CHUNK};
 use crate::types::*;
+use crate::zstdread::ZstdReader;
 
 #[derive(Clone, Copy)]
 struct Trip {
@@ -337,10 +341,49 @@ fn finish_gz(
     Ok(())
 }
 
+/// The compression layer around the tar stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    None,
+    Gzip,
+    Zstd,
+}
+
+fn finish_zst(
+    mut guard: Guard<ZstdReader<Counting<impl Read>>>,
+    w: &Walk,
+    shared: &Shared,
+    out: &mut Out,
+) -> Result<(), EngineError> {
+    let check = if let Some(e) = &w.stream_error {
+        StreamCheck::Failed(e.clone())
+    } else if w.stopped {
+        StreamCheck::NotReached
+    } else {
+        match io::copy(&mut guard, &mut io::sink()) {
+            Ok(_) if guard.inner.fully_checksummed() => {
+                StreamCheck::Matched(CheckSet::of(&[CheckKind::ZstdFrameChecksum]))
+            }
+            // The stream ended cleanly but a frame declared no checksum, so
+            // there is nothing to report as matched.
+            Ok(_) => StreamCheck::NotApplicable,
+            Err(e) => {
+                if report_trip(shared, None, out)?.is_some() {
+                    StreamCheck::NotReached
+                } else {
+                    StreamCheck::Failed(truncate_text(e.to_string()))
+                }
+            }
+        }
+    };
+    out(Message::StreamCheck(check))?;
+    Ok(())
+}
+
 pub fn run<R: Read + Seek>(
     src: R,
     archive_len: u64,
-    gz: bool,
+    layer: Layer,
     req: &Request,
     out: &mut Out,
 ) -> Result<Tally, EngineError> {
@@ -351,7 +394,22 @@ pub fn run<R: Read + Seek>(
             truncate_text(format!("cannot read tar structure: {e}")),
         ))
     };
-    let w = if gz {
+    let w = if layer == Layer::Zstd {
+        let counting = Counting {
+            inner: src,
+            shared: Rc::clone(&shared),
+        };
+        let guard = Guard {
+            inner: ZstdReader::new(counting),
+            shared: Rc::clone(&shared),
+            limits: req.limits,
+            ratio: true,
+        };
+        let mut archive = Archive::new(guard);
+        let w = walk(archive.entries().map_err(bad)?, &shared, None, req, out)?;
+        finish_zst(archive.into_inner(), &w, &shared, out)?;
+        w
+    } else if layer == Layer::Gzip {
         let counting = Counting {
             inner: src,
             shared: Rc::clone(&shared),

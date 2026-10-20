@@ -86,8 +86,9 @@ pub fn run<R: Read + Seek>(
     out(Message::Format(format))?;
     let tally = match format {
         ForeignFormat::Zip => zipfmt::run(src, len, req, out)?,
-        ForeignFormat::Tar => tarfmt::run(src, len, false, req, out)?,
-        ForeignFormat::TarGz => tarfmt::run(src, len, true, req, out)?,
+        ForeignFormat::Tar => tarfmt::run(src, len, tarfmt::Layer::None, req, out)?,
+        ForeignFormat::TarGz => tarfmt::run(src, len, tarfmt::Layer::Gzip, req, out)?,
+        ForeignFormat::TarZst => tarfmt::run(src, len, tarfmt::Layer::Zstd, req, out)?,
         ForeignFormat::SevenZ => sevenfmt::run(src, len, origin, req, out)?,
         ForeignFormat::Rar => rarfmt::run(origin, req, out)?,
     };

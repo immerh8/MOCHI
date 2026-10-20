@@ -29,6 +29,10 @@ fn all_messages() -> Vec<Message> {
             id: "h 1".into(),
         },
         Message::Format(ForeignFormat::TarGz),
+        Message::Format(ForeignFormat::TarZst),
+        Message::StreamCheck(StreamCheck::Matched(CheckSet::of(&[
+            CheckKind::ZstdFrameChecksum,
+        ]))),
         Message::Entry(entry()),
         Message::Entry(EntryInfo {
             encryption: Encryption::ZipCryptoWeak,
@@ -145,6 +149,7 @@ fn trailing_bytes_are_rejected() {
 fn unknown_kinds_and_codes_are_rejected() {
     assert!(Message::decode(0x55, &[]).is_err());
     assert!(Message::decode(kind::FORMAT, &[9]).is_err());
+    assert!(Message::decode(kind::FORMAT, &[7]).is_err());
     assert!(Message::decode(kind::FORMAT, &[0]).is_err());
     assert!(Message::decode(
         kind::BREACH,
@@ -157,7 +162,8 @@ fn unknown_kinds_and_codes_are_rejected() {
     assert!(Message::decode(kind::ERROR, &e.finish()).is_err());
     // A check set must name something.
     assert!(Message::decode(kind::STREAM_CHECK, &[1, 0]).is_err());
-    assert!(Message::decode(kind::STREAM_CHECK, &[1, 16]).is_err());
+    assert!(Message::decode(kind::STREAM_CHECK, &[1, 32]).is_err());
+    assert!(Message::decode(kind::STREAM_CHECK, &[1, 16]).is_ok());
 }
 
 #[test]
