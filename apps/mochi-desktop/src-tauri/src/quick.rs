@@ -1822,7 +1822,10 @@ mod tests {
             .set_location(&other.path().join("Chosen.mochi"), ArchiveFormat::Zip)
             .unwrap();
         assert_eq!(at.name, "Chosen.zip");
-        assert!(at.folder.text.contains(&*other.path().to_string_lossy()));
+        // The display form of a Windows temp path can differ from `path()`
+        // (verbatim prefix, short names), so compare the folder's own name.
+        let leaf = other.path().file_name().unwrap().to_string_lossy();
+        assert!(at.folder.text.ends_with(&*leaf), "{}", at.folder.text);
         q.submit_add(request("Chosen", ArchiveFormat::Zip)).unwrap();
         handle.join().unwrap();
         assert!(other.path().join("Chosen.zip").is_file());

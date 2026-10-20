@@ -111,31 +111,37 @@
 ; first free <name>.staleN and schedule that name for deletion at the next restart.
 ; Uses $R3. Never schedules the original name, which a later install may use again.
 !macro MochiRetireFile PATH
+  ; One id per expansion: __LINE__ differs on every line of a macro, so each
+  ; label would get a different suffix from the jumps that name it.
+  !define MOCHI_RID ${__LINE__}
   Delete "${PATH}"
-  IfFileExists "${PATH}" 0 mochi_retired_${__LINE__}
+  IfFileExists "${PATH}" 0 mochi_retired_${MOCHI_RID}
   StrCpy $R3 1
-  mochi_try_${__LINE__}:
-  IfFileExists "${PATH}.stale$R3" 0 mochi_rename_${__LINE__}
+  mochi_try_${MOCHI_RID}:
+  IfFileExists "${PATH}.stale$R3" 0 mochi_rename_${MOCHI_RID}
   IntOp $R3 $R3 + 1
-  IntCmp $R3 20 mochi_retired_${__LINE__} mochi_try_${__LINE__} mochi_retired_${__LINE__}
-  mochi_rename_${__LINE__}:
+  IntCmp $R3 20 mochi_retired_${MOCHI_RID} mochi_try_${MOCHI_RID} mochi_retired_${MOCHI_RID}
+  mochi_rename_${MOCHI_RID}:
   Rename "${PATH}" "${PATH}.stale$R3"
   Delete /REBOOTOK "${PATH}.stale$R3"
-  mochi_retired_${__LINE__}:
+  mochi_retired_${MOCHI_RID}:
+  !undef MOCHI_RID
 !macroend
 
 ; Retire every mochi-shellext-*.dll in $INSTDIR except KEEP (empty: all). Uses $R3, $R5-$R6.
 !macro MochiSweepShellExt KEEP
+  !define MOCHI_SID ${__LINE__}
   FindFirst $R5 $R6 "$INSTDIR\mochi-shellext-*.dll"
-  mochi_sweep_loop_${__LINE__}:
-  StrCmp $R6 "" mochi_sweep_done_${__LINE__}
-  StrCmp $R6 "${KEEP}" mochi_sweep_next_${__LINE__}
+  mochi_sweep_loop_${MOCHI_SID}:
+  StrCmp $R6 "" mochi_sweep_done_${MOCHI_SID}
+  StrCmp $R6 "${KEEP}" mochi_sweep_next_${MOCHI_SID}
   !insertmacro MochiRetireFile "$INSTDIR\$R6"
-  mochi_sweep_next_${__LINE__}:
+  mochi_sweep_next_${MOCHI_SID}:
   FindNext $R5 $R6
-  Goto mochi_sweep_loop_${__LINE__}
-  mochi_sweep_done_${__LINE__}:
+  Goto mochi_sweep_loop_${MOCHI_SID}
+  mochi_sweep_done_${MOCHI_SID}:
   FindClose $R5
+  !undef MOCHI_SID
 !macroend
 
 ; Offer MOCHI under "Open with" for one extension (never the default value).
