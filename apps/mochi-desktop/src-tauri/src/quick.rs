@@ -302,7 +302,29 @@ fn invalid(what: impl Into<String>) -> MochiError {
 }
 
 fn path_text(path: &Path) -> NameText {
-    NameText::of(crate::help::for_shell(path).to_string_lossy().as_bytes())
+    let shown = crate::help::for_shell(path);
+    local_path_text(&shown.to_string_lossy(), cfg!(windows))
+}
+
+/// A local path as display text. A backslash in a Windows path is the separator, not a name
+/// character: escaping it as `\\` would show `C:\\Users\\...`. There, each component is escaped
+/// and the separators are kept.
+fn local_path_text(text: &str, windows: bool) -> NameText {
+    if !windows {
+        return NameText::of(text.as_bytes());
+    }
+    let parts: Vec<NameText> = text
+        .split('\\')
+        .map(|p| NameText::of(p.as_bytes()))
+        .collect();
+    NameText {
+        text: parts
+            .iter()
+            .map(|p| p.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\\"),
+        verbatim: parts.iter().all(|p| p.verbatim),
+    }
 }
 
 fn file_name_text(path: &Path) -> NameText {
@@ -1065,6 +1087,20 @@ impl Quick {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    #[test]
+    fn a_windows_path_keeps_its_separators_and_still_escapes_names() {
+        let p = local_path_text("C:\\Users\\me\\a\u{1b}b", true);
+        assert_eq!(
+            p.text,
+            "C:\\Users\\me\\a\u{1b}b".replace('\u{1b}', "\\u{1b}")
+        );
+        assert!(!p.verbatim);
+        let q = local_path_text(r"C:\Users\me", true);
+        assert_eq!(q.text, r"C:\Users\me");
+        assert!(q.verbatim);
+        assert_eq!(local_path_text(r"/a\b", false).text, r"/a\\b");
+    }
+
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;

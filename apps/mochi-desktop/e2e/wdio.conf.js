@@ -77,7 +77,8 @@ process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt
 // The cold-start spec (specs/add-cold.e2e.js) needs the app started WITH arguments, as Explorer
 // starts it for "Add to archive...": a second session whose capabilities carry them. Each
 // capability runs its own specs, so the other specs never see these arguments and this one never
-// shares an app with them. Three files in one folder, in one launch.
+// shares an app with them. (No "--" in the args: msedgedriver reads a bare "--" as an empty
+// switch name and refuses the session; these paths do not start with "-".) Three files in one folder, in one launch.
 const coldDir = path.join(os.tmpdir(), "mochi-e2e-cold", "trip");
 process.env.MOCHI_E2E_COLD_DIR = coldDir;
 const coldSpec = path.resolve(here, "specs/add-cold.e2e.js");
@@ -108,7 +109,7 @@ export const config = {
       "wdio:specs": [coldSpec],
       "tauri:options": {
         application,
-        args: ["--add", "--", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))],
+        args: ["--add", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))],
       },
     },
   ],
