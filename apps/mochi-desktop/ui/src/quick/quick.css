@@ -39,3 +39,12 @@
   margin-top: 0.25rem;
   font: inherit;
 }
+.quick {
+  overflow-y: auto;
+}
+.quick .warning {
+  color: var(--fg);
+}
+.quick .result-list {
+  grid-template-columns: minmax(4rem, 7rem) minmax(0, 1fr);
+}
