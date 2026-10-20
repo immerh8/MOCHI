@@ -111,13 +111,15 @@ fn io_error(what: &str, e: &std::io::Error) -> MochiError {
 // ---------------------------------------------------------------------------
 
 fn private_dir_builder() -> std::fs::DirBuilder {
-    let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
+        let mut b = std::fs::DirBuilder::new();
         b.mode(0o700);
+        b
     }
-    b
+    #[cfg(not(unix))]
+    std::fs::DirBuilder::new()
 }
 
 /// `<cache>/drag-out`, made (owner-only on Unix) if it is not there. It must
