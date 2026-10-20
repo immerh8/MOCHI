@@ -344,7 +344,8 @@ describe("extract", () => {
     );
     await press("extract-cancel");
     await waitForState("cancelled");
-    const status = await $('[data-testid="extract-status"]').getText();
+    // One line in the status bar; the rest of what it says is its tooltip and is read out.
+    const status = await browser.execute(() => document.querySelector('[data-testid="extract-status"]')?.textContent ?? "");
     expect(status).toContain("Cancelled");
     expect(status).toContain("each one complete");
     await expect($('[data-testid="extract-status"]')).toHaveAttribute("data-complete", "false");
