@@ -48,6 +48,16 @@ cargo build --release --locked -p mochi-foreign --features engine --bin mochi-fo
 mkdir -p apps/mochi-desktop/src-tauri/binaries
 cp "target/release/mochi-foreign-helper$ext" "apps/mochi-desktop/src-tauri/binaries/mochi-foreign-helper-$triple$ext"
 
+# 3a. Windows only: the Explorer context-menu handler (crates/mochi-shellext, a classic
+# IContextMenu COM DLL; owner decision 2026-10-20, O10). The overlay below installs it as
+# mochi-shellext-<app version>.dll next to the app: a VERSIONED name, because Explorer keeps
+# a loaded shell extension locked and an update must not need to overwrite it
+# (packaging/nsis/hooks.nsh registers exactly that name).
+if [ "$kind" = nsis ]; then
+  cargo build --release --locked -p mochi-shellext
+  test -f target/release/mochi_shellext.dll
+fi
+
 # 3b. The user guide (audit F8): docs/user converted to static, offline HTML. It is installed as
 # the resource `guide/` (NSIS: <install dir>\guide\; deb: /usr/lib/MOCHI/guide/), which is where
 # Help, User guide looks (apps/mochi-desktop/src-tauri/src/help.rs, GUIDE_RESOURCE). The smoke
@@ -63,7 +73,9 @@ kind, lic, guide = sys.argv[1], sys.argv[2], sys.argv[3]
 rel = os.path.relpath(lic, "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
 guide_rel = os.path.relpath(guide, "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
 if kind == "nsis":  # next to the exe: <install dir>\licenses\
-    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt", guide_rel: "guide"}}
+    version = json.load(open("apps/mochi-desktop/src-tauri/tauri.conf.json"))["version"]
+    dll_rel = os.path.relpath("target/release/mochi_shellext.dll", "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
+    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt", guide_rel: "guide", dll_rel: f"mochi-shellext-{version}.dll"}}
 else:  # Debian convention
     bundle = {"resources": {guide_rel: "guide"}, "linux": {"deb": {"files": {"/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt": rel}}}}
 bundle["externalBin"] = ["binaries/mochi-foreign-helper"]

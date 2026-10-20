@@ -59,7 +59,7 @@ function backend() {
       case "recent_archives":
         return [];
       case "staged_sources":
-        return { items: [], destination: null, default_destination: null };
+        return { items: [], destination: null, default_destination: null, format: "mochi" };
       case "open_snapshot":
         return { seq: a.seq, commit_id: "c".repeat(64), entries: 0, root_dirs: 0, root_files: 0, catalog_source: { source: "image" } };
       case "list_children":
@@ -208,4 +208,18 @@ test("a password-protected foreign archive asks in the window and sends the pass
   expect(opens.map((c) => c.args)).toEqual([{ retry: true, password: "SECRET" }]);
   expect(screen.queryByTestId("foreign-password")).toBeNull();
   expect(JSON.stringify(b.calls.filter((c) => c.cmd !== "open_foreign_archive"))).not.toContain("SECRET");
+});
+
+// Reported by users: the New archive dialog was invisible while a ZIP, 7z or RAR file was open,
+// because the writer sat inside the MOCHI stage, which is hidden then.
+test("New archive opens a visible dialog while a foreign archive is open", async () => {
+  const b = backend();
+  render(<Browser foreign={<ForeignBrowser />} />);
+  await screen.findByTestId("start-screen");
+  b.launch({ event: "foreign_opened", archive: foreignSummary(11, "photos.7z") });
+  await screen.findByTestId("foreign-meta");
+  await userEvent.click(screen.getByTestId("new-archive"));
+  const panel = await screen.findByTestId("write-panel");
+  expect(panel).toBeVisible();
+  expect(screen.getByTestId("create-format")).toBeVisible();
 });

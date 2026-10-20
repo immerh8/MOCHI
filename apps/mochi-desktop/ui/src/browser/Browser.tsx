@@ -921,6 +921,19 @@ export function Browser({
 
         <div className="stage">
           <SlotHost name="stage" className="stage-foreign" />
+          {/* Outside the MOCHI stage, which is hidden while a ZIP, 7z or RAR file is open: the
+              New archive dialog (position: fixed) must still be visible then. */}
+          <Writer
+            archive={open?.archive ?? null}
+            viewingHead={viewingHead}
+            selected={selected}
+            onCommitted={(a) => void adopt(a)}
+            showToolbar
+            createRequest={createRequest}
+            removeRequest={removeRequest}
+            onCreating={setCreating}
+            onArchiveDropped={() => void doOpenDropped()}
+          />
           <div className="stage-mochi" hidden={foreignOpen}>
             {waiting && (
               <Panel
@@ -953,17 +966,6 @@ export function Browser({
                 }}
               />
             )}
-            <Writer
-              archive={open?.archive ?? null}
-              viewingHead={viewingHead}
-              selected={selected}
-              onCommitted={(a) => void adopt(a)}
-              showToolbar
-              createRequest={createRequest}
-              removeRequest={removeRequest}
-              onCreating={setCreating}
-              onArchiveDropped={() => void doOpenDropped()}
-            />
             {open && (
               <>
                 <Extractor

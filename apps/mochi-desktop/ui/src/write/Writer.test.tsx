@@ -7,7 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { Browser } from "../browser/Browser";
 import type { ArchiveSummary } from "../ipc/browse";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
-import type { CommitReport, DropEvent, StagedItem, StagedView } from "../ipc/write";
+import type { ArchiveFormat, CommitReport, DropEvent, ExportReportView, StagedItem, StagedView } from "../ipc/write";
 import { Writer } from "./Writer";
 import type { WriterProps } from "./Writer";
 
@@ -16,6 +16,14 @@ const internals = () =>
   (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
 
 const HOSTILE = '<img src=x onerror="alert(1)">';
+
+const EXTENSIONS: Record<ArchiveFormat, string> = {
+  mochi: ".mochi",
+  zip: ".zip",
+  tar: ".tar",
+  tar_gz: ".tar.gz",
+  tar_zst: ".tar.zst",
+};
 
 function summary(handle: number, commits: number, name = "fake.mochi"): ArchiveSummary {
   return {
@@ -60,6 +68,7 @@ function backend(opts: { destination?: string | null; defaultDestination?: strin
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let staged: StagedItem[] = [];
   let destination: string | null = null;
+  let format: ArchiveFormat = "mochi";
   let jobChannel: Channel<JobEvent> | undefined;
   let dropChannel: Channel<DropEvent> | undefined;
   // Tauri delivers a channel's messages in order, numbered from 0 per channel.
@@ -68,6 +77,7 @@ function backend(opts: { destination?: string | null; defaultDestination?: strin
     items: staged,
     destination,
     default_destination: destination === null && staged.length > 0 ? (opts.defaultDestination ?? null) : null,
+    format,
   });
   const browse = { archive: summary(3, 1) };
   mockIPC((cmd, args) => {
@@ -93,6 +103,10 @@ function backend(opts: { destination?: string | null; defaultDestination?: strin
         return view();
       case "stage_dropped_archive":
         staged = [...staged, { name: { text: "photos.zip", verbatim: true }, kind: "file" }];
+        return view();
+      case "set_archive_format":
+        format = a.format as ArchiveFormat;
+        if (destination !== null) destination = destination.replace(/\.[a-z.]+$/, "") + EXTENSIONS[format];
         return view();
       case "clear_staged":
         staged = [];
@@ -464,10 +478,10 @@ test("a cancel or a failure stays plain lines with no Details, and can be dismis
 test("a job that cannot start shows the error and leaves the panel usable", async () => {
   const user = userEvent.setup();
   mockIPC((cmd) => {
-    if (cmd === "staged_sources") return { items: [{ name: { text: "x", verbatim: true }, kind: "file" }], destination: null, default_destination: null };
+    if (cmd === "staged_sources") return { items: [{ name: { text: "x", verbatim: true }, kind: "file" }], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops") return null;
     if (cmd === "recent_archives") return [];
-    if (cmd === "choose_destination") return { items: [], destination: "n.mochi", default_destination: null };
+    if (cmd === "choose_destination") return { items: [], destination: "n.mochi", default_destination: null, format: "mochi" };
     if (cmd === "start_job") throw { code: "INVALID_ARGUMENT", message: "nothing is staged" };
     throw new Error(cmd);
   });
@@ -486,7 +500,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
   expect(screen.getByTestId("drop-overlay")).toBeInTheDocument();
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: null },
+    staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: null, format: "mochi" },
     problems: [{ code: "INVALID_ARGUMENT", message: "x would be stored under the same name as y" }],
     from_shell: false,
   });
@@ -504,7 +518,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
   await user.click(screen.getByTestId("write-close"));
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
+    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null, format: "mochi" },
     problems: [],
     from_shell: false,
   });
@@ -517,7 +531,7 @@ test("the shell's Add to archive opens the add dialog instead of adding at once"
   render(<Writer archive={summary(3, 2)} viewingHead selected={[]} onCommitted={() => undefined} />);
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: "note.txt", verbatim: true }, kind: "file" }], destination: null, default_destination: null },
+    staged: { items: [{ name: { text: "note.txt", verbatim: true }, kind: "file" }], destination: null, default_destination: null, format: "mochi" },
     problems: [],
     from_shell: true,
   });
@@ -531,7 +545,7 @@ test("a drop on an older version adds nothing and says only the latest can be ch
   render(<Writer archive={summary(3, 2)} viewingHead={false} selected={[]} onCommitted={() => undefined} />);
   b.drop({
     event: "dropped",
-    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
+    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null, format: "mochi" },
     problems: [],
     from_shell: false,
   });
@@ -644,4 +658,210 @@ test("the browser shows the archive as it stands after a commit: same handle for
   await screen.findByText("made.mochi");
   expect(b.calls.filter((c) => c.cmd === "close_archive").map((c) => c.args)).toEqual([{ handle: 3 }]);
   expect(b.calls.filter((c) => c.cmd === "open_snapshot").map((c) => c.args).at(-1)).toEqual({ handle: 9, seq: 0 });
+});
+
+// ---- the format of a new archive (plan O31, owner decision 2026-10-20) ------------------------
+
+const exportReport = (over: Partial<ExportReportView> = {}): ExportReportView => ({
+  format: "zip",
+  name: { text: "pack.zip", verbatim: true },
+  location: { text: "/home/me/pack.zip", verbatim: true },
+  files: 2,
+  directories: 1,
+  bytes: 2048,
+  output_bytes: 900,
+  skipped: [],
+  durability_note: null,
+  ...over,
+});
+
+const exported = (r: ExportReportView): JobOutcome => ({ status: "completed", summary: "s", export: r });
+
+test("the create panel offers .mochi, ZIP, tar, tar.gz and tar.zst, with .mochi chosen", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  const select = screen.getByTestId("create-format");
+  expect(select).toHaveValue("mochi");
+  const labels = within(select).getAllByRole("option").map((o) => o.textContent);
+  expect(labels).toEqual(["MOCHI (.mochi)", "ZIP (.zip)", "tar (.tar)", "tar.gz (.tar.gz)", "tar.zst (.tar.zst)"]);
+  expect(screen.queryByTestId("plain-note")).toBeNull();
+});
+
+test("choosing ZIP asks Rust for the format, hides the .mochi-only options, and creates with export_archive", async () => {
+  const user = userEvent.setup();
+  const b = backend({ destination: "/home/me/pack.mochi" });
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  // Options the user had chosen for .mochi are dropped, not carried over.
+  await user.click(screen.getByTestId("encrypt"));
+  await user.click(screen.getByTestId("recovery-10"));
+  await user.selectOptions(screen.getByTestId("create-format"), "zip");
+  expect(b.calls.filter((c) => c.cmd === "set_archive_format").map((c) => c.args)).toEqual([{ format: "zip" }]);
+  expect(screen.getByTestId("plain-note")).toBeInTheDocument();
+  expect(screen.queryByTestId("encrypt")).toBeNull();
+  expect(screen.queryByTestId("create-passphrase")).toBeNull();
+  expect(screen.queryByTestId("recovery-none")).toBeNull();
+  expect(screen.queryByTestId("tar-compatible")).toBeNull();
+  // The compression level stays, and is used.
+  await user.click(screen.getByTestId("preset-smaller"));
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  expect(b.request()).toEqual({ kind: "export_archive", format: "zip", level: "smaller" });
+  expect(b.cmds()).not.toContain("create_archive");
+});
+
+test("plain tar has no compression level; tar.gz and tar.zst do", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  for (const [format, level] of [
+    ["tar", false],
+    ["tar_gz", true],
+    ["tar_zst", true],
+    ["zip", true],
+    ["mochi", true],
+  ] as const) {
+    await user.selectOptions(screen.getByTestId("create-format"), format);
+    if (level) expect(screen.getByTestId("preset-fast")).toBeInTheDocument();
+    else {
+      expect(screen.queryByTestId("preset-fast")).toBeNull();
+      expect(screen.getByTestId("no-level")).toHaveTextContent("not compressed");
+    }
+  }
+});
+
+test("going back to .mochi shows its options again, unchecked", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("tar-compatible"));
+  await user.selectOptions(screen.getByTestId("create-format"), "tar_zst");
+  await user.selectOptions(screen.getByTestId("create-format"), "mochi");
+  expect(screen.getByTestId("encrypt")).not.toBeChecked();
+  expect(screen.getByTestId("tar-compatible")).not.toBeChecked();
+  expect(screen.getByTestId("recovery-none")).toBeChecked();
+});
+
+test("a finished export says what was written and offers Show in folder, with no commit wording", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  await user.selectOptions(screen.getByTestId("create-format"), "zip");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  b.job({ event: "started", job_id: 5 });
+  b.job({ event: "progress", job_id: 5, phase: "export", completed: 512, total: 2048 });
+  expect(screen.getByTestId("write-progress")).toHaveTextContent("Writing: 512 bytes of 2.0 KiB");
+  b.job({ event: "finished", job_id: 5, outcome: exported(exportReport()) });
+  const status = screen.getByTestId("write-status");
+  expect(status).toHaveTextContent("Wrote 2 files · 1 folder · 2.0 KiB to pack.zip");
+  expect(status).toHaveAttribute("data-committed", "false");
+  const text = (status.textContent ?? "").toLowerCase();
+  for (const word of ["committed", "backed up", "safe", "preserved", "healthy"]) expect(text).not.toContain(word);
+  // The panel closed; no archive is opened (there is none to open).
+  expect(screen.queryByTestId("write-panel")).toBeNull();
+  await user.click(screen.getByTestId("write-show-folder"));
+  expect(b.calls.find((c) => c.cmd === "show_in_folder")?.args).toEqual({ what: { kind: "last_export" } });
+  await user.click(screen.getByTestId("write-details-toggle"));
+  const details = screen.getByTestId("write-details");
+  expect(details).toHaveTextContent("ZIP (.zip)");
+  expect(details).toHaveTextContent("File size");
+  expect(details).toHaveTextContent("did not check the file afterwards");
+  expect(details.textContent).not.toContain("LOCAL_COMMITTED");
+});
+
+test("an export with items it could not write lists them as text and is partial in the line", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  await user.selectOptions(screen.getByTestId("create-format"), "tar_gz");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  b.job({
+    event: "finished",
+    job_id: 5,
+    outcome: exported(
+      exportReport({
+        format: "tar_gz",
+        name: { text: "pack.tar.gz", verbatim: true },
+        skipped: [{ path: { text: HOSTILE, verbatim: true }, reason: "a symbolic link is not stored; it was not followed" }],
+      }),
+    ),
+  });
+  expect(screen.getByTestId("write-status")).toHaveTextContent("1 item not stored");
+  await user.click(screen.getByRole("button", { name: /^Details/ }));
+  expect(screen.getByTestId("write-not-stored-item")).toHaveTextContent(HOSTILE);
+  expect(document.querySelector("img")).toBeNull();
+});
+
+test("a failed or cancelled export says nothing was written under that name", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  await user.selectOptions(screen.getByTestId("create-format"), "zip");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  b.job({
+    event: "finished",
+    job_id: 5,
+    outcome: { status: "failed", code: "DESTINATION_EXISTS", message: "pack.zip already exists; nothing was written and it was not replaced" },
+  });
+  const status = screen.getByTestId("write-status");
+  expect(status).toHaveTextContent("Failed (DESTINATION_EXISTS)");
+  expect(status).toHaveTextContent("Nothing was written under that name.");
+  expect(status).not.toHaveTextContent("committed");
+});
+
+test("the first look at the staged set does not overwrite what Rust announced first", async () => {
+  // A launch announced items before the window listened; the answer to the first look is older.
+  let release: (v: StagedView) => void = () => undefined;
+  const late = new Promise<StagedView>((r) => (release = r));
+  let dropChannel: Channel<DropEvent> | undefined;
+  mockIPC((cmd, args) => {
+    if (cmd === "watch_drops") {
+      dropChannel = (args as { onDrop: Channel<DropEvent> }).onDrop;
+      return null;
+    }
+    if (cmd === "staged_sources") return late;
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  renderWriter();
+  await waitFor(() => expect(dropChannel).toBeDefined());
+  const id = (dropChannel as Channel<DropEvent>).id;
+  act(() => {
+    internals().runCallback(id, {
+      index: 0,
+      message: {
+        event: "dropped",
+        staged: {
+          items: [{ name: { text: "from-the-shell.txt", verbatim: true }, kind: "file" }],
+          destination: null,
+          default_destination: null,
+          format: "mochi",
+        },
+        problems: [],
+        from_shell: true,
+      } satisfies DropEvent,
+    });
+  });
+  expect(await screen.findByText("from-the-shell.txt")).toBeInTheDocument();
+  // The older, empty answer arrives afterwards.
+  await act(async () => release({ items: [], destination: null, default_destination: null, format: "mochi" }));
+  expect(screen.getByText("from-the-shell.txt")).toBeInTheDocument();
+  expect(screen.getAllByTestId("staged-item")).toHaveLength(1);
 });

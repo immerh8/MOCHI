@@ -9,6 +9,7 @@ MOCHI is an archive format and archiver, shipped like WinRAR: a format library p
 - `crates/mochi-format` — framing, record envelopes, digests. Pure; no filesystem policy.
 - `crates/mochi-core` — archive operations, catalog, recovery manifests, verification, repair, jobs, reports.
 - `crates/mochi-cli` — the `mochi` binary.
+- `crates/mochi-export` — writes ZIP, `.tar`, `.tar.gz`, `.tar.zst` from local files for the desktop app (plan O31). Parses no archive.
 - `crates/mochi-testkit` — fault-injecting storage and fixture builders.
 - `apps/mochi-desktop` — Tauri v2 application (`src-tauri/` Rust backend, `ui/` frontend).
 
@@ -38,6 +39,7 @@ ci/tar-interop.sh "$PWD/target/debug/mochi" zstd tar bsdtar   # C10: real zstd, 
 cargo test -p mochi-testkit --test r3_cddl      # R3: docs/schemas/*.cddl against the golden bytes (cddl crate, dev-dependency of mochi-testkit only)
 cargo test -p mochi-testkit --test r8_golden     # R8: 76 whole-archive cases + the `legacy/` draft-2 migrate cases, their summaries, coverage, the G1 audit vectors, the 12 MiB budget (fixtures/golden/r8; frozen when written)
 cargo run -p mochi-cli -- --help
+cargo test -p mochi-export                      # O31: round trips of every plain format, cancellation, collisions
 cargo run --release -p mochi-testkit --example c5_append_bench   # §27 append benchmark (C5)
 cargo run --release -p mochi-testkit --example c12_parity_bench   # §27 recovery-record benchmark (C12, R6); --quick skips 512 MiB
 ```
@@ -125,7 +127,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 ## Rust conventions
 
 - Library crates: no `unwrap`/`expect`/`panic!` on paths reachable from archive contents. Return typed errors carrying a stable code.
-- `#![forbid(unsafe_code)]` in `mochi-format` and `mochi-core`. Any exception needs a justification comment and review. `unsafe` exists only in `mochi-foreign` (UnRAR, Job Object) and `mochi-sys` (five Win32 calls: a write-through no-replace `MoveFileExW` and the volume filesystem name for Windows archive creation, `LockFileEx`/`UnlockFileEx` on one byte for the writer lock, and `GetFileInformationByHandle` for the lock's path check; `deny(unsafe_op_in_unsafe_fn)`, a `// SAFETY:` on every block); `ci/check-invariants.sh` enforces both.
+- `#![forbid(unsafe_code)]` in `mochi-format` and `mochi-core`. Any exception needs a justification comment and review. `unsafe` exists only in `mochi-foreign` (UnRAR, Job Object), `mochi-shellext` (the Windows Explorer context-menu handler: a classic `IContextMenu` in-process COM DLL, whose unsafe is the COM boundary in `src/shell.rs` alone: class factory, `IShellExtInit`/`IContextMenu`, `DragQueryFileW`, `InsertMenuW`; it only starts the app with `--add|--add-now -- PATH...` through `std::process::Command`, parses no archive, writes nothing, depends only on the `windows` crates, `catch_unwind` at every COM entry point, owner decision 2026-10-20, O10) and `mochi-sys` (five Win32 calls: a write-through no-replace `MoveFileExW` and the volume filesystem name for Windows archive creation, `LockFileEx`/`UnlockFileEx` on one byte for the writer lock, and `GetFileInformationByHandle` for the lock's path check; `deny(unsafe_op_in_unsafe_fn)`, a `// SAFETY:` on every block, which `mochi-shellext` follows too); `ci/check-invariants.sh` enforces both.
 - Secrets use `zeroize`; never `Debug`-print, log, or put them in error messages.
 - Integer arithmetic on archive-derived values uses checked operations.
 - Long operations are jobs: accept a progress sink and a cancellation token, return a typed report. Do not add a second progress mechanism.
@@ -156,7 +158,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 
 Active scope is MOCHI 1.0: Core, TAR-compatibility, Encrypted, and Redundancy profiles; the CLI commands listed in spec §23; the desktop app phases D0–D7.
 
-**Not in 1.0** unless the plan is changed first: key files and public-key recipients for encryption (1.0 is passphrase-only, spec D3), split volumes / segmented storage, the Preservation profile and inventory service, concurrent preparation / multi-writer, remote HTTP/S3 access, mount, FastCDC, signatures and Merkle proofs, SFX archives, and *writing* any non-MOCHI archive format. If a task touches one of these, say so and point to spec Annex A before writing code. A 1.0 build must answer requests for these with `UNSUPPORTED` / exit code 4.
+**Not in 1.0** unless the plan is changed first: key files and public-key recipients for encryption (1.0 is passphrase-only, spec D3), split volumes / segmented storage, the Preservation profile and inventory service, concurrent preparation / multi-writer, remote HTTP/S3 access, mount, FastCDC, signatures and Merkle proofs, SFX archives, and *writing* any non-MOCHI archive format except the four the desktop app may create (owner decision 2026-10-20, plan O31): ZIP, `.tar`, `.tar.gz`, `.tar.zst`, written by `mochi-export`, never RAR and not 7z. The CLI does not write them. If a task touches one of these, say so and point to spec Annex A before writing code. A 1.0 build must answer requests for these with `UNSUPPORTED` / exit code 4.
 
 
 **Foreign archive formats (plan D8, O9).** The desktop app *reads* ZIP, 7z, RAR, and `.tar.gz`/`.tar`: browse, extract, test. Rules that code review enforces:
@@ -165,6 +167,7 @@ Active scope is MOCHI 1.0: Core, TAR-compatibility, Encrypted, and Redundancy pr
 - **Never write RAR**, and never use UnRAR code for anything but reading: its license forbids building a RAR-compatible archiver (plan O23). The `unrar` crates are labelled MIT/Apache, but the UnRAR source they vendor is RARLAB freeware; license tooling that reads crate metadata will miss this.
 - Never call UnRAR's (or any library's) own extract-to-disk functions. Entries are streamed to the C6 restore engine, which alone writes files.
 - Foreign-format results never use MOCHI verification wording or health dimensions: report the check that actually ran ("CRC32 matched").
+- Writing the four allowed formats (plan O31) lives only in `crates/mochi-export`: it reads the user's local files, never parses an archive, publishes through a temporary file in the destination folder and a no-replace rename, never overwrites, and reports what it wrote ("Wrote 12 files, 3.4 MB"), never MOCHI wording (no `LOCAL_COMMITTED`, no health dimensions). No ZIP encryption: ask and it answers `UNSUPPORTED`.
 
 ## Pull request checklist
 

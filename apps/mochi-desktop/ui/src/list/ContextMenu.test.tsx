@@ -36,7 +36,7 @@ function backend() {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
     calls.push({ cmd, args: a });

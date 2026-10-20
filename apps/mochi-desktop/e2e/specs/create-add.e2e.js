@@ -5,7 +5,7 @@
 // writes that file before each flow. Dropping files from a file manager is
 // an operating-system gesture WebDriver cannot make: it is covered by the
 // Rust drop-event tests and the UI tests, and is on the release checklist.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
@@ -253,5 +253,130 @@ describe("create and add", () => {
     expect(existsSync(cancelled)).toBe(false);
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
     await expect($('[data-testid="write-status"]')).toHaveAttribute("data-committed", "false");
+  });
+
+  // The earlier flows can leave the create panel open (a cancelled create keeps it for another
+  // try): empty and close it before the next one, as a person would.
+  const startFresh = async () => {
+    if (await $('[data-testid="write-panel"]').isExisting()) {
+      await $('[data-testid="stage-clear"]').click();
+      await $('[data-testid="write-close"]').click();
+      await $('[data-testid="write-panel"]').waitForExist({ reverse: true });
+    }
+    await clickNewArchive();
+  };
+
+  // Owner decision 2026-10-20 (plan O31): ZIP, tar, tar.gz and tar.zst can be created too.
+  const zipPath = path.join(out, "photos.zip");
+  const header = (file, ...magic) => readFileSync(file).subarray(0, magic.length).equals(Buffer.from(magic));
+
+  it("creates a ZIP when asked: a plain file, no MOCHI options, and the result says what was written", async () => {
+    // The save dialog's answer has no extension: the format's is added.
+    queuePicks(path.join(src, "photos"), path.join(out, "photos"));
+    await startFresh();
+    await $('[data-testid="stage-folder"]').click();
+    await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await expect($('[data-testid="create-format"]')).toHaveValue("mochi");
+    await $('[data-testid="create-format"]').selectByAttribute("value", "zip");
+    await expect($('[data-testid="plain-note"]')).toExist();
+    await $('[data-testid="create-options"] summary').click();
+    for (const id of ["encrypt", "tar-compatible", "recovery-none"]) {
+      await expect($(`[data-testid="${id}"]`)).not.toExist();
+    }
+    await expect($('[data-testid="preset-balanced"]')).toBeSelected();
+    await $('[data-testid="change-destination"]').click();
+    await browser.waitUntil(async () => (await textOf("save-location")).endsWith("photos.zip"), {
+      timeoutMsg: "the name did not take the ZIP extension",
+    });
+    await $('[data-testid="create-confirm"]').click();
+    await waitForStatus("Wrote 2 files");
+    await expect($('[data-testid="write-status"]')).toHaveAttribute("data-committed", "false");
+    expect(existsSync(zipPath)).toBe(true);
+    expect(header(zipPath, 0x50, 0x4b)).toBe(true);
+    expect(existsSync(path.join(out, "photos.mochi"))).toBe(false);
+    // No temporary file is left beside it.
+    expect(readdirSync(out).filter((n) => n.endsWith(".part"))).toEqual([]);
+    const status = (await $('[data-testid="write-status"]').getText()).toLowerCase();
+    for (const word of ["committed", "backed up", "safe", "preserved"]) expect(status).not.toContain(word);
+    await openResultDetails("write");
+    await expect($('[data-testid="write-details"]')).toHaveText(expect.stringContaining("ZIP (.zip)"));
+    await expect($('[data-testid="write-details"]')).not.toHaveText(expect.stringContaining("LOCAL_COMMITTED"));
+    await closeResultDetails("write");
+    // "Show in folder" asks for the folder the file went to.
+    await $('[data-testid="write-show-folder"]').click();
+    await browser.waitUntil(() => readFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "utf8").split("\n").includes(out), {
+      timeoutMsg: "the folder was not shown",
+    });
+    // The archive on screen is the one from before: a ZIP is not opened by creating it.
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
+    await assertNoBannedWording();
+  });
+
+  it("never replaces an existing file, in any plain format", async () => {
+    const before = readFileSync(zipPath);
+    queuePicks(path.join(src, "photos"), path.join(out, "photos"));
+    await startFresh();
+    await $('[data-testid="stage-folder"]').click();
+    await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await $('[data-testid="create-format"]').selectByAttribute("value", "zip");
+    await $('[data-testid="change-destination"]').click();
+    await browser.waitUntil(async () => (await textOf("save-location")).endsWith("photos.zip"));
+    await $('[data-testid="create-confirm"]').click();
+    await waitForStatus("Failed (DESTINATION_EXISTS)");
+    // The second line is for screen readers and the tooltip, not the one-line bar.
+    await expect($('[data-testid="write-status"]')).toHaveElementProperty(
+      "textContent",
+      expect.stringContaining("Nothing was written under that name."),
+    );
+    expect(readFileSync(zipPath).equals(before)).toBe(true);
+    expect(readdirSync(out).filter((n) => n.endsWith(".part"))).toEqual([]);
+    // Back to a clean state for the next flow.
+    await $('[data-testid="stage-clear"]').click();
+    await $('[data-testid="write-close"]').click();
+  });
+
+  it("writes tar, tar.gz and tar.zst files with their own extensions", async () => {
+    for (const [format, ext, magic] of [
+      ["tar", "tar", null],
+      ["tar_gz", "tar.gz", [0x1f, 0x8b]],
+      ["tar_zst", "tar.zst", [0x28, 0xb5, 0x2f, 0xfd]],
+    ]) {
+      queuePicks(path.join(src, "photos"), path.join(out, `plain-${format}`));
+      await startFresh();
+      await $('[data-testid="stage-folder"]').click();
+      await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+      await $('[data-testid="create-format"]').selectByAttribute("value", format);
+      await $('[data-testid="create-options"] summary').click();
+      // Plain tar is not compressed, so it has no level to choose.
+      if (format === "tar") await expect($('[data-testid="no-level"]')).toExist();
+      else await expect($('[data-testid="preset-fast"]')).toExist();
+      await $('[data-testid="change-destination"]').click();
+      await browser.waitUntil(async () => (await textOf("save-location")).endsWith(`plain-${format}.${ext}`));
+      await $('[data-testid="create-confirm"]').click();
+      await waitForStatus(`Wrote 2 files · 1 folder`);
+      const file = path.join(out, `plain-${format}.${ext}`);
+      expect(existsSync(file)).toBe(true);
+      if (magic) expect(header(file, ...magic)).toBe(true);
+      else expect(readFileSync(file).subarray(257, 262).toString()).toBe("ustar");
+    }
+  });
+
+  it("cancels a ZIP midway: no file and no temporary file appear", async () => {
+    const cancelledZip = path.join(out, "cancelled-zip");
+    queuePicks(path.join(src, "bulk"), cancelledZip);
+    await startFresh();
+    await $('[data-testid="stage-folder"]').click();
+    await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
+    await $('[data-testid="create-format"]').selectByAttribute("value", "zip");
+    await $('[data-testid="change-destination"]').click();
+    await $('[data-testid="create-confirm"]').click();
+    const progress = await $('[data-testid="write-progress"]');
+    await progress.waitForExist({ timeout: 30_000 });
+    await browser.waitUntil(async () => (await progress.getText()).includes("Looking through the files"));
+    await $('[data-testid="write-cancel"]').click();
+    await waitForStatus("Cancelled. No archive was created.");
+    expect(existsSync(`${cancelledZip}.zip`)).toBe(false);
+    expect(readdirSync(out).filter((n) => n.startsWith("cancelled-zip") || n.endsWith(".part"))).toEqual([]);
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
   });
 });

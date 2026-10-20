@@ -23,6 +23,9 @@
 //! * A cancelled job leaves the previous head valid (spec §5.1): the
 //!   writer publishes in one step at the end, and creation publishes a
 //!   temporary file only on success.
+//! * A new archive can also be a plain ZIP, `.tar`, `.tar.gz`, or `.tar.zst`
+//!   (plan O31): the `ExportArchive` job hands the staged sources to
+//!   `mochi-export` and reports what was written, never a commit.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -44,9 +47,9 @@ use tauri::DragDropEvent;
 
 use crate::browse::{parse_key, Archives};
 use crate::ipc::{
-    ArchiveHandle, CommitOperation, CommitReport, CompressionPreset, DropEvent, IpcError,
-    JobRequest, NameText, PathKey, Secret, SkippedView, StageOutcome, StagedItem, StagedKind,
-    StagedView,
+    ArchiveFormat, ArchiveHandle, CommitOperation, CommitReport, CompressionPreset, DropEvent,
+    ExportReportView, IpcError, JobRequest, NameText, PathKey, Secret, SkippedView, StageOutcome,
+    StagedItem, StagedKind, StagedView,
 };
 
 /// Most sources one staged set holds (a folder counts once).
@@ -130,6 +133,8 @@ struct Staged {
 struct StagedSet {
     items: Vec<Staged>,
     destination: Option<PathBuf>,
+    /// The format of the next new archive (plan O31).
+    format: ArchiveFormat,
 }
 
 /// What the user has chosen to add, and where a new archive would go.
@@ -139,6 +144,9 @@ pub struct Staging {
     /// A single `.mochi` file dropped on the window: opened on request, not
     /// staged (`on_drag_drop`). Only Rust ever holds the path.
     dropped_archive: Mutex<Option<PathBuf>>,
+    /// The folder the last export was written into: what "Show in folder"
+    /// opens (the webview names no path).
+    last_export_folder: Mutex<Option<PathBuf>>,
 }
 
 fn view_of(set: &StagedSet) -> StagedView {
@@ -161,12 +169,13 @@ fn view_of(set: &StagedSet) -> StagedView {
             .and_then(|d| d.file_name())
             .map(|n| n.to_string_lossy().into_owned()),
         default_destination: default_destination(set).map(|p| p.display().to_string()),
+        format: set.format,
     }
 }
 
 /// Where a new archive goes when the user did not choose: next to the first
 /// staged item, named after it, never over an existing file (`name.mochi`,
-/// then `name (2).mochi`, and so on). `None` when there is nothing staged,
+/// then `name (2).mochi`, and so on; the extension is the chosen format's). `None` when there is nothing staged,
 /// or the item has no usable parent folder or Unicode name; the save dialog
 /// then has to be used. Nothing is created here.
 fn default_destination(set: &StagedSet) -> Option<PathBuf> {
@@ -176,11 +185,12 @@ fn default_destination(set: &StagedSet) -> Option<PathBuf> {
     let first = set.items.first()?;
     let parent = first.path.parent().filter(|p| !p.as_os_str().is_empty())?;
     let stem = first.path.file_stem()?.to_str()?;
+    let ext = set.format.extension();
     (1u32..=99).find_map(|n| {
         let name = if n == 1 {
-            format!("{stem}.mochi")
+            format!("{stem}{ext}")
         } else {
-            format!("{stem} ({n}).mochi")
+            format!("{stem} ({n}){ext}")
         };
         let candidate = parent.join(name);
         (!candidate.exists()).then_some(candidate)
@@ -262,8 +272,33 @@ impl Staging {
 
     pub fn clear(&self) -> StagedView {
         let mut set = lock(&self.inner);
-        *set = StagedSet::default();
+        let format = set.format;
+        *set = StagedSet {
+            format,
+            ..StagedSet::default()
+        };
         view_of(&set)
+    }
+
+    /// Choose the format of the next new archive. A destination already
+    /// chosen keeps its folder and name and takes the format's extension.
+    pub fn set_format(&self, format: ArchiveFormat) -> StagedView {
+        let mut set = lock(&self.inner);
+        set.format = format;
+        if let Some(d) = set.destination.take() {
+            set.destination = Some(format.path_for(&d));
+        }
+        view_of(&set)
+    }
+
+    /// The format of the next new archive.
+    pub(crate) fn format(&self) -> ArchiveFormat {
+        lock(&self.inner).format
+    }
+
+    /// The folder the last export went into, for "Show in folder".
+    pub(crate) fn last_export_folder(&self) -> Option<PathBuf> {
+        lock(&self.last_export_folder).clone()
     }
 
     /// The destination chosen with the save dialog, if any (D5 re-encryption
@@ -355,46 +390,64 @@ pub trait DropSink: Send + Sync + 'static {
 /// The window's current listener for drop events, if any.
 #[derive(Default)]
 pub struct DropWatch {
-    sink: Mutex<Option<Arc<dyn DropSink>>>,
+    /// The listener and the announcement nobody has heard yet, under one lock:
+    /// an announcement either reaches the listener that is there, or is kept
+    /// for the next one, and `set` replays it and installs its sink in the
+    /// same step, so an announcement made between the two cannot be stranded.
+    state: Mutex<DropState>,
+}
+
+#[derive(Default)]
+struct DropState {
+    sink: Option<Arc<dyn DropSink>>,
     /// An announcement (D6) made while nobody listened, replayed to the next
     /// listener: an "Add to archive" from the shell can arrive before the
-    /// window has started listening.
-    waiting: Mutex<Option<DropEvent>>,
+    /// window has started listening. The newest replaces an older one.
+    waiting: Option<DropEvent>,
 }
 
 impl DropWatch {
     /// Listen with `sink`, replacing any earlier listener (a reloaded page).
+    /// What was announced while nobody listened is delivered first; if the
+    /// new sink is already gone it stays waiting for the next one.
     pub fn set(&self, sink: Arc<dyn DropSink>) {
-        let waiting = lock(&self.waiting).take();
-        if let Some(event) = waiting {
-            sink.send(event);
+        let mut state = lock(&self.state);
+        if let Some(event) = state.waiting.take() {
+            if !sink.send(event.clone()) {
+                state.waiting = Some(event);
+                state.sink = None;
+                return;
+            }
         }
-        *lock(&self.sink) = Some(sink);
+        state.sink = Some(sink);
     }
 
     fn emit(&self, event: DropEvent) {
-        let sink = lock(&self.sink).clone();
-        if let Some(sink) = sink {
+        let mut state = lock(&self.state);
+        if let Some(sink) = state.sink.clone() {
             if !sink.send(event) {
-                *lock(&self.sink) = None;
+                state.sink = None;
             }
         }
     }
 
-    /// Tell the window that items were staged from outside it (the shell's
-    /// "Add to archive", plan D6), as a drop would: the window opens its add
-    /// panel. Held for the next listener if there is none.
+    /// Tell the window that items were staged from outside it (as a drop
+    /// would): the window opens its add panel. Held for the next listener if
+    /// there is none.
     pub fn announce_staged(&self, outcome: StageOutcome) {
         let event = DropEvent::Dropped {
             staged: outcome.staged,
             problems: outcome.problems,
             from_shell: true,
         };
-        let sink = lock(&self.sink).clone();
-        let delivered = sink.is_some_and(|s| s.send(event.clone()));
+        let mut state = lock(&self.state);
+        let delivered = state
+            .sink
+            .clone()
+            .is_some_and(|sink| sink.send(event.clone()));
         if !delivered {
-            *lock(&self.sink) = None;
-            *lock(&self.waiting) = Some(event);
+            state.sink = None;
+            state.waiting = Some(event);
         }
     }
 }
@@ -483,6 +536,8 @@ pub struct JobDone {
     pub search: Option<Box<crate::ipc::SearchResultView>>,
     /// Set by the rekey jobs (D5).
     pub rekey: Option<Box<crate::ipc::RekeyReport>>,
+    /// Set by the export job (plan O31).
+    pub export: Option<Box<ExportReportView>>,
 }
 
 impl Services {
@@ -521,6 +576,21 @@ impl Services {
                     if !(1..=100).contains(p) {
                         return Err(invalid("a recovery record takes 1 to 100 percent"));
                     }
+                }
+                let t = self.staging.take();
+                if t.items.is_empty() {
+                    return Err(invalid("nothing is staged: choose files or a folder first"));
+                }
+                if t.destination.is_none() {
+                    return Err(invalid("choose where to save the new archive first"));
+                }
+                Ok(())
+            }
+            JobRequest::ExportArchive { format, .. } => {
+                if format.export().is_none() {
+                    return Err(invalid(
+                        "ExportArchive writes ZIP, tar, tar.gz, and tar.zst; use CreateArchive for .mochi",
+                    ));
                 }
                 let t = self.staging.take();
                 if t.items.is_empty() {
@@ -572,6 +642,7 @@ impl Services {
                         check: None,
                         search: None,
                         rekey: None,
+                        export: None,
                     })
             }
             JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
@@ -597,6 +668,7 @@ impl Services {
                 },
                 ctx,
             ),
+            JobRequest::ExportArchive { format, level } => self.export(*format, *level, ctx),
             JobRequest::SearchArchive { .. } => crate::search::run(&self.archives, request, ctx),
             JobRequest::AddPassphrase { .. }
             | JobRequest::RemovePassphrase { .. }
@@ -660,6 +732,46 @@ impl Services {
         // in it unlocked without typing the passphrase again.
         let opened = self.archives.open(&destination, read);
         Ok(done(CommitOperation::Create, &outcome, &import, 0, opened))
+    }
+
+    /// Write the staged sources as a plain ZIP or tar file (plan O31). The
+    /// report says what was written; it is not a commit and not a verification.
+    fn export(
+        &self,
+        format: ArchiveFormat,
+        level: CompressionPreset,
+        ctx: &JobContext<'_>,
+    ) -> Result<JobDone> {
+        let export_format = format
+            .export()
+            .ok_or_else(|| invalid("not a ZIP or tar format"))?;
+        let taken = self.staging.take();
+        let destination = format.path_for(
+            &taken
+                .destination
+                .clone()
+                .ok_or_else(|| invalid("choose where to save the new archive first"))?,
+        );
+        let inputs: Vec<(ArchivePath, PathBuf)> = taken
+            .items
+            .iter()
+            .map(|s| (s.name.clone(), s.path.clone()))
+            .collect();
+        let report = mochi_export::export(
+            &Tree::default(),
+            &inputs,
+            &destination,
+            &mochi_export::Options {
+                format: export_format,
+                level: level.export_level(),
+            },
+            ctx,
+        )?;
+        self.staging.consume(&taken, true);
+        if let Some(folder) = destination.parent() {
+            *lock(&self.staging.last_export_folder) = Some(folder.to_path_buf());
+        }
+        Ok(export_done(format, &destination, &report))
     }
 
     fn add(&self, handle: ArchiveHandle, ctx: &JobContext<'_>) -> Result<JobDone> {
@@ -801,6 +913,52 @@ fn commit_to(
     Ok(outcome)
 }
 
+/// The result of an export: what was written (plan O31).
+pub(crate) fn export_done(
+    format: ArchiveFormat,
+    destination: &Path,
+    report: &mochi_export::Report,
+) -> JobDone {
+    let file_name = destination.file_name().unwrap_or(destination.as_os_str());
+    let view = ExportReportView {
+        format,
+        name: NameText::of(file_name.to_string_lossy().as_bytes()),
+        location: NameText::of(
+            crate::help::for_shell(destination)
+                .to_string_lossy()
+                .as_bytes(),
+        ),
+        files: report.files,
+        directories: report.directories,
+        bytes: report.bytes,
+        output_bytes: report.output_bytes,
+        skipped: report
+            .skipped
+            .iter()
+            .map(|s| SkippedView {
+                path: NameText::of(s.path.as_bytes()),
+                reason: s.reason.clone(),
+            })
+            .collect(),
+        durability_note: report.durability_note.clone(),
+    };
+    JobDone {
+        summary: format!(
+            "wrote {} files and {} folders to {}",
+            report.files,
+            report.directories,
+            file_name.to_string_lossy()
+        ),
+        commit: None,
+        extract: None,
+        foreign_test: None,
+        check: None,
+        search: None,
+        rekey: None,
+        export: Some(Box::new(view)),
+    }
+}
+
 fn done(
     operation: CommitOperation,
     outcome: &CommitOutcome,
@@ -848,6 +1006,7 @@ fn done(
         check: None,
         search: None,
         rekey: None,
+        export: None,
     }
 }
 
@@ -1873,5 +2032,376 @@ mod tests {
         let e = fx.svc.staging.stage_dropped_archive().unwrap_err();
         assert_eq!(e.code, "INVALID_ARGUMENT", "once; nothing is waiting now");
         assert_eq!(fx.svc.staging.view().items.len(), 1);
+    }
+
+    // ---- export (plan O31): ZIP, tar, tar.gz, tar.zst ----
+
+    fn export_request(format: ArchiveFormat) -> JobRequest {
+        JobRequest::ExportArchive {
+            format,
+            level: CompressionPreset::Fast,
+        }
+    }
+
+    const EXPORT_FORMATS: [ArchiveFormat; 4] = [
+        ArchiveFormat::Zip,
+        ArchiveFormat::Tar,
+        ArchiveFormat::TarGz,
+        ArchiveFormat::TarZst,
+    ];
+
+    /// The foreign-archive helper next to the test executable, built on demand.
+    fn helper() -> PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let name = if cfg!(windows) {
+            "mochi-foreign-helper.exe"
+        } else {
+            "mochi-foreign-helper"
+        };
+        let path = exe.parent().unwrap().parent().unwrap().join(name);
+        if !path.exists() {
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+            let ok = std::process::Command::new(cargo)
+                .args(["build", "-p", "mochi-foreign"])
+                .status()
+                .unwrap()
+                .success();
+            assert!(
+                ok && path.exists(),
+                "could not build the helper at {path:?}"
+            );
+        }
+        path
+    }
+
+    #[test]
+    fn each_exported_format_is_read_back_by_the_foreign_reader_and_reports_plainly() {
+        for format in EXPORT_FORMATS {
+            let fx = fixture();
+            // An empty folder and a Unicode name travel too.
+            std::fs::create_dir_all(fx.root.join("docs/empty")).unwrap();
+            put(&fx.root, "docs/Grüße ☃.txt", b"unicode");
+            stage_ok(&fx.svc, &[fx.root.join("docs"), fx.root.join("loose.bin")]);
+            fx.svc.staging.set_format(format);
+            // The user typed no extension: the format's is added.
+            fx.svc.staging.set_destination(fx.out.join("pack"));
+            let done = run_plain(&fx.svc, &export_request(format)).unwrap();
+            let dest = fx.out.join(format!("pack{}", format.extension()));
+            assert!(dest.is_file(), "{format:?}");
+            assert_eq!(
+                std::fs::read_dir(&fx.out).unwrap().count(),
+                1,
+                "no temporary file"
+            );
+            assert!(done.commit.is_none(), "an export is not a commit");
+            let report = done.export.expect("an export report");
+            assert_eq!(report.format, format);
+            assert_eq!(report.name.text, format!("pack{}", format.extension()));
+            assert_eq!((report.files, report.directories), (4, 3), "{format:?}");
+            assert_eq!(report.bytes, 5 + 17 + 7 + 100);
+            assert_eq!(report.output_bytes, std::fs::metadata(&dest).unwrap().len());
+            assert!(report.skipped.is_empty());
+            // The staged set is consumed, as after a create.
+            assert!(fx.svc.staging.view().items.is_empty());
+            assert_eq!(
+                fx.svc.staging.last_export_folder().as_deref(),
+                Some(fx.out.as_path())
+            );
+
+            // The existing reader (the isolated helper) lists it and tests it.
+            let foreign = Arc::new(crate::foreign::Foreign::default());
+            foreign.set_helper(helper());
+            let summary = foreign
+                .open(&dest, None)
+                .expect("the foreign reader opens it");
+            assert_eq!(summary.entries, 7, "{format:?}: 3 folders and 4 files");
+            let page = foreign.children(summary.handle, None, 0, 100).unwrap();
+            let names: Vec<_> = page.entries.iter().map(|e| e.name.text.clone()).collect();
+            assert_eq!(names, ["docs", "loose.bin"], "{format:?}");
+            let svc = Services {
+                foreign: Arc::clone(&foreign),
+                ..Services::default()
+            };
+            let tested = svc
+                .run(
+                    &JobRequest::TestForeign {
+                        handle: summary.handle,
+                    },
+                    &JobContext {
+                        progress: &NullProgress,
+                        cancel: &CancellationToken::new(),
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            let t = tested.foreign_test.unwrap();
+            assert_eq!(t.problems_total, 0, "{format:?}: {:?}", t.problems);
+            assert!(t.complete);
+        }
+    }
+
+    #[test]
+    fn export_wording_is_the_summary_of_what_was_written_not_a_commit() {
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("loose.bin")]);
+        fx.svc.staging.set_format(ArchiveFormat::Zip);
+        let done = run_plain(&fx.svc, &export_request(ArchiveFormat::Zip)).unwrap();
+        let text = done.summary.to_lowercase();
+        for banned in [
+            "local_committed",
+            "commit",
+            "safe",
+            "backed up",
+            "preserved",
+            "verified",
+        ] {
+            assert!(!text.contains(banned), "{text}");
+        }
+    }
+
+    #[test]
+    fn export_never_replaces_a_file_and_the_staged_set_stays_for_another_try() {
+        for format in EXPORT_FORMATS {
+            let fx = fixture();
+            stage_ok(&fx.svc, &[fx.root.join("docs")]);
+            fx.svc.staging.set_format(format);
+            let dest = fx.out.join(format!("mine{}", format.extension()));
+            std::fs::write(&dest, b"precious").unwrap();
+            fx.svc.staging.set_destination(dest.clone());
+            let e = run_plain(&fx.svc, &export_request(format)).unwrap_err();
+            assert_eq!(e.code, ErrorCode::DestinationExists, "{format:?}");
+            assert_eq!(std::fs::read(&dest).unwrap(), b"precious");
+            assert_eq!(std::fs::read_dir(&fx.out).unwrap().count(), 1);
+            assert_eq!(fx.svc.staging.view().items.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_cancelled_export_leaves_no_file_and_keeps_the_staged_set() {
+        for format in EXPORT_FORMATS {
+            let fx = fixture();
+            stage_ok(&fx.svc, &[fx.root.join("docs"), fx.root.join("loose.bin")]);
+            fx.svc.staging.set_format(format);
+            fx.svc.staging.set_destination(fx.out.join("never"));
+            let token = CancellationToken::new();
+            struct CancelOnWrite(CancellationToken);
+            impl ProgressSink for CancelOnWrite {
+                fn report(&self, e: &ProgressEvent) {
+                    if e.phase == mochi_export::WRITE_PHASE {
+                        self.0.cancel();
+                    }
+                }
+            }
+            let e = run(
+                &fx.svc,
+                &export_request(format),
+                &CancelOnWrite(token.clone()),
+                &token,
+            )
+            .unwrap_err();
+            assert_eq!(e.code, ErrorCode::Cancelled, "{format:?}");
+            assert_eq!(
+                std::fs::read_dir(&fx.out).unwrap().count(),
+                0,
+                "{format:?}: no archive and no temporary file"
+            );
+            assert_eq!(fx.svc.staging.view().items.len(), 2);
+            assert_eq!(fx.svc.staging.last_export_folder(), None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_export_lists_what_it_could_not_represent() {
+        let fx = fixture();
+        std::os::unix::fs::symlink(fx.root.join("loose.bin"), fx.root.join("docs/link")).unwrap();
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        fx.svc.staging.set_format(ArchiveFormat::TarGz);
+        fx.svc.staging.set_destination(fx.out.join("links"));
+        let done = run_plain(&fx.svc, &export_request(ArchiveFormat::TarGz)).unwrap();
+        let r = done.export.unwrap();
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].path.text, "docs/link");
+        assert!(r.skipped[0].reason.contains("symbolic link"));
+    }
+
+    #[test]
+    fn an_export_request_is_checked_before_a_job_starts() {
+        let fx = fixture();
+        // .mochi is created by CreateArchive, not exported.
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        let e = fx
+            .svc
+            .validate(&export_request(ArchiveFormat::Mochi))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        // Nothing staged.
+        fx.svc.staging.clear();
+        let e = fx
+            .svc
+            .validate(&export_request(ArchiveFormat::Zip))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        // The registry refuses it without spawning, like a create.
+        let reg = Arc::new(JobRegistry::with_services(fx.svc.clone()));
+        struct Never;
+        impl EventSink for Never {
+            fn send(&self, _: JobEvent) -> bool {
+                panic!("no events for a refused job")
+            }
+        }
+        let e = reg
+            .start(
+                export_request(ArchiveFormat::Zip),
+                Arc::new(Never),
+                Box::new(|_| panic!("must not spawn")),
+            )
+            .unwrap_err();
+        assert_eq!(e.code, "INVALID_ARGUMENT");
+    }
+
+    #[test]
+    fn an_export_streams_progress_and_one_finished_with_its_report() {
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("docs"), fx.root.join("loose.bin")]);
+        fx.svc.staging.set_format(ArchiveFormat::Zip);
+        fx.svc.staging.set_destination(fx.out.join("job"));
+        let reg = Arc::new(JobRegistry::with_services(fx.svc.clone()));
+        let (tx, rx) = mpsc::channel();
+        reg.start(
+            export_request(ArchiveFormat::Zip),
+            Arc::new(Collect(Mutex::new(tx), AtomicBool::new(true))),
+            Box::new(|w| {
+                std::thread::spawn(w);
+            }),
+        )
+        .unwrap();
+        let mut events = Vec::new();
+        loop {
+            let e = rx.recv_timeout(Duration::from_secs(60)).unwrap();
+            let end = matches!(e, JobEvent::Finished { .. });
+            events.push(e);
+            if end {
+                break;
+            }
+        }
+        assert!(events.iter().any(
+            |e| matches!(e, JobEvent::Progress { phase, total: Some(_), .. } if phase == mochi_export::WRITE_PHASE)
+        ));
+        let JobEvent::Finished {
+            outcome: JobOutcome::Completed { export, commit, .. },
+            ..
+        } = events.last().unwrap()
+        else {
+            panic!("{:?}", events.last())
+        };
+        assert!(commit.is_none());
+        assert_eq!(export.as_ref().unwrap().format, ArchiveFormat::Zip);
+        assert!(fx.out.join("job.zip").is_file());
+    }
+
+    // ---- the chosen format and the names that follow it ----
+
+    #[test]
+    fn the_default_name_and_a_chosen_destination_follow_the_format() {
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        let st = &fx.svc.staging;
+        assert_eq!(st.view().format, ArchiveFormat::Mochi);
+        for (format, ext) in [
+            (ArchiveFormat::Zip, "zip"),
+            (ArchiveFormat::TarGz, "tar.gz"),
+            (ArchiveFormat::Mochi, "mochi"),
+        ] {
+            let v = st.set_format(format);
+            assert_eq!(v.format, format);
+            assert_eq!(
+                v.default_destination,
+                Some(fx.root.join(format!("docs.{ext}")).display().to_string())
+            );
+        }
+        // A name taken for this format moves to the next free one.
+        st.set_format(ArchiveFormat::Zip);
+        std::fs::write(fx.root.join("docs.zip"), b"mine").unwrap();
+        assert_eq!(
+            st.view().default_destination,
+            Some(fx.root.join("docs (2).zip").display().to_string())
+        );
+        // A chosen destination takes the new extension and keeps its folder.
+        st.set_destination(fx.out.join("report.mochi"));
+        let v = st.set_format(ArchiveFormat::TarZst);
+        assert_eq!(v.destination.as_deref(), Some("report.tar.zst"));
+        let v = st.set_format(ArchiveFormat::Tar);
+        assert_eq!(v.destination.as_deref(), Some("report.tar"));
+        // Clearing the selection keeps the format the user chose.
+        assert_eq!(st.clear().format, ArchiveFormat::Tar);
+    }
+
+    // ---- announcements to a window that is not listening yet ----
+
+    fn announce(watch: &DropWatch, name: &str) {
+        let staging = Staging::default();
+        let _ = name;
+        watch.announce_staged(StageOutcome {
+            staged: staging.view(),
+            problems: vec![IpcError {
+                code: "X".into(),
+                message: name.to_owned(),
+            }],
+        });
+    }
+
+    fn announced(sink: &Drops) -> Vec<String> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                DropEvent::Dropped { problems, .. } => problems.first().map(|p| p.message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_announcement_made_before_the_window_listens_is_replayed_once() {
+        let watch = DropWatch::default();
+        announce(&watch, "first");
+        announce(&watch, "second"); // the newest replaces an older waiting one
+        let sink = Arc::new(Drops(Mutex::default(), AtomicBool::new(true)));
+        watch.set(sink.clone());
+        assert_eq!(announced(&sink), ["second"]);
+        // Not replayed to a reloaded page.
+        let again = Arc::new(Drops(Mutex::default(), AtomicBool::new(true)));
+        watch.set(again.clone());
+        assert!(announced(&again).is_empty());
+    }
+
+    #[test]
+    fn an_announcement_racing_a_listener_is_delivered_exactly_once_never_stranded() {
+        // Many rounds of `set` against `announce_staged` on two threads: every
+        // announcement ends up in a sink (the old one or the new one), and
+        // nothing stays waiting once a listener is installed.
+        for round in 0..200 {
+            let watch = Arc::new(DropWatch::default());
+            let sink = Arc::new(Drops(Mutex::default(), AtomicBool::new(true)));
+            let w = Arc::clone(&watch);
+            let announcer = std::thread::spawn(move || announce(&w, &format!("r{round}")));
+            watch.set(sink.clone());
+            announcer.join().unwrap();
+            assert_eq!(announced(&sink), [format!("r{round}")], "round {round}");
+            assert!(lock(&watch.state).waiting.is_none(), "round {round}");
+        }
+    }
+
+    #[test]
+    fn a_listener_that_is_already_gone_leaves_the_announcement_waiting() {
+        let watch = DropWatch::default();
+        announce(&watch, "kept");
+        let dead = Arc::new(Drops(Mutex::default(), AtomicBool::new(false)));
+        watch.set(dead.clone());
+        let live = Arc::new(Drops(Mutex::default(), AtomicBool::new(true)));
+        watch.set(live.clone());
+        assert_eq!(announced(&live), ["kept"]);
     }
 }

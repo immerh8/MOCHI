@@ -8,19 +8,20 @@
 //!   was opened (an [`ArchiveSummary`], as `open_archive` returns) or what the
 //!   problem was. It never receives, and never sends, a path.
 //! * **Two kinds of verb (owner decision 2026-10-16, replacing "nothing runs
-//!   silently").** *Panel verbs* open an archive read-only or stage sources
-//!   and the main window shows the existing panel: "Open with MOCHI" (the
-//!   browser) and "Add to archive…" (`--add`, the add panel). Nothing is
-//!   written until the user presses the button there. *Quick verbs* do the
-//!   job at once in a small compact window ([`crate::quick`]; progress, then a
+//!   silently"; amended 2026-10-20).** The *panel verb* "Open with MOCHI"
+//!   opens an archive read-only in the main window's browser. *Quick verbs*
+//!   run in a small compact window ([`crate::quick`]; progress, then a
 //!   one-line result with "Show in folder" and Close) and never open the main
 //!   window: "Extract here" and "Extract to new folder" (`--extract-here`,
-//!   `--extract-to-folder`) and "Add to archive" (`--add-now`). A quick verb
+//!   `--extract-to-folder`), "Add to archive" (`--add-now`, at once), and
+//!   "Add to archive…" (`--add`, a small form first: name, Browse…, format,
+//!   level, `.mochi` options, OK and Cancel; nothing is written until OK). A quick verb
 //!   never overwrites: when anything in the way exists, nothing is written and
 //!   the extract plan for the same archive opens in the main window instead
 //!   (the panel verb's screen, with the folder chosen in Rust). Explorer starts
-//!   one process per selected item, so `--add-now` launches that arrive within
-//!   [`ADD_BATCH_WINDOW`] of each other are collected into one archive.
+//!   one process per selected item, so `--add-now` and `--add` launches that
+//!   arrive within [`ADD_BATCH_WINDOW`] of each other are collected into one
+//!   archive; a later `--add` launch joins the form while it is still open.
 //! * **No secret on a command line.** There is no option for a passphrase;
 //!   a passphrase option is refused by name, and the refusal never repeats an
 //!   option's value. Encrypted archives ask for the passphrase in the window.
@@ -51,7 +52,7 @@
 //!   --open                  the same, explicitly ("Open with MOCHI")
 //!   --extract-here          quick: extract PATH into the archive's folder
 //!   --extract-to-folder     quick: extract PATH into a new folder named for it
-//!   --add                   stage PATH... in the add panel
+//!   --add                   quick: the Add form for PATH... (name, format, OK)
 //!   --add-now               quick: add PATH... to a new archive next to it
 //! ```
 //!
@@ -72,7 +73,7 @@ use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{ArchiveSummary, ForeignArchiveSummary, IpcError};
 use crate::quick::{MainPort, Quick, QuickAction, QuickJob};
-use crate::write::{DropWatch, Staging, MAX_STAGED};
+use crate::write::MAX_STAGED;
 
 /// Longest path accepted from the command line, in bytes (Windows allows
 /// 32,767 UTF-16 units; Linux 4,096).
@@ -102,7 +103,7 @@ impl Verb {
     pub fn is_quick(self) -> bool {
         matches!(
             self,
-            Verb::ExtractHere | Verb::ExtractToFolder | Verb::AddNow
+            Verb::ExtractHere | Verb::ExtractToFolder | Verb::Add | Verb::AddNow
         )
     }
 }
@@ -231,7 +232,10 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
 
 /// The arguments of this process, without the program name.
 pub fn from_environment() -> Result<Option<Launch>, LaunchError> {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.is_empty() {
+        args = crate::automation::launch_args();
+    }
     let cwd = std::env::current_dir().unwrap_or_default();
     parse(&args, &cwd)
 }
@@ -283,9 +287,7 @@ struct Delivery {
 /// What a launch needs besides its arguments.
 struct Inner {
     archives: Arc<Archives>,
-    staging: Arc<Staging>,
     destination: Arc<Destination>,
-    drops: Arc<DropWatch>,
     foreign: Arc<Foreign>,
     quick: Arc<Quick>,
     delivery: Mutex<Delivery>,
@@ -316,38 +318,24 @@ pub struct Launches {
 impl Launches {
     pub fn new(
         archives: Arc<Archives>,
-        staging: Arc<Staging>,
         destination: Arc<Destination>,
-        drops: Arc<DropWatch>,
         foreign: Arc<Foreign>,
         quick: Arc<Quick>,
     ) -> Launches {
-        Self::with_batch_window(
-            archives,
-            staging,
-            destination,
-            drops,
-            foreign,
-            quick,
-            ADD_BATCH_WINDOW,
-        )
+        Self::with_batch_window(archives, destination, foreign, quick, ADD_BATCH_WINDOW)
     }
 
-    /// [`Launches::new`] with another collection window for `--add-now`.
+    /// [`Launches::new`] with another collection window for `--add-now` and `--add`.
     pub fn with_batch_window(
         archives: Arc<Archives>,
-        staging: Arc<Staging>,
         destination: Arc<Destination>,
-        drops: Arc<DropWatch>,
         foreign: Arc<Foreign>,
         quick: Arc<Quick>,
         batch_window: Duration,
     ) -> Launches {
         let inner = Arc::new(Inner {
             archives,
-            staging,
             destination,
-            drops,
             foreign,
             quick,
             delivery: Mutex::default(),
@@ -374,14 +362,17 @@ impl Launches {
                 };
                 match item {
                     Item::ShowMain => worker.show_main(),
-                    Item::Launch(Ok(mut launch)) if launch.verb == Verb::AddNow => {
+                    Item::Launch(Ok(mut launch))
+                        if matches!(launch.verb, Verb::AddNow | Verb::Add) =>
+                    {
                         // Collect the launches of one selection into one
                         // archive: wait until none has arrived for a window.
-                        // Anything else that arrives meanwhile keeps its
+                        // Only launches of the same verb are collected;
+                        // anything else that arrives meanwhile keeps its
                         // place, after this one.
                         loop {
                             match rx.recv_timeout(batch_window) {
-                                Ok(Item::Launch(Ok(more))) if more.verb == Verb::AddNow => {
+                                Ok(Item::Launch(Ok(more))) if more.verb == launch.verb => {
                                     for p in more.paths {
                                         if !launch.paths.contains(&p) {
                                             launch.paths.push(p);
@@ -510,9 +501,15 @@ impl Inner {
         };
         match launch.verb {
             Verb::Add => {
-                let outcome = self.staging.add(&launch.paths);
-                self.drops.announce_staged(outcome);
-                self.show_main();
+                // A form that is still open takes the items; otherwise a form
+                // of its own is queued behind whatever the quick worker is
+                // doing.
+                if !self.quick.extend_prompt(&launch.paths) {
+                    // A send fails only if the quick worker is gone (a panic).
+                    let _ = quick.send(QuickJob::AddDialog {
+                        paths: launch.paths,
+                    });
+                }
             }
             Verb::AddNow => {
                 // A send fails only if the quick worker is gone (a panic).
@@ -784,7 +781,11 @@ mod tests {
         assert_eq!(l.paths.len(), 3);
         let l = parsed(&["--add-now", "a", "b"]).unwrap().unwrap();
         assert_eq!((l.verb, l.paths.len()), (Verb::AddNow, 2));
-        assert!(!Verb::Open.is_quick() && !Verb::Add.is_quick());
+        assert!(!Verb::Open.is_quick());
+        assert!(
+            Verb::Add.is_quick(),
+            "Add to archive... is the compact form"
+        );
         assert!(Verb::ExtractHere.is_quick() && Verb::ExtractToFolder.is_quick());
         assert!(Verb::AddNow.is_quick());
     }
@@ -917,9 +918,7 @@ mod tests {
         let destination = Arc::new(Destination::default());
         let l = Launches::new(
             Arc::new(Archives::default()),
-            Arc::new(Staging::default()),
             Arc::clone(&destination),
-            Arc::new(DropWatch::default()),
             Arc::clone(&foreign),
             Quick::new(),
         );
@@ -1236,9 +1235,7 @@ mod tests {
             .collect();
         let l = Launches::with_batch_window(
             Arc::new(Archives::default()),
-            Arc::new(Staging::default()),
             Arc::new(Destination::default()),
-            Arc::new(DropWatch::default()),
             Arc::new(Foreign::default()),
             Quick::new(),
             Duration::from_millis(300),
@@ -1291,9 +1288,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let l = Launches::with_batch_window(
             Arc::new(Archives::default()),
-            Arc::new(Staging::default()),
             Arc::new(Destination::default()),
-            Arc::new(DropWatch::default()),
             Arc::new(Foreign::default()),
             Quick::new(),
             Duration::from_millis(200),
@@ -1345,39 +1340,214 @@ mod tests {
         assert_eq!(names, ["a.mochi", "b.mochi"]);
     }
 
-    #[test]
-    fn add_stages_in_rust_and_announces_like_a_drop() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("notes.txt");
-        std::fs::write(&file, b"x").unwrap();
-        let l = launches();
-        l.handle_now(Ok(Launch {
-            verb: Verb::Add,
-            paths: vec![file.clone(), dir.path().join("missing")],
-        }));
-        // Nobody listened to drops yet: the announcement waits.
-        struct Drops(Mutex<Vec<crate::ipc::DropEvent>>);
-        impl crate::write::DropSink for Drops {
-            fn send(&self, event: crate::ipc::DropEvent) -> bool {
-                self.0.lock().unwrap().push(event);
-                true
+    /// Wait until `want` finds an event in the compact window's stream.
+    fn wait_quick(
+        sink: &QSink,
+        want: impl Fn(&crate::quick::QuickEvent) -> bool,
+    ) -> crate::quick::QuickEvent {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(e) = sink.events().into_iter().find(|e| want(e)) {
+                return e;
             }
+            assert!(std::time::Instant::now() < deadline, "{:?}", sink.events());
+            std::thread::sleep(Duration::from_millis(10));
         }
-        let drops = Arc::new(Drops(Mutex::default()));
-        l.inner.drops.set(drops.clone());
-        let got = drops.0.lock().unwrap().clone();
-        assert_eq!(got.len(), 1);
-        let crate::ipc::DropEvent::Dropped {
-            staged,
-            problems,
-            from_shell: true,
-        } = &got[0]
+    }
+
+    fn add_form_launches(batch: Duration) -> (Launches, Arc<QSink>) {
+        let l = Launches::with_batch_window(
+            Arc::new(Archives::default()),
+            Arc::new(Destination::default()),
+            Arc::new(Foreign::default()),
+            Quick::new(),
+            batch,
+        );
+        let compact = QSink::live();
+        l.inner.quick.watch(compact.clone());
+        (l, compact)
+    }
+
+    fn zip_request(name: &str) -> crate::quick::QuickAddRequest {
+        crate::quick::QuickAddRequest {
+            name: name.to_owned(),
+            format: crate::ipc::ArchiveFormat::Zip,
+            level: crate::ipc::CompressionPreset::Balanced,
+            passphrase: None,
+            recovery_percent: None,
+        }
+    }
+
+    #[test]
+    fn add_is_a_quick_verb_and_never_opens_the_main_window() {
+        assert!(Verb::Add.is_quick());
+    }
+
+    #[test]
+    fn add_launches_of_one_selection_make_one_form_and_nothing_is_written_until_ok() {
+        use crate::quick::QuickEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("trip");
+        std::fs::create_dir(&folder).unwrap();
+        let files: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt"]
+            .iter()
+            .map(|n| {
+                let p = folder.join(n);
+                std::fs::write(&p, n.as_bytes()).unwrap();
+                p
+            })
+            .collect();
+        let (l, compact) = add_form_launches(Duration::from_millis(300));
+        // One process per item, a few milliseconds apart, as Explorer does.
+        for f in &files {
+            l.submit(parse(
+                &[OsStr::new("--add"), OsStr::new("--"), f.as_os_str()],
+                &cwd(),
+            ));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let QuickEvent::AddPrompt {
+            items,
+            name,
+            folder: shown,
+            ..
+        } = wait_quick(&compact, |e| matches!(e, QuickEvent::AddPrompt { .. }))
         else {
-            panic!("{got:?}")
+            unreachable!()
         };
-        assert_eq!(staged.items.len(), 1);
-        assert_eq!(staged.items[0].name.text, "notes.txt");
-        assert_eq!(problems.len(), 1, "the missing path is explained");
-        assert_eq!(l.inner.staging.view().items.len(), 1);
+        assert_eq!(items, 3, "one form for the whole selection");
+        assert_eq!(name, "trip.mochi", "named like --add-now");
+        assert!(shown.text.ends_with("trip"), "{}", shown.text);
+        let prompts = compact
+            .events()
+            .iter()
+            .filter(|e| matches!(e, QuickEvent::AddPrompt { .. }))
+            .count();
+        assert_eq!(prompts, 1);
+        // Nothing runs and nothing is written before OK.
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(!compact
+            .events()
+            .iter()
+            .any(|e| matches!(e, QuickEvent::Started { .. } | QuickEvent::Done { .. })));
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 3);
+        // OK writes the archive the form describes, as a ZIP.
+        l.inner.quick.submit_add(zip_request("trip")).unwrap();
+        let QuickEvent::Done {
+            name,
+            files,
+            format,
+            status,
+            ..
+        } = wait_quick(&compact, |e| matches!(e, QuickEvent::Done { .. }))
+        else {
+            unreachable!()
+        };
+        assert_eq!((name.text.as_str(), files), ("trip.zip", 3));
+        assert_eq!(format, crate::ipc::ArchiveFormat::Zip);
+        assert_eq!(status, None, "a ZIP has no commit status");
+        assert!(folder.join("trip.zip").is_file());
+        assert!(!folder.join("trip.mochi").exists());
+    }
+
+    #[test]
+    fn a_later_add_launch_joins_the_form_while_it_is_open() {
+        use crate::quick::QuickEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        let two = dir.path().join("two.txt");
+        std::fs::write(&one, b"1").unwrap();
+        std::fs::write(&two, b"22").unwrap();
+        let (l, compact) = add_form_launches(Duration::from_millis(50));
+        l.submit(parse(&[OsStr::new("--add"), one.as_os_str()], &cwd()));
+        wait_quick(&compact, |e| {
+            matches!(e, QuickEvent::AddPrompt { items: 1, .. })
+        });
+        // Well after the collection window: the form is open.
+        std::thread::sleep(Duration::from_millis(200));
+        l.submit(parse(&[OsStr::new("--add"), two.as_os_str()], &cwd()));
+        wait_quick(&compact, |e| {
+            matches!(e, QuickEvent::AddPrompt { items: 2, .. })
+        });
+        l.inner.quick.submit_add(zip_request("both")).unwrap();
+        let QuickEvent::Done { files, .. } =
+            wait_quick(&compact, |e| matches!(e, QuickEvent::Done { .. }))
+        else {
+            unreachable!()
+        };
+        assert_eq!(files, 2);
+        assert!(dir.path().join("both.zip").is_file());
+    }
+
+    #[test]
+    fn an_add_launch_after_ok_gets_a_form_of_its_own() {
+        use crate::quick::QuickEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        let two = dir.path().join("two.txt");
+        std::fs::write(&one, b"1").unwrap();
+        std::fs::write(&two, b"22").unwrap();
+        let (l, compact) = add_form_launches(Duration::from_millis(50));
+        l.submit(parse(&[OsStr::new("--add"), one.as_os_str()], &cwd()));
+        wait_quick(&compact, |e| matches!(e, QuickEvent::AddPrompt { .. }));
+        l.inner.quick.submit_add(zip_request("first")).unwrap();
+        wait_quick(&compact, |e| matches!(e, QuickEvent::Done { .. }));
+        l.submit(parse(&[OsStr::new("--add"), two.as_os_str()], &cwd()));
+        // The second form carries only the second item, not the first.
+        let QuickEvent::AddPrompt { items, subject, .. } = wait_quick(
+            &compact,
+            |e| matches!(e, QuickEvent::AddPrompt { subject, .. } if subject.text == "two.txt"),
+        ) else {
+            unreachable!()
+        };
+        assert_eq!(items, 1);
+        assert_eq!(subject.text, "two.txt");
+        l.inner.quick.closed();
+        assert!(dir.path().join("first.zip").is_file());
+        assert!(!dir.path().join("two.mochi").exists() && !dir.path().join("two.zip").exists());
+    }
+
+    #[test]
+    fn closing_the_form_writes_nothing_and_frees_the_worker_for_the_next_form() {
+        use crate::quick::QuickEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        std::fs::write(&one, b"1").unwrap();
+        let (l, compact) = add_form_launches(Duration::from_millis(50));
+        l.submit(parse(&[OsStr::new("--add"), one.as_os_str()], &cwd()));
+        wait_quick(&compact, |e| matches!(e, QuickEvent::AddPrompt { .. }));
+        l.inner.quick.closed();
+        // The worker ends the cancelled job (its event has no window to go to).
+        std::thread::sleep(Duration::from_millis(150));
+        let second = QSink::live();
+        l.inner.quick.watch(second.clone());
+        l.submit(parse(&[OsStr::new("--add"), one.as_os_str()], &cwd()));
+        wait_quick(&second, |e| matches!(e, QuickEvent::AddPrompt { .. }));
+        // What the first window never heard is not replayed to the next one.
+        assert!(
+            matches!(second.events()[0], QuickEvent::AddPrompt { .. }),
+            "{:?}",
+            second.events()
+        );
+        l.inner.quick.closed();
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "only the item itself is in the folder"
+        );
+    }
+
+    #[test]
+    fn add_on_something_that_does_not_exist_fails_in_the_compact_window() {
+        use crate::quick::QuickEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let (l, compact) = add_form_launches(Duration::from_millis(50));
+        l.submit(parse(
+            &[OsStr::new("--add"), dir.path().join("gone").as_os_str()],
+            &cwd(),
+        ));
+        let failed = wait_quick(&compact, |e| matches!(e, QuickEvent::Failed { .. }));
+        assert!(matches!(failed, QuickEvent::Failed { .. }));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }

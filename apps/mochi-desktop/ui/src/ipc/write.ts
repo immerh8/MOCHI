@@ -4,18 +4,22 @@
 // sees only display names.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import type { ArchiveFormat } from "./generated/ArchiveFormat";
 import type { CommitReport } from "./generated/CommitReport";
 import type { CompressionPreset } from "./generated/CompressionPreset";
 import type { DropEvent } from "./generated/DropEvent";
+import type { ExportReportView } from "./generated/ExportReportView";
 import type { SourcePick } from "./generated/SourcePick";
 import type { StageOutcome } from "./generated/StageOutcome";
 import type { StagedItem } from "./generated/StagedItem";
 import type { StagedView } from "./generated/StagedView";
 
 export type {
+  ArchiveFormat,
   CommitReport,
   CompressionPreset,
   DropEvent,
+  ExportReportView,
   SourcePick,
   StageOutcome,
   StagedItem,
@@ -49,4 +53,13 @@ export function clearStaged(): Promise<StagedView> {
 /** Show the save dialog; `null` if the user cancelled it. */
 export function chooseDestination(): Promise<StagedView | null> {
   return invoke<StagedView | null>("choose_destination");
+}
+
+/**
+ * Choose the format of the next new archive (plan O31): `.mochi`, ZIP, tar,
+ * tar.gz or tar.zst. Rust returns the staged view with names that follow the
+ * format's extension.
+ */
+export function setArchiveFormat(format: ArchiveFormat): Promise<StagedView> {
+  return invoke<StagedView>("set_archive_format", { format });
 }

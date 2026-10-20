@@ -463,7 +463,7 @@ test("the browser's Extract takes the list's selection", async () => {
       case "recent_archives":
         return [];
       case "staged_sources":
-        return { items: [], destination: null, default_destination: null };
+        return { items: [], destination: null, default_destination: null, format: "mochi" };
       case "open_archive":
         return { status: "opened", archive: summary() };
       case "open_snapshot":

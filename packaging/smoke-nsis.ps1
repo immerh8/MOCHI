@@ -3,7 +3,7 @@
 # with the default (the foreign-format opt-in is OFF) and once with /ASSOCIATE_FOREIGN.
 # Usage: smoke-nsis.ps1 path\to\setup.exe
 # Note: Windows Server runner; client-only behaviour (WebView2 bootstrap on a machine
-# without it, Explorer's menu display) is on the release checklist (docs/packaging.md).
+# without it, Explorer's menu display and its locked-DLL behaviour on update) is on the release checklist (docs/packaging.md).
 param([Parameter(Mandatory = $true)][string]$Setup)
 $ErrorActionPreference = "Stop"
 function Fail($m) { Write-Error "SMOKE FAIL: $m"; exit 1 }
@@ -30,15 +30,23 @@ function Test-OpenWith($ext) {
 }
 
 # Every key and value this installer may add (plan D6; packaging/nsis/hooks.nsh).
-# One cascading submenu "MOCHI" per class, with its entries as subkeys; the flat verbs of
-# 0.1.0 must be gone as well (an update removes them, an uninstall leaves none).
+# Owner decision 2026-10-20: a flat Explorer menu. The shell extension DLL (CLSID below)
+# serves "Add to archive..." and Add to "<Name>.mochi" on every file and folder; three
+# static verbs sit on .mochi files. The cascade "MochiMenu" and the flat verbs of 0.1.0
+# must be gone (an update removes them, an uninstall leaves none).
+$clsid = "{508772cd-d924-4b90-8b87-37fd5d593932}"
 $verbKeys = @(
+  "CLSID\$clsid",
+  "*\shellex\ContextMenuHandlers\MOCHI",
+  "Directory\shellex\ContextMenuHandlers\MOCHI",
+  "SystemFileAssociations\.mochi\shell\MochiOpen",
+  "SystemFileAssociations\.mochi\shell\MochiExtractHere",
+  "SystemFileAssociations\.mochi\shell\MochiExtractToFolder"
+)
+$legacyKeys = @(
   "SystemFileAssociations\.mochi\shell\MochiMenu",
   "*\shell\MochiMenu",
   "Directory\shell\MochiMenu",
-  "SystemFileAssociations\.mochi\shell\MochiOpen",
-  "SystemFileAssociations\.mochi\shell\MochiExtractHere",
-  "SystemFileAssociations\.mochi\shell\MochiExtractToFolder",
   "*\shell\MochiAdd",
   "Directory\shell\MochiAdd"
 )
@@ -47,7 +55,7 @@ $foreignExts = "zip", "7z", "rar", "tar", "tgz", "gz"
 $installKey = "HKCU:\Software\The MOCHI Project contributors\MOCHI"
 
 function Assert-NothingRegistered($when) {
-  foreach ($k in $verbKeys + @("MOCHI.Archive", "MOCHI.Foreign")) {
+  foreach ($k in $verbKeys + $legacyKeys + @("MOCHI.Archive", "MOCHI.Foreign")) {
     if (Test-ClassKey $k) { Fail "$when : HKCU\Software\Classes\$k exists" }
   }
   if (Test-ClassKey ".mochi") { Fail "$when : HKCU\Software\Classes\.mochi exists" }
@@ -114,48 +122,63 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if ((Get-ClassDefault ".mochi") -ne "MOCHI.Archive") { Fail ".mochi is not associated with MOCHI.Archive" }
   $open = Get-ClassDefault "MOCHI.Archive\shell\open\command"
   if (-not $open -or -not $open.Contains($exePath)) { Fail "MOCHI.Archive open command does not run the installed app: $open" }
-  # The submenu: a menu key (text "MOCHI", empty SubCommands) whose own shell key holds the entries.
-  $addItems = [ordered]@{ "40Add" = @("--add-now", "Add to archive"); "50AddPanel" = @("--add", "Add to archive...") }
-  $mochiItems = [ordered]@{
-    "10Open"            = @("--open", "Open with MOCHI");
-    "20ExtractHere"     = @("--extract-here", "Extract here");
-    "30ExtractToFolder" = @("--extract-to-folder", "Extract to a new folder")
+  # The flat static verbs on .mochi files, with their exact commands (no cascade).
+  $mochiVerbs = [ordered]@{
+    "MochiOpen"            = @("--open", "Open with MOCHI");
+    "MochiExtractHere"     = @("--extract-here", "Extract here");
+    "MochiExtractToFolder" = @("--extract-to-folder", "Extract to a new folder")
   }
-  foreach ($n in $addItems.Keys) { $mochiItems[$n] = $addItems[$n] }
-  $menus = [ordered]@{
-    "SystemFileAssociations\.mochi" = $mochiItems;
-    "*"                              = $addItems;
-    "Directory"                      = $addItems
+  foreach ($v in $mochiVerbs.Keys) {
+    $k = "SystemFileAssociations\.mochi\shell\$v"
+    $text = Get-ClassDefault $k
+    if ($text -ne $mochiVerbs[$v][1]) { Fail "menu entry $k has text '$text', expected '$($mochiVerbs[$v][1])'" }
+    $cmd = Get-ClassDefault "$k\command"
+    $expect = "`"$exePath`" $($mochiVerbs[$v][0]) -- `"%1`""
+    if ($cmd -ne $expect) { Fail "menu entry $k runs '$cmd', expected '$expect'" }
+    if ($cmd -match "passphrase|password") { Fail "menu entry $k puts a secret option on the command line" }
   }
-  foreach ($class in $menus.Keys) {
-    $menu = "$class\shell\MochiMenu"
-    $mk = $classes.OpenSubKey("Software\Classes\$menu")
-    if (-not $mk) { Fail "submenu $menu is not registered" }
-    try {
-      if ($mk.GetValue("MUIVerb") -ne "MOCHI") { Fail "submenu $menu has the wrong text: '$($mk.GetValue('MUIVerb'))'" }
-      if ($null -eq $mk.GetValue("SubCommands")) { Fail "submenu $menu has no SubCommands value (the cascade would not show)" }
-    } finally { $mk.Close() }
-    $items = $menus[$class]
-    foreach ($item in $items.Keys) {
-      $k = "$menu\shell\$item"
-      $text = Get-ClassDefault $k
-      if ($text -ne $items[$item][1]) { Fail "menu entry $k has text '$text', expected '$($items[$item][1])'" }
-      $cmd = Get-ClassDefault "$k\command"
-      if (-not $cmd) { Fail "menu entry $k has no command" }
-      $expect = "`"$exePath`" $($items[$item][0]) -- `"%1`""
-      if ($cmd -ne $expect) { Fail "menu entry $k runs '$cmd', expected '$expect'" }
-      if ($cmd -match "passphrase|password") { Fail "menu entry $k puts a secret option on the command line" }
-    }
-    # Nothing else under the submenu.
-    $sk = $classes.OpenSubKey("Software\Classes\$menu\shell")
-    try {
-      $names = @($sk.GetSubKeyNames())
-      if ($names.Count -ne $items.Count) { Fail "submenu $menu has entries [$($names -join ', ')], expected [$($items.Keys -join ', ')]" }
-    } finally { $sk.Close() }
+  $sk = $classes.OpenSubKey("Software\Classes\SystemFileAssociations\.mochi\shell")
+  try {
+    $names = @($sk.GetSubKeyNames())
+    if ($names.Count -ne $mochiVerbs.Count) { Fail ".mochi has verbs [$($names -join ', ')], expected [$($mochiVerbs.Keys -join ', ')]" }
+  } finally { $sk.Close() }
+
+  # The Explorer shell extension (crates/mochi-shellext): one versioned DLL next to the app,
+  # registered per user as an in-process COM server and as a context-menu handler for all
+  # files and folders. Its two entries are drawn by the DLL, so no verb keys exist for them.
+  $dlls = @(Get-ChildItem $dir -Filter "mochi-shellext-*.dll")
+  if ($dlls.Count -ne 1) { Fail "expected one mochi-shellext-<version>.dll in $dir, found $($dlls.Count)" }
+  $dll = $dlls[0].FullName
+  if ($dlls[0].Length -lt 20KB) { Fail "$($dlls[0].Name) is suspiciously small" }
+  $inproc = Get-ClassDefault "CLSID\$clsid\InprocServer32"
+  if ($inproc -ne $dll) { Fail "InprocServer32 is '$inproc', expected '$dll'" }
+  $ik = $classes.OpenSubKey("Software\Classes\CLSID\$clsid\InprocServer32")
+  try { if ($ik.GetValue("ThreadingModel") -ne "Apartment") { Fail "ThreadingModel is not Apartment" } } finally { $ik.Close() }
+  foreach ($class in "*", "Directory") {
+    $h = Get-ClassDefault "$class\shellex\ContextMenuHandlers\MOCHI"
+    if ($h -ne $clsid) { Fail "$class has context-menu handler '$h', expected $clsid" }
   }
-  # The flat verbs of 0.1.0 are not registered next to the submenu.
-  foreach ($old in $verbKeys | Where-Object { $_ -notlike "*MochiMenu" }) {
-    if (Test-ClassKey $old) { Fail "legacy verb $old is still registered" }
+  # Per-user: nothing under HKLM (no elevation).
+  if (Test-Path "HKLM:\Software\Classes\CLSID\$clsid") { Fail "the shell extension was registered machine-wide" }
+  # The DLL loads and the class factory answers, in a child process that exits (so that the
+  # uninstall below does not meet a locked file here; Explorer's locked-DLL case is covered
+  # by the rename-aside in the hooks and by the release checklist).
+  $probe = @"
+`$h = [System.Runtime.InteropServices.NativeLibrary]::Load('$dll')
+`$p = [IntPtr]::Zero
+foreach (`$e in 'DllGetClassObject', 'DllCanUnloadNow') {
+  if (-not [System.Runtime.InteropServices.NativeLibrary]::TryGetExport(`$h, `$e, [ref]`$p)) { exit 3 }
+}
+`$t = [type]::GetTypeFromCLSID([guid]'$clsid')
+`$o = [Activator]::CreateInstance(`$t)
+if (-not `$o) { exit 4 }
+"@
+  $pwsh = (Get-Process -Id $PID).Path
+  & $pwsh -NoProfile -NonInteractive -Command $probe
+  if ($LASTEXITCODE -ne 0) { Fail "the shell extension DLL did not load or create its COM class (exit $LASTEXITCODE)" }
+  # Nothing of the old cascade next to it.
+  foreach ($old in $legacyKeys) {
+    if (Test-ClassKey $old) { Fail "legacy menu key $old is still registered" }
   }
   # The opt-in is OFF unless asked for, and never writes a type's default value.
   foreach ($e in $foreignExts) {
@@ -175,6 +198,7 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if (Test-Path (Join-Path $dir $exe.Name)) { Fail "app exe still present after uninstall" }
   if (Test-Path $helper) { Fail "mochi-foreign-helper.exe still present after uninstall" }
   if (Test-Path $guideIndex) { Fail "user guide still present after uninstall" }
+  if (Test-Path $dll) { Fail "$dll still present after uninstall" }
   Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
   # Uninstall removes every key and association it added (plan D6).
   Assert-NothingRegistered "after uninstall"

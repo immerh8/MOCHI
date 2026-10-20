@@ -17,7 +17,10 @@ import { isIpcError } from "../ipc/jobs";
 import { attentionHint, cautionCount, countParts, joinParts, logRecord } from "../result/details";
 import type { DetailRow, ResultDetails } from "../result/details";
 import { InlineDetails } from "../result/Result";
+import { formatLabel } from "../write/format";
 import { LOCAL_COMMIT_NOTE, progressText as writeProgress } from "../write/messages";
+import { AddForm } from "./AddForm";
+import type { AddFormStart } from "./AddForm";
 import "./quick.css";
 
 interface Job {
@@ -28,6 +31,7 @@ interface Job {
 
 type View =
   | { kind: "waiting" }
+  | { kind: "form" }
   | { kind: "running"; progress: { phase: string; completed: number; total: number | null } | null }
   | { kind: "passphrase"; wrong: boolean }
   | {
@@ -59,13 +63,19 @@ function finished(event: QuickEvent): View | null {
     case "done": {
       const parts = joinParts(countParts(event.files, event.directories, event.bytes));
       const add = event.action === "add";
+      // A plain ZIP or tar file (plan O31): what was written, and no commit status.
+      const plain = add && event.format !== "mochi";
       const rows: DetailRow[] = [
         { label: t("quick.rowLocation"), value: event.location.text },
         { label: t("quick.rowFiles"), value: event.files.toLocaleString("en-US") },
         { label: t("quick.rowFolders"), value: event.directories.toLocaleString("en-US") },
         { label: t("quick.rowSize"), value: formatSize(String(event.bytes)) },
       ];
-      if (add) {
+      if (plain) {
+        rows.unshift({ label: t("quick.rowFormat"), value: formatLabel(event.format) });
+        rows.push({ label: t("quick.rowFileSize"), value: formatSize(String(event.output_bytes)) });
+      }
+      if (add && !plain) {
         rows.push({
           label: t("quick.rowStatus"),
           value: t("write.statusCommitted"),
@@ -89,15 +99,17 @@ function finished(event: QuickEvent): View | null {
           caution: true,
         });
       }
-      const head = add
-        ? t("quick.doneAdd", { name: event.name.text, parts })
-        : t("quick.doneExtract", { parts, name: event.name.text });
+      const head = plain
+        ? t("quick.doneExport", { parts, name: event.name.text })
+        : add
+          ? t("quick.doneAdd", { name: event.name.text, parts })
+          : t("quick.doneExtract", { parts, name: event.name.text });
       const line =
         event.skipped > 0
           ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: event.skipped.toLocaleString("en-US") })}`
           : head;
       const record = [
-        add ? `add commit ${event.status ?? ""}` : "extract",
+        plain ? `export ${event.format}` : add ? `add commit ${event.status ?? ""}` : "extract",
         `files ${event.files}, folders ${event.directories}, bytes ${event.bytes}`,
         `skipped ${event.skipped}`,
         event.durability_note
@@ -110,7 +122,10 @@ function finished(event: QuickEvent): View | null {
         folder: true,
         failed: false,
         warn: event.skipped > 0,
-        details: { rows, notes: [add ? LOCAL_COMMIT_NOTE : t("quick.extractNote")] },
+        details: {
+          rows,
+          notes: [plain ? t("quick.exportNote") : add ? LOCAL_COMMIT_NOTE : t("quick.extractNote")],
+        },
         record,
       };
     }
@@ -173,6 +188,8 @@ function finished(event: QuickEvent): View | null {
 export function QuickWindow() {
   const [job, setJob] = useState<Job | null>(null);
   const [view, setView] = useState<View>({ kind: "waiting" });
+  // The Add form: what was chosen (updated when another item joins) and the form's starting values.
+  const [prompt, setPrompt] = useState<{ items: number; subject: string; start: AddFormStart } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const passphraseRef = useRef<HTMLInputElement>(null);
@@ -183,9 +200,20 @@ export function QuickWindow() {
       subscribeQuick((event) => {
         if (event.event === "started") {
           setJob({ action: event.action, name: event.subject.text, items: event.items });
+          setPrompt(null);
           setView({ kind: "running", progress: null });
           setCancelling(false);
           setProblem(null);
+          return;
+        }
+        if (event.event === "add_prompt") {
+          setPrompt((prev) => ({
+            items: event.items,
+            subject: event.subject.text,
+            // Only the first values start the form; later ones just change the count.
+            start: prev?.start ?? { name: event.name, folder: event.folder.text, format: event.format },
+          }));
+          setView({ kind: "form" });
           return;
         }
         if (event.event === "need_passphrase") {
@@ -232,7 +260,14 @@ export function QuickWindow() {
     sendQuickPassphrase(value).catch(report);
   };
 
-  const heading = job ? title(job) : t("quick.waiting");
+  const heading =
+    view.kind === "form" && prompt
+      ? prompt.items > 1
+        ? t("quick.formTitleMore", { name: prompt.subject, n: prompt.items - 1 })
+        : t("quick.formTitle", { name: prompt.subject })
+      : job
+        ? title(job)
+        : t("quick.waiting");
   const addProgress = job?.action === "add";
 
   return (
@@ -241,6 +276,7 @@ export function QuickWindow() {
         {heading}
       </h1>
       {view.kind === "waiting" && <p data-testid="quick-waiting">{t("common.starting")}</p>}
+      {view.kind === "form" && prompt && <AddForm start={prompt.start} />}
       {view.kind === "running" && (
         <>
           <div className="progress" data-testid="quick-progress">

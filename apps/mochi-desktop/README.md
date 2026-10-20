@@ -22,6 +22,7 @@ apps/mochi-desktop/
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── crashlog.rs # D7: the opt-in local crash log (panic hook, settings, rotation)
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
+│       ├── formats.rs  # O31: the five formats of a new archive, their extensions, typed names
 │       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar, tar.gz, tar.zst read-only through the isolated helper; name search
 │       ├── help.rs     # Help, User guide: opens the bundled guide offline (F8)
 │       ├── launch.rs   # D6: the shell's open, extract, and add verbs, parsed in Rust
@@ -86,7 +87,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 
 ## Security decisions (each is a reason AGENTS.md asks for)
 
-- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder" and "Add to archive" run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it five commands and nothing else: `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path) and `allow-quick-close`. The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
+- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder", "Add to archive" (`--add-now`) and "Add to archive..." (`--add`, the form below) run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it seven commands and nothing else: `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path), `allow-quick-close`, and, for the Add form, `allow-quick-choose-location` (Browse...: the save dialog is shown from Rust, which keeps the folder; the webview learns the folder's display text and the file name) and `allow-quick-add-submit` (OK: a plain file name, one of five format words, a level, and for `.mochi` only a passphrase that crosses once into a zeroizing type and a recovery percentage; Rust checks it, refuses a name that exists, and makes the archive in the folder it holds). The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
   `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
@@ -229,6 +230,39 @@ unchanged. The start-up check is opt-in and off by default; Rust refuses an auto
 while it is off. Release notes are remote text and are shown as text only. The decision
 logic is behind the `Backend` trait and is tested without a network. Endpoint, public key,
 the release workflow, and the owner's steps: `docs/packaging.md`.
+
+## Creating ZIP and tar archives, and the Add form (plan O31, owner decision 2026-10-20)
+
+The app may create `.mochi` (the default), ZIP, `.tar`, `.tar.gz` and `.tar.zst`; it never writes RAR, and
+7z is not written now. The writer is `crates/mochi-export` (not `mochi-format`, not `mochi-core`, not the
+foreign helper: it parses no archive, only reads the user's files). The `ExportArchive { format, level }`
+job runs through the one job runner with the one progress sink and cancellation token (`export_scan`, then
+`export` in content bytes with a known total) and finishes with `completed` carrying an `ExportReportView`:
+what was written (files, folders, bytes, the file's size, what was skipped and why) and nothing else. It
+never carries `LOCAL_COMMITTED`, a health dimension, or a statement about the file being checked; the
+window says "Wrote 12 files · 3 folders · 3.4 MB to trip.zip". The bytes go to a temporary file
+(`.<name>.<random>.part`) in the destination folder and are published with the no-replace rename the
+`.mochi` writer uses, so a failed or cancelled job leaves no file under the final name and an existing file
+is never replaced (there is no "replace" option). Symlinks, devices, names that are not Unicode, and files
+that cannot be read are skipped and listed. There is no ZIP encryption: asking for a password or a recovery
+record with a plain format is refused (`UNSUPPORTED_FEATURE`), and the window does not offer them.
+
+* **Create archive** has a Format drop-down (`set_archive_format`): the default name and a chosen
+  destination take the format's extension; encryption, the TAR-compatible profile and the recovery record
+  are shown for `.mochi` only; the compression level is shown for everything but plain tar.
+* **"Add to archive..." (`--add`)** opens a small form in the compact window instead of the main window's
+  add panel: archive name (prefilled `<Name>.mochi` next to the items, the `--add-now` rule), Browse...,
+  format, compression, the `.mochi` options, OK and Cancel. Launches of one selection (Explorer starts one
+  process per item) arriving within 500 ms make one form; a later launch joins the form while it is open;
+  one that arrives after OK gets a form of its own (the compact window runs one job at a time, so an
+  Extract verb started while a form is open waits until the form is answered or closed). Nothing is written until OK, closing the window cancels,
+  and OK runs in the same window with progress, then the result with "Show in folder". Cold start: the first
+  process opens only this window (`Verb::is_quick`); the main window is never created for it. The old add
+  panel is no longer reachable from the shell. (A bug that hid the New archive dialog while a ZIP, 7z or RAR
+  file was open is fixed: the writer sits outside the stage that is hidden then. `DropWatch` takes its
+  waiting announcement and installs the listener under one lock, so an announcement made between the two
+  cannot be stranded; and the writer ignores the first "what is staged" answer if Rust announced something
+  newer.)
 
 ## Jobs
 

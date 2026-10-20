@@ -199,18 +199,168 @@ describe("a second launch", () => {
     await closeQuickWindow(mainWindow);
   });
 
-  it("'Add to archive...' still opens the add panel in the main window and writes nothing", async () => {
+  // Owner decision 2026-10-20: "Add to archive..." is a small WinRAR-style form in the compact
+  // window, not the main window's add panel. Nothing is written until OK.
+  const bytesOf = (file) => readFileSync(file);
+  const startsWith = (file, ...magic) => bytesOf(file).subarray(0, magic.length).equals(Buffer.from(magic));
+
+  it("'Add to archive...' opens a small form, writes nothing until OK, and OK makes the chosen format", async () => {
     const dir = path.join(work, "panel");
     mkdirSync(dir);
     const file = path.join(dir, "note.txt");
     writeFileSync(file, "x");
     const ended = await secondLaunch(["--add", "--", file]);
     expect(ended.code).toBe(0);
-    await browser.switchToWindow(mainWindow);
-    await browser.waitUntil(async () => (await $('[data-testid="staged-item"]').isExisting()), {
-      timeoutMsg: "the add panel did not show the staged file",
-    });
+    await switchToWindowWith("quick-form");
+    await expect($('[data-testid="quick-title"]')).toHaveText(expect.stringContaining("Add note.txt to an archive"));
+    // The suggested name follows the Add now rule; the folder is shown as text.
+    await expect($('[data-testid="quick-name"]')).toHaveValue("note.mochi");
+    await expect($('[data-testid="quick-folder"]')).toHaveText(expect.stringContaining(dir));
+    await expect($('[data-testid="quick-format"]')).toHaveValue("mochi");
+    await expect($('[data-testid="quick-mochi-options"]')).toExist();
     expect(readdirSync(dir)).toEqual(["note.txt"]);
+    // The main window did not open an add panel: the form is the whole flow.
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="staged-item"]')).not.toExist();
+    await expect($('[data-testid="write-panel"]')).not.toExist();
+    await switchToWindowWith("quick-form");
+    // Another format: the extension follows, and the .mochi-only options are gone.
+    await $('[data-testid="quick-format"]').selectByAttribute("value", "zip");
+    await expect($('[data-testid="quick-name"]')).toHaveValue("note.zip");
+    await expect($('[data-testid="quick-mochi-options"]')).not.toExist();
+    expect(readdirSync(dir)).toEqual(["note.txt"]);
+    await $('[data-testid="quick-ok"]').click();
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Wrote 1 file"));
+    expect(readdirSync(dir).sort()).toEqual(["note.txt", "note.zip"]);
+    expect(startsWith(path.join(dir, "note.zip"), 0x50, 0x4b)).toBe(true);
+    const text = (await $('[data-testid="quick-result"]').getText()).toLowerCase();
+    for (const word of ["backed up", "safe", "preserved", "committed"]) expect(text).not.toContain(word);
+    // "Show in folder" opens the folder the archive went to.
+    writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
+    await $('[data-testid="quick-show-folder"]').click();
+    await browser.waitUntil(() => readFileSync(process.env.MOCHI_E2E_OPEN_LOG, "utf8").split("\n").includes(dir), {
+      timeoutMsg: "the folder was not shown",
+    });
+    await closeQuickWindow(mainWindow);
+  });
+
+  it("'Add to archive...' on one selection (one process per item) makes one form and one .tar.gz", async () => {
+    const dir = path.join(work, "form-trip");
+    mkdirSync(dir);
+    const files = ["a.txt", "b.txt", "c.txt"].map((n) => {
+      const f = path.join(dir, n);
+      writeFileSync(f, n);
+      return f;
+    });
+    const ended = await Promise.all(files.map((f) => secondLaunch(["--add", "--", f])));
+    expect(ended.map((e) => e.code)).toEqual([0, 0, 0]);
+    await switchToWindowWith("quick-form");
+    await expect($('[data-testid="quick-title"]')).toHaveText(expect.stringContaining("and 2 more"));
+    expect(await browser.execute(() => document.querySelectorAll('[data-testid="quick-form"]').length)).toBe(1);
+    await expect($('[data-testid="quick-name"]')).toHaveValue("form-trip.mochi");
+    await $('[data-testid="quick-format"]').selectByAttribute("value", "tar_gz");
+    await expect($('[data-testid="quick-name"]')).toHaveValue("form-trip.tar.gz");
+    await $('[data-testid="quick-level"]').selectByAttribute("value", "fast");
+    await $('[data-testid="quick-ok"]').click();
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Wrote 3 files"));
+    expect(readdirSync(dir).sort()).toEqual(["a.txt", "b.txt", "c.txt", "form-trip.tar.gz"]);
+    expect(startsWith(path.join(dir, "form-trip.tar.gz"), 0x1f, 0x8b)).toBe(true);
+    await closeQuickWindow(mainWindow);
+  });
+
+  it("a later 'Add to archive...' launch joins the form while it is open", async () => {
+    const dir = path.join(work, "join");
+    mkdirSync(dir);
+    const first = path.join(dir, "one.txt");
+    const second = path.join(dir, "two.txt");
+    writeFileSync(first, "1");
+    writeFileSync(second, "22");
+    expect((await secondLaunch(["--add", "--", first])).code).toBe(0);
+    await switchToWindowWith("quick-form");
+    await expect($('[data-testid="quick-title"]')).toHaveText(expect.stringContaining("Add one.txt to an archive"));
+    // Typed by the user before the second launch arrives: it must survive.
+    await $('[data-testid="quick-name"]').setValue("both");
+    // Well after the collection window.
+    await browser.pause(1500);
+    expect((await secondLaunch(["--add", "--", second])).code).toBe(0);
+    await browser.waitUntil(async () => (await $('[data-testid="quick-title"]').getText()).includes("and 1 more"), {
+      timeoutMsg: "the second item did not join the open form",
+    });
+    await expect($('[data-testid="quick-name"]')).toHaveValue("both");
+    await $('[data-testid="quick-format"]').selectByAttribute("value", "zip");
+    await $('[data-testid="quick-ok"]').click();
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Wrote 2 files"));
+    expect(readdirSync(dir).sort()).toEqual(["both.zip", "one.txt", "two.txt"]);
+    await closeQuickWindow(mainWindow);
+  });
+
+  it("the form never replaces a file: a name in the way is refused and the form stays open", async () => {
+    const dir = path.join(work, "taken");
+    mkdirSync(dir);
+    const file = path.join(dir, "x.txt");
+    writeFileSync(file, "x");
+    writeFileSync(path.join(dir, "taken.zip"), "mine");
+    expect((await secondLaunch(["--add", "--", file])).code).toBe(0);
+    await switchToWindowWith("quick-form");
+    await $('[data-testid="quick-format"]').selectByAttribute("value", "zip");
+    await $('[data-testid="quick-name"]').setValue("taken");
+    await $('[data-testid="quick-ok"]').click();
+    await expect($('[data-testid="quick-form-error"]')).toHaveText(expect.stringContaining("does not replace files"));
+    await expect($('[data-testid="quick-form"]')).toExist();
+    expect(readFileSync(path.join(dir, "taken.zip"), "utf8")).toBe("mine");
+    await $('[data-testid="quick-name"]').setValue("free");
+    await $('[data-testid="quick-ok"]').click();
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Wrote 1 file"));
+    expect(readFileSync(path.join(dir, "taken.zip"), "utf8")).toBe("mine");
+    expect(readdirSync(dir).sort()).toEqual(["free.zip", "taken.zip", "x.txt"]);
+    await closeQuickWindow(mainWindow);
+  });
+
+  it("Browse... picks the place in Rust; the form shows only its folder and the file name", async () => {
+    const dir = path.join(work, "browse");
+    const elsewhere = path.join(work, "browse-elsewhere");
+    mkdirSync(dir);
+    mkdirSync(elsewhere);
+    const file = path.join(dir, "y.txt");
+    writeFileSync(file, "y");
+    expect((await secondLaunch(["--add", "--", file])).code).toBe(0);
+    await switchToWindowWith("quick-form");
+    // The native dialog is replaced in the e2e build by this queue (README, "Sources and destinations").
+    writeFileSync(process.env.MOCHI_E2E_PICK_FILE, path.join(elsewhere, "Chosen"));
+    await $('[data-testid="quick-browse"]').click();
+    await browser.waitUntil(async () => (await $('[data-testid="quick-name"]').getValue()) === "Chosen.mochi", {
+      timeoutMsg: "the chosen name was not shown",
+    });
+    await expect($('[data-testid="quick-folder"]')).toHaveText(expect.stringContaining(elsewhere));
+    await $('[data-testid="quick-ok"]').click();
+    await switchToWindowWith("quick-result");
+    await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Archive created: Chosen.mochi"));
+    expect(readdirSync(elsewhere)).toEqual(["Chosen.mochi"]);
+    expect(readdirSync(dir)).toEqual(["y.txt"]);
+    await closeQuickWindow(mainWindow);
+  });
+
+  it("Cancel on the form closes the window and writes nothing", async () => {
+    const dir = path.join(work, "cancel-form");
+    mkdirSync(dir);
+    const file = path.join(dir, "z.txt");
+    writeFileSync(file, "z");
+    expect((await secondLaunch(["--add", "--", file])).code).toBe(0);
+    await switchToWindowWith("quick-form");
+    try {
+      await $('[data-testid="quick-form-cancel"]').click();
+    } catch (err) {
+      if (!/no such window/i.test(String(err?.message ?? err))) throw err;
+    }
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+      timeoutMsg: "the compact window did not close",
+    });
+    await browser.switchToWindow(mainWindow);
+    expect(readdirSync(dir)).toEqual(["z.txt"]);
   });
 
   it("refuses a passphrase option without echoing its value", async () => {
@@ -243,6 +393,31 @@ describe("a second launch", () => {
     for (const word of ["backed up", "safe", "preserved", "verified", "healthy"]) {
       expect(text).not.toContain(word);
     }
+  });
+
+  // Users reported "Add to archive..." did nothing while a ZIP, 7z or RAR file was open: the panel it
+  // used sat in a part of the window that is hidden then. The form is its own window now.
+  it("'Add to archive...' shows its form while a ZIP is open in the main window", async () => {
+    const dir = path.join(work, "while-foreign");
+    mkdirSync(dir);
+    const file = path.join(dir, "n.txt");
+    writeFileSync(file, "n");
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="foreign-meta"]')).toExist();
+    expect((await secondLaunch(["--add", "--", file])).code).toBe(0);
+    await switchToWindowWith("quick-form");
+    await expect($('[data-testid="quick-name"]')).toHaveValue("n.mochi");
+    await expect($('[data-testid="quick-form"]')).toBeDisplayed();
+    // The foreign browser is still what the main window shows.
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="foreign-meta"]')).toExist();
+    await switchToWindowWith("quick-form");
+    await $('[data-testid="quick-form-cancel"]').click().catch(() => undefined);
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+      timeoutMsg: "the compact window did not close",
+    });
+    await browser.switchToWindow(mainWindow);
+    expect(readdirSync(dir)).toEqual(["n.txt"]);
   });
 
   it("shows a hostile name in a ZIP as text and marks it not extractable", async () => {

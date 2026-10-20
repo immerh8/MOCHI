@@ -68,7 +68,7 @@ function fakeBackend(opts: { open?: () => unknown } = {}) {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     // The Writer's start-up calls (D2) are tested in write/Writer.test.tsx.
-    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
     calls.push({ cmd, args: a });

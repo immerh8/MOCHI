@@ -16,6 +16,7 @@ mod d5_tests;
 pub mod dragout;
 pub mod extract;
 pub mod foreign;
+pub mod formats;
 pub mod help;
 pub mod ipc;
 pub mod jobs;
@@ -55,9 +56,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let quick = quick::Quick::new();
     let launches = Arc::new(launch::Launches::new(
         Arc::clone(&archives),
-        Arc::clone(&staging),
         Arc::clone(&destination),
-        Arc::clone(&drops),
         Arc::clone(&foreign),
         Arc::clone(&quick),
     ));
@@ -72,10 +71,10 @@ pub fn run() -> Result<(), tauri::Error> {
     tauri::Builder::default()
         // First, so that a second process hands over before anything else
         // starts. Its arguments are parsed and validated in Rust like the
-        // first launch's (`launch`). A panel verb brings the main window
+        // first launch's (`launch`). "Open with MOCHI" brings the main window
         // forward (from the worker, which creates it if only a compact window
-        // is open); a quick verb opens only the compact window. This callback
-        // may run on the event loop, so it creates no window itself.
+        // is open); every other verb opens only the compact window. This
+        // callback may run on the event loop, so it creates no window itself.
         .plugin(tauri_plugin_single_instance::init(
             move |_app, argv, cwd| match launch::from_forwarded(&argv, &cwd) {
                 Ok(None) => second_launches.focus(),
@@ -149,6 +148,9 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::quick_cancel,
             commands::quick_show_folder,
             commands::quick_close,
+            commands::quick_choose_location,
+            commands::quick_add_submit,
+            commands::set_archive_format,
             commands::choose_check_subject,
             commands::health_report,
             commands::export_report,
@@ -246,7 +248,16 @@ impl Windows {
 }
 
 impl quick::WindowHost for Windows {
-    fn show_quick(&self) {
+    fn show_quick(&self, size: quick::QuickSize) {
+        use tauri::Manager;
+        // The Add form is taller than a job's progress and result.
+        let (width, height) = match size {
+            quick::QuickSize::Compact => (460.0, 280.0),
+            quick::QuickSize::Form => (480.0, 470.0),
+        };
+        if let Some(window) = self.app.get_webview_window(QUICK_LABEL) {
+            let _ = window.set_size(tauri::LogicalSize::new(width, height));
+        }
         if self.bring_forward(QUICK_LABEL) {
             return;
         }
@@ -257,7 +268,7 @@ impl quick::WindowHost for Windows {
             tauri::WebviewUrl::App("index.html#quick".into()),
         )
         .title("MOCHI")
-        .inner_size(460.0, 280.0)
+        .inner_size(width, height)
         .resizable(false)
         .maximizable(false)
         .center()

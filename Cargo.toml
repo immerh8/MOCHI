@@ -6,16 +6,22 @@ members = [
     "crates/mochi-cli",
     "crates/mochi-testkit",
     "crates/mochi-foreign",
+    # Writes ZIP, tar, tar.gz and tar.zst from local files (plan O31, owner
+    # decision 2026-10-20). Parses no archive.
+    "crates/mochi-export",
     # The only unsafe outside mochi-foreign: the Win32 calls mochi-core may not
     # make itself (G6a publication, B.2.17 writer lock).
     "crates/mochi-sys",
+    # The Explorer context-menu handler (classic IContextMenu COM DLL, Windows
+    # only; empty elsewhere). The second place with unsafe code besides mochi-sys.
+    "crates/mochi-shellext",
     # Phase D0 (plan §7, decision O1): the Tauri v2 desktop app. Building it
     # on Linux needs webkit2gtk 4.1 (apps/mochi-desktop/README.md).
     "apps/mochi-desktop/src-tauri",
 ]
 
 [workspace.package]
-version = "0.9.5"
+version = "0.9.6"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -26,12 +32,19 @@ mochi-format = { path = "crates/mochi-format" }
 mochi-core = { path = "crates/mochi-core" }
 mochi-testkit = { path = "crates/mochi-testkit" }
 mochi-sys = { path = "crates/mochi-sys" }
+mochi-export = { path = "crates/mochi-export" }
 clap = { version = "4", features = ["derive", "string"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 blake3 = { version = "1", default-features = false, features = ["std"] }
 zstd = "0.13"
+# Writing ZIP / tar / tar.gz (plan O31), used by `mochi-export` only. MIT (zip),
+# MIT OR Apache-2.0 (tar, flate2). Deflate through flate2's pure-Rust backend
+# (miniz_oxide); no bzip2/lzma/zstd/AES inside ZIP.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 getrandom = "0.3"
 # Encrypted profile (spec Annex B.2.10, D20). All MIT or Apache-2.0.
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }

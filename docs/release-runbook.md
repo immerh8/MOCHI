@@ -152,6 +152,8 @@ scratch folder. Install the **0.9.0** setup from its published release.
 
 ### W-06. The MOCHI right-click menu (the menu display is yours; the entries themselves are Automated)
 
+**Layout changed 2026-10-20 (owner decision, O10): the menu is flat, with no "MOCHI" submenu.** Read every "MOCHI ▸ X" below as the flat entry X. Every file and folder shows exactly two entries, **Add to archive...** and **Add to "<Name>.mochi"** (drawn by `mochi-shellext.dll`; the name is the file's name without extension, the folder's name, or for several items their folder's name); `.mochi` files also show **Open with MOCHI**, **Extract here**, **Extract to a new folder**. Also do the Windows 11 client check in `docs/packaging.md` (Release checklist, Shell integration): the labels, and an update while Explorer runs (locked DLL). The guest checks `A-ASSOC-VERBS`, `B-ASSOC-VERBS` and `B-VERB-ADD-*` (`ci/g6-windows/guest/payload/user.ps1`) read the new layout.
+
 Close MOCHI first each time. In the scratch folder:
 
 1. Right-click `Ärchive & ço.mochi` → **Show more options** (or Shift+F10).
@@ -162,7 +164,7 @@ Close MOCHI first each time. In the scratch folder:
 5. **MOCHI ▸ Extract to a new folder** → **Pass:** a folder named for the archive that did not exist before (if one did, `… (2)`); an existing folder is left alone. **Show in folder** opens it.
 6. Right-click `Note é & more.txt` → **MOCHI ▸ Add to archive** → **Pass:** the small window says "Archive created: Note é & more.mochi" and that it is a local commit (it does not say backed up or safe); the archive is next to the file. Again: `… (2).mochi`, the first untouched.
 7. Select three files (Ctrl+click) → **MOCHI ▸ Add to archive** → **Pass:** **one** small window and **one** archive named for the folder. **Fail:** three archives or three windows.
-8. Right-click the folder `Folder & ü` → **MOCHI ▸ Add to archive...** → **Pass:** the full window with the add panel and the folder under **Chosen items**; nothing written until you press the button.
+8. Right-click the folder `Folder & ü` → **MOCHI ▸ Add to archive...** → **Pass:** a **small** "Add to archive" form (archive name `Folder & ü.mochi`, Browse…, Format, Level, OK, Cancel); the full window does not open; nothing written until you press OK. Choose Format **ZIP** → the name ends in `.zip`; OK → one `.zip` next to the folder.
 9. With MOCHI open, double-click `Second é & copy.mochi` → **Pass:** the **same** window shows it; Task Manager lists **one** MOCHI. **Fail:** a second window.
 10. Throughout: **Pass:** every entry used the right file despite the spaces, accents and `&`. **Fail:** "could not open", the wrong file, or a name cut at the `&`.
 

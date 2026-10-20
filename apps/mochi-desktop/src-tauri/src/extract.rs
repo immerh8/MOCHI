@@ -364,6 +364,7 @@ pub fn run(
         check: None,
         search: None,
         rekey: None,
+        export: None,
     })
 }
 

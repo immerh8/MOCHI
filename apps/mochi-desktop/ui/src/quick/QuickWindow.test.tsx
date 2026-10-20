@@ -1,7 +1,7 @@
 // Plan D6, owner decision 2026-10-16: the compact window of the shell's quick verbs. It hears
 // events from Rust, asks for a passphrase once, and never names a path (spec §23.3 wording:
 // a new archive is a local commit, never "backed up" or "safe").
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -14,14 +14,18 @@ type Internals = { runCallback: (id: number, data: unknown) => void };
 const internals = () =>
   (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
 
-function backend() {
+function backend(answer: (cmd: string, args: Record<string, unknown>) => unknown = () => null) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let channel: Channel<QuickEvent> | undefined;
   let index = 0;
   mockIPC((cmd, args) => {
-    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
-    if (cmd === "watch_quick") channel = (args as { onEvent: Channel<QuickEvent> }).onEvent;
-    return null;
+    const a = (args ?? {}) as Record<string, unknown>;
+    calls.push({ cmd, args: a });
+    if (cmd === "watch_quick") {
+      channel = (args as { onEvent: Channel<QuickEvent> }).onEvent;
+      return null;
+    }
+    return answer(cmd, a);
   });
   return {
     calls,
@@ -59,6 +63,8 @@ test("an extraction shows its progress, then a plain result with Show in folder 
     note: null,
     status: null,
     durability_note: null,
+    format: "mochi",
+    output_bytes: 0,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent(/^Extracted 3 files · 1 folder · 12 bytes into Pictures$/);
@@ -97,6 +103,8 @@ test("a new archive is reported as a local commit and never as backed up or safe
     note: "x: not stored",
     status: "LOCAL_COMMITTED",
     durability_note: null,
+    format: "mochi",
+    output_bytes: 0,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Archive created: notes.mochi · 3 files · 1.5 KiB · 1 not added");
@@ -182,6 +190,8 @@ test("a degraded directory entry is a note in the details, not in the line, and 
     note: null,
     status: "LOCAL_COMMITTED",
     durability_note: "directory flush ran, but Windows does not document it as durable",
+    format: "mochi",
+    output_bytes: 0,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Archive created: a.mochi · 1 file · 10 bytes");
@@ -194,4 +204,296 @@ test("a degraded directory entry is a note in the details, not in the line, and 
   expect(screen.getByTestId("quick-details")).toHaveTextContent("Not confirmed");
   expect(screen.getByTestId("quick-details")).toHaveTextContent("Windows does not document it as durable");
   expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
+});
+
+// ---- the Add form (owner decision 2026-10-20) ------------------------------
+
+const prompt = (items = 1, subject = "notes.txt"): QuickEvent => ({
+  event: "add_prompt",
+  items,
+  subject: name(subject),
+  name: "notes.mochi",
+  folder: name("/home/me/docs"),
+  format: "mochi",
+});
+
+test("Add to archive... opens a form with the suggested name, the folder as text, and the .mochi defaults", async () => {
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt(3));
+  expect(await screen.findByTestId("quick-title")).toHaveTextContent("Add notes.txt and 2 more to an archive");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.mochi");
+  expect(screen.getByTestId("quick-folder")).toHaveTextContent("In folder: /home/me/docs");
+  expect(screen.getByTestId("quick-format")).toHaveValue("mochi");
+  expect(screen.getByTestId("quick-level")).toHaveValue("balanced");
+  expect(screen.getByTestId("quick-mochi-options")).toBeInTheDocument();
+  expect(screen.getByTestId("quick-encrypt")).not.toBeChecked();
+  expect(screen.getByTestId("quick-recovery")).toHaveValue("");
+  // Five formats, .mochi first.
+  const options = within(screen.getByTestId("quick-format")).getAllByRole("option");
+  expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(["mochi", "zip", "tar", "tar_gz", "tar_zst"]);
+  // The name is the thing to type: focus is there, with the extension left out of the selection.
+  expect(screen.getByTestId("quick-name")).toHaveFocus();
+  // Nothing was asked of Rust but the stream.
+  expect(b.calls.map((c) => c.cmd)).toEqual(["watch_quick"]);
+});
+
+test("choosing another format changes the extension of the name and hides the .mochi-only options", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.zip");
+  expect(screen.queryByTestId("quick-mochi-options")).toBeNull();
+  expect(screen.queryByTestId("quick-encrypt")).toBeNull();
+  expect(screen.queryByTestId("quick-recovery")).toBeNull();
+  expect(screen.getByTestId("quick-plain-note")).toBeInTheDocument();
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar_gz");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.tar.gz");
+  expect(screen.getByTestId("quick-level")).toBeEnabled();
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.tar");
+  expect(screen.getByTestId("quick-level")).toBeDisabled();
+  expect(screen.getByTestId("quick-no-level")).toBeInTheDocument();
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.tar.zst");
+  await user.selectOptions(screen.getByTestId("quick-format"), "mochi");
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.mochi");
+  expect(screen.getByTestId("quick-mochi-options")).toBeInTheDocument();
+  // A name the user typed keeps its stem.
+  await user.clear(screen.getByTestId("quick-name"));
+  await user.type(screen.getByTestId("quick-name"), "Holiday 2026");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  expect(screen.getByTestId("quick-name")).toHaveValue("Holiday 2026.zip");
+});
+
+test("leaving .mochi drops its password and repair data: they are not carried to a ZIP", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-encrypt"));
+  await user.type(screen.getByTestId("quick-new-passphrase"), "hunter2");
+  await user.type(screen.getByTestId("quick-new-passphrase-again"), "hunter2");
+  await user.selectOptions(screen.getByTestId("quick-recovery"), "10");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  await user.click(screen.getByTestId("quick-ok"));
+  const sent = b.calls.find((c) => c.cmd === "quick_add_submit");
+  expect(sent?.args).toEqual({ request: { name: "notes.zip", format: "zip", level: "balanced" } });
+});
+
+test("OK sends the name, the format and the level, and no path", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
+  await user.selectOptions(screen.getByTestId("quick-level"), "smaller");
+  await user.click(screen.getByTestId("quick-ok"));
+  expect(b.calls.filter((c) => c.cmd === "quick_add_submit").map((c) => c.args)).toEqual([
+    { request: { name: "notes.tar.zst", format: "tar_zst", level: "smaller" } },
+  ]);
+  // The job's events take over the window: the form is replaced by its progress.
+  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 1 });
+  expect(await screen.findByTestId("quick-progress")).toBeInTheDocument();
+  expect(screen.queryByTestId("quick-form")).toBeNull();
+});
+
+test("a .mochi archive with a password and a recovery record sends both once, and empties the fields", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-encrypt"));
+  // The two must match.
+  await user.type(screen.getByTestId("quick-new-passphrase"), "correct horse");
+  await user.type(screen.getByTestId("quick-new-passphrase-again"), "correct hose");
+  await user.click(screen.getByTestId("quick-ok"));
+  expect(await screen.findByTestId("quick-form-error")).toHaveTextContent("The two passphrases differ");
+  expect(b.calls.some((c) => c.cmd === "quick_add_submit")).toBe(false);
+  await user.clear(screen.getByTestId("quick-new-passphrase-again"));
+  await user.type(screen.getByTestId("quick-new-passphrase-again"), "correct horse");
+  await user.selectOptions(screen.getByTestId("quick-recovery"), "20");
+  await user.click(screen.getByTestId("quick-ok"));
+  expect(b.calls.filter((c) => c.cmd === "quick_add_submit").map((c) => c.args)).toEqual([
+    {
+      request: {
+        name: "notes.mochi",
+        format: "mochi",
+        level: "balanced",
+        passphrase: "correct horse",
+        recovery_percent: 20,
+      },
+    },
+  ]);
+  expect(screen.getByTestId("quick-new-passphrase")).toHaveValue("");
+  expect(screen.getByTestId("quick-new-passphrase-again")).toHaveValue("");
+});
+
+test("an empty passphrase is refused before anything is sent", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-encrypt"));
+  await user.click(screen.getByTestId("quick-ok"));
+  expect(await screen.findByTestId("quick-form-error")).toHaveTextContent("Enter a passphrase");
+  expect(b.calls.some((c) => c.cmd === "quick_add_submit")).toBe(false);
+});
+
+test("Browse asks Rust for a place and shows only the folder text and the file name", async () => {
+  const user = userEvent.setup();
+  const b = backend((cmd) =>
+    cmd === "quick_choose_location" ? { folder: name("/home/me/Elsewhere"), name: "Chosen.zip" } : null,
+  );
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  await user.click(screen.getByTestId("quick-browse"));
+  expect(await screen.findByDisplayValue("Chosen.zip")).toBeInTheDocument();
+  expect(screen.getByTestId("quick-folder")).toHaveTextContent("In folder: /home/me/Elsewhere");
+  expect(b.calls.filter((c) => c.cmd === "quick_choose_location").map((c) => c.args)).toEqual([
+    { name: "notes.zip", format: "zip" },
+  ]);
+});
+
+test("cancelling the dialog from Browse changes nothing", async () => {
+  const user = userEvent.setup();
+  const b = backend(() => null);
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-browse"));
+  await waitFor(() => expect(b.calls.some((c) => c.cmd === "quick_choose_location")).toBe(true));
+  expect(screen.getByTestId("quick-name")).toHaveValue("notes.mochi");
+  expect(screen.getByTestId("quick-folder")).toHaveTextContent("/home/me/docs");
+});
+
+test("a name Rust refuses is shown and the form stays open for another", async () => {
+  const user = userEvent.setup();
+  const refusal = {
+    code: "DESTINATION_EXISTS",
+    message: "notes.mochi already exists in that folder. Choose another name; MOCHI does not replace files.",
+  };
+  let refuse = true;
+  const b = backend((cmd) => {
+    if (cmd === "quick_add_submit" && refuse) {
+      refuse = false;
+      return Promise.reject(refusal);
+    }
+    return null;
+  });
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-ok"));
+  expect(await screen.findByTestId("quick-form-error")).toHaveTextContent("does not replace files");
+  expect(screen.getByTestId("quick-form")).toBeInTheDocument();
+  expect(screen.getByTestId("quick-ok")).toBeEnabled();
+  await user.clear(screen.getByTestId("quick-name"));
+  await user.type(screen.getByTestId("quick-name"), "other");
+  await user.click(screen.getByTestId("quick-ok"));
+  await waitFor(() => expect(b.calls.filter((c) => c.cmd === "quick_add_submit")).toHaveLength(2));
+  expect(b.calls.filter((c) => c.cmd === "quick_add_submit").at(-1)?.args).toEqual({
+    request: { name: "other", format: "mochi", level: "balanced" },
+  });
+});
+
+test("another item joining the form changes the count, not what the user typed", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt(1));
+  await screen.findByTestId("quick-form");
+  await user.clear(screen.getByTestId("quick-name"));
+  await user.type(screen.getByTestId("quick-name"), "mine.mochi");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  b.send({ ...prompt(2), name: "something-else.mochi" } as QuickEvent);
+  await waitFor(() => expect(screen.getByTestId("quick-title")).toHaveTextContent("Add notes.txt and 1 more to an archive"));
+  expect(screen.getByTestId("quick-name")).toHaveValue("mine.zip");
+  expect(screen.getByTestId("quick-format")).toHaveValue("zip");
+});
+
+test("Cancel closes the window and starts nothing", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  await user.click(screen.getByTestId("quick-form-cancel"));
+  expect(b.calls.map((c) => c.cmd)).toEqual(["watch_quick", "quick_close"]);
+});
+
+test("a hostile file name in the title and the folder is text, never markup", async () => {
+  const b = backend();
+  const { container } = render(<QuickWindow />);
+  const hostile = '<img src=x onerror="alert(1)">';
+  b.send({ ...prompt(), subject: name(hostile), folder: name(`/tmp/${hostile}`) } as QuickEvent);
+  await screen.findByTestId("quick-form");
+  expect(screen.getByTestId("quick-title")).toHaveTextContent(hostile);
+  expect(screen.getByTestId("quick-folder")).toHaveTextContent(hostile);
+  expect(container.querySelector("img")).toBeNull();
+});
+
+test("a window that opens after the form was sent still shows it, once", async () => {
+  const b = backend();
+  const first = render(<QuickWindow />);
+  b.send(prompt(2));
+  b.send(prompt(3));
+  first.unmount();
+  render(<QuickWindow />);
+  expect(await screen.findByTestId("quick-title")).toHaveTextContent("and 2 more");
+  expect(screen.getAllByTestId("quick-form")).toHaveLength(1);
+});
+
+test("a plain ZIP or tar file is reported as what was written: no commit, no status, no claim", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 2 });
+  b.send({
+    event: "done",
+    action: "add",
+    name: name("trip.zip"),
+    location: name("/home/me/trip.zip"),
+    files: 12,
+    directories: 3,
+    bytes: 3_400_000,
+    skipped: 1,
+    note: "link: a symbolic link is not stored; it was not followed",
+    status: null,
+    durability_note: null,
+    format: "zip",
+    output_bytes: 1_200_000,
+  });
+  const result = await screen.findByTestId("quick-result");
+  expect(result).toHaveTextContent("Wrote 12 files · 3 folders · 3.2 MiB to trip.zip · 1 not added");
+  await user.click(screen.getByRole("button", { name: /^Details/ }));
+  const details = screen.getByTestId("quick-details");
+  expect(details).toHaveTextContent("ZIP (.zip)");
+  expect(details).toHaveTextContent("/home/me/trip.zip");
+  expect(details).toHaveTextContent("File size");
+  expect(details).toHaveTextContent("did not check the file afterwards");
+  const text = (result.textContent + (details.textContent ?? "")).toLowerCase();
+  for (const word of ["local_committed", "committed", "backed up", "safe", "preserved", "healthy", "verified"]) {
+    expect(text, word).not.toContain(word);
+  }
+  expect(screen.getByTestId("quick-show-folder")).toBeInTheDocument();
+});
+
+test("a cancelled export says no archive was created", async () => {
+  const b = backend();
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "add", subject: name("big.bin"), items: 1 });
+  b.send({ event: "progress", phase: "export", completed: 1024, total: 4096 });
+  expect(await screen.findByTestId("quick-progress-text")).toHaveTextContent("Writing: 1.0 KiB (1,024 bytes) of 4.0 KiB (4,096 bytes)");
+  b.send({ event: "cancelled", action: "add" });
+  expect(await screen.findByTestId("quick-result")).toHaveTextContent("Cancelled. No archive was created.");
 });

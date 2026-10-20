@@ -20,7 +20,7 @@
 // launching a browser, the path the Help action opens:
 //   python3 packaging/guide.py target/guide     (MOCHI_E2E_GUIDE_DIR overrides)
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,22 @@ process.env.MOCHI_E2E_OPEN_LOG = path.join(os.tmpdir(), "mochi-e2e-opened.txt");
 // "Show in folder" records the folder it was asked to show here (src/help.rs `open_folder`).
 process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt");
 
+// The cold-start spec (specs/add-cold.e2e.js) needs the app started WITH arguments, as Explorer
+// starts it for "Add to archive...": a second session whose capabilities carry them. Each
+// capability runs its own specs, so the other specs never see these arguments and this one never
+// shares an app with them. (No "--" in the args: msedgedriver reads a bare "--" as an empty
+// switch name and refuses the session; these paths do not start with "-".) Three files in one folder, in one launch.
+const coldDir = path.join(os.tmpdir(), "mochi-e2e-cold", "trip");
+process.env.MOCHI_E2E_COLD_DIR = coldDir;
+const coldSpec = path.resolve(here, "specs/add-cold.e2e.js");
+const coldArgs = ["--add", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))];
+// On Windows, tauri-driver hands `tauri:options.args` to msedgedriver as WebView2 *browser*
+// arguments, never to the app (CI: the app started with no verb and showed the main window).
+// There the test build (feature e2e) reads its arguments, once, from this file instead, which
+// beforeSession fills for the cold spec only (`automation::launch_args`).
+process.env.MOCHI_E2E_ARGS_FILE = path.join(os.tmpdir(), "mochi-e2e-args.txt");
+const isWindows = process.platform === "win32";
+
 let tauriDriver;
 
 /** The spec files that are about one tool, and the More menu item that opens it. */
@@ -92,7 +108,13 @@ export const config = {
   capabilities: [
     {
       maxInstances: 1,
+      "wdio:exclude": [coldSpec],
       "tauri:options": { application },
+    },
+    {
+      maxInstances: 1,
+      "wdio:specs": [coldSpec],
+      "tauri:options": isWindows ? { application } : { application, args: coldArgs },
     },
   ],
   logLevel: "warn",
@@ -101,11 +123,22 @@ export const config = {
   mochaOpts: { ui: "bdd", timeout: 60_000 },
   waitforTimeout: 15_000,
 
+  beforeSession: (_config, _caps, specs) => {
+    // One line per argument; the app empties the file when it reads it.
+    const cold = specs.some((s) => /add-cold\.e2e\.js$/.test(s));
+    writeFileSync(process.env.MOCHI_E2E_ARGS_FILE, cold && isWindows ? coldArgs.join("\n") : "");
+  },
+
   onPrepare: () => {
+    // The files the cold start adds, made fresh.
+    rmSync(path.dirname(coldDir), { recursive: true, force: true });
+    mkdirSync(coldDir, { recursive: true });
+    for (const n of ["a.txt", "b.txt", "c.txt"]) writeFileSync(path.join(coldDir, n), n);
     // No pick left over from an earlier run.
     writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
     writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
     writeFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "");
+    writeFileSync(process.env.MOCHI_E2E_ARGS_FILE, "");
     // On PATH after `cargo install tauri-driver` (~/.cargo/bin).
     const bin = process.env.TAURI_DRIVER ?? "tauri-driver";
     tauriDriver = spawn(bin, driverArgs, { stdio: [null, process.stdout, process.stderr] });
