@@ -11,7 +11,19 @@ const dir = process.env.MOCHI_E2E_COLD_DIR;
 
 describe("Add to archive... on a cold start", () => {
   it("shows the form for the whole selection in a compact window, and no main window", async () => {
-    await $('[data-testid="quick-form"]').waitForExist({ timeout: 60_000 });
+    // On Windows, msedgedriver attaches to WebView2 as soon as its browser process
+    // starts, which can be before the compact window's page exists: look through the
+    // window handles until one shows the form, as launch.e2e.js does.
+    await browser.waitUntil(
+      async () => {
+        for (const handle of await browser.getWindowHandles()) {
+          await browser.switchToWindow(handle);
+          if (await $('[data-testid="quick-form"]').isExisting()) return true;
+        }
+        return false;
+      },
+      { timeout: 50_000, interval: 500, timeoutMsg: "no window shows the quick form" },
+    );
     // One window only: this verb never opens the main window.
     expect((await browser.getWindowHandles()).length).toBe(1);
     await expect($('[data-testid="start-screen"]')).not.toExist();
