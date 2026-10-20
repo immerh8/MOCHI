@@ -41,6 +41,12 @@ export interface ExtractorProps {
    * is written until the user confirms it.
    */
   autoPlan?: { token: number; handle: number; defaultFolder?: boolean } | null;
+  /**
+   * The list's menu asked to extract the selection: when this changes, open
+   * the folder dialog and plan the selected entries (the toolbar button's
+   * "pick a folder" path).
+   */
+  selectedRequest?: number;
 }
 
 /** Where the folder comes from: made next to the archive, picked, or the one already chosen. */
@@ -67,7 +73,7 @@ type JobView =
  * holds a path the user did not see, and the job runs in Rust over the shared
  * job channel. What was not extracted, and why, is listed as text.
  */
-export function Extractor({ archive, seq, selected, autoPlan = null }: ExtractorProps) {
+export function Extractor({ archive, seq, selected, autoPlan = null, selectedRequest = 0 }: ExtractorProps) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [plan, setPlan] = useState<ExtractPlan | null>(null);
   // The plan's folder is the new one made next to the archive (it is removed
@@ -155,6 +161,20 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
       },
     );
   }, [autoPlan, handle, seq]);
+
+  // The list's menu: Extract to... for the selection, into a folder the user picks.
+  const seenRequestRef = useRef(selectedRequest);
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  });
+  useEffect(() => {
+    if (selectedRequest === seenRequestRef.current) return;
+    seenRequestRef.current = selectedRequest;
+    if (selectedRef.current.length === 0 || busy) return;
+    const entries = [...selectedRef.current];
+    queueMicrotask(() => planFor({ kind: "selected", entries }, "pick"));
+  }, [selectedRequest, busy, planFor]);
 
   const onEvent = useCallback((event: JobEvent) => {
     setJob((prev) => {

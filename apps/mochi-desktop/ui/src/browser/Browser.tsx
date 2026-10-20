@@ -48,6 +48,7 @@ import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
 import { Rekey } from "../crypt/Rekey";
 import { HIDDEN_WITH_KEY, NOT_SIGNED, VISIBLE_WITHOUT_KEY } from "../crypt/messages";
 import { useDragOut } from "../list/dragOut";
+import { copyNames, listMenuItems, useListMenu } from "../list/ContextMenu";
 import { ancestorsOf } from "../list/keys";
 import { useSelection } from "../list/selection";
 import type { Selection } from "../list/selection";
@@ -650,6 +651,24 @@ export function Browser({
     },
   };
 
+  // The list's right-click menu. Names are the full in-archive paths, as text.
+  const [extractSelectedRequest, setExtractSelectedRequest] = useState(0);
+  const listMenu = useListMenu(
+    listMenuItems({
+      selected: selected.length,
+      total: searching ? hits.length : (total ?? 0),
+      selectAll: () => listKeyHandlers.all(),
+      copyNames: () => {
+        const names = searching
+          ? hitSel.rows.map((h) => h.path.text)
+          : folderSel.rows.map((r) => [...path.map((c) => c.name.text), r.name.text].join("/"));
+        copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
+      },
+      extract: () => setExtractSelectedRequest((n) => n + 1),
+      remove: viewingHead ? () => setRemoveRequest((n) => n + 1) : null,
+    }),
+  );
+
   const openHit = (hit: HitRow) => {
     if (hit.key === null) return;
     const above = ancestorsOf(hit.key, hit.path);
@@ -952,6 +971,7 @@ export function Browser({
                   seq={open.snapshot.seq}
                   selected={selected}
                   autoPlan={autoExtract}
+                  selectedRequest={extractSelectedRequest}
                 />
                 <div className="workspace">
                   {foldersShown && (
@@ -966,10 +986,11 @@ export function Browser({
                       />
                     </nav>
                   )}
-                  <div className="listing" onKeyDown={(e) => listKeys(e, listKeyHandlers)}>
+                  <div className="listing" onKeyDown={(e) => listKeys(e, listKeyHandlers)} {...listMenu.listProps}>
                     <p id="entry-hint" className="sr-only">
                       {t("help.keys")}
                     </p>
+                    {listMenu.menu}
                     {searching ? (
                       <SearchResults
                         search={search}

@@ -28,6 +28,7 @@ import { useDragOut } from "../list/dragOut";
 import { ancestorsOf } from "../list/keys";
 import { useSelection } from "../list/selection";
 import type { Selection } from "../list/selection";
+import { copyNames, listMenuItems, useListMenu } from "../list/ContextMenu";
 import { listKeys, rowHandlers } from "../list/rows";
 import { ResultBar } from "../result/Result";
 import { SearchResults } from "../search/SearchResults";
@@ -380,6 +381,23 @@ export function ForeignBrowser() {
   const folderDrag = useDragOut(dragFrom(folderSel));
   const hitDrag = useDragOut(dragFrom(hitSel));
 
+  // The list's right-click menu; a foreign archive is read-only, so Delete is off.
+  const listMenu = useListMenu(
+    listMenuItems({
+      selected: selectedRows.length,
+      total: searching ? hits.length : (count ?? 0),
+      selectAll: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
+      copyNames: () => {
+        const names = searching
+          ? hitSel.rows.map((h) => h.path.text)
+          : folderSel.rows.map((r) => [...path.map((c) => c.name.text), r.name.text].join("/"));
+        copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
+      },
+      extract: extractNow,
+      remove: null,
+    }),
+  );
+
   const openHit = (hit: ForeignHitRow) => {
     if (hit.key === null) return;
     const above = ancestorsOf(hit.key, hit.path);
@@ -570,6 +588,7 @@ export function ForeignBrowser() {
       <div className="workspace">
         <div
           className="listing"
+          {...listMenu.listProps}
           onKeyDown={(e) =>
             listKeys(e, {
               all: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
@@ -588,6 +607,7 @@ export function ForeignBrowser() {
           <p id="foreign-entry-hint" className="sr-only">
             {t("help.keys")}
           </p>
+          {listMenu.menu}
           {searching ? (
             <SearchResults
               search={search}
