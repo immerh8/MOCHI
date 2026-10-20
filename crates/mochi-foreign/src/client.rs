@@ -413,17 +413,24 @@ impl ForeignClient {
             memory_limit: None,
             ..req
         };
-        let mut child = Command::new(&self.helper)
-            .stdin(Stdio::piped())
+        let mut cmd = Command::new(&self.helper);
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                ForeignError::new(
-                    ErrorCode::HelperSpawnFailed,
-                    format!("cannot start the helper: {}", e.kind()),
-                )
-            })?;
+            .stderr(Stdio::null());
+        // The helper is a console-subsystem binary; without this flag every
+        // spawn from the (windowless) desktop app flashes a console window.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| {
+            ForeignError::new(
+                ErrorCode::HelperSpawnFailed,
+                format!("cannot start the helper: {}", e.kind()),
+            )
+        })?;
         // Confine the helper before it is sent anything. A limit that was
         // asked for and cannot be applied is an error, never a silent skip.
         #[cfg(windows)]
