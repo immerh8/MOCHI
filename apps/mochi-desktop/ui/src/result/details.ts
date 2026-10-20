@@ -57,9 +57,18 @@ export function cautionCount(details: ResultDetails): number {
   return details.rows.filter((r) => r.caution === true).length;
 }
 
-/** "3 notes" / "1 note". */
-export function notesText(n: number): string {
-  return tc(n, "result.notesOne", "result.notesMany");
+/** "1 item needs attention" / "3 items need attention": the badge's accessible name. */
+export function attentionText(n: number): string {
+  return tc(n, "result.attentionOne", "result.attentionMany");
+}
+
+/**
+ * The same, with a pointer to the panel. It is visually hidden text in the
+ * live region of a result, so a screen reader announces that there is
+ * something in Details without any durability wording on screen.
+ */
+export function attentionHint(n: number): string {
+  return t("result.attentionHint", { items: attentionText(n) });
 }
 
 /**

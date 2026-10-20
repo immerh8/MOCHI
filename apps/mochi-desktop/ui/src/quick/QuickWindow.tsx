@@ -14,7 +14,7 @@ import {
   type QuickEvent,
 } from "../ipc/quick";
 import { isIpcError } from "../ipc/jobs";
-import { countParts, joinParts, logRecord } from "../result/details";
+import { attentionHint, cautionCount, countParts, joinParts, logRecord } from "../result/details";
 import type { DetailRow, ResultDetails } from "../result/details";
 import { InlineDetails } from "../result/Result";
 import { LOCAL_COMMIT_NOTE, progressText as writeProgress } from "../write/messages";
@@ -94,7 +94,7 @@ function finished(event: QuickEvent): View | null {
         : t("quick.doneExtract", { parts, name: event.name.text });
       const line =
         event.skipped > 0
-          ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: event.skipped })}`
+          ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: event.skipped.toLocaleString("en-US") })}`
           : head;
       const record = [
         add ? `add commit ${event.status ?? ""}` : "extract",
@@ -303,6 +303,11 @@ export function QuickWindow() {
                 {line}
               </p>
             ))}
+            {view.details && cautionCount(view.details) > 0 && (
+              <span className="sr-only" data-testid="quick-attention">
+                {attentionHint(cautionCount(view.details))}
+              </span>
+            )}
           </div>
           {view.details && <InlineDetails prefix="quick" details={view.details} />}
           <div className="actions">

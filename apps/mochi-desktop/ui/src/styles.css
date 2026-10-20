@@ -1236,3 +1236,15 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
 .result-items .name {
   white-space: pre-wrap;
 }
+/* The dot is the warning colour of the warning bar, never the success green. */
+.result-badge {
+  width: 0.65rem;
+  height: 0.65rem;
+}
+@media (forced-colors: active) {
+  .result-badge {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Canvas;
+  }
+}

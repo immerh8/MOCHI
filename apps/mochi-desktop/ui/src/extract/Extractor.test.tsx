@@ -374,7 +374,7 @@ test("a finished extraction lists what was not extracted and which attributes we
   );
   expect(status).toHaveClass("warning");
   expect(screen.getByTestId("extract-details")).not.toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Details, 2 notes" }));
+  await user.click(screen.getByRole("button", { name: "Details, 2 items need attention" }));
   expect(screen.getByTestId("extract-details")).toBeVisible();
   const items = screen.getAllByTestId("extract-not-extracted-item");
   expect(items[0]).toHaveTextContent(`${HOSTILE} (NAME_UNSUPPORTED)`);
@@ -526,9 +526,13 @@ test("a degraded folder entry is a caution in the details: badge on the button, 
     outcome: { status: "completed", summary: "s", extract: report({ durability_note: "no directory sync" }) },
   });
   const status = screen.getByTestId("extract-status");
-  expect(status).toHaveTextContent(/^Extracted 3 files · 1 folder · 100 bytes$/);
+  // The visible line carries no durability wording; a hidden pointer is in the live region.
+  expect(screen.getByTestId("extract-headline")).toHaveTextContent(/^Extracted 3 files · 1 folder · 100 bytes$/);
+  expect(screen.getByTestId("extract-attention")).toHaveClass("sr-only");
+  expect(screen.getByTestId("extract-attention")).toHaveTextContent("1 item needs attention, see Details");
+  expect(status).toContainElement(screen.getByTestId("extract-attention"));
   expect(status).not.toHaveClass("warning");
-  const toggle = screen.getByRole("button", { name: "Details, 1 note" });
+  const toggle = screen.getByRole("button", { name: "Details, 1 item needs attention" });
   expect(screen.getByTestId("extract-badge")).toBeInTheDocument();
   await user.click(toggle);
   expect(screen.getByTestId("extract-details")).toHaveTextContent("Folder entries on disk");

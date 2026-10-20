@@ -377,9 +377,16 @@ test("a degraded directory entry shows a caution badge and stays neutral: no suc
     completed({ ...commit("create", summary(9, 1, "new.mochi")), durability_note: note }),
   );
   const status = screen.getByTestId("write-status");
+  expect(screen.getByTestId("write-headline")).toHaveTextContent(/^Created new\.mochi · 2 files · 1 folder · 2\.0 KiB$/);
+  expect(screen.getByTestId("write-headline")).not.toHaveTextContent(/degraded|durable|not confirmed/i);
+  // A hidden pointer in the live region lets a screen reader announce it.
+  const hint = screen.getByTestId("write-attention");
+  expect(hint).toHaveClass("sr-only");
+  expect(hint).toHaveTextContent("1 item needs attention, see Details");
+  expect(status).toContainElement(hint);
   expect(status).not.toHaveTextContent(/degraded|durable|not confirmed/i);
   expect(status).not.toHaveClass("warning");
-  const toggle = screen.getByRole("button", { name: "Details, 1 note" });
+  const toggle = screen.getByRole("button", { name: "Details, 1 item needs attention" });
   expect(toggle).toHaveAttribute("data-cautions", "1");
   expect(screen.getByTestId("write-badge")).toBeInTheDocument();
   expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
@@ -407,7 +414,7 @@ test("items not stored make the result partial in the line, with reasons listed 
   const status = screen.getByTestId("write-status");
   expect(status).toHaveTextContent("Added to fake.mochi · 2 files · 1 folder · 2.0 KiB · 2 items not stored");
   expect(status).toHaveClass("warning");
-  await user.click(screen.getByRole("button", { name: "Details, 1 note" }));
+  await user.click(screen.getByRole("button", { name: "Details, 1 item needs attention" }));
   const items = screen.getAllByTestId("write-not-stored-item");
   expect(items).toHaveLength(2);
   expect(items[0]).toHaveTextContent(`${HOSTILE}: symbolic links are not stored`);
@@ -436,7 +443,7 @@ test("a result can be dismissed, which closes its panel and keeps focus on the p
   const b = backend();
   const { user } = await createThen(b, completed(commit("create", summary(9, 1, "new.mochi"))));
   await user.click(screen.getByRole("button", { name: "Details" }));
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await user.click(screen.getByRole("button", { name: "Dismiss result" }));
   expect(screen.queryByTestId("write-result")).toBeNull();
   expect(screen.queryByTestId("write-details")).toBeNull();
   expect(screen.getByTestId("write-status")).toBeEmptyDOMElement();
@@ -448,7 +455,7 @@ test("a cancel or a failure stays plain lines with no Details, and can be dismis
   expect(screen.getByTestId("write-status")).toHaveTextContent("Failed (IO_ERROR): disk");
   expect(screen.getByTestId("write-status")).toHaveTextContent("Nothing was committed.");
   expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await user.click(screen.getByRole("button", { name: "Dismiss result" }));
   expect(screen.getByTestId("write-status")).toBeEmptyDOMElement();
 });
 

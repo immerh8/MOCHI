@@ -1,12 +1,15 @@
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { Ref } from "react";
 
 import { Live } from "../a11y/Live";
 import { Name } from "../browser/Name";
 import { t } from "../i18n";
 import { CloseIcon, InfoIcon } from "../icons";
-import type { DetailRow, ResultDetails } from "./details";
-import { cautionCount, notesText } from "./details";
+import type { DetailItem, DetailRow, ResultDetails } from "./details";
+import { attentionHint, attentionText, cautionCount } from "./details";
+
+/** Told on `document` when a result panel opens, so any other one closes. */
+const DRAWER_OPENED = "mochi:result-drawer-opened";
 
 /** The rows of a Details panel as a definition list, then its short notes. */
 export function DetailsList({ details, testId }: { details: ResultDetails; testId?: string }) {
@@ -31,7 +34,19 @@ export function DetailsList({ details, testId }: { details: ResultDetails; testI
   );
 }
 
+/** Keys for a list: the item's own text plus how many equal items came before it. */
+function itemKeys(items: DetailItem[]): string[] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = `${item.name?.text ?? ""}:${item.code ?? ""}:${item.text ?? ""}`;
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return `${base}#${n}`;
+  });
+}
+
 function Row({ row }: { row: DetailRow }) {
+  const keys = row.items ? itemKeys(row.items) : [];
   return (
     <>
       {row.value !== undefined && <span className="result-value">{row.value}</span>}
@@ -39,8 +54,8 @@ function Row({ row }: { row: DetailRow }) {
       {row.note !== undefined && <span className="result-reason">{row.note}</span>}
       {row.items !== undefined && (
         <ul className="result-items">
-          {row.items.map((item) => (
-            <li key={`${item.name?.text ?? ""}:${item.code ?? ""}:${item.text ?? ""}`} data-testid={row.itemTestId}>
+          {row.items.map((item, i) => (
+            <li key={keys[i]} data-testid={row.itemTestId}>
               {item.name && <Name name={item.name} />}
               {item.code !== undefined && <span className="meta"> ({item.code})</span>}
               {item.text !== undefined && (item.name ? ": " : "")}
@@ -104,25 +119,58 @@ export function ResultBar({
   const [openFor, setOpenFor] = useState<ResultDetails | null>(null);
   const open = details !== null && openFor === details;
   const wasOpenRef = useRef(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const refocusRef = useRef(false);
+
+  /** Focus is in the drawer, or on the page body (nothing else holds it). */
+  const focusInOrNowhere = useCallback(() => {
+    const active = document.activeElement;
+    return active === null || active === document.body || (drawerRef.current?.contains(active) ?? false);
+  }, []);
+
+  /**
+   * Close the panel. Focus goes back to the Details button only if it was in
+   * the panel (or nowhere): a panel closed because the user moved on, or
+   * because another one opened, does not steal focus.
+   */
+  const closeDrawer = useCallback(() => {
+    refocusRef.current = focusInOrNowhere();
+    setOpenFor(null);
+  }, [focusInOrNowhere]);
 
   useEffect(() => {
     if (open) {
       headingRef.current?.focus();
-    } else if (wasOpenRef.current) {
-      // Closed by Escape or the Close button: give focus back to the opener.
+      // The panel starts below the toolbar, so More, Info and Help stay reachable.
+      const bottom = document.querySelector(".toolbar")?.getBoundingClientRect().bottom ?? 0;
+      if (drawerRef.current) drawerRef.current.style.top = `${Math.max(0, Math.round(bottom))}px`;
+      // One result panel at a time: tell the others to close.
+      document.dispatchEvent(new CustomEvent(DRAWER_OPENED, { detail: drawerId }));
+    } else if (wasOpenRef.current && refocusRef.current) {
       toggleRef.current?.focus();
     }
+    if (!open) refocusRef.current = false;
     wasOpenRef.current = open;
-  }, [open]);
+  }, [open, drawerId]);
+
+  useEffect(() => {
+    const onOpened = (e: Event) => {
+      if (e instanceof CustomEvent && e.detail !== drawerId) setOpenFor(null);
+    };
+    document.addEventListener(DRAWER_OPENED, onOpened);
+    return () => document.removeEventListener(DRAWER_OPENED, onOpened);
+  }, [drawerId]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) setOpenFor(null);
+      // Escape closes this panel only when it is the thing the keypress is for:
+      // not when focus is in a menu or another panel, which handle it themselves.
+      if (e.key === "Escape" && !e.defaultPrevented && focusInOrNowhere()) closeDrawer();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, focusInOrNowhere, closeDrawer]);
 
   const has = lines.length > 0;
   const cautions = details === null ? 0 : cautionCount(details);
@@ -144,6 +192,11 @@ export function ResultBar({
             {line}
           </p>
         ))}
+        {cautions > 0 && (
+          <span className="sr-only" data-testid={`${prefix}-attention`}>
+            {attentionHint(cautions)}
+          </span>
+        )}
       </Live>
       {has && (
         <div className="result-actions">
@@ -160,12 +213,12 @@ export function ResultBar({
               data-testid={`${prefix}-details-toggle`}
               data-cautions={cautions}
               aria-label={
-                cautions > 0 ? t("result.detailsWithNotes", { notes: notesText(cautions) }) : t("result.details")
+                cautions > 0 ? t("result.detailsAttention", { items: attentionText(cautions) }) : t("result.details")
               }
               title={t("result.details")}
               aria-expanded={open}
               aria-controls={drawerId}
-              onClick={() => setOpenFor(open ? null : details)}
+              onClick={() => (open ? closeDrawer() : setOpenFor(details))}
             >
               <InfoIcon />
               {cautions > 0 && <span className="result-badge" aria-hidden="true" data-testid={`${prefix}-badge`} />}
@@ -190,6 +243,7 @@ export function ResultBar({
       {details !== null && (
         <aside
           id={drawerId}
+          ref={drawerRef}
           className="result-drawer"
           aria-labelledby={headingId}
           hidden={!open}
@@ -199,7 +253,7 @@ export function ResultBar({
             <h3 id={headingId} ref={headingRef} tabIndex={-1}>
               {t("result.details")}
             </h3>
-            <button type="button" data-testid={`${prefix}-details-close`} onClick={() => setOpenFor(null)}>
+            <button type="button" data-testid={`${prefix}-details-close`} onClick={closeDrawer}>
               {t("common.close")}
             </button>
           </div>
@@ -226,7 +280,7 @@ export function InlineDetails({ prefix, details }: { prefix: string; details: Re
         className="result-inline-toggle"
         data-testid={`${prefix}-details-toggle`}
         data-cautions={cautions}
-        aria-label={cautions > 0 ? t("result.detailsWithNotes", { notes: notesText(cautions) }) : t("result.details")}
+        aria-label={cautions > 0 ? t("result.detailsAttention", { items: attentionText(cautions) }) : t("result.details")}
         aria-expanded={open}
         aria-controls={regionId}
         onClick={() => setOpen((v) => !v)}
