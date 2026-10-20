@@ -652,6 +652,12 @@ button.crumb {
   border: 1px solid var(--accent);
   background: var(--accent-bg);
 }
+/* A selected row: the fill and a bar at its start, so that a run of selected
+   rows reads as one block. */
+.entry.selected {
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .tree ul {
   list-style: none;
   margin: 0;
@@ -1017,6 +1023,9 @@ button.crumb {
 }
 .tool-pane > section > h2:first-child {
   margin-right: 2.5rem;
+}
+.tool-pane [role="status"]:empty {
+  min-height: 0;
 }
 .tool-pane .dialog-layer {
   position: static;

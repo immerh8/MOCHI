@@ -97,6 +97,20 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     await expect($('[data-testid="foreign-crumbs"]')).toHaveText(expect.stringContaining("sub"));
   });
 
+  it("finds names anywhere in the archive from the toolbar's search field", async () => {
+    const field = await $('[data-testid="search-query"]');
+    await field.setValue("b.txt");
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => (await $$('[data-testid="search-hit"]')).length === 1, {
+      timeout: 30_000,
+      timeoutMsg: "the foreign search found no hit",
+    });
+    await expect($('[data-testid="search-hit"]')).toHaveText(expect.stringContaining("b.txt"));
+    await expect($('[data-testid="foreign-count"]')).toHaveText("1 match");
+    await $('[data-testid="search-clear"]').click();
+    await browser.waitUntil(async () => (await entryNames()).includes("b.txt"));
+  });
+
   it("reads and checks every entry and reports the check that ran, not a verification", async () => {
     await press("foreign-test");
     await waitForStatus("completed");
