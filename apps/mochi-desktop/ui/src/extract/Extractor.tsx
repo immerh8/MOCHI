@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useJobFocus } from "../a11y/focus";
-import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
 import { ExtractIcon } from "../icons";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { t, tc } from "../i18n";
+import { logRecord } from "../result/details";
+import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
 import { planExtract } from "../ipc/extract";
 import { discardExtractFolder, planExtractDefault, showInFolder } from "../ipc/start";
@@ -16,7 +17,6 @@ import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import {
-  attributeLine,
   CONFLICT_NOTE,
   describe,
   FOLDER_NOTE,
@@ -178,6 +178,9 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     // A completed extraction makes its plan stale (what it wrote now
     // collides); a cancelled or failed one keeps the panel for another try.
     if (event.event === "finished" && event.outcome.status === "completed") {
+      // The technical record goes to the console, once per result.
+      const record = describe(event.outcome).record;
+      if (record) logRecord(record);
       setScope(null);
       setPlan(null);
       setMadeFolder(false);
@@ -222,7 +225,8 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
     );
   };
 
-  const described = job.state === "done" ? describe(job.outcome) : null;
+  // Memoised: the Details panel belongs to one result and is told apart by identity.
+  const described = useMemo(() => (job.state === "done" ? describe(job.outcome) : null), [job]);
   const report = job.state === "done" && job.outcome.status === "completed" ? job.outcome.extract : undefined;
   const hasConflicts = plan !== null && plan.conflicts_total > 0;
 
@@ -386,59 +390,28 @@ export function Extractor({ archive, seq, selected, autoPlan = null }: Extractor
         </div>
       )}
 
-      <Live
-        ref={resultRef}
-        data-testid="extract-status"
-        data-state={job.state === "done" ? job.outcome.status : undefined}
-        data-complete={
-          job.state === "done" ? described?.completed === true && (report?.not_extracted_total ?? 0) === 0 : undefined
-        }
-      >
-        {described && job.state === "done" && (
-          <>
-          <p data-testid="extract-headline">{described.headline}</p>
-          {report && report.not_extracted.length > 0 && (
-            <>
-              <p className="warning">{t("extract.notExtracted")}</p>
-              <ul className="staged" data-testid="extract-not-extracted" aria-label={t("extract.notExtractedList")}>
-                {report.not_extracted.map((e) => (
-                  <li key={`${e.code}:${e.path.text}`} data-testid="extract-not-extracted-item">
-                    <Name name={e.path} /> <span className="meta">({e.code})</span> {e.reason.text}
-                    {e.reason.verbatim ? "" : t("common.escapedMarker")}
-                  </li>
-                ))}
-              </ul>
-              {report.not_extracted_total > report.not_extracted.length && (
-                <p className="note">
-                  {t("common.andMore", {
-                    n: (report.not_extracted_total - report.not_extracted.length).toLocaleString("en-US"),
-                  })}
-                </p>
-              )}
-            </>
-          )}
-          {report && report.attribute_notes.length > 0 && (
-            <ul className="staged" data-testid="extract-attributes" aria-label={t("extract.attributesList")}>
-              {report.attribute_notes.map((n) => (
-                <li key={n.attribute} data-testid="extract-attribute-note">
-                  {attributeLine(n)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {described.notes.map((l) => (
-            <p key={l}>{l}</p>
-          ))}
-          </>
-        )}
-      </Live>
-      {job.state === "done" && job.outcome.status === "completed" && report && (
-        <div className="actions">
-          <button type="button" data-testid="extract-show-folder" onClick={showFolder}>
-            {t("start.showInFolder")}
-          </button>
-        </div>
-      )}
+      <ResultBar
+        prefix="extract"
+        statusTestId="extract-status"
+        statusRef={resultRef}
+        statusAttrs={{
+          "data-state": job.state === "done" ? job.outcome.status : undefined,
+          "data-complete":
+            job.state === "done"
+              ? String(described?.completed === true && (report?.not_extracted_total ?? 0) === 0)
+              : undefined,
+        }}
+        lines={described ? [described.headline, ...described.notes] : []}
+        headlineTestId="extract-headline"
+        warn={described?.warn ?? false}
+        details={described?.details ?? null}
+        onShowFolder={job.state === "done" && job.outcome.status === "completed" && report ? showFolder : undefined}
+        onDismiss={() => {
+          setJob({ state: "idle" });
+          setFolderError(null);
+        }}
+        fallbackId="extract-heading"
+      />
       {folderError && (
         <p role="alert" className="error" data-testid="extract-folder-error">
           {folderError}

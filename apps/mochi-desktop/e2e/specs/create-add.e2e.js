@@ -9,7 +9,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
-import { clickNewArchive, closeHelp, closeVersions, openHelp, openVersions } from "./_ui.js";
+import {
+  clickNewArchive,
+  closeHelp,
+  closeResultDetails,
+  closeVersions,
+  openHelp,
+  openResultDetails,
+  openVersions,
+} from "./_ui.js";
 
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
 const queuePicks = (...paths) => writeFileSync(pickFile, paths.join("\n"));
@@ -112,10 +120,17 @@ describe("create and add", () => {
 
     await $('[data-testid="create-confirm"]').click();
     await waitForStatus("Created main.mochi");
+    // One short line; the technical record is in the Details panel (owner request, 0.9.3).
     const status = await $('[data-testid="write-status"]').getText();
-    expect(status).toContain("Technical detail: commit 0 (LOCAL_COMMITTED).");
-    expect(status).toContain("saved in one file on this computer");
+    expect(status).toContain("Created main.mochi · ");
+    expect(status).not.toContain("LOCAL_COMMITTED");
+    await openResultDetails("write");
+    const details = await $('[data-testid="write-details"]').getText();
+    expect(details).toContain("Committed on this computer");
+    expect(details).toContain("commit 0 · LOCAL_COMMITTED");
+    expect(details).toContain("one file on this computer");
     await assertNoBannedWording();
+    await closeResultDetails("write");
     expect(existsSync(mainArchive)).toBe(true);
 
     // The new archive opened in the browser, at its head.
@@ -176,10 +191,12 @@ describe("create and add", () => {
 
     await $('[data-testid="remove-entry"]').click();
     await $('[data-testid="delete-confirm"]').click();
-    await waitForStatus("Removed 1 entry from the current version");
+    await waitForStatus("Removed 1 item from this version");
     const status = await $('[data-testid="write-status"]').getText();
     expect(status).toContain("Earlier versions still have it");
-    expect(status).toContain("stays in the archive's history");
+    await openResultDetails("write");
+    expect(await $('[data-testid="write-details"]').getText()).toContain("stays in the archive's history");
+    await closeResultDetails("write");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("3 versions"));
     await browser.waitUntil(async () => {
       const names = await entryNames();

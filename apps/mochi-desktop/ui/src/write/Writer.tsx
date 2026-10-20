@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useJobFocus } from "../a11y/focus";
-import { Live } from "../a11y/Live";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
@@ -31,8 +30,10 @@ import {
   recoveryLabel,
   VISIBLE_WITHOUT_KEY,
 } from "../crypt/messages";
-import { DELETE_NOTE, outcomeLines, progressText, TAR_NOTES } from "./messages";
-import type { Operation } from "./messages";
+import { logRecord } from "../result/details";
+import { ResultBar } from "../result/Result";
+import { commitView, DELETE_NOTE, outcomeResult, progressText, TAR_NOTES } from "./messages";
+import type { Operation, WriteResult } from "./messages";
 
 /** The compression presets, in the order shown. */
 export const PRESETS: { id: CompressionPreset; label: () => string; hint: () => string }[] = [
@@ -83,7 +84,7 @@ type JobView =
       total: number | null;
       cancelRequested: boolean;
     }
-  | { state: "done"; lines: string[]; committed: boolean; archive: ArchiveSummary | null }
+  | { state: "done"; result: WriteResult; committed: boolean; archive: ArchiveSummary | null }
   | { state: "error"; text: string };
 
 const EMPTY: StagedView = { items: [], destination: null, default_destination: null };
@@ -181,7 +182,7 @@ export function Writer({
           const o = event.outcome;
           return {
             state: "done",
-            lines: outcomeLines(operationRef.current, o),
+            result: outcomeResult(operationRef.current, o),
             committed: o.status === "completed" && o.commit !== undefined,
             archive: o.status === "completed" ? (o.commit?.archive ?? null) : null,
           };
@@ -190,6 +191,10 @@ export function Writer({
     });
     if (event.event === "finished") {
       const o = event.outcome;
+      // The technical record goes to the console, once per result.
+      if (o.status === "completed" && o.commit) {
+        logRecord(commitView(o.commit).record);
+      }
       stagedSources().then(setStaged, () => undefined);
       if (o.status === "completed" && o.commit) {
         setMode("closed");
@@ -695,20 +700,27 @@ export function Writer({
           </button>
         </div>
       )}
-      <Live data-testid="write-status" data-committed={job.state === "done" ? job.committed : undefined}>
-        {job.state === "done" && job.lines.map((l) => <p key={l}>{l}</p>)}
-      </Live>
-      {job.state === "done" && job.archive !== null && (
-        <div className="actions">
-          <button
-            type="button"
-            data-testid="write-show-folder"
-            onClick={() => job.archive && showFolder(job.archive.handle)}
-          >
-            {t("start.showInFolder")}
-          </button>
-        </div>
-      )}
+      <ResultBar
+        prefix="write"
+        statusTestId="write-status"
+        statusAttrs={{ "data-committed": job.state === "done" ? String(job.committed) : undefined }}
+        lines={job.state !== "done" ? [] : job.result.kind === "commit" ? [job.result.line] : job.result.lines}
+        headlineTestId="write-headline"
+        warn={job.state === "done" && job.result.kind === "commit" && job.result.warn}
+        details={job.state === "done" && job.result.kind === "commit" ? job.result.details : null}
+        onShowFolder={
+          job.state === "done" && job.archive !== null
+            ? () => {
+                if (job.archive) showFolder(job.archive.handle);
+              }
+            : undefined
+        }
+        onDismiss={() => {
+          setJob({ state: "idle" });
+          setFolderError(null);
+        }}
+        fallbackId="write-heading"
+      />
       {folderError && (
         <p role="alert" className="error" data-testid="write-folder-error">
           {folderError}

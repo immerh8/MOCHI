@@ -227,7 +227,8 @@ pub trait StorageDir {
     /// visible, so no other writer can lock the new archive first
     /// (`LockHeld` if one already holds it; nothing is published). The
     /// default suits backends whose lock belongs to the file, which keeps it
-    /// under its new name; the OS backend locks a separate lock file (Q54).
+    /// under its new name; so does the OS backend (spec B.2.17: the lock is
+    /// on the open file, not on a separate lock file).
     fn publish_archive(
         &mut self,
         file: &mut Self::File,

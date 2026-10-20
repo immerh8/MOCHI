@@ -2,7 +2,10 @@ import { expect, test } from "vitest";
 
 import type { CommitReport } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
-import { DELETE_NOTE, LOCAL_COMMIT_NOTE, outcomeLines, TAR_NOTES } from "./messages";
+import { cautionCount } from "../result/details";
+import type { ResultDetails } from "../result/details";
+import { DELETE_NOTE, LOCAL_COMMIT_NOTE, outcomeResult, TAR_NOTES } from "./messages";
+import type { WriteResult } from "./messages";
 import type { Operation } from "./messages";
 
 const ARCHIVE = {
@@ -61,10 +64,35 @@ function at(i: number): JobOutcome {
   return entry[1];
 }
 
+/** Every string a result can show: its lines, or its line, rows, and notes. */
+function allText(r: WriteResult): string[] {
+  if (r.kind === "text") return r.lines;
+  return [r.line, ...detailText(r.details)];
+}
+
+function detailText(d: ResultDetails): string[] {
+  return [
+    ...d.rows.flatMap((row) => [
+      row.label,
+      row.value ?? "",
+      row.sub ?? "",
+      row.note ?? "",
+      ...(row.items ?? []).flatMap((i) => [i.name?.text ?? "", i.code ?? "", i.text ?? ""]),
+    ]),
+    ...d.notes,
+  ];
+}
+
+function commitOf(i: number) {
+  const r = outcomeResult(ALL[i]?.[0] ?? "add", at(i));
+  if (r.kind !== "commit") throw new Error("not a commit");
+  return r;
+}
+
 test("no message claims the data is backed up, safe, or preserved (spec §23.3 #6)", () => {
   const banned = [/backed up/i, /backup/i, /\bsafe/i, /preserv/i, /secure/i, /protected/i];
   const text = [
-    ...ALL.flatMap(([op, o]) => outcomeLines(op, o)),
+    ...ALL.flatMap(([op, o]) => allText(outcomeResult(op, o))),
     DELETE_NOTE,
     LOCAL_COMMIT_NOTE,
     ...TAR_NOTES,
@@ -72,40 +100,97 @@ test("no message claims the data is backed up, safe, or preserved (spec §23.3 #
   for (const b of banned) expect(text).not.toMatch(b);
 });
 
-test("a commit says it completed locally and names its status", () => {
-  const lines = outcomeLines("add", at(1));
-  expect(lines[0]).toBe("Added to a.mochi: 3 files, 1 folder, 1.5 KiB (1,536 bytes).");
-  expect(lines).toContain(LOCAL_COMMIT_NOTE);
-  // The precise term and the status are kept, as the last line.
-  expect(lines.at(-1)).toBe("Technical detail: commit 4 (LOCAL_COMMITTED).");
+test("a commit is one short line: counts without zeros, no byte count, no technical code", () => {
+  const r = commitOf(1);
+  expect(r.line).toBe("Added to a.mochi · 3 files · 1 folder · 1.5 KiB");
+  expect(r.line).not.toContain("1,536");
+  expect(r.line).not.toContain("LOCAL_COMMITTED");
+  expect(r.warn).toBe(false);
+  // A zero count is left out of the line.
+  const noFolders = outcomeResult("create", {
+    status: "completed",
+    summary: "s",
+    commit: report("create", { files: 6, directories: 0, bytes: 906363 }),
+  });
+  expect(noFolders.kind === "commit" && noFolders.line).toBe("Created a.mochi · 6 files · 885.1 KiB");
 });
 
-test("a deletion is removal from the current version and says the content stays in history", () => {
-  const lines = outcomeLines("delete", at(2));
-  expect(lines[0]).toContain("Removed 2 entries from the current version of a.mochi");
-  expect(lines[0]).toContain("Earlier versions still have them");
-  const note = lines.join(" ");
+test("the details hold the counts, the status with its technical value, and the local-copy note", () => {
+  const r = commitOf(1);
+  const row = (label: string) => r.details.rows.find((x) => x.label === label);
+  expect(row("Files")?.value).toBe("3");
+  expect(row("Folders")?.value).toBe("1");
+  expect(row("Size")?.value).toBe("1.5 KiB (1,536 bytes)");
+  expect(row("Status")?.value).toBe("Committed on this computer");
+  expect(row("Status")?.sub).toBe("commit 4 · LOCAL_COMMITTED");
+  expect(row("Status")?.caution).toBeUndefined();
+  expect(r.details.notes).toEqual([LOCAL_COMMIT_NOTE]);
+  expect(LOCAL_COMMIT_NOTE).toBe(
+    "This archive is one file on this computer. Keep a separate copy of anything you cannot lose.",
+  );
+  expect(cautionCount(r.details)).toBe(0);
+  expect(r.record).toContain("commit 4 LOCAL_COMMITTED");
+});
+
+test("a deletion is removal from this version, in one line that says earlier versions keep the content", () => {
+  const r = commitOf(2);
+  expect(r.line).toBe("Removed 2 items from this version. Earlier versions still have them.");
+  const one = outcomeResult("delete", {
+    status: "completed",
+    summary: "s",
+    commit: report("delete", { removed: 1 }),
+  });
+  expect(one.kind === "commit" && one.line).toBe("Removed 1 item from this version. Earlier versions still have it.");
+  const note = r.details.notes.join(" ");
   expect(note).toContain("stays in the archive's history");
   expect(note).toContain("retention and garbage collection");
   expect(note).toContain("does not make the archive smaller");
 });
 
-test("skips, degraded durability, and a failed reopen are all stated", () => {
-  const text = outcomeLines("add", at(3)).join("\n");
-  expect(text).toContain("Not stored: docs/link: symbolic links are not stored");
-  expect(text).toContain("Degraded: the new file's directory entry is not confirmed durable");
-  expect(text).toContain("could not be opened again for browsing (LIMIT_EXCEEDED)");
+test("a degraded directory entry is a caution row in the details, never in the line, and counts as a note", () => {
+  const r = commitOf(3);
+  const row = r.details.rows.find((x) => x.label === "Folder entry on disk");
+  expect(row).toMatchObject({
+    value: "Not confirmed",
+    sub: "Degraded",
+    note: "directory sync unsupported",
+    caution: true,
+  });
+  // not stored + degraded + could not reopen
+  expect(cautionCount(r.details)).toBe(3);
+  expect(r.record).toContain("not confirmed durable (directory sync unsupported)");
+});
+
+test("items not stored make the result partial: the line says so and the details list them with reasons", () => {
+  const r = commitOf(3);
+  expect(r.warn).toBe(true);
+  expect(r.line).toBe("Added to a.mochi · 3 files · 1 folder · 1.5 KiB · 1 item not stored · could not be opened again");
+  const row = r.details.rows.find((x) => x.label === "Not stored");
+  expect(row?.caution).toBe(true);
+  expect(row?.items).toEqual([{ name: { text: "docs/link", verbatim: true }, text: "symbolic links are not stored" }]);
+  const reopen = r.details.rows.find((x) => x.label === "Opening it again");
+  expect(reopen?.note).toContain("LIMIT_EXCEEDED");
+});
+
+test("an unconfirmed commit and a clean commit differ only in the notes: both lines are plain text", () => {
+  const clean = commitOf(1);
+  expect(clean.line).not.toMatch(/degraded|not confirmed|not stored/i);
 });
 
 test("cancelled and failed jobs say what did not happen; an unconfirmed commit claims neither", () => {
-  expect(outcomeLines("create", { status: "cancelled" })).toEqual(["Cancelled. No archive was created."]);
-  expect(outcomeLines("add", { status: "cancelled" })[0]).toContain("Nothing was committed");
-  expect(outcomeLines("add", { status: "failed", code: "IO_ERROR", message: "disk" })).toEqual([
+  const lines = (op: Operation, o: JobOutcome) => {
+    const r = outcomeResult(op, o);
+    if (r.kind !== "text") throw new Error("expected text");
+    return r.lines;
+  };
+  expect(lines("create", { status: "cancelled" })).toEqual(["Cancelled. No archive was created."]);
+  expect(lines("add", { status: "cancelled" })[0]).toContain("Nothing was committed");
+  expect(lines("add", { status: "failed", code: "IO_ERROR", message: "disk" })).toEqual([
     "Failed (IO_ERROR): disk",
     "Nothing was committed.",
   ]);
   for (const code of ["COMMIT_UNCONFIRMED", "WRITER_POISONED"]) {
-    const text = outcomeLines("add", { status: "failed", code, message: "m" }).join(" ");
+    const text = lines("add", { status: "failed", code, message: "m" }).join(" ");
     expect(text).toContain("may or may not have been published");
     expect(text).not.toContain("Nothing was committed");
   }
