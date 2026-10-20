@@ -28,7 +28,7 @@ hits=$(grep -rnE --include='*.rs' 'b"MOCHI(2|TQ)\\0' crates apps fuzz 2>/dev/nul
 [ -n "$hits" ] && report "8-byte MOCHI magic literal outside mochi-format/src/registry.rs (AGENTS.md: Wire format)" "$hits"
 
 # 3. unsafe is forbidden in the two format-critical library crates (mochi-sys,
-#    rule 11 (f2), is where mochi-core's one Win32 call lives).
+#    rule 11 (f2), is where mochi-core's Win32 calls live).
 for f in crates/mochi-format/src/lib.rs crates/mochi-core/src/lib.rs; do
   grep -q 'forbid(unsafe_code)' "$f" || report "missing #![forbid(unsafe_code)]" "$f"
 done
@@ -159,9 +159,11 @@ hits=$(awk '
   crates/mochi-foreign/src/rarfmt.rs crates/mochi-foreign/src/jobobject.rs crates/mochi-sys/src/lib.rs || true)
 [ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign / mochi-sys)" "$hits"
 #     (f2) `unsafe` is allowed only in mochi-foreign (above) and mochi-sys, the
-#     two Win32 calls mochi-core may not make itself (owner decision
-#     2026-10-15, G6a). Library and app sources only; the testkit's counting
-#     allocator example and the fuzz targets are not shipped.
+#     Win32 calls mochi-core may not make itself: the no-replace move and the
+#     volume name (owner decision 2026-10-15, G6a) and the one-byte writer lock
+#     (owner decision 2026-10-20, spec B.2.17). Library and app sources only;
+#     the testkit's counting allocator example and the fuzz targets are not
+#     shipped.
 hits=$(grep -rnE --include='*.rs' '\bunsafe\b' crates/*/src apps/mochi-desktop/src-tauri/src 2>/dev/null \
         | grep -vE '^crates/mochi-foreign/src/(rarfmt|jobobject)\.rs:|^crates/mochi-sys/src/lib\.rs:' \
         | grep -vE '^[^:]+:[0-9]+:\s*(//|\*)' || true)

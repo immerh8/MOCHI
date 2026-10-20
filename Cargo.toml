@@ -6,7 +6,8 @@ members = [
     "crates/mochi-cli",
     "crates/mochi-testkit",
     "crates/mochi-foreign",
-    # The only unsafe outside mochi-foreign: two Win32 calls (G6a).
+    # The only unsafe outside mochi-foreign: the Win32 calls mochi-core may not
+    # make itself (G6a publication, B.2.17 writer lock).
     "crates/mochi-sys",
     # Phase D0 (plan §7, decision O1): the Tauri v2 desktop app. Building it
     # on Linux needs webkit2gtk 4.1 (apps/mochi-desktop/README.md).

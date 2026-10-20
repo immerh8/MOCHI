@@ -76,56 +76,62 @@
 //!   unaffected.
 //! * Windows CI (`windows-latest`) runs the storage conformance suite and the
 //!   `windows_*` tests below: a locked temporary file is published (with the
-//!   archive's own `.mochi-lock` held and another handle open on it), an
+//!   byte-range lock held on it and another handle open on it), an
 //!   existing destination is refused with both files untouched, and two
 //!   concurrent creators produce exactly one winner.
 //!
-//! **Locking (spec §12.2 step 1; owner decision Q54, spec Annex B D17 and
-//! B.2.7).** An archive's publication lock is an OS lock (`File::try_lock`:
-//! Linux `flock`, Windows `LockFileEx`) on a **separate lock file**,
-//! [`lock_file_path`]: `<archive file name>.mochi-lock` in the archive's
-//! directory, both taken from the canonical path. Locking the archive itself
-//! is not enough on Windows, where byte-range locks are mandatory and a lock
-//! over the archive fails every other handle's reads (error 33), so nothing
-//! could verify or read an archive during an append.
-//! * **Existence is not ownership.** The lock file is created if missing,
-//!   never truncated, never written, and never removed by unlock. Only the OS
-//!   lock on it counts; the OS drops it when the holder exits, so a crashed
-//!   writer leaves nothing to clean up. The one removal is the orphan sweep
-//!   below (owner decision 2026-10-19, spec B.2.16).
-//! * **Hidden on Windows.** A lock file this build *creates* carries
-//!   `FILE_ATTRIBUTE_HIDDEN` ([`WINDOWS_FILE_ATTRIBUTE_HIDDEN`]). The file is
-//!   opened with `OPEN_ALWAYS` semantics (`create(true)`, `truncate(false)`),
-//!   so an existing file is opened as is, hidden or not, and its attributes
-//!   are not touched: lock files made by earlier builds stay visible. Linux
-//!   keeps the plain name (it is fixed by spec B.2.7).
-//! * **Orphan sweep (Unix only; spec B.2.16).** An *orphan* is a
-//!   `<name>.mochi-lock` whose `<name>` is absent from the same directory.
-//!   When a writer takes an archive lock, or a created archive is published,
-//!   [`sweep_orphan_lock_files`] looks at that one directory (bounded, no
-//!   recursion, errors ignored) and removes each orphan it can lock, only
-//!   *under that lock* and after checking again that the archive is absent.
-//!   Soundness rests on one rule kept by **every** locker, the cleaner
-//!   included: after locking, the path must still name the file you locked
-//!   (`dev`/`ino`), else drop it and start over. A locker that opened the
-//!   file just before the cleaner unlinked it thus never keeps a lock on a
-//!   dead inode, so no two writers hold "the" lock at once. Windows has no
-//!   sweep: stable Rust has no safe file-identity API there
-//!   (`volume_serial_number`/`file_index` are unstable, `windows_by_handle`),
-//!   and its delete-while-open semantics are untested here.
-//! * **Aliases.** The path is canonicalized first (`std::fs::canonicalize`),
-//!   so relative paths, `.`/`..`, symbolic links, and Windows short (8.3)
-//!   names all reach one lock file; names a filesystem treats as equal (case,
-//!   on a case-insensitive filesystem) reach the same lock file the same way
-//!   they reach the same archive. **Hard links** have no canonical name: on
-//!   Unix the writer also takes `flock` on the archive itself (advisory, so
-//!   readers are unaffected), which covers them; on Windows two hard-link
-//!   names of one archive are **not** excluded from each other (no stable,
-//!   safe API gives a file's identity; recorded in B.2.7).
-//! * Temporary files (D13) and sidecars (D14) are locked on themselves:
-//!   nobody reads them while they are held, and cleanup tests their own
-//!   lock. [`OsDir::publish_archive`] takes the final name's lock file before
-//!   a created archive becomes visible.
+//! **Locking (spec §12.2 step 1; owner decisions Q54 and 2026-10-20, spec
+//! Annex B D17 and B.2.7 as amended by B.2.17, D27).** An archive's
+//! publication lock is an OS lock **on the archive file itself**. There is no
+//! separate lock file and nothing is created beside the archive.
+//! * **Unix:** an exclusive `flock` (`File::try_lock`). It is advisory and
+//!   does not affect readers. It belongs to the open file, not to the name,
+//!   so hard links of the archive share it.
+//! * **Windows:** `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK |
+//!   LOCKFILE_FAIL_IMMEDIATELY)` on **one byte at offset 2^62**
+//!   ([`WINDOWS_LOCK_OFFSET`]), released with `UnlockFileEx`, both through
+//!   `mochi-sys`. Windows byte-range locks are mandatory, but only for the
+//!   bytes they cover: a lock far beyond any possible file size conflicts with
+//!   no read and no write of the real contents, so readers keep working while
+//!   a writer holds it. (`File::try_lock` locks the whole range, which is why
+//!   B.2.7 had used a separate file; that was error 33 on every other
+//!   handle's reads.) Byte-range locks belong to the file, so hard links of
+//!   one archive share the lock on Windows too.
+//! * **Ownership.** Only the OS lock counts, and the OS drops it when the
+//!   holder exits, so a crashed writer leaves nothing to clean up.
+//! * **Creation (D13).** The temporary file is locked on itself
+//!   ([`StorageDir::create_exclusive`]) before it is published. The lock is on
+//!   the open handle, so it carries across the no-replace rename and the new
+//!   archive is never visible unlocked; nothing else is taken.
+//! * **The locker checks the name.** After locking an existing archive, on
+//!   Unix the path must still name the file that was locked (`dev`/`ino` of
+//!   the handle against `metadata(path)`); if not (the archive was replaced
+//!   by hand), the handle is dropped and the path opened again, a bounded
+//!   number of times (`LOCK_ATTEMPTS`, 8). **Windows has no stable, safe file
+//!   identity in `std`** (`volume_serial_number`/`file_index` are unstable),
+//!   so the check is skipped there: a limitation, not a guarantee. MOCHI
+//!   never replaces or renames an archive itself.
+//! * **Aliases.** Relative paths, `.`/`..`, symbolic links, short names,
+//!   case on a case-insensitive filesystem and hard links all reach the same
+//!   file, and the lock belongs to the file, so every alias is excluded.
+//!   (B.2.7's Windows hard-link gap is closed by this.)
+//! * **Legacy lock files.** Builds up to 0.9.2 kept the lock in a separate
+//!   `<archive file name>.mochi-lock` file ([`LEGACY_LOCK_FILE_SUFFIX`]).
+//!   While a writer holds an archive's lock (an existing archive just locked,
+//!   or a created archive just published), [`sweep_legacy_lock_files`] looks
+//!   at that archive's directory (bounded, no recursion, never follows a
+//!   link, every error ignored) and removes each regular, empty
+//!   `*.mochi-lock` file it can lock the way those builds did (whole-file
+//!   `File::try_lock`), orphan or not, on Unix and on Windows. One held by
+//!   anyone else is kept. Nothing sweeps on read-only commands. No build from
+//!   0.9.3 on opens such a file, so the creation race of spec B.2.16 no
+//!   longer arises between new builds; on Unix old builds also `flock` the
+//!   archive, so old and new still exclude each other; **on Windows a build
+//!   up to 0.9.2 and a build from 0.9.3 writing the same archive at the same
+//!   time are not excluded** (spec B.2.17 item 6).
+//! * Temporary files (D13) and sidecars (D14) are locked on themselves with
+//!   the same primitive (`LockRole::Itself`): nobody reads them while they
+//!   are held, and cleanup tests their own lock.
 //! * **Readers take no lock.** Concurrent reads are correct because a reader
 //!   interprets only what a valid footer commits (the size is taken once,
 //!   §12.2: "Readers MUST NOT assume the only recoverable commit is at
@@ -133,8 +139,8 @@
 //! * Advisory on Linux: a process that ignores the lock is not stopped,
 //!   which is why the writer also re-checks the file size before each commit
 //!   (spec §12.5: `O_APPEND` alone is insufficient).
-//! * If the lock file cannot be created (a read-only directory), the writer
-//!   fails before writing anything.
+//! * A read-only archive cannot be appended to, lock or no lock (the file is
+//!   opened for writing); the directory's permissions do not matter any more.
 //!
 //! **Network filesystems** (NFS, SMB) are not supported for writing: their
 //! locking and flush semantics vary, and none of the above is assumed there.
@@ -247,31 +253,31 @@ impl ReadStorage for OsReadStorage {
     }
 }
 
-/// Suffix of an archive's writer lock file (Q54; spec Annex B.2.7).
-pub const LOCK_FILE_SUFFIX: &str = ".mochi-lock";
+/// Name suffix of the separate writer lock file that builds up to 0.9.2 kept
+/// beside every archive (Q54; spec Annex B.2.7, superseded by B.2.17, D27).
+/// **No build from 0.9.3 on opens or creates such a file**; the name is kept
+/// only so [`sweep_legacy_lock_files`] and the tests can recognise one.
+pub const LEGACY_LOCK_FILE_SUFFIX: &str = ".mochi-lock";
 
-/// The writer lock file of the archive at `archive`, which must exist:
-/// `<file name>.mochi-lock` beside the canonical path, so every alias that
-/// resolves to the same name reaches the same lock file (see "Locking").
-pub fn lock_file_path(archive: &Path) -> Result<PathBuf, StorageError> {
-    let canonical = std::fs::canonicalize(archive)?;
-    let (Some(dir), Some(name)) = (canonical.parent(), canonical.file_name()) else {
-        return Err(StorageError::Io(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} has no parent directory", canonical.display()),
-        )));
-    };
-    Ok(named_lock_file(dir, name))
-}
+/// The byte the writer lock covers on Windows: offset 2^62 (spec B.2.17 item
+/// 2). It is far beyond any possible file size, so the lock conflicts with no
+/// read or write of the archive's real bytes. Every implementation that
+/// writes the same archives must use this byte.
+pub const WINDOWS_LOCK_OFFSET: u64 = 0x4000_0000_0000_0000;
 
-fn named_lock_file(canonical_dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
-    let mut lock = name.to_os_string();
-    lock.push(LOCK_FILE_SUFFIX);
-    canonical_dir.join(lock)
-}
+/// How often an archive locker starts over when the path no longer names the
+/// file it locked (the archive was replaced by hand in between). Reaching the
+/// end is not a real case.
+const LOCK_ATTEMPTS: usize = 8;
 
-/// Take `File::try_lock`, mapping contention to [`StorageError::LockHeld`].
-fn try_lock_file(file: &File) -> Result<(), StorageError> {
+/// Most directory entries one legacy sweep reads.
+const SWEEP_MAX_ENTRIES: usize = 4096;
+
+/// Take `File::try_lock` (the whole file), mapping contention to
+/// [`StorageError::LockHeld`]. This is what builds up to 0.9.2 took on their
+/// lock files, and so what the legacy sweep takes; on Unix it is also the
+/// writer lock.
+fn try_lock_whole_file(file: &File) -> Result<(), StorageError> {
     match file.try_lock() {
         Ok(()) => Ok(()),
         Err(std::fs::TryLockError::WouldBlock) => Err(StorageError::LockHeld),
@@ -279,32 +285,39 @@ fn try_lock_file(file: &File) -> Result<(), StorageError> {
     }
 }
 
-/// `FILE_ATTRIBUTE_HIDDEN` (Win32 `fileapi.h`/`winnt.h`): the attribute a
-/// newly created lock file gets on Windows (spec B.2.16).
-#[cfg(any(windows, test))]
-const WINDOWS_FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+/// Take the writer lock on `file` itself, without waiting (spec B.2.17 item
+/// 2): Unix `flock`. `LockHeld` if another handle holds it.
+#[cfg(unix)]
+fn lock_file_handle(file: &File) -> Result<(), StorageError> {
+    try_lock_whole_file(file)
+}
 
-/// How often a locker starts over when the file it locked is no longer the
-/// one the path names (an orphan sweep removed it in between). Each retry
-/// needs a sweep to win a race, so reaching the end is not a real case.
-const LOCK_OPEN_ATTEMPTS: usize = 8;
+/// Take the writer lock on `file` itself, without waiting (spec B.2.17 item
+/// 2): one byte at [`WINDOWS_LOCK_OFFSET`]. `LockHeld` if another handle
+/// holds it.
+#[cfg(windows)]
+fn lock_file_handle(file: &File) -> Result<(), StorageError> {
+    match mochi_sys::try_lock_byte(file, WINDOWS_LOCK_OFFSET) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(StorageError::LockHeld),
+        Err(e) => Err(StorageError::Io(e)),
+    }
+}
 
-/// Open a writer lock file, creating it if missing and never truncating: on
-/// Windows `OPEN_ALWAYS` (`create(true)` without `truncate`, not
-/// `CREATE_ALWAYS`, which fails on an existing hidden file). The hidden
-/// attribute applies only when the file is created.
-fn open_lock_file(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(windows)]
-    std::os::windows::fs::OpenOptionsExt::attributes(&mut options, WINDOWS_FILE_ATTRIBUTE_HIDDEN);
-    options.open(path)
+#[cfg(unix)]
+fn unlock_file_handle(file: &File) -> io::Result<()> {
+    file.unlock()
+}
+
+#[cfg(windows)]
+fn unlock_file_handle(file: &File) -> io::Result<()> {
+    mochi_sys::unlock_byte(file, WINDOWS_LOCK_OFFSET)
 }
 
 /// Whether `path` (followed through links, as the open was) still names the
 /// file `file` is open on. Unix compares `dev`/`ino`: `file` keeps its inode
 /// alive, so the number cannot have been reused. Windows has no stable safe
-/// identity, and nothing there unlinks a lock file, so it answers yes.
+/// identity (module docs, "The locker checks the name"), so it answers yes.
 #[cfg(unix)]
 fn names_same_file(file: &File, path: &Path) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
@@ -321,117 +334,122 @@ fn names_same_file(_: &File, _: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Open and lock a writer lock file, then verify the path still names it
-/// (spec B.2.16): the rule every locker keeps so an orphan sweep cannot
-/// leave two holders on different inodes under one name.
-fn acquire_lock_file(path: &Path) -> Result<File, StorageError> {
-    acquire_lock_file_with(path, || {})
+/// The directory a legacy sweep looks at for the archive at `archive`: the
+/// directory of its canonical path, which is where builds up to 0.9.2 put the
+/// lock file (they took both parts from the canonical path), else its
+/// literal parent.
+fn sweep_dir(archive: &Path) -> PathBuf {
+    std::fs::canonicalize(archive)
+        .ok()
+        .and_then(|canonical| canonical.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| parent_dir(archive).to_path_buf())
 }
 
-/// [`acquire_lock_file`], calling `after_open` between each open and the
-/// lock attempt: the window of the B/C race, which tests fill on purpose.
-fn acquire_lock_file_with(path: &Path, mut after_open: impl FnMut()) -> Result<File, StorageError> {
-    let wrap = |e: io::Error| {
-        StorageError::Io(io::Error::new(
-            e.kind(),
-            format!("writer lock file {}: {e}", path.display()),
-        ))
-    };
-    for _ in 0..LOCK_OPEN_ATTEMPTS {
-        let file = open_lock_file(path).map_err(wrap)?;
-        after_open();
-        try_lock_file(&file)?;
-        if names_same_file(&file, path).map_err(wrap)? {
-            return Ok(file);
-        }
-        // Unlinked after we opened it: dropping `file` unlocks the dead
-        // inode. Open the name again (creating a fresh file).
-    }
-    Err(wrap(io::Error::other(
-        "the lock file was removed again and again while locking it",
-    )))
+/// Whether `name` is `<something>.mochi-lock` with a non-empty `<something>`.
+/// The suffix is ASCII, so a lossy conversion cannot create or hide a match.
+fn is_legacy_lock_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.len() > LEGACY_LOCK_FILE_SUFFIX.len() && name.ends_with(LEGACY_LOCK_FILE_SUFFIX)
 }
 
-/// Most directory entries one sweep reads.
-#[cfg(unix)]
-const SWEEP_MAX_ENTRIES: usize = 4096;
-
-/// Remove orphaned writer lock files in `dir` (spec B.2.16), best effort:
-/// never recursive, never follows a link, bounded by [`SWEEP_MAX_ENTRIES`],
-/// and every error is ignored, so it cannot fail the caller's operation.
-/// Returns how many it removed.
-#[cfg(unix)]
-pub fn sweep_orphan_lock_files(dir: &Path) -> usize {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+/// Remove the legacy `*.mochi-lock` files in `dir` (spec B.2.17 item 5):
+/// regular, empty files that are not held by anyone else, whether or not
+/// their archive exists. Best effort: it looks at this one directory only,
+/// never recurses, never follows a link, reads at most `SWEEP_MAX_ENTRIES` (4,096)
+/// entries, and every error is ignored, so it cannot fail the operation that
+/// triggered it. Returns how many files it removed.
+///
+/// Writers call it while they hold an archive's lock; read-only commands
+/// never do.
+pub fn sweep_legacy_lock_files(dir: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
     let mut removed = 0;
     for entry in entries.take(SWEEP_MAX_ENTRIES).flatten() {
-        let file_name = entry.file_name();
-        let Some(stem) = file_name
-            .as_bytes()
-            .strip_suffix(LOCK_FILE_SUFFIX.as_bytes())
-        else {
-            continue;
-        };
-        if stem.is_empty() || !entry.file_type().is_ok_and(|t| t.is_file()) {
+        if !is_legacy_lock_name(&entry.file_name()) {
             continue;
         }
-        let archive = dir.join(std::ffi::OsString::from_vec(stem.to_vec()));
-        if remove_orphan(&dir.join(&file_name), &archive) {
+        // `DirEntry::file_type` does not follow links: a link, a directory
+        // or anything else that is not a regular file is kept.
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        if remove_legacy_lock_file(&entry.path()) {
             removed += 1;
         }
     }
     removed
 }
 
-/// Windows has no sweep (see "Locking").
-#[cfg(not(unix))]
-pub fn sweep_orphan_lock_files(_: &Path) -> usize {
-    0
-}
+/// `FILE_FLAG_OPEN_REPARSE_POINT` (Win32 `winbase.h`): open a link itself,
+/// not its target.
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
-/// One orphan: absent archive, then lock, then verify and re-check, then
-/// unlink while still holding the lock. Anything unexpected leaves the file.
-#[cfg(unix)]
-fn remove_orphan(lock: &Path, archive: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let absent = |p: &Path| matches!(std::fs::symlink_metadata(p), Err(e) if e.kind() == io::ErrorKind::NotFound);
-    if !absent(archive) {
-        return false;
-    }
-    // No `create`: a sweep never makes the file it is looking for.
-    let Ok(file) = OpenOptions::new().read(true).open(lock) else {
+/// `FILE_ATTRIBUTE_REPARSE_POINT` (Win32 `winnt.h`).
+#[cfg(windows)]
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+/// One legacy lock file: lock it the way old builds did (whole file), check
+/// that it is what the name says (the very file the path names, regular, not
+/// a link, empty), then unlink it **while still holding the lock**. Anything
+/// unexpected leaves the file. No `create`: a sweep never makes the file it
+/// is looking for.
+fn remove_legacy_lock_file(path: &Path) -> bool {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::custom_flags(&mut options, FILE_FLAG_OPEN_REPARSE_POINT);
+    let Ok(file) = options.open(path) else {
         return false;
     };
     // Held by anyone else (or an error): not ours to remove.
-    if try_lock_file(&file).is_err() {
+    if try_lock_whole_file(&file).is_err() {
         return false;
     }
-    // Same rule as every locker: the name must still be the file we hold
-    // (and not a link, so `symlink_metadata`). A lock file is never written,
-    // so anything with bytes is not one of ours.
-    let (Ok(held), Ok(named)) = (file.metadata(), std::fs::symlink_metadata(lock)) else {
+    let Ok(held) = file.metadata() else {
         return false;
     };
-    let same = (held.dev(), held.ino()) == (named.dev(), named.ino());
-    if !same || !named.file_type().is_file() || held.len() != 0 {
+    // A lock file is never written, so anything with bytes is not one of
+    // ours.
+    if !held.is_file() || held.len() != 0 || !names_exactly(&file, path) {
         return false;
     }
-    // Under the lock, the archive may have been created since the first look.
-    if !absent(archive) {
-        return false;
-    }
-    std::fs::remove_file(lock).is_ok()
+    std::fs::remove_file(path).is_ok()
 }
 
-/// What [`Storage::try_lock_exclusive`] locks for an [`OsStorage`].
+/// Whether `path`, **without** following a link, is the very file `file` is
+/// open on. Unix compares `dev`/`ino`. On Windows the handle was opened with
+/// `FILE_FLAG_OPEN_REPARSE_POINT`, so a link is what we hold and its
+/// reparse-point attribute is refused; there is no stable safe file
+/// identity beyond that.
+#[cfg(unix)]
+fn names_exactly(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), std::fs::symlink_metadata(path)) {
+        (Ok(held), Ok(named)) => {
+            named.file_type().is_file() && (held.dev(), held.ino()) == (named.dev(), named.ino())
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+fn names_exactly(file: &File, _path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    file.metadata().is_ok_and(|held| {
+        held.is_file() && held.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+    })
+}
+
+/// What [`Storage::try_lock_exclusive`] does for an [`OsStorage`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LockRole {
-    /// An archive: its lock file (plus, on Unix, the archive itself).
+    /// An archive: lock it, then check the path still names it and sweep the
+    /// legacy lock files of its directory.
     Archive,
-    /// A temporary file or sidecar: the file itself.
+    /// A temporary file or sidecar: lock it on itself, nothing more.
     Itself,
 }
 
@@ -441,14 +459,20 @@ pub struct OsStorage {
     file: File,
     path: PathBuf,
     role: LockRole,
-    /// The held writer lock file ([`LockRole::Archive`]).
-    lock_file: Option<File>,
-    /// Whether this handle holds an OS lock on `file` itself. Taking a lock
-    /// again is a no-op: `flock` (Linux) allows that, but `LockFileEx`
-    /// (Windows) refuses an overlapping lock even from the same handle, so
-    /// the state is kept here rather than asked of the OS (found by T22 on
+    /// Whether this handle holds the writer lock on `file`. Taking it again
+    /// is a no-op: `flock` (Linux) allows that, but `LockFileEx` (Windows)
+    /// refuses an overlapping lock even from the same handle, so the state is
+    /// kept here rather than asked of the OS (found by T22 on
     /// `windows-latest`).
-    file_locked: bool,
+    locked: bool,
+}
+
+impl Drop for OsStorage {
+    /// Release the lock at once. Closing the handle would too, but on Windows
+    /// only after a delay the OS does not bound.
+    fn drop(&mut self) {
+        let _ = self.unlock_handle();
+    }
 }
 
 impl OsStorage {
@@ -460,72 +484,75 @@ impl OsStorage {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        Ok(Self::archive(file, path))
+        Ok(Self::new(file, path, LockRole::Archive))
     }
 
     /// Open an existing file for reading and writing.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new().read(true).write(true).open(&path)?;
-        Ok(Self::archive(file, path))
+        Ok(Self::new(file, path, LockRole::Archive))
     }
 
-    fn archive(file: File, path: PathBuf) -> Self {
+    fn new(file: File, path: PathBuf, role: LockRole) -> Self {
         Self {
             file,
             path,
-            role: LockRole::Archive,
-            lock_file: None,
-            file_locked: false,
+            role,
+            locked: false,
         }
     }
 
+    /// A temporary or sidecar file, locked on itself and nothing more.
     fn itself(file: File, path: PathBuf) -> Self {
-        Self {
-            role: LockRole::Itself,
-            ..Self::archive(file, path)
-        }
+        Self::new(file, path, LockRole::Itself)
     }
 
-    fn lock_itself(&mut self) -> Result<(), StorageError> {
-        if !self.file_locked {
-            try_lock_file(&self.file)?;
-            self.file_locked = true;
+    /// Take the writer lock on the open file, if this handle does not hold it.
+    fn lock_handle(&mut self) -> Result<(), StorageError> {
+        if !self.locked {
+            lock_file_handle(&self.file)?;
+            self.locked = true;
         }
         Ok(())
     }
 
-    fn unlock_itself(&mut self) -> Result<(), StorageError> {
-        if self.file_locked {
-            self.file.unlock()?;
-            self.file_locked = false;
+    fn unlock_handle(&mut self) -> Result<(), StorageError> {
+        if self.locked {
+            unlock_file_handle(&self.file)?;
+            self.locked = false;
         }
         Ok(())
     }
 
-    /// Take the archive lock through the lock file at `lock_path`. On Unix,
-    /// also `flock` the archive itself, which excludes hard-link aliases.
-    fn lock_archive_at(&mut self, lock_path: &Path) -> Result<(), StorageError> {
-        if self.lock_file.is_some() {
-            return Ok(());
-        }
-        let lock = acquire_lock_file(lock_path)?;
-        if cfg!(unix) {
-            if let Err(e) = self.lock_itself() {
-                let _ = lock.unlock();
-                return Err(e);
+    /// Lock an archive (spec B.2.17 items 2, 4 and 5): the lock on the file;
+    /// on Unix then a check that the path still names it (else release, open
+    /// the path again and start over, [`LOCK_ATTEMPTS`] times); then the
+    /// legacy sweep of its directory, best effort.
+    fn lock_archive(&mut self) -> Result<(), StorageError> {
+        for _ in 0..LOCK_ATTEMPTS {
+            self.lock_handle()?;
+            match names_same_file(&self.file, &self.path) {
+                Ok(true) => {
+                    sweep_legacy_lock_files(&sweep_dir(&self.path));
+                    return Ok(());
+                }
+                Ok(false) => {
+                    // The archive was replaced after we opened it: what we
+                    // hold is a file no path names. Follow the path.
+                    self.unlock_handle()?;
+                    self.file = OpenOptions::new().read(true).write(true).open(&self.path)?;
+                }
+                Err(e) => {
+                    let _ = self.unlock_handle();
+                    return Err(e.into());
+                }
             }
         }
-        self.lock_file = Some(lock);
-        Ok(())
-    }
-
-    fn release_lock_file(&mut self) -> Result<(), StorageError> {
-        if let Some(lock) = self.lock_file.take() {
-            // Unlocked, never removed: existence is not ownership.
-            lock.unlock()?;
-        }
-        Ok(())
+        Err(StorageError::Io(io::Error::other(format!(
+            "{} was replaced again and again while locking it",
+            self.path.display()
+        ))))
     }
 }
 
@@ -563,26 +590,17 @@ impl Storage for OsStorage {
     }
 
     fn try_lock_exclusive(&mut self) -> Result<(), StorageError> {
+        if self.locked {
+            return Ok(());
+        }
         match self.role {
-            LockRole::Itself => self.lock_itself(),
-            LockRole::Archive if self.lock_file.is_some() => Ok(()),
-            LockRole::Archive => {
-                let lock_path = lock_file_path(&self.path)?;
-                self.lock_archive_at(&lock_path)?;
-                // Trigger 1 of the orphan sweep (B.2.16): an appender holds
-                // its archive's lock. Best effort; never fails the lock.
-                if let Some(dir) = lock_path.parent() {
-                    sweep_orphan_lock_files(dir);
-                }
-                Ok(())
-            }
+            LockRole::Itself => self.lock_handle(),
+            LockRole::Archive => self.lock_archive(),
         }
     }
 
     fn unlock(&mut self) -> Result<(), StorageError> {
-        let itself = self.unlock_itself();
-        let lock_file = self.release_lock_file();
-        itself.and(lock_file)
+        self.unlock_handle()
     }
 
     fn truncate(&mut self, new_len: u64) -> Result<(), StorageError> {
@@ -833,11 +851,13 @@ impl StorageDir for OsDir {
         Ok(())
     }
 
-    /// Takes `to`'s writer lock file for `file` first, so the archive is
-    /// never visible unlocked; then publishes, then sweeps orphaned lock
-    /// files of this directory (spec B.2.16, best effort). On Windows the temporary
-    /// file's own lock is released afterwards: it is now the archive, and a
-    /// lock on it would block readers (Q54).
+    /// `file` holds the temporary file's lock, taken on the file itself by
+    /// [`create_exclusive`](StorageDir::create_exclusive) (it is taken here if
+    /// it somehow is not), so the archive is never visible unlocked: the lock
+    /// is on the open handle and carries across the no-replace rename. Then
+    /// publishes, and sweeps the legacy lock files of the archive's
+    /// directory (spec B.2.17 item 5, best effort). On a failed publication
+    /// the temporary file stays locked by `file` for its creator to discard.
     fn publish_archive(
         &mut self,
         file: &mut OsStorage,
@@ -845,23 +865,14 @@ impl StorageDir for OsDir {
         to: &str,
     ) -> Result<(), StorageError> {
         let (src, dst) = (self.entry(from)?, self.entry(to)?);
-        let dir = std::fs::canonicalize(&self.path)?;
-        file.lock_archive_at(&named_lock_file(&dir, std::ffi::OsStr::new(to)))?;
-        match publish_no_replace_at(&src, &dst, to) {
-            Ok(m) => self.record_publish(m),
-            Err(e) => {
-                let _ = file.release_lock_file();
-                return Err(e);
-            }
-        }
+        file.lock_handle()?;
+        let mechanism = publish_no_replace_at(&src, &dst, to)?;
+        self.record_publish(mechanism);
         file.path = dst;
         file.role = LockRole::Archive;
-        if cfg!(windows) {
-            file.unlock_itself()?;
-        }
-        // Trigger 2 of the orphan sweep (B.2.16): a creator published and
-        // still holds the new archive's lock. Best effort.
-        sweep_orphan_lock_files(&dir);
+        // Trigger b of the legacy sweep: a creator published and still holds
+        // the new archive's lock.
+        sweep_legacy_lock_files(&sweep_dir(&file.path));
         Ok(())
     }
 
@@ -881,7 +892,7 @@ impl StorageDir for OsDir {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RemoveOutcome::Missing),
             Err(e) => return Err(e.into()),
         };
-        match try_lock_file(&file) {
+        match lock_file_handle(&file) {
             Ok(()) => {}
             Err(StorageError::LockHeld) => return Ok(RemoveOutcome::Locked),
             Err(e) => return Err(e),
@@ -1016,97 +1027,317 @@ mod tests {
         ));
     }
 
-    /// B/C of spec B.2.16, deterministic: B opens the orphan, a sweep unlinks
-    /// it (B holds no lock), and B can still lock the dead inode while C locks
-    /// a fresh file of the same name. The locker-side check refuses B's lock.
-    #[cfg(unix)]
+    // ---- The writer lock is on the archive itself (spec B.2.17, D27) --------
+
+    /// The names in `dir`, sorted.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// An empty legacy lock file named for `name` in `dir`.
+    fn legacy_lock(dir: &Path, name: &str) -> PathBuf {
+        let p = dir.join(format!("{name}{LEGACY_LOCK_FILE_SUFFIX}"));
+        File::create(&p).unwrap();
+        p
+    }
+
+    /// Locking, committing and unlocking an archive, and creating one through
+    /// `OsDir`, leave exactly one file in the directory: no lock file, on any
+    /// platform.
     #[test]
-    fn a_lock_on_an_unlinked_inode_is_detected() {
+    fn no_lock_file_is_ever_created() {
+        let (d, path) = tmp();
+        let mut s = OsStorage::create_new(&path).unwrap();
+        s.try_lock_exclusive().unwrap();
+        s.append(b"x").unwrap();
+        assert_eq!(names_in(d.path()), ["a.mochi"]);
+        s.unlock().unwrap();
+        let mut again = OsStorage::open_existing(&path).unwrap();
+        again.try_lock_exclusive().unwrap();
+        drop(again);
+        assert_eq!(names_in(d.path()), ["a.mochi"]);
+
+        let mut dir = OsDir::open(d.path()).unwrap();
+        let mut f = dir.create_exclusive("b.tmp").unwrap();
+        f.append(b"y").unwrap();
+        dir.publish_archive(&mut f, "b.tmp", "b.mochi").unwrap();
+        f.unlock().unwrap();
+        assert_eq!(names_in(d.path()), ["a.mochi", "b.mochi"]);
+    }
+
+    /// A reader (no lock, a separate handle) reads, and a writer appends and
+    /// is read back, while the lock is held. On Windows this is the reason
+    /// the lock is one byte beyond the data: a whole-file lock failed these
+    /// reads with error 33 (Q54).
+    #[test]
+    fn readers_read_while_the_lock_is_held() {
         let (_d, path) = tmp();
-        let lock = path.with_file_name("a.mochi.mochi-lock");
-        File::create(&lock).unwrap();
-        let b = open_lock_file(&lock).unwrap();
-        assert_eq!(sweep_orphan_lock_files(lock.parent().unwrap()), 1);
-        assert!(!lock.exists());
-        let c = acquire_lock_file(&lock).unwrap();
-        // Without the check both would hold "the" lock.
-        try_lock_file(&b).unwrap();
-        assert!(names_same_file(&c, &lock).unwrap());
-        assert!(!names_same_file(&b, &lock).unwrap());
+        let mut w = OsStorage::create_new(&path).unwrap();
+        w.append(b"hello").unwrap();
+        w.try_lock_exclusive().unwrap();
+        let r = OsReadStorage::open(&path).unwrap();
+        let mut buf = [0u8; 5];
+        r.read_exact_at(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"hello");
+        w.append(b" world").unwrap();
+        w.sync_data().unwrap();
+        assert_eq!(r.size().unwrap(), 11);
+        let mut buf = [0u8; 11];
+        r.read_exact_at(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"hello world");
+        // `std::fs::read` opens another handle too.
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello world");
+        w.truncate(5).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
     }
 
-    /// The same race through `acquire_lock_file`: a sweep runs and C locks a
-    /// fresh file after B opened the orphan and before B locks. B must end up
-    /// on C's file (and so be refused), not on the dead inode.
+    /// Every alias of one file is excluded, hard links included (on Windows
+    /// too: the byte-range lock belongs to the file, not to the name).
+    #[test]
+    fn a_hard_link_shares_the_lock() {
+        let (d, path) = tmp();
+        OsStorage::create_new(&path).unwrap();
+        let link = d.path().join("link.mochi");
+        std::fs::hard_link(&path, &link).unwrap();
+        let mut a = OsStorage::open_existing(&path).unwrap();
+        let mut b = OsStorage::open_existing(&link).unwrap();
+        a.try_lock_exclusive().unwrap();
+        assert!(matches!(
+            b.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
+        a.unlock().unwrap();
+        b.try_lock_exclusive().unwrap();
+        assert!(matches!(
+            a.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
+    }
+
+    /// Dropping a handle releases its lock at once, without `unlock`.
+    #[test]
+    fn dropping_a_handle_releases_the_lock() {
+        let (_d, path) = tmp();
+        let mut a = OsStorage::create_new(&path).unwrap();
+        a.try_lock_exclusive().unwrap();
+        drop(a);
+        OsStorage::open_existing(&path)
+            .unwrap()
+            .try_lock_exclusive()
+            .unwrap();
+    }
+
+    /// After locking, the path must still name the locked file (Unix; spec
+    /// B.2.17 item 4): an archive replaced by hand between opening and
+    /// locking is followed, and the lock ends up on the file now at the
+    /// path, which a second writer is then refused.
     #[cfg(unix)]
     #[test]
-    fn a_locker_that_lost_the_race_starts_over() {
+    fn a_replaced_archive_is_followed() {
         let (d, path) = tmp();
-        let lock = path.with_file_name("a.mochi.mochi-lock");
-        File::create(&lock).unwrap();
-        let mut c = None;
-        let mut first = true;
-        let b = acquire_lock_file_with(&lock, || {
-            if std::mem::take(&mut first) {
-                assert_eq!(sweep_orphan_lock_files(d.path()), 1);
-                c = Some(acquire_lock_file(&lock).unwrap());
-            }
-        });
-        assert!(matches!(b, Err(StorageError::LockHeld)), "{b:?}");
-        drop(c);
-        // With nobody holding, a locker whose file vanished locks the new one.
-        let mut first = true;
-        let b = acquire_lock_file_with(&lock, || {
-            if std::mem::take(&mut first) {
-                assert_eq!(sweep_orphan_lock_files(d.path()), 1);
-            }
-        })
-        .unwrap();
-        assert!(names_same_file(&b, &lock).unwrap());
+        std::fs::write(&path, b"old").unwrap();
+        let mut a = OsStorage::open_existing(&path).unwrap();
+        // Replaced by hand after `a` opened it.
+        let replacement = d.path().join("new");
+        std::fs::write(&replacement, b"newer contents").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        a.try_lock_exclusive().unwrap();
+        assert_eq!(a.size().unwrap(), 14, "a follows the file at the path");
+        let mut b = OsStorage::open_existing(&path).unwrap();
+        assert!(matches!(
+            b.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
     }
 
-    /// Lockers racing a sweeper never overlap, orphan or not.
+    /// An archive deleted after it was opened cannot be locked: an error,
+    /// not a lock on a file nobody can reach.
     #[cfg(unix)]
     #[test]
-    fn lockers_never_overlap_while_a_sweep_runs() {
-        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        let (d, path) = tmp();
-        let lock = path.with_file_name("a.mochi.mochi-lock");
-        let (holders, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
-        let entered = AtomicUsize::new(0);
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                while !stop.load(Ordering::Relaxed) {
-                    sweep_orphan_lock_files(d.path());
-                }
-            });
-            let lockers: Vec<_> = (0..4)
-                .map(|_| {
-                    s.spawn(|| {
-                        for _ in 0..400 {
-                            let Ok(f) = acquire_lock_file(&lock) else {
-                                continue;
-                            };
-                            assert_eq!(holders.fetch_add(1, Ordering::SeqCst), 0);
-                            entered.fetch_add(1, Ordering::SeqCst);
-                            std::thread::yield_now();
-                            holders.fetch_sub(1, Ordering::SeqCst);
-                            drop(f);
-                        }
-                    })
-                })
-                .collect();
-            for l in lockers {
-                l.join().unwrap();
-            }
-            stop.store(true, Ordering::Relaxed);
-        });
-        assert!(entered.load(Ordering::SeqCst) > 0);
+    fn a_deleted_archive_is_not_locked() {
+        let (_d, path) = tmp();
+        let mut a = OsStorage::create_new(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(a.try_lock_exclusive(), Err(StorageError::Io(_))));
     }
 
+    /// The sweep removes empty legacy lock files, orphan or not, and keeps
+    /// everything else (spec B.2.17 item 5).
     #[test]
-    fn hidden_attribute_is_the_win32_value() {
-        assert_eq!(WINDOWS_FILE_ATTRIBUTE_HIDDEN, 0x2);
+    fn the_sweep_removes_empty_legacy_lock_files_and_nothing_else() {
+        let td = tempfile::tempdir().unwrap();
+        let dir = td.path();
+        let orphan = legacy_lock(dir, "gone.mochi");
+        std::fs::write(dir.join("here.mochi"), b"archive").unwrap();
+        let present = legacy_lock(dir, "here.mochi");
+
+        // Held by someone else the way old builds held it.
+        let held = legacy_lock(dir, "held.mochi");
+        let holder = File::open(&held).unwrap();
+        holder.try_lock().unwrap();
+        // Bytes, a directory, other names, a sub-directory.
+        let bytes = dir.join("bytes.mochi.mochi-lock");
+        std::fs::write(&bytes, b"user data").unwrap();
+        let as_dir = dir.join("dir.mochi.mochi-lock");
+        std::fs::create_dir(&as_dir).unwrap();
+        let bare = dir.join(LEGACY_LOCK_FILE_SUFFIX);
+        File::create(&bare).unwrap();
+        let near = dir.join("notes.mochi-lock.txt");
+        File::create(&near).unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let nested = legacy_lock(&dir.join("sub"), "deep.mochi");
+
+        assert_eq!(sweep_legacy_lock_files(dir), 2);
+        assert!(!orphan.exists() && !present.exists());
+        for kept in [&held, &bytes, &as_dir, &bare, &near, &nested] {
+            assert!(kept.symlink_metadata().is_ok(), "{}", kept.display());
+        }
+        assert!(dir.join("here.mochi").exists());
+
+        // Released, the held one goes too.
+        drop(holder);
+        assert_eq!(sweep_legacy_lock_files(dir), 1);
+        assert!(!held.exists());
+    }
+
+    /// A link named like a lock file is kept, and so is its target.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_never_follows_a_link() {
+        let td = tempfile::tempdir().unwrap();
+        let dir = td.path();
+        let target = dir.join("target.txt");
+        File::create(&target).unwrap();
+        let link = dir.join("link.mochi.mochi-lock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let dangling = dir.join("dangling.mochi.mochi-lock");
+        std::os::unix::fs::symlink(dir.join("nowhere"), &dangling).unwrap();
+        assert_eq!(sweep_legacy_lock_files(dir), 0);
+        assert!(link.symlink_metadata().is_ok() && target.exists());
+        assert!(dangling.symlink_metadata().is_ok());
+    }
+
+    /// The sweep reads at most `SWEEP_MAX_ENTRIES` entries and a missing
+    /// directory is nothing.
+    #[test]
+    fn the_sweep_is_bounded_and_forgiving() {
+        assert_eq!(sweep_legacy_lock_files(Path::new("/nonexistent/mochi")), 0);
+        let td = tempfile::tempdir().unwrap();
+        for i in 0..SWEEP_MAX_ENTRIES + 20 {
+            File::create(td.path().join(format!("{i}.mochi-lock"))).unwrap();
+        }
+        assert_eq!(sweep_legacy_lock_files(td.path()), SWEEP_MAX_ENTRIES);
+        assert_eq!(names_in(td.path()).len(), 20);
+    }
+
+    /// Both triggers: taking an existing archive's lock, and publishing a
+    /// created archive.
+    #[test]
+    fn locking_and_publishing_an_archive_sweep_its_directory() {
+        let (d, path) = tmp();
+        let gone = legacy_lock(d.path(), "gone.mochi");
+        let mut s = OsStorage::create_new(&path).unwrap();
+        // `create_new` alone swept nothing.
+        assert!(gone.exists());
+        s.try_lock_exclusive().unwrap();
+        assert!(!gone.exists(), "taking an archive's lock sweeps");
+
+        let own = legacy_lock(d.path(), "a.mochi");
+        let mut dir = OsDir::open(d.path()).unwrap();
+        let mut f = dir.create_exclusive("c.tmp").unwrap();
+        assert!(own.exists(), "creating a temporary file sweeps nothing");
+        dir.publish_archive(&mut f, "c.tmp", "c.mochi").unwrap();
+        assert!(!own.exists(), "publishing a created archive sweeps");
+    }
+
+    /// A temporary file or sidecar locked on itself sweeps nothing, and a
+    /// read-only open never does.
+    #[test]
+    fn temporary_files_and_readers_sweep_nothing() {
+        let (d, path) = tmp();
+        OsStorage::create_new(&path).unwrap();
+        let lock = legacy_lock(d.path(), "x.mochi");
+        let mut dir = OsDir::open(d.path()).unwrap();
+        dir.create_exclusive("t.tmp").unwrap();
+        let _r = OsReadStorage::open(&path).unwrap();
+        assert!(lock.exists());
+    }
+
+    /// A whole-file lock on a legacy lock file, taken by an old build that
+    /// is still running, keeps the file and does not fail the writer.
+    #[test]
+    fn a_legacy_lock_file_held_by_an_old_build_is_kept() {
+        let (d, path) = tmp();
+        let old = legacy_lock(d.path(), "a.mochi");
+        let holder = File::open(&old).unwrap();
+        holder.try_lock().unwrap();
+        let mut s = OsStorage::create_new(&path).unwrap();
+        s.try_lock_exclusive().unwrap();
+        assert!(old.exists());
+    }
+
+    /// **Windows (spec B.2.17 item 2).** The lock is one byte at offset 2^62:
+    /// another handle cannot take that byte, and cannot take the whole file
+    /// either (the range overlaps), yet it reads the real bytes. A foreign
+    /// holder of the same byte refuses the writer.
+    #[cfg(windows)]
+    #[test]
+    fn windows_lock_is_one_byte_far_beyond_the_data() {
+        assert_eq!(WINDOWS_LOCK_OFFSET, 1 << 62);
+        let (_d, path) = tmp();
+        let mut w = OsStorage::create_new(&path).unwrap();
+        w.append(b"data").unwrap();
+        w.try_lock_exclusive().unwrap();
+        let other = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(!mochi_sys::try_lock_byte(&other, WINDOWS_LOCK_OFFSET).unwrap());
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        let mut buf = [0u8; 4];
+        OsReadStorage::open(&path)
+            .unwrap()
+            .read_exact_at(0, &mut buf)
+            .unwrap();
+        assert_eq!(&buf, b"data");
+        w.unlock().unwrap();
+
+        assert!(mochi_sys::try_lock_byte(&other, WINDOWS_LOCK_OFFSET).unwrap());
+        let mut w2 = OsStorage::open_existing(&path).unwrap();
+        assert!(matches!(
+            w2.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
+        mochi_sys::unlock_byte(&other, WINDOWS_LOCK_OFFSET).unwrap();
+        w2.try_lock_exclusive().unwrap();
+    }
+
+    /// **Windows.** A hidden legacy lock file (what 0.9.2 created) is
+    /// removed too.
+    #[cfg(windows)]
+    #[test]
+    fn windows_sweep_removes_a_hidden_legacy_lock_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let hidden = td.path().join("a.mochi.mochi-lock");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .attributes(0x2)
+            .open(&hidden)
+            .unwrap();
+        let visible = legacy_lock(td.path(), "b.mochi");
+        assert_eq!(sweep_legacy_lock_files(td.path()), 2);
+        assert!(!hidden.exists() && !visible.exists());
     }
 
     #[test]
@@ -1298,9 +1529,11 @@ mod tests {
 
     /// **Windows (G6a).** A locked temporary file is published by
     /// `MoveFileExW(…, MOVEFILE_WRITE_THROUGH)` while MOCHI holds the file's
-    /// own lock, the archive's `.mochi-lock` file, and another open handle:
-    /// none of them blocks the move. Nothing but the lock holder can then
-    /// take the archive's lock, and the NTFS write-through record is set.
+    /// own byte-range lock and another open handle: neither blocks the move,
+    /// and the lock is on the open handle, so it carries across the rename
+    /// (the new archive is never visible unlocked). Nothing but the lock
+    /// holder can then take the archive's lock, readers read it meanwhile, and
+    /// the NTFS write-through record is set.
     #[cfg(windows)]
     #[test]
     fn windows_publishes_a_locked_temporary_file_by_move_write_through() {
@@ -1310,13 +1543,18 @@ mod tests {
         f.append(b"first commit").unwrap();
         f.sync_data().unwrap();
         let other_handle = OsReadStorage::open(td.path().join("a.tmp")).unwrap();
+        let mut before = OsStorage::open_existing(td.path().join("a.tmp")).unwrap();
+        assert!(matches!(
+            before.try_lock_exclusive(),
+            Err(StorageError::LockHeld)
+        ));
 
         dir.publish_archive(&mut f, "a.tmp", "a.mochi").unwrap();
 
         assert_eq!(dir.last_publish(), Some(PublishMechanism::MoveWriteThrough));
         assert!(dir.last_publish_was_ntfs_write_through());
         assert!(!td.path().join("a.tmp").exists());
-        assert!(td.path().join("a.mochi.mochi-lock").exists());
+        assert_eq!(names_in(td.path()), ["a.mochi"], "no lock file");
         let mut second = OsStorage::open_existing(td.path().join("a.mochi")).unwrap();
         assert!(matches!(
             second.try_lock_exclusive(),

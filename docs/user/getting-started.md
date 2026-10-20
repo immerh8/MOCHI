@@ -158,12 +158,14 @@ The CLI keeps the last head it saw for each archive in a small state directory
 that an older copy has replaced a newer archive. `--no-local-history` turns that off, and
 freshness is then `UNKNOWN` ([verification.md](verification.md)).
 
-## The `.mochi-lock` file
+## No lock file
 
-Creating or changing an archive makes an empty file named `<archive name>.mochi-lock` beside it.
-It keeps two programs from writing the same archive at once; it holds no data, and the archive
-does not need it to be read or restored. On Windows MOCHI creates it hidden (lock files made by
-earlier versions stay visible). On Linux, when MOCHI next creates or changes an archive in the
-same folder, it removes lock files whose archive is gone (renamed or deleted). On Windows those
-are not cleaned up automatically; if you rename or delete an archive, you can delete its
-`.mochi-lock` file too. Never delete one while a program is writing that archive.
+MOCHI keeps two programs from writing the same archive at once with a lock the operating system
+holds on the archive itself while a program is writing it. Nothing is created beside the archive,
+and other programs can still read it meanwhile. Earlier versions (up to 0.9.2) made an empty file
+named `<archive name>.mochi-lock` beside every archive. When this version creates or changes an
+archive, it removes the empty `.mochi-lock` files in the same folder that no program is using, on
+Windows and Linux alike, so you do not need to delete them by hand. Reading, testing, or listing an
+archive removes nothing. Do not write the
+same archive with an old and a new version of MOCHI at the same time: on Windows they do not
+exclude each other.

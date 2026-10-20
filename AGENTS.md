@@ -125,7 +125,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 ## Rust conventions
 
 - Library crates: no `unwrap`/`expect`/`panic!` on paths reachable from archive contents. Return typed errors carrying a stable code.
-- `#![forbid(unsafe_code)]` in `mochi-format` and `mochi-core`. Any exception needs a justification comment and review. `unsafe` exists only in `mochi-foreign` (UnRAR, Job Object) and `mochi-sys` (two Win32 calls for Windows archive creation: a write-through no-replace `MoveFileExW`, and the volume filesystem name; `deny(unsafe_op_in_unsafe_fn)`, a `// SAFETY:` on every block); `ci/check-invariants.sh` enforces both.
+- `#![forbid(unsafe_code)]` in `mochi-format` and `mochi-core`. Any exception needs a justification comment and review. `unsafe` exists only in `mochi-foreign` (UnRAR, Job Object) and `mochi-sys` (four Win32 calls: a write-through no-replace `MoveFileExW` and the volume filesystem name for Windows archive creation, and `LockFileEx`/`UnlockFileEx` on one byte for the writer lock; `deny(unsafe_op_in_unsafe_fn)`, a `// SAFETY:` on every block); `ci/check-invariants.sh` enforces both.
 - Secrets use `zeroize`; never `Debug`-print, log, or put them in error messages.
 - Integer arithmetic on archive-derived values uses checked operations.
 - Long operations are jobs: accept a progress sink and a cancellation token, return a typed report. Do not add a second progress mechanism.
