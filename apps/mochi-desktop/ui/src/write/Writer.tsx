@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useJobFocus } from "../a11y/focus";
+import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
@@ -9,7 +10,7 @@ import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { IpcError, JobEvent, JobRequest } from "../ipc/jobs";
-import { showInFolder } from "../ipc/start";
+import { showInFolder, stageDroppedArchive } from "../ipc/start";
 import {
   chooseDestination,
   clearStaged,
@@ -19,7 +20,7 @@ import {
   watchDrops,
 } from "../ipc/write";
 import type { CompressionPreset, SourcePick, StagedView } from "../ipc/write";
-import { MinusIcon, PlusIcon } from "../icons";
+import { CloseIcon, NewArchiveIcon, PlusIcon, TrashIcon } from "../icons";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
 import {
@@ -42,7 +43,7 @@ export const PRESETS: { id: CompressionPreset; label: () => string; hint: () => 
   { id: "smaller", label: () => t("write.presetSmaller"), hint: () => t("write.presetSmallerHint") },
 ];
 
-/** The entry the list has selected, for the remove flow. */
+/** An entry the list has selected, for the remove flow. */
 export type SelectedEntry = { key: string; name: NameText };
 
 export interface WriterProps {
@@ -50,7 +51,8 @@ export interface WriterProps {
   archive: ArchiveSummary | null;
   /** Whether the snapshot on screen is the latest; only it can be changed. */
   viewingHead: boolean;
-  selected: SelectedEntry | null;
+  /** What the list has selected (Remove removes all of it). */
+  selected: readonly SelectedEntry[];
   /**
    * A commit was published. `archive` is the archive as it now stands (the
    * same handle for an add or remove, a new one for a create), `null` if it
@@ -65,9 +67,11 @@ export interface WriterProps {
   showToolbar?: boolean;
   /** Changes when the start screen asks for a new archive. */
   createRequest?: number;
+  /** Changes when the list asks to remove its selection (the Delete key). */
+  removeRequest?: number;
   /** Told when the create panel opens or closes (the start screen steps aside). */
   onCreating?: (creating: boolean) => void;
-  /** A single `.mochi` file was dropped on the window; Rust holds it. */
+  /** A single archive file was dropped on the window; Rust holds it. */
   onArchiveDropped?: () => void;
 }
 
@@ -106,6 +110,7 @@ export function Writer({
   onCommitted,
   showToolbar = true,
   createRequest = 0,
+  removeRequest = 0,
   onCreating,
   onArchiveDropped,
 }: WriterProps) {
@@ -125,13 +130,16 @@ export function Writer({
   const [error, setError] = useState<string | null>(null);
 
   // The drop listener is registered once; it reads the latest values here.
-  const latestRef = useRef({ archive, busy: false });
+  const latestRef = useRef({ archive, viewingHead, busy: false });
   useEffect(() => {
     latestRef.current = {
       archive,
+      viewingHead,
       busy: job.state === "starting" || job.state === "running",
     };
   });
+  // Files dropped on an open archive go straight in (one commit, no panel).
+  const runRef = useRef<(op: Operation, request: JobRequest) => void>(() => undefined);
   const operationRef = useRef<Operation>("add");
   const onCommittedRef = useRef(onCommitted);
   const onArchiveDroppedRef = useRef(onArchiveDropped);
@@ -148,13 +156,42 @@ export function Writer({
         return;
       }
       if (event.event === "archive") {
+        // A ZIP (or other foreign archive) dropped on an open MOCHI archive is added to it,
+        // as any file is; otherwise the dropped archive is opened.
+        const now = latestRef.current;
+        if (event.foreign && now.archive && !now.busy) {
+          if (!now.viewingHead) {
+            setError(t("write.onlyLatest"));
+            return;
+          }
+          const handle = now.archive.handle;
+          stageDroppedArchive().then(
+            (view) => {
+              setStaged(view);
+              runRef.current("add", { kind: "add_to_archive", handle });
+            },
+            (e: unknown) => setError(errorText(t("write.addSelectionFailed"), e)),
+          );
+          return;
+        }
         onArchiveDroppedRef.current?.();
         return;
       }
       setStaged(event.staged);
       setProblems(event.problems);
-      if (latestRef.current.busy) return;
-      setMode((m) => (m === "create" || m === "add" ? m : latestRef.current.archive ? "add" : "create"));
+      const now = latestRef.current;
+      if (now.busy) return;
+      // Dropped on an open archive: added at once. The shell's "Add to archive" asks first.
+      if (now.archive && !event.from_shell && event.staged.items.length > 0 && event.problems.length === 0) {
+        if (!now.viewingHead) {
+          setError(t("write.onlyLatest"));
+          return;
+        }
+        setMode((m) => (m === "create" ? m : "closed"));
+        runRef.current("add", { kind: "add_to_archive", handle: now.archive.handle });
+        return;
+      }
+      setMode((m) => (m === "create" || m === "add" ? m : now.archive ? "add" : "create"));
     }).catch((e: unknown) => setError(errorText(t("write.dropUnavailable"), e)));
   }, []);
 
@@ -214,6 +251,9 @@ export function Writer({
       setError(errorText(t("write.startFailed"), e));
     });
   };
+  useEffect(() => {
+    runRef.current = run;
+  });
 
   const stage = (pick: SourcePick) => {
     setError(null);
@@ -249,6 +289,12 @@ export function Writer({
   if (seenRequest !== createRequest) {
     setSeenRequest(createRequest);
     open("create");
+  }
+  const canRemove = archive !== null && viewingHead && selected.length > 0;
+  const [seenRemove, setSeenRemove] = useState(removeRequest);
+  if (seenRemove !== removeRequest) {
+    setSeenRemove(removeRequest);
+    if (canRemove && !busy) open("remove");
   }
 
   const onCreatingRef = useRef(onCreating);
@@ -341,11 +387,43 @@ export function Writer({
   };
 
   const canAdd = archive !== null;
-  const canRemove = archive !== null && viewingHead && selected !== null;
+  // A problem shows where the user is looking: in the open panel, else in the status bar.
+  const errorLine = error && (
+    <p role="alert" className="error status-line" data-testid="write-error" title={error}>
+      {error}
+    </p>
+  );
 
   const stagedList = (
     <>
-      <div className="actions" title={t("write.dropHint")}>
+      {staged.items.length === 0 ? (
+        <p className="drop-target" data-testid="staged-empty" title={t("write.dropHint")}>
+          {t("write.nothingChosen")}
+        </p>
+      ) : (
+        <ul className="staged" data-testid="staged-list" aria-label={t("write.chosenItems")}>
+          {staged.items.map((item, i) => (
+            <li key={item.name.text} data-testid="staged-item">
+              <span className="kind-label" title={kindLabel(item.kind)}>
+                {kindLabel(item.kind)}
+              </span>{" "}
+              <Name name={item.name} />
+              <button
+                type="button"
+                className="icon-button unstage"
+                data-testid="unstage"
+                aria-label={t("write.unstageItem", { name: item.name.text })}
+                title={t("write.unstage")}
+                onClick={() => unstage(i)}
+                disabled={busy}
+              >
+                <CloseIcon />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="actions">
         <button type="button" data-testid="stage-files" onClick={() => stage("files")} disabled={busy}>
           {t("write.addFiles")}
         </button>
@@ -356,27 +434,6 @@ export function Writer({
           {t("write.clear")}
         </button>
       </div>
-      {staged.items.length === 0 ? (
-        <p data-testid="staged-empty">{t("write.nothingChosen")}</p>
-      ) : (
-        <ul className="staged" data-testid="staged-list" aria-label={t("write.chosenItems")}>
-          {staged.items.map((item, i) => (
-            <li key={item.name.text} data-testid="staged-item">
-              <span className="kind-label">{kindLabel(item.kind)}</span> <Name name={item.name} />
-              <button
-                type="button"
-                className="link"
-                data-testid="unstage"
-                aria-label={t("write.unstageItem", { name: item.name.text })}
-                onClick={() => unstage(i)}
-                disabled={busy}
-              >
-                {t("write.unstage")}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       {problems.length > 0 && (
         <ul role="alert" className="error" data-testid="write-problems">
           {problems.map((p) => (
@@ -387,6 +444,37 @@ export function Writer({
         </ul>
       )}
     </>
+  );
+
+  // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
+  const progressLine = (job.state === "starting" || job.state === "running") && (
+    <div className="progress" data-testid="write-running">
+      {job.state === "running" && (
+        <>
+          <ProgressMeter
+            completed={job.completed}
+            total={job.total}
+            text={
+              (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+              (job.cancelRequested ? t("common.cancelling") : "")
+            }
+            textTestId="write-progress"
+          />
+        </>
+      )}
+      {job.state === "starting" && <span>{t("common.starting")}</span>}
+      <button
+        type="button"
+        className="icon-button"
+        data-testid="write-cancel"
+        aria-label={t("common.cancel")}
+        title={t("common.cancel")}
+        onClick={cancel}
+        disabled={job.state !== "running" || job.cancelRequested}
+      >
+        <CloseIcon />
+      </button>
+    </div>
   );
 
   return (
@@ -401,16 +489,14 @@ export function Writer({
       )}
       {showToolbar && (
         <>
-          <ToolSlot name="new">
-            <button
-              type="button"
-              className="menu-item"
-              data-testid="new-archive"
+          <ToolSlot name="new" owner="any">
+            <ToolButton
+              icon={<NewArchiveIcon />}
+              label={t("write.new")}
+              testId="new-archive"
               onClick={() => open("create")}
               disabled={busy}
-            >
-              {t("write.new")}
-            </button>
+            />
           </ToolSlot>
           <ToolSlot name="add">
             <ToolButton
@@ -424,7 +510,7 @@ export function Writer({
           </ToolSlot>
           <ToolSlot name="remove">
             <ToolButton
-              icon={<MinusIcon />}
+              icon={<TrashIcon />}
               label={t("write.remove")}
               testId="remove-entry"
               onClick={() => open("remove")}
@@ -434,7 +520,7 @@ export function Writer({
                   ? t("write.openFirst")
                   : !viewingHead
                     ? t("write.onlyLatest")
-                    : selected
+                    : selected.length > 0
                       ? t("write.removeTip")
                       : t("write.selectFirst")
               }
@@ -442,47 +528,43 @@ export function Writer({
           </ToolSlot>
         </>
       )}
-      {error && (
-        <p role="alert" className="error" data-testid="write-error">
-          {error}
-        </p>
-      )}
-
       {mode === "create" && (
         <Panel
           label={t("write.panelNew")}
           heading={t("write.panelNew")}
           testId="write-panel"
           fallbackId="write-heading"
+          onClose={busy ? undefined : close}
         >
           <section aria-labelledby="create-step-1" className="step" data-testid="create-step-files">
-            <h4 id="create-step-1">{t("write.step1")}</h4>
+            <h4 id="create-step-1" className="sr-only">
+              {t("write.step1")}
+            </h4>
             {stagedList}
           </section>
-          <section aria-labelledby="create-step-2" className="step" data-testid="create-step-where">
+          <section aria-labelledby="create-step-2" className="step save-row" data-testid="create-step-where">
             <h4 id="create-step-2">{t("write.step2")}</h4>
             {staged.destination !== null ? (
-              <p data-testid="save-location">{t("write.savedAs", { name: staged.destination })}</p>
+              <span data-testid="save-location" title={t("write.savedAs", { name: staged.destination })}>
+                {staged.destination}
+              </span>
             ) : staged.default_destination !== null ? (
-              <>
-                <p data-testid="save-location">{staged.default_destination}</p>
-                <p className="note">{t("write.saveNote")}</p>
-              </>
+              <span data-testid="save-location" title={t("write.saveNote")}>
+                {staged.default_destination}
+              </span>
             ) : (
-              <p className="note" data-testid="save-location">
+              <span className="note" data-testid="save-location">
                 {t("write.saveUnknown")}
-              </p>
+              </span>
             )}
-            <div className="actions">
-              <button
-                type="button"
-                data-testid="change-destination"
-                onClick={changeDestination}
-                disabled={busy || staged.items.length === 0}
-              >
-                {t("write.change")}
-              </button>
-            </div>
+            <button
+              type="button"
+              data-testid="change-destination"
+              onClick={changeDestination}
+              disabled={busy || staged.items.length === 0}
+            >
+              {t("write.change")}
+            </button>
           </section>
           <details className="options" data-testid="create-options">
             <summary>{t("write.options")}</summary>
@@ -497,7 +579,7 @@ export function Writer({
                     checked={preset === p.id}
                     onChange={() => setPreset(p.id)}
                   />{" "}
-                  {p.label()} <span className="meta">({p.hint()})</span>
+                  <span title={p.hint()}>{p.label()}</span>
                 </label>
               ))}
             </fieldset>
@@ -516,7 +598,7 @@ export function Writer({
                 />{" "}
                 {t("write.encrypt")}
               </label>
-              {tar && <p className="note">{NO_GENERIC_TOOLS}</p>}
+              {tar && <Hint text={NO_GENERIC_TOOLS} />}
               {encrypt && (
                 <div data-testid="encrypt-panel">
                   <label>
@@ -540,14 +622,10 @@ export function Writer({
                     />
                   </label>
                   <EncryptionNotes creating />
-                  <p className="note">{HIDDEN_WITH_KEY}</p>
-                  <p className="note">{t("write.visibleIntro")}</p>
-                  <ul className="note" data-testid="visible-without-key">
-                    {VISIBLE_WITHOUT_KEY.map((v) => (
-                      <li key={v}>{v}</li>
-                    ))}
-                  </ul>
-                  <p className="note">{t("write.fixedAtCreation")}</p>
+                  <Hint
+                    testId="visible-without-key"
+                    text={[HIDDEN_WITH_KEY, t("write.visibleIntro"), ...VISIBLE_WITHOUT_KEY, t("write.fixedAtCreation")]}
+                  />
                 </div>
               )}
             </fieldset>
@@ -575,11 +653,7 @@ export function Writer({
                   {recoveryLabel(p)}
                 </label>
               ))}
-              <ul className="note" data-testid="recovery-notes">
-                {RECOVERY_NOTES.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
+              <Hint testId="recovery-notes" text={RECOVERY_NOTES} />
             </fieldset>
             <fieldset disabled={busy}>
               <legend>{t("write.compatibility")}</legend>
@@ -593,22 +667,20 @@ export function Writer({
                 />{" "}
                 {t("write.tarCompatible")}
               </label>
-              <ul className="note" data-testid="tar-notes">
-                {TAR_NOTES.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
+              <Hint testId="tar-notes" text={TAR_NOTES} />
             </fieldset>
           </details>
-          <div className="actions">
+          {errorLine}
+          {progressLine}
+          <div className="actions dialog-actions">
             <button
               type="button"
-              className="big primary"
+              className="primary"
               data-testid="create-confirm"
               onClick={create}
               disabled={busy || staged.items.length === 0}
             >
-              <span className="big-title">{t("write.createConfirm")}</span>
+              {t("write.createConfirm")}
             </button>
             <button type="button" data-testid="write-close" onClick={close} disabled={busy}>
               {t("write.close")}
@@ -623,15 +695,16 @@ export function Writer({
           heading={t("write.addTo", { name: archive.file_name })}
           testId="write-panel"
           fallbackId="write-heading"
+          onClose={busy ? undefined : close}
         >
-          <p className="note">
-            {t("write.addNote")}
-            {archive.profile.tar_compatible ? t("write.addNoteTar") : ""}
-          </p>
           {stagedList}
-          <div className="actions">
+          {errorLine}
+          {progressLine}
+          <div className="actions dialog-actions">
+            <Hint text={t("write.addNote") + (archive.profile.tar_compatible ? t("write.addNoteTar") : "")} />
             <button
               type="button"
+              className="primary"
               data-testid="add-confirm"
               onClick={() => run("add", { kind: "add_to_archive", handle: archive.handle })}
               disabled={busy || staged.items.length === 0}
@@ -645,23 +718,35 @@ export function Writer({
         </Panel>
       )}
 
-      {mode === "remove" && archive && selected && (
+      {mode === "remove" && archive && selected.length > 0 && (
         <Panel
           label={t("write.panelRemove")}
           heading={t("write.removeHeading")}
           testId="write-panel"
           fallbackId="write-heading"
+          onClose={busy ? undefined : close}
         >
-          <p>{t("write.removeQuestion", { name: selected.name.text })}</p>
+          <p>
+            {selected.length === 1 && selected[0]
+              ? t("write.removeQuestion", { name: selected[0].name.text })
+              : t("write.removeQuestionMany", { n: selected.length.toLocaleString("en-US") })}
+          </p>
           <p className="note" data-testid="delete-note">
             {DELETE_NOTE}
           </p>
-          <div className="actions">
+          {errorLine}
+          {progressLine}
+          <div className="actions dialog-actions">
             <button
               type="button"
+              className="primary"
               data-testid="delete-confirm"
               onClick={() =>
-                run("delete", { kind: "delete_from_archive", handle: archive.handle, keys: [selected.key] })
+                run("delete", {
+                  kind: "delete_from_archive",
+                  handle: archive.handle,
+                  keys: selected.map((e) => e.key),
+                })
               }
               disabled={busy}
             >
@@ -674,32 +759,9 @@ export function Writer({
         </Panel>
       )}
 
-      {(job.state === "starting" || job.state === "running") && (
-        <div className="progress" data-testid="write-running">
-          {job.state === "running" && (
-            <>
-              <ProgressMeter
-                completed={job.completed}
-                total={job.total}
-                text={
-                  (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-                  (job.cancelRequested ? t("common.cancelling") : "")
-                }
-                textTestId="write-progress"
-              />
-            </>
-          )}
-          {job.state === "starting" && <span>{t("common.starting")}</span>}
-          <button
-            type="button"
-            data-testid="write-cancel"
-            onClick={cancel}
-            disabled={job.state !== "running" || job.cancelRequested}
-          >
-            {t("common.cancel")}
-          </button>
-        </div>
-      )}
+      <ToolSlot name="status" owner="any">
+      {mode === "closed" && errorLine}
+      {mode === "closed" && progressLine}
       <ResultBar
         prefix="write"
         statusTestId="write-status"
@@ -722,10 +784,11 @@ export function Writer({
         fallbackId="write-heading"
       />
       {folderError && (
-        <p role="alert" className="error" data-testid="write-folder-error">
+        <p role="alert" className="error status-line" data-testid="write-folder-error">
           {folderError}
         </p>
       )}
+      </ToolSlot>
     </section>
   );
 }

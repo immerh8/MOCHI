@@ -497,10 +497,17 @@ pub enum DropEvent {
     Dropped {
         staged: StagedView,
         problems: Vec<IpcError>,
+        /// Staged by the shell's "Add to archive" (D6), not dropped on the
+        /// window: the window asks before it adds, where a drop on an open
+        /// archive adds at once.
+        from_shell: bool,
     },
-    /// One `.mochi` file was dropped. It is not staged: the window asks Rust
-    /// to open it (`open_dropped_archive`). Only the file name is shown.
-    Archive { name: String },
+    /// One archive file was dropped: a `.mochi` file or a ZIP, 7z, RAR, tar,
+    /// tar.gz or tar.zst file (`foreign`). It is not staged yet: the window
+    /// asks Rust to open it (`open_dropped_archive`) or, to add the file to an
+    /// archive as an ordinary source, to stage it (`stage_dropped_archive`).
+    /// Only the file name is shown.
+    Archive { name: String, foreign: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1151,6 +1158,21 @@ pub enum OpenOutcome {
         /// The file's name on this computer.
         file_name: String,
     },
+    /// The file was a ZIP, 7z, RAR, tar, tar.gz or tar.zst archive and is
+    /// open read-only (D8). Its handle belongs to the foreign-archive
+    /// commands (`foreign_children`, `close_foreign_archive`, ...).
+    Foreign {
+        archive: ForeignArchiveSummary,
+    },
+    /// The foreign archive needs a password (or the one given was wrong).
+    /// Rust remembers the file: the window answers with
+    /// `open_foreign_archive(retry = true, password)`.
+    ForeignPassword {
+        /// `true` when a password was given and did not open it.
+        wrong: bool,
+        /// The file's name on this computer.
+        file_name: String,
+    },
 }
 
 /// One key envelope valid at the head (`mochi rekey --list`; needs no key).
@@ -1239,6 +1261,12 @@ pub struct HitView {
     pub seq: u64,
     /// The stored path, escaped.
     pub path: NameText,
+    /// The same key `list_children` returns for this entry. It is valid for
+    /// selecting and extracting in the hit's own snapshot (`seq`), which may
+    /// not be the one the window is showing.
+    pub key: PathKey,
+    /// Key of the containing folder; `null` for an entry at the root.
+    pub parent: Option<PathKey>,
     pub kind: EntryKindView,
     /// Decimal string.
     pub size: String,
@@ -1297,7 +1325,7 @@ pub struct SearchResultView {
 
 // ---- D8: foreign archives ----------------------------------------------------
 //
-// ZIP, 7z, RAR, tar and tar.gz open read-only. Nothing here uses MOCHI's
+// ZIP, 7z, RAR, tar, tar.gz and tar.zst open read-only. Nothing here uses MOCHI's
 // verification wording or health dimensions (plan D8 rule 6): a foreign
 // "test" reports the checks that ran, recoverability/freshness/retention are
 // fixed at UNSUPPORTED. Names cross as `NameText`, as in D1.
@@ -1318,7 +1346,7 @@ pub struct ForeignArchiveSummary {
     pub handle: ArchiveHandle,
     /// The file's name on this computer (chosen by the user).
     pub file_name: String,
-    /// `ZIP`, `7z`, `RAR`, `tar`, or `tar.gz`.
+    /// `ZIP`, `7z`, `RAR`, `tar`, `tar.gz`, or `tar.zst`.
     pub format: String,
     #[ts(type = "number")]
     pub entries: u64,
@@ -1374,6 +1402,31 @@ pub struct ForeignChildrenPage {
     pub total: u32,
     pub offset: u32,
     pub entries: Vec<ForeignRow>,
+}
+
+/// One entry of a foreign archive whose full path matched a search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignHit {
+    /// Exactly the row `foreign_children` returns for this entry, so its key
+    /// selects, extracts, and drags like any listed row.
+    pub row: ForeignRow,
+    /// The full path inside the archive, escaped for display.
+    pub path: NameText,
+    /// Key of the containing folder (what `foreign_children` takes as `dir`);
+    /// `null` for an entry at the root, and for one whose name was refused.
+    pub parent: Option<PathKey>,
+}
+
+/// What `foreign_search` found: names only, never file contents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ForeignSearchResult {
+    /// At most [`crate::foreign::MAX_SEARCH_HITS`] hits, folders and files
+    /// alike, in path order.
+    pub hits: Vec<ForeignHit>,
+    /// All matches, shown or not.
+    pub total_hits: u32,
 }
 
 /// What `plan_extract_foreign` found.

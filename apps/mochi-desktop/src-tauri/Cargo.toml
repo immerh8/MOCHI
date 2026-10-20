@@ -30,6 +30,8 @@ e2e = []
 mochi-core.workspace = true
 mochi-format.workspace = true
 zeroize.workspace = true
+# Random names for drag-out folders (`dragout`): the operating system's CSPRNG.
+getrandom.workspace = true
 # The client only: no ZIP/7z/RAR/tar parser is linked into the app process
 # (plan D8 rule 3; ci/check-invariants.sh checks `default-features = false`).
 # The helper binary it talks to is built from the same package and shipped
@@ -53,6 +55,11 @@ tauri-plugin-updater = "2"
 # (Help, User guide). Called from Rust on a path Rust resolved; the webview gets no
 # opener, shell, or filesystem permission. MIT, as are its two small dependencies.
 open = "5"
+# Starts the operating system's drag of files out of the main window (Rust
+# only, `dragout`): Apache-2.0 OR MIT, by CrabNebula (the crate behind
+# tauri-plugin-drag, which is NOT used: the webview gets no plugin command
+# and never names a path). Windows: OLE `DoDragDrop`; Linux: GTK drag source.
+drag = "2.1.1"
 
 [dev-dependencies]
 mochi-testkit.workspace = true

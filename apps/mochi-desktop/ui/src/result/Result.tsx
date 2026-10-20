@@ -4,7 +4,7 @@ import type { Ref } from "react";
 import { Live } from "../a11y/Live";
 import { Name } from "../browser/Name";
 import { t } from "../i18n";
-import { CloseIcon, InfoIcon } from "../icons";
+import { CloseIcon, InfoIcon, ShowFolderIcon } from "../icons";
 import type { DetailItem, DetailRow, ResultDetails } from "./details";
 import { attentionHint, attentionText, cautionCount } from "./details";
 
@@ -181,12 +181,14 @@ export function ResultBar({
         ref={statusRef}
         data-testid={statusTestId}
         className={warn ? "result-text warning" : "result-text"}
+        title={has ? lines.join("\n") : undefined}
         {...statusAttrs}
       >
+        {/* One line in the status bar; the rest is in its tooltip and is read out. */}
         {lines.map((line, i) => (
           <p
             key={line}
-            className={i === 0 ? undefined : "note"}
+            className={i === 0 ? undefined : "note sr-only"}
             data-testid={i === 0 ? headlineTestId : undefined}
           >
             {line}
@@ -201,8 +203,15 @@ export function ResultBar({
       {has && (
         <div className="result-actions">
           {onShowFolder && (
-            <button type="button" data-testid={`${prefix}-show-folder`} onClick={onShowFolder}>
-              {t("start.showInFolder")}
+            <button
+              type="button"
+              className="icon-button"
+              data-testid={`${prefix}-show-folder`}
+              aria-label={t("start.showInFolder")}
+              title={t("start.showInFolder")}
+              onClick={onShowFolder}
+            >
+              <ShowFolderIcon />
             </button>
           )}
           {details !== null && (

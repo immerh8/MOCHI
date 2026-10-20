@@ -1,38 +1,38 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
 import {
+  ActivityIcon,
   BackIcon,
   CaretDownIcon,
   CheckIcon,
+  CloseIcon,
   ExtractIcon,
-  FolderIcon,
   FoldersIcon,
-  MinusIcon,
-  PlusIcon,
+  GearIcon,
   HelpIcon,
   InfoIcon,
+  KeyIcon,
   MoreIcon,
-  SearchIcon,
+  OpenIcon,
+  PlusIcon,
+  TrashIcon,
+  WrenchIcon,
 } from "../icons";
 import { t, tc, tn } from "../i18n";
 
-import {
-  closeArchive,
-  entryDetails,
-  listChildren,
-  openArchive,
-  openSnapshot,
-} from "../ipc/browse";
+import { closeArchive, entryDetails, listChildren, openArchive, openSnapshot } from "../ipc/browse";
 import type {
   ArchiveSummary,
   OpenOutcome,
   CommitView,
   EntryDetails,
   EntryRow,
+  NameText,
   SnapshotView,
 } from "../ipc/browse";
+import { dragOut } from "../ipc/dragout";
 import { subscribeLaunches } from "../ipc/launch";
 import { forgetRecentArchives, openDroppedArchive, openRecent, recentArchives } from "../ipc/start";
 import type { RecentView } from "../ipc/start";
@@ -47,16 +47,25 @@ import { Checker } from "../check/Checker";
 import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
 import { Rekey } from "../crypt/Rekey";
 import { HIDDEN_WITH_KEY, NOT_SIGNED, VISIBLE_WITHOUT_KEY } from "../crypt/messages";
-import { Search } from "../search/Search";
+import { useDragOut } from "../list/dragOut";
+import { ancestorsOf } from "../list/keys";
+import { useSelection } from "../list/selection";
+import type { Selection } from "../list/selection";
+import { listKeys, rowHandlers } from "../list/rows";
+import { SearchBox } from "../search/SearchBox";
+import { SearchResults } from "../search/SearchResults";
+import type { HitRow } from "../search/SearchResults";
+import { useArchiveSearch } from "../search/useArchiveSearch";
 import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
-import type { Shell, SlotName } from "../shell/Shell";
-import { StatusBar } from "./StatusBar";
+import type { ForeignHandoff, Shell, SlotName } from "../shell/Shell";
+import { ToolSheet } from "../shell/ToolSheet";
+import type { ToolId } from "../shell/ToolSheet";
 
 /** Row height of the file list, in pixels. */
-export const ROW_HEIGHT = 30;
+export const ROW_HEIGHT = 26;
 
 function profileText(a: ArchiveSummary): string {
   const parts = [t("browser.profileCore")];
@@ -121,10 +130,12 @@ function Details({ details }: { details: EntryDetails }) {
   const a = details.attributes;
   return (
     <section aria-labelledby="details-heading" className="details" data-testid="details">
-      <h3 id="details-heading">{t("browser.details")}</h3>
+      <h3 id="details-heading">
+        <Name name={details.path} />
+      </h3>
       <dl>
-        <dt>{t("browser.detailPath")}</dt>
-        <dd data-testid="details-path">
+        <dt className="sr-only">{t("browser.detailPath")}</dt>
+        <dd className="sr-only" data-testid="details-path">
           <Name name={details.path} />
         </dd>
         <dt>{t("browser.detailKind")}</dt>
@@ -137,20 +148,26 @@ function Details({ details }: { details: EntryDetails }) {
         )}
         {a.state === "recorded" ? (
           <>
-            <dt>{t("browser.detailPermissions")}</dt>
-            <dd>
-              {a.posix
-                ? t("browser.detailPosix", {
+            <dt>{t("browser.detailModified")}</dt>
+            <dd>{a.mtime ?? t("browser.detailNotRecorded")}</dd>
+            {a.posix && (
+              <>
+                <dt>{t("browser.detailPermissions")}</dt>
+                <dd>
+                  {t("browser.detailPosix", {
                     mode: formatMode(a.posix.mode),
                     uid: a.posix.uid,
                     gid: a.posix.gid,
-                  })
-                : t("browser.detailNotRecorded")}
-            </dd>
-            <dt>{t("browser.detailWindows")}</dt>
-            <dd>{a.windows ? a.windows.join(", ") || t("browser.detailNoneSet") : t("browser.detailNotRecorded")}</dd>
-            <dt>{t("browser.detailModified")}</dt>
-            <dd>{a.mtime ?? t("browser.detailNotRecorded")}</dd>
+                  })}
+                </dd>
+              </>
+            )}
+            {a.windows && (
+              <>
+                <dt>{t("browser.detailWindows")}</dt>
+                <dd>{a.windows.join(", ") || t("browser.detailNoneSet")}</dd>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -174,21 +191,25 @@ function Details({ details }: { details: EntryDetails }) {
           <dd className="hash">{details.file_version_id}</dd>
         </dl>
       </details>
-      <p className="note">{t("browser.detailsNote")}</p>
     </section>
   );
 }
 
 type Open = { archive: ArchiveSummary; snapshot: SnapshotView };
 
+/** An entry the list can select: a folder row or a search hit. */
+export type Picked = { key: string; name: NameText };
+
 /** Plan D1: open an archive and browse its snapshots. Read-only. */
 export function Browser({
-  toolsNav,
+  foreign,
   tools,
   help,
 }: {
-  toolsNav?: ReactNode;
-  tools?: ReactNode;
+  /** The foreign-archive browser (D8); it draws into the stage slot. */
+  foreign?: ReactNode;
+  /** The tools the More menu opens, by id ("settings", "selfTest"). */
+  tools?: Partial<Record<ToolId, ReactNode>>;
   help?: ReactNode;
 }) {
   const [open, setOpen] = useState<Open | null>(null);
@@ -196,13 +217,12 @@ export function Browser({
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState<Crumb[]>([]);
   const [counted, setCounted] = useState<{ id: string; total: number } | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [details, setDetails] = useState<EntryDetails | null>(null);
+  const [shownDetails, setShownDetails] = useState<{ id: string; details: EntryDetails } | null>(null);
   const [waiting, setWaiting] = useState<{ pending: number; fileName: string } | null>(null);
-  // Set when the shell asked to extract (D6): the Extractor then shows its plan.
   // Set when a folder was opened from the list by key or double click, so the
   // new listing takes keyboard focus instead of dropping it on the page.
   const [focusList, setFocusList] = useState(false);
+  // Set when the shell asked to extract (D6): the Extractor then shows its plan.
   const [autoExtract, setAutoExtract] = useState<{
     token: number;
     handle: number;
@@ -210,6 +230,7 @@ export function Browser({
   } | null>(null);
   const [recents, setRecents] = useState<RecentView[]>([]);
   const [createRequest, setCreateRequest] = useState(0);
+  const [removeRequest, setRemoveRequest] = useState(0);
   const [creating, setCreating] = useState(false);
   const [extractAfterUnlock, setExtractAfterUnlock] = useState(false);
   // The window around the list (toolbar, panels that open and close).
@@ -217,12 +238,15 @@ export function Browser({
   const [foldersOpen, setFoldersOpen] = useState(false);
   const [foldersShown, setFoldersShown] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [tool, setTool] = useState<ToolId | null>(null);
   const [foreignOpen, setForeignOpen] = useState(false);
   const [closeForeignToken, setCloseForeignToken] = useState(0);
   const [openForeignToken, setOpenForeignToken] = useState(0);
   const [testRequest, setTestRequest] = useState(0);
+  const [query, setQuery] = useState("");
+  const [foreignHandoff, setForeignHandoff] = useState<ForeignHandoff | null>(null);
+  const [clearSearch, setClearSearch] = useState(0);
   const [slots, setSlots] = useState<Partial<Record<SlotName, HTMLElement>>>({});
   const register = useCallback((name: SlotName, el: HTMLElement | null) => {
     setSlots((prev) => {
@@ -231,6 +255,7 @@ export function Browser({
       return { ...prev, [name]: el };
     });
   }, []);
+  const clearQuery = useCallback(() => setClearSearch((n) => n + 1), []);
 
   const refreshRecents = useCallback(() => {
     recentArchives().then(setRecents, () => setRecents([]));
@@ -273,21 +298,56 @@ export function Browser({
     [handle, seq, dir],
   );
 
-  const navigate = useCallback((to: Crumb[], fromList = false) => {
-    setFocusList(fromList);
-    setPath(to);
-    setSelected(null);
-    setDetails(null);
-  }, []);
-
-  const select = useCallback(
-    (row: EntryRow) => {
-      if (handle === null || seq === null) return;
-      setSelected(row.key);
-      entryDetails(handle, seq, row.key).then(setDetails, fail(t("browser.detailsFailed")));
-    },
-    [handle, seq, fail],
+  // What the toolbar's search found in the snapshot on screen.
+  const searching = open !== null && !foreignOpen && query !== "";
+  const search = useArchiveSearch(searching ? handle : null, seq, query);
+  const hits = useMemo(() => (search.state === "done" ? search.hits : []), [search]);
+  const loadHits = useCallback(
+    (offset: number, limit: number) => Promise.resolve(hits.slice(offset, offset + limit)),
+    [hits],
   );
+
+  const folderSel = useSelection<EntryRow>(loadPage, listError);
+  const hitSel = useSelection<HitRow>(loadHits, listError);
+  const selected: Picked[] = (searching ? hitSel.rows : folderSel.rows).flatMap((r) =>
+    r.key === null ? [] : [{ key: r.key, name: r.name }],
+  );
+  const focusKey = (searching ? hitSel.focus : folderSel.focus)?.key ?? null;
+  const clearFolderSel = folderSel.clear;
+  const clearHitSel = hitSel.clear;
+
+  const navigate = useCallback(
+    (to: Crumb[], fromList = false) => {
+      setFocusList(fromList);
+      setPath(to);
+      clearFolderSel();
+    },
+    [clearFolderSel],
+  );
+
+  // A new search, or none, starts with nothing selected among the hits.
+  useEffect(() => {
+    clearHitSel();
+  }, [search, clearHitSel]);
+
+  // The Info panel shows the entry clicked last.
+  const detailsId = `${handle ?? ""}:${seq ?? ""}:${focusKey ?? ""}`;
+  const details = shownDetails?.id === detailsId ? shownDetails.details : null;
+  useEffect(() => {
+    if (handle === null || seq === null || focusKey === null) return;
+    let live = true;
+    entryDetails(handle, seq, focusKey).then(
+      (d) => {
+        if (live) setShownDetails({ id: `${handle}:${seq}:${focusKey}`, details: d });
+      },
+      (e: unknown) => {
+        if (live) fail(t("browser.detailsFailed"))(e);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [handle, seq, focusKey, fail]);
 
   /** Show an archive that is open in Rust, replacing the one on screen. */
   const show = async (archive: ArchiveSummary) => {
@@ -296,6 +356,7 @@ export function Browser({
     const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
     const snapshot = await openSnapshot(archive.handle, head);
     setOpen({ archive, snapshot });
+    clearQuery();
     navigate([]);
   };
 
@@ -313,6 +374,21 @@ export function Browser({
       if (outcome.status === "needs_passphrase") {
         setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
         setExtractAfterUnlock(extract);
+        return;
+      }
+      // A ZIP, 7z, RAR, or tar: the foreign browser shows it (read-only).
+      if (outcome.status === "foreign") {
+        if (open) {
+          await closeArchive(open.archive.handle).catch(() => false);
+          setOpen(null);
+        }
+        const archive = outcome.archive;
+        setForeignHandoff((h) => ({ token: (h?.token ?? 0) + 1, kind: "opened", archive }));
+        return;
+      }
+      if (outcome.status === "foreign_password") {
+        const wrong = outcome.wrong;
+        setForeignHandoff((h) => ({ token: (h?.token ?? 0) + 1, kind: "password", wrong }));
         return;
       }
       await show(outcome.archive);
@@ -418,6 +494,7 @@ export function Browser({
     await closeArchive(open.archive.handle).catch(() => false);
     setOpen(null);
     setError(null);
+    clearQuery();
     navigate([]);
   };
 
@@ -428,6 +505,7 @@ export function Browser({
     try {
       const snapshot = await openSnapshot(open.archive.handle, to);
       setOpen({ ...open, snapshot });
+      clearQuery();
       navigate([]);
     } catch (e) {
       setError(errorText(t("browser.openCommitFailed", { seq: to }), e));
@@ -436,20 +514,14 @@ export function Browser({
     }
   };
 
-  // Toolbar items that live in the Advanced area (Find, Test, Passphrases,
-  // Settings…) open it and land on that section's heading, as the section
-  // buttons do (a closed disclosure cannot take focus).
-  const advancedRef = useRef<HTMLDetailsElement>(null);
-  const showAdvanced = (headingId: string) => {
-    if (advancedRef.current) advancedRef.current.open = true;
-    const heading = document.getElementById(headingId);
-    heading?.focus();
-    heading?.scrollIntoView?.({ block: "start" });
+  // The More menu's tools open in a window over the list, one at a time.
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const showTool = (id: ToolId) => {
+    setMoreOpen(false);
+    setTool(id);
   };
-  const showSettings = () => showAdvanced("settings-heading");
-  const showSearch = () => showAdvanced("search-heading");
   const doTest = () => {
-    showAdvanced("check-heading");
+    showTool("check");
     setTestRequest((n) => n + 1);
   };
 
@@ -467,17 +539,15 @@ export function Browser({
     wasCreatingRef.current = creating;
   }, [creating, open]);
 
-  // The version list, the More menu and the folder tree close on Escape and
-  // when the pointer goes down outside them.
+  // The version list and the More menu close on Escape and when the pointer
+  // goes down outside them.
   const moreRef = useRef<HTMLDivElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const versionsRef = useRef<HTMLDivElement>(null);
   const versionsButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // A choice closes the menu. Some items are drawn into it from other components
   // (a portal), whose clicks do not bubble through this element in React's tree, so
-  // this listens on the element itself. Focus goes to the More button first: a panel
-  // the choice opens gives focus back there when it closes (a hidden item cannot take it).
+  // this listens on the element itself.
   useEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
@@ -500,7 +570,7 @@ export function Browser({
         setVersionsOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (moreOpen) moreButtonRef.current?.focus();
       setMoreOpen(false);
@@ -514,18 +584,29 @@ export function Browser({
     };
   }, [moreOpen, versionsOpen]);
 
-  const toggleHelp = () => {
-    const next = !helpOpen;
-    setHelpOpen(next);
-    if (next) {
-      // The panel is hidden until this render commits; focus it after.
-      setTimeout(() => document.getElementById("help-heading")?.focus(), 0);
-    }
-  };
-  const fromMenu = (run: () => void) => {
-    setMoreOpen(false);
-    run();
-  };
+  // Desktop keys: Ctrl+F finds, Ctrl+O opens.
+  const openRef = useRef(doOpen);
+  useEffect(() => {
+    openRef.current = doOpen;
+  });
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key === "f" || e.key === "F") {
+        const field = document.querySelector<HTMLInputElement>('[data-testid="search-query"]');
+        if (field && !field.disabled) {
+          e.preventDefault();
+          field.focus();
+          field.select();
+        }
+      } else if (e.key === "o" || e.key === "O") {
+        e.preventDefault();
+        void openRef.current();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const shell: Shell = {
     active,
@@ -535,28 +616,80 @@ export function Browser({
     closeForeignToken,
     openForeignToken,
     infoOpen,
+    query,
+    clearQuery,
+    foreignHandoff,
   };
 
-  const count = total === null ? null : total;
+  // Drag entries out of the list into a folder on the computer.
+  const dragFrom =
+    <T extends { key: string | null }>(sel: Selection<T>) =>
+    (row: T) => {
+      if (handle === null || seq === null || row.key === null) return null;
+      const inSel = sel.rows.some((x) => x.key === row.key);
+      const keys = inSel ? sel.rows.flatMap((x) => (x.key === null ? [] : [x.key])) : [row.key];
+      return dragOut(handle, seq, keys).catch((e: unknown) => setError(errorText(t("browser.dragFailed"), e)));
+    };
+  const folderDrag = useDragOut(dragFrom(folderSel));
+  const hitDrag = useDragOut(dragFrom(hitSel));
+
+  const viewingHead = open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1);
+  const listKeyHandlers = {
+    all: () => (searching ? hitSel.all(hits.length) : total !== null && folderSel.all(total)),
+    none: () => {
+      const sel = searching ? hitSel : folderSel;
+      if (sel.rows.length === 0) return false;
+      sel.clear();
+      return true;
+    },
+    up: () => {
+      if (!searching && path.length > 0) navigate(path.slice(0, -1), true);
+    },
+    remove: () => {
+      if (viewingHead && selected.length > 0) setRemoveRequest((n) => n + 1);
+    },
+  };
+
+  const openHit = (hit: HitRow) => {
+    if (hit.key === null) return;
+    const above = ancestorsOf(hit.key, hit.path);
+    clearQuery();
+    if (hit.kind === "directory") navigate([...above, { key: hit.key, name: hit.name }], true);
+    else navigate(above, true);
+  };
+
   const statusText =
-    count === null
+    total === null
       ? t("common.loading")
-      : tc(count, "common.itemOne", "common.itemMany") +
-        (selected !== null ? t("common.statusSeparator") + t("common.selectedCount", { n: 1 }) : "");
+      : tc(total, "common.itemOne", "common.itemMany") +
+        (selected.length > 0 ? t("common.statusSeparator") + t("common.selectedCount", { n: selected.length }) : "");
 
   return (
     <ShellContext value={shell}>
       <section aria-labelledby="browser-heading" className="browser">
         <div className="toolbar" role="group" aria-label={t("toolbar.label")}>
-          <h1 className="brand">
+          <h1 className="brand" title={t("app.title")}>
             <span className="mascot-face" aria-hidden="true" />
-            {t("app.title")}
+            <span className="sr-only">{t("app.title")}</span>
           </h1>
+          <span className="tool-cell">
+            <ToolButton
+              icon={<OpenIcon />}
+              label={t("browser.open")}
+              testId="toolbar-open"
+              title={t("toolbar.openTip")}
+              disabled={busy}
+              onClick={() => void doOpen()}
+            />
+          </span>
+          <SlotHost name="new" />
+          <span className="toolbar-sep" aria-hidden="true" />
           <SlotHost name="add" />
           <SlotHost name="extract" />
           <SlotHost name="test" />
           <SlotHost name="remove" />
-          <SlotHost name="find" />
+          <span className="toolbar-spacer" />
+          <SearchBox disabled={!canInspect} onQuery={setQuery} clearToken={clearSearch} />
           <span className="tool-cell">
             <ToolButton
               icon={<InfoIcon />}
@@ -568,44 +701,45 @@ export function Browser({
               onClick={() => setInfoOpen((v) => !v)}
             />
           </span>
-          <span className="toolbar-spacer" />
           <div className="more" ref={moreRef}>
             <button
               ref={moreButtonRef}
               type="button"
               className="tool"
               data-testid="toolbar-more"
-              title={t("toolbar.moreTip")}
+              title={t("toolbar.more")}
               aria-expanded={moreOpen}
               aria-controls="more-menu"
               onClick={() => setMoreOpen((v) => !v)}
             >
               <MoreIcon />
-              <span className="tool-label">{t("toolbar.more")}</span>
+              <span className="sr-only">{t("toolbar.more")}</span>
             </button>
-            <div
-              id="more-menu"
-              className="menu"
-              ref={menuRef}
-              hidden={!moreOpen}
-            >
-              <SlotHost name="new" className="menu-cell" />
+            <div id="more-menu" className="menu" ref={menuRef} hidden={!moreOpen}>
               <button type="button" className="menu-item" data-testid="start-extract" onClick={() => void doOpen(true)} disabled={busy}>
+                <ExtractIcon />
                 {t("start.extractOpen")}
               </button>
-              <button type="button" className="menu-item" data-testid="menu-passphrases" onClick={() => fromMenu(() => showAdvanced("rekey-heading"))}>
-                {t("app.sectionPassphrases")}
-              </button>
-              <button type="button" className="menu-item" data-testid="menu-repair" onClick={() => fromMenu(() => showAdvanced("check-heading"))}>
-                {t("toolbar.repair")}
-              </button>
-              <button type="button" className="menu-item" data-testid="menu-foreign" onClick={() => fromMenu(() => setOpenForeignToken((n) => n + 1))}>
+              <button type="button" className="menu-item" data-testid="menu-foreign" onClick={() => setOpenForeignToken((n) => n + 1)}>
+                <OpenIcon />
                 {t("toolbar.foreign")}
               </button>
-              <button type="button" className="menu-item" data-testid="start-settings" onClick={() => fromMenu(showSettings)}>
+              <hr />
+              <button type="button" className="menu-item" data-testid="menu-passphrases" onClick={() => showTool("passphrases")}>
+                <KeyIcon />
+                {t("app.sectionPassphrases")}
+              </button>
+              <button type="button" className="menu-item" data-testid="menu-repair" onClick={() => showTool("check")}>
+                <WrenchIcon />
+                {t("toolbar.repair")}
+              </button>
+              <hr />
+              <button type="button" className="menu-item" data-testid="start-settings" onClick={() => showTool("settings")}>
+                <GearIcon />
                 {t("start.settings")}
               </button>
-              <button type="button" className="menu-item" data-testid="menu-self-test" onClick={() => fromMenu(() => showAdvanced("self-test-heading"))}>
+              <button type="button" className="menu-item" data-testid="menu-self-test" onClick={() => showTool("selfTest")}>
+                <ActivityIcon />
                 {t("toolbar.selfTest")}
               </button>
             </div>
@@ -616,18 +750,18 @@ export function Browser({
               label={t("help.toolbar")}
               testId="toolbar-help"
               title={t("toolbar.helpTip")}
-              expanded={helpOpen}
-              onClick={toggleHelp}
+              expanded={tool === "help"}
+              onClick={() => setTool((v) => (v === "help" ? null : "help"))}
             />
           </span>
         </div>
-        <h2 id="browser-heading" tabIndex={-1} className={showStart || open || foreignOpen ? "sr-only" : undefined}>
+        <h2 id="browser-heading" tabIndex={-1} className="sr-only">
           {open || foreignOpen ? t("browser.heading") : t("start.heading")}
         </h2>
         {/* What the toolbar's other buttons are while their owner has nothing
             to offer: the MOCHI ones when no MOCHI archive is open are drawn by
-            their components; while a foreign archive is open, Add, Remove and
-            Find are off. */}
+            their components; while a foreign archive is open, Add and Remove
+            are off. */}
         <ToolSlot name="test" owner="mochi">
           <ToolButton
             icon={<CheckIcon />}
@@ -638,21 +772,11 @@ export function Browser({
             onClick={doTest}
           />
         </ToolSlot>
-        <ToolSlot name="find" owner="mochi">
-          <ToolButton
-            icon={<SearchIcon />}
-            label={t("toolbar.find")}
-            testId="search-archive"
-            title={open ? t("browser.search") : t("toolbar.openFirst")}
-            disabled={open === null}
-            onClick={showSearch}
-          />
-        </ToolSlot>
         <ToolSlot name="add" owner="foreign">
-          <ToolButton icon={<PlusIcon />} label={t("write.add")} testId="add-to-archive" title={t("toolbar.readOnly")} disabled onClick={showSearch} />
+          <ToolButton icon={<PlusIcon />} label={t("write.add")} testId="add-to-archive" title={t("toolbar.readOnly")} disabled onClick={doTest} />
         </ToolSlot>
         <ToolSlot name="remove" owner="foreign">
-          <ToolButton icon={<MinusIcon />} label={t("write.remove")} testId="remove-entry" title={t("toolbar.readOnly")} disabled onClick={showSearch} />
+          <ToolButton icon={<TrashIcon />} label={t("write.remove")} testId="remove-entry" title={t("toolbar.readOnly")} disabled onClick={doTest} />
         </ToolSlot>
         <ToolSlot name="extract" owner="mochi">
           {open === null && (
@@ -662,12 +786,9 @@ export function Browser({
               testId="extract-all"
               title={t("extract.openFirst")}
               disabled
-              onClick={showSearch}
+              onClick={doTest}
             />
           )}
-        </ToolSlot>
-        <ToolSlot name="find" owner="foreign">
-          <ToolButton icon={<SearchIcon />} label={t("toolbar.find")} testId="search-archive" title={t("toolbar.noSearch")} disabled onClick={showSearch} />
         </ToolSlot>
 
         {open && !foreignOpen && (
@@ -677,7 +798,7 @@ export function Browser({
               className="icon-button"
               data-testid="close-archive"
               aria-label={t("browser.close")}
-              title={t("browser.back")}
+              title={t("browser.close")}
               onClick={doClose}
               disabled={busy}
             >
@@ -698,40 +819,37 @@ export function Browser({
               <FoldersIcon />
             </button>
             <div className="path-meta" data-testid="archive-meta">
-              <strong className="path-title">{open.archive.file_name}</strong>
-              <span className="path-sub">
-                {t("browser.metaSeparator")}
-                {open.archive.commits.length > 1 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="link version-button"
-                      ref={versionsButtonRef}
-                      data-testid="toggle-versions"
-                      aria-expanded={versionsOpen}
-                      aria-controls="versions-pop"
-                      onClick={() => setVersionsOpen((v) => !v)}
-                    >
-                      {tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
-                        n: open.archive.commits.length,
-                      })}
-                      <CaretDownIcon />
-                    </button>
-                  </>
-                ) : (
-                  tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
-                    n: open.archive.commits.length,
-                  })
-                )}
-                {open.archive.profile.encrypted && (
-                  <>
-                    {t("browser.metaSeparator")}
-                    {t("browser.profileEncrypted")}
-                  </>
-                )}
-              </span>
+              <strong className="path-title" title={open.archive.file_name}>
+                {open.archive.file_name}
+              </strong>
+              {open.archive.profile.encrypted && (
+                <span
+                  className="badge"
+                  data-testid="encrypted-note"
+                  title={[t("browser.profileEncrypted"), HIDDEN_WITH_KEY, ...VISIBLE_WITHOUT_KEY, NOT_SIGNED].join("\n")}
+                >
+                  <KeyIcon />
+                  <span className="sr-only">{t("browser.profileEncrypted")}</span>
+                </span>
+              )}
             </div>
             <div className="versions" ref={versionsRef}>
+              <button
+                type="button"
+                className="version-button"
+                ref={versionsButtonRef}
+                data-testid="toggle-versions"
+                aria-expanded={versionsOpen}
+                aria-controls="versions-pop"
+                disabled={open.archive.commits.length < 2}
+                title={tn(open.archive.commits.length, "browser.metaCommitOne", "browser.metaCommitMany", {
+                  n: open.archive.commits.length,
+                })}
+                onClick={() => setVersionsOpen((v) => !v)}
+              >
+                {t("browser.versionShort", { seq: open.snapshot.seq })}
+                {open.archive.commits.length > 1 && <CaretDownIcon />}
+              </button>
               <div id="versions-pop" className="popover" hidden={!versionsOpen}>
                 <Timeline
                   commits={open.archive.commits}
@@ -744,43 +862,45 @@ export function Browser({
               </div>
             </div>
             <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
-              <button type="button" className="link" onClick={() => navigate([])}>
-                {t("browser.commit", { seq: open.snapshot.seq })}
+              <button type="button" className="crumb" onClick={() => navigate([])} title={t("browser.archiveRoot")}>
+                <span aria-hidden="true">/</span>
+                <span className="sr-only">{t("browser.archiveRoot")}</span>
               </button>
               {path.map((c, i) => (
-                <span key={c.key}>
-                  {t("common.nameSeparator")}
-                  <button type="button" className="link" onClick={() => navigate(path.slice(0, i + 1))}>
+                <span key={c.key} className="crumb-part">
+                  {i > 0 && <span aria-hidden="true">/</span>}
+                  <button type="button" className="crumb" onClick={() => navigate(path.slice(0, i + 1))}>
                     <Name name={c.name} />
                   </button>
                 </span>
               ))}
             </nav>
-            <button
-              type="button"
-              className="icon-button"
-              data-testid="open-archive"
-              aria-label={t("browser.open")}
-              title={t("browser.open")}
-              onClick={() => void doOpen()}
-              disabled={busy}
-            >
-              <FolderIcon />
-            </button>
+            {open.archive.retention_error && (
+              <span role="note" className="path-warn" title={t("browser.retentionError", {
+                code: open.archive.retention_error.code,
+                message: open.archive.retention_error.message,
+              })}>
+                !
+                <span className="sr-only">
+                  {t("browser.retentionError", {
+                    code: open.archive.retention_error.code,
+                    message: open.archive.retention_error.message,
+                  })}
+                </span>
+              </span>
+            )}
+            {open.snapshot.catalog_source.source === "snapshot_manifest" && (
+              <span role="note" className="path-warn" data-testid="catalog-note" title={t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}>
+                !
+                <span className="sr-only">
+                  {t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}
+                </span>
+              </span>
+            )}
           </div>
         )}
 
         <div className="stage">
-          <div className="sheet" hidden={!helpOpen} data-testid="help-sheet">
-            {help}
-          </div>
-          {/* Outside the MOCHI stage: a launch can open a foreign archive and
-              then say why it did nothing more, so this must show in either. */}
-          {error && (
-            <p role="alert" className="error" data-testid="browse-error">
-              {error}
-            </p>
-          )}
           <SlotHost name="stage" className="stage-foreign" />
           <div className="stage-mochi" hidden={foreignOpen}>
             {waiting && (
@@ -789,6 +909,7 @@ export function Browser({
                 testId="unlock-panel"
                 fallbackId="browser-heading"
                 heading={t("browser.isEncrypted", { name: waiting.fileName })}
+                onClose={giveUp}
               >
                 <PassphraseForm
                   testId="unlock"
@@ -815,11 +936,12 @@ export function Browser({
             )}
             <Writer
               archive={open?.archive ?? null}
-              viewingHead={open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1)}
-              selected={details ? { key: details.key, name: details.path } : null}
+              viewingHead={viewingHead}
+              selected={selected}
               onCommitted={(a) => void adopt(a)}
               showToolbar
               createRequest={createRequest}
+              removeRequest={removeRequest}
               onCreating={setCreating}
               onArchiveDropped={() => void doOpenDropped()}
             />
@@ -828,22 +950,9 @@ export function Browser({
                 <Extractor
                   archive={open.archive}
                   seq={open.snapshot.seq}
-                  selected={details ? { key: details.key, name: details.path } : null}
+                  selected={selected}
                   autoPlan={autoExtract}
                 />
-                {open.archive.retention_error && (
-                  <p role="note" className="warning">
-                    {t("browser.retentionError", {
-                      code: open.archive.retention_error.code,
-                      message: open.archive.retention_error.message,
-                    })}
-                  </p>
-                )}
-                {open.snapshot.catalog_source.source === "snapshot_manifest" && (
-                  <p role="note" className="warning" data-testid="catalog-note">
-                    {t("browser.catalogRebuilt", { code: open.snapshot.catalog_source.image_error.code })}
-                  </p>
-                )}
                 <div className="workspace">
                   {foldersShown && (
                     <nav className="folders" aria-label={t("browser.paneFolders")} hidden={!foldersOpen}>
@@ -857,62 +966,90 @@ export function Browser({
                       />
                     </nav>
                   )}
-                  <div className="listing">
+                  <div className="listing" onKeyDown={(e) => listKeys(e, listKeyHandlers)}>
                     <p id="entry-hint" className="sr-only">
                       {t("help.keys")}
                     </p>
-                    {total !== null && (
-                      <VirtualList
-                        key={listingId}
-                        total={total}
+                    {searching ? (
+                      <SearchResults
+                        search={search}
                         rowHeight={ROW_HEIGHT}
-                        loadPage={loadPage}
-                        label={t("browser.folderContents")}
-                        head={<ListHead />}
                         hintId="entry-hint"
-                        focusFirst={focusList}
-                        testId="entries"
-                        onError={listError}
-                        renderRow={(row: EntryRow, _index: number, tabIndex: 0 | -1) => (
+                        testId="search-hits"
+                        renderRow={(hit, index, tabIndex) => (
                           <button
                             type="button"
-                            className={row.key === selected ? "entry selected" : "entry"}
-                            data-testid="entry"
-                            data-kind={row.kind}
-                            aria-pressed={row.key === selected}
+                            className={hitSel.has(hit) ? "entry selected" : "entry"}
+                            data-testid="search-hit"
+                            data-kind={hit.kind}
+                            aria-pressed={hitSel.has(hit)}
                             tabIndex={tabIndex}
-                            onClick={() => select(row)}
-                            onDoubleClick={() => {
-                              if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && row.kind === "directory") {
-                                e.preventDefault();
-                                navigate([...path, { key: row.key, name: row.name }], true);
-                              }
-                            }}
+                            {...rowHandlers(hitSel, hit, index, () => openHit(hit), hitDrag, hit.kind === "directory")}
                           >
                             <EntryCells
-                              kind={row.kind}
-                              name={row.name}
-                              kindLabel={row.kind === "directory" ? t("common.folder") : t("common.file")}
-                              size={
-                                row.kind === "directory"
-                                  ? t("browser.itemsCount", {
-                                      n: (row.child_dirs + row.child_files).toLocaleString("en-US"),
-                                    })
-                                  : shortSize(row.size)
-                              }
+                              kind={hit.kind}
+                              name={hit.name}
+                              kindLabel={hit.kind === "directory" ? t("common.folder") : t("common.file")}
+                              size={hit.size}
+                              folder={hit.folder}
                             />
                           </button>
                         )}
                       />
+                    ) : (
+                      total !== null && (
+                        <VirtualList
+                          key={listingId}
+                          total={total}
+                          rowHeight={ROW_HEIGHT}
+                          loadPage={loadPage}
+                          label={t("browser.folderContents")}
+                          head={<ListHead />}
+                          hintId="entry-hint"
+                          focusFirst={focusList}
+                          testId="entries"
+                          onError={listError}
+                          renderRow={(row: EntryRow, index: number, tabIndex: 0 | -1) => (
+                            <button
+                              type="button"
+                              className={folderSel.has(row) ? "entry selected" : "entry"}
+                              data-testid="entry"
+                              data-kind={row.kind}
+                              aria-pressed={folderSel.has(row)}
+                              tabIndex={tabIndex}
+                              {...rowHandlers(
+                                folderSel,
+                                row,
+                                index,
+                                () => {
+                                  if (row.kind === "directory") navigate([...path, { key: row.key, name: row.name }], true);
+                                },
+                                folderDrag,
+                                row.kind === "directory",
+                              )}
+                            >
+                              <EntryCells
+                                kind={row.kind}
+                                name={row.name}
+                                kindLabel={row.kind === "directory" ? t("common.folder") : t("common.file")}
+                                size={
+                                  row.kind === "directory"
+                                    ? t("browser.itemsCount", {
+                                        n: (row.child_dirs + row.child_files).toLocaleString("en-US"),
+                                      })
+                                    : shortSize(row.size)
+                                }
+                              />
+                            </button>
+                          )}
+                        />
+                      )
                     )}
                   </div>
                   <aside className="info" aria-label={t("toolbar.info")} hidden={!infoOpen} data-testid="info-panel">
                     {details && <Details details={details} />}
                     <details className="technical" data-testid="archive-technical">
-                      <summary>{t("start.technical")}</summary>
+                      <summary>{t("browser.aboutArchive")}</summary>
                       <p data-testid="archive-technical-text">
                         {profileText(open.archive)}
                         {t("browser.metaSeparator")}
@@ -928,47 +1065,63 @@ export function Browser({
                         ))}
                       </ul>
                     </details>
-                    {open.archive.profile.encrypted && (
-                      <details className="note" data-testid="encrypted-note">
-                        <summary>{t("browser.encryptedSummary")}</summary>
-                        <p>{HIDDEN_WITH_KEY}</p>
-                        <p>{t("browser.visibleWithoutKeyIntro")}</p>
-                        <ul>
-                          {VISIBLE_WITHOUT_KEY.map((v) => (
-                            <li key={v}>{v}</li>
-                          ))}
-                        </ul>
-                        <p>{NOT_SIGNED}</p>
-                      </details>
-                    )}
                   </aside>
                 </div>
-                <StatusBar
-                  testId="entry-count"
-                  text={statusText}
-                  title={t("browser.entriesInVersion", { n: open.snapshot.entries.toLocaleString("en-US") })}
-                >
-                  <SlotHost name="primary" className="statusbar-slot" />
-                </StatusBar>
+                <ToolSlot name="count" owner="mochi">
+                  <span
+                    className="statusbar-text"
+                    data-testid="entry-count"
+                    title={
+                      searching && search.state === "done" && search.detail !== undefined
+                        ? search.detail
+                        : t("browser.entriesInVersion", { n: open.snapshot.entries.toLocaleString("en-US") })
+                    }
+                  >
+                    {searching ? search.statusText : statusText}
+                  </span>
+                </ToolSlot>
               </>
             )}
           </div>
         </div>
-        <details className="advanced" data-testid="advanced" ref={advancedRef}>
-          <summary>{t("start.advanced")}</summary>
-          {toolsNav}
-          <Search archive={open?.archive ?? null} />
-          <Rekey
-            key={open?.archive.handle ?? "none"}
-            archive={open?.archive ?? null}
-            onChanged={(a) => {
-              if (a === null) void doClose();
-              else void adopt(a);
-            }}
-          />
-          <Checker archive={open?.archive ?? null} testRequest={testRequest} />
-          {tools}
-        </details>
+        <div className="statusbar">
+          <SlotHost name="count" className="statusbar-count" />
+          <SlotHost name="status" className="statusbar-status" />
+          {error && (
+            <div className="statusbar-error">
+              <p role="alert" className="statusbar-error-text" data-testid="browse-error" title={error}>
+                {error}
+              </p>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t("result.dismiss")}
+                title={t("result.dismiss")}
+                onClick={() => setError(null)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          )}
+        </div>
+        {foreign}
+        <ToolSheet tool={tool} onClose={() => setTool(null)} returnFocus={moreButtonRef}>
+          {{
+            help,
+            passphrases: (
+              <Rekey
+                key={open?.archive.handle ?? "none"}
+                archive={open?.archive ?? null}
+                onChanged={(a) => {
+                  if (a === null) void doClose();
+                  else void adopt(a);
+                }}
+              />
+            ),
+            check: <Checker archive={open?.archive ?? null} testRequest={testRequest} />,
+            ...tools,
+          }}
+        </ToolSheet>
       </section>
     </ShellContext>
   );

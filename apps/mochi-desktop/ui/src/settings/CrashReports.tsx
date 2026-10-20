@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { Hint } from "../a11y/Hint";
 import type { ReactNode } from "react";
 
 import { Live } from "../a11y/Live";
@@ -91,8 +92,7 @@ export function CrashReports({ children }: { children?: ReactNode }) {
       {children}
       <h3>{t("settings.crashHeading")}</h3>
       <p data-testid="crash-policy">{t("settings.crashPolicy")}</p>
-      <p className="note">{t("settings.crashCollected")}</p>
-      <p className="note">{t("settings.crashLimits")}</p>
+      <Hint text={[t("settings.crashCollected"), t("settings.crashLimits")]} />
       <div>
         <label>
           <input

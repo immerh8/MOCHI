@@ -6,4 +6,10 @@ import type { StagedView } from "./StagedView";
  * What reaches the webview about drag and drop (Rust handles the window's
  * event; the webview needs no permission to hear it).
  */
-export type DropEvent = { "event": "hover", active: boolean, } | { "event": "dropped", staged: StagedView, problems: Array<IpcError>, } | { "event": "archive", name: string, };
+export type DropEvent = { "event": "hover", active: boolean, } | { "event": "dropped", staged: StagedView, problems: Array<IpcError>, 
+/**
+ * Staged by the shell's "Add to archive" (D6), not dropped on the
+ * window: the window asks before it adds, where a drop on an open
+ * archive adds at once.
+ */
+from_shell: boolean, } | { "event": "archive", name: string, foreign: boolean, };

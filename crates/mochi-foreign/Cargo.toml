@@ -1,6 +1,6 @@
 [package]
 name = "mochi-foreign"
-description = "Read-only foreign archive formats (ZIP, tar, tar.gz) parsed in an isolated helper process (plan D8)."
+description = "Read-only foreign archive formats (ZIP, 7z, RAR, tar, tar.gz, tar.zst) parsed in an isolated helper process (plan D8)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,19 +22,23 @@ default = ["engine"]
 # talks to the helper) depends on this crate with `default-features = false`,
 # so no ZIP/tar/gzip parser is linked into its process; ci/check-invariants.sh
 # checks that.
-engine = ["dep:zip", "dep:tar", "dep:flate2", "dep:rustix", "dep:sevenz-rust2", "dep:unrar_sys"]
+engine = ["dep:zip", "dep:tar", "dep:flate2", "dep:ruzstd", "dep:rustix", "dep:sevenz-rust2", "dep:unrar_sys"]
 # Fault hooks for the crash/limit tests (panic, abort, huge allocation, hang,
 # stdout flood). Enabled only by this crate's own dev-dependency below;
 # ci/check-invariants.sh forbids it anywhere else.
 test-faults = ["engine"]
 
 [dependencies]
-# MIT. No bzip2/lzma/zstd/ppmd: C or large decoders we do not need yet; such
-# entries are reported UNSUPPORTED per entry. aes-crypto = AES + ZipCrypto.
+# MIT. No bzip2/lzma/zstd/ppmd inside ZIP: C or large decoders we do not need
+# yet; such entries are reported UNSUPPORTED per entry. (Zstandard is read for
+# `.tar.zst` only, through the pure-Rust `ruzstd` below.) aes-crypto = AES + ZipCrypto.
 zip = { version = "9", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"], optional = true }
 # MIT OR Apache-2.0 each.
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
+# MIT, pure Rust decoder (no C): `.tar.zst`. `hash` is the XXH64 that checks a
+# frame's content checksum; `std` is its io::Read adapter.
+ruzstd = { version = "0.9", default-features = false, features = ["std", "hash"], optional = true }
 sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["aes256", "bzip2", "deflate", "ppmd"], optional = true }
 # The FFI crate of the `unrar` project (muja/unrar.rs; MIT OR Apache-2.0). It
 # builds the vendored RARLAB UnRAR C++ source, which is NOT MIT/Apache: see
@@ -53,6 +57,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dev-dependencies]
 mochi-foreign = { path = ".", features = ["test-faults"] }
 tempfile.workspace = true
+# Writes the .tar.zst fixtures and bombs in tests only (libzstd, as in mochi-core).
+zstd.workspace = true
 
 [lints]
 workspace = true

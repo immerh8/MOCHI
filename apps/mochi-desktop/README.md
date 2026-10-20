@@ -22,9 +22,10 @@ apps/mochi-desktop/
 │       ├── commands.rs # Tauri commands: validate, call, return typed results
 │       ├── crashlog.rs # D7: the opt-in local crash log (panic hook, settings, rotation)
 │       ├── extract.rs  # D3: the chosen folder, the collision plan, the extract job
-│       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar read-only through the isolated helper
+│       ├── foreign.rs  # D8: ZIP, 7z, RAR, tar, tar.gz, tar.zst read-only through the isolated helper; name search
 │       ├── help.rs     # Help, User guide: opens the bundled guide offline (F8)
 │       ├── launch.rs   # D6: the shell's open, extract, and add verbs, parsed in Rust
+│       ├── route.rs    # One Open for every format: MOCHI magic wins, then foreign by name or first bytes
 │       ├── rekey.rs    # D5: key envelopes and passphrase changes
 │       ├── search.rs   # D5: name search
 │       ├── update.rs   # T13: the in-app updater, driven from Rust
@@ -172,6 +173,29 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   changed them. Sizes cross as decimal strings, because an archive may claim values
   above 2^53. Encrypted archives are refused with `KEY_UNAVAILABLE` until passphrase
   entry (D5).
+- **Dragging entries out to the file manager (`dragout.rs`).** `drag_out` (a MOCHI
+  archive) and `drag_out_foreign` (ZIP, 7z, RAR, tar) take only an archive handle, the
+  snapshot, and entry keys; each is granted by its own permission (`allow-drag-out`,
+  `allow-drag-out-foreign`). Rust makes a fresh folder with a random 128-bit name under
+  `<app cache>/drag-out/` (owner-only on Unix), extracts the selection into it through the
+  Extract code itself (`extract::run`, `Foreign::run`, so the C6 restore engine writes every
+  byte, an Encrypted archive uses the passphrase already given in its session, and a foreign
+  archive is read only by the isolated helper), moves each selected entry to the top level of
+  the folder's `items` directory under its own name (`a/b/c.txt` is dragged as `c.txt`), and
+  starts the operating system's drag of those items with the `drag` crate (Apache-2.0 OR MIT,
+  CrabNebula; OLE `DoDragDrop` on Windows, a GTK drag source on Linux). `tauri-plugin-drag`
+  is not used and the webview gets no plugin, fs, shell, or dialog permission, so it never
+  sees a path. A selection above 8 GiB of declared size is refused (`LIMIT_EXCEEDED`; the UI
+  offers Extract); so is one with no keys, too many keys, an unparseable key, or one the
+  archive lacks (`INVALID_ARGUMENT`), and so is a selection from which any entry could not
+  be extracted (nothing partial is offered). The folder is deleted when the drag ends without
+  a drop, when anything fails before it starts, and by a sweep at start-up and at exit for
+  folders over an hour old; the sweep removes only directories directly inside `drag-out`
+  whose name is 32 lowercase hex digits, and never follows a symbolic link. A dropped-on
+  folder is left for the sweep because the file manager may still be copying from it.
+  Extraction happens before the drag starts, so the interface should call the command as the
+  drag gesture begins. Not covered by headless tests: the native drag itself (the E2E job
+  cannot drive an OS drag; the release checklist covers it by hand on Windows and Ubuntu).
 - **CSP.** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none';
   form-action 'none'; frame-ancestors 'none'`. `connect-src` names Tauri's IPC
@@ -338,53 +362,85 @@ attach it to an issue.
 - Foreign archives (D8): opened read-only, parsed in the helper process, extracted only
   through the shared restore engine, and tested with CRC wording, never MOCHI verification wording.
   The same holds when the shell starts the app with one (T20): `launch.rs` sends a ZIP, 7z, RAR,
-  tar, or tar.gz path to the in-app open path in Rust, the window shows the foreign browser (an
+  tar, tar.gz, or tar.zst path to the in-app open path in Rust, the window shows the foreign browser (an
   encrypted archive asks for its password there, once), and the shell's "Extract here" /
   "Extract to a new folder" stay `.mochi`-only: on a foreign file they extract nothing and open it
   for browsing with a plain note.
+  **One Open (`route.rs`):** Open archive, the recent list, a dropped file, and the shell's open verb
+  all go through one router. A file that starts with the MOCHI descriptor frame is a MOCHI archive
+  whatever its name (a TAR-compatible `.mochi` is also a valid tar.zst stream, so a name cannot decide);
+  otherwise a foreign name or first bytes send it to the helper. `open_archive`, `open_recent` and
+  `open_dropped_archive` return `foreign` or `foreign_password` beside the MOCHI outcomes; foreign
+  archives are recorded in the recent list. A dropped single archive file is announced with
+  `foreign: bool` and can be opened or, with `stage_dropped_archive`, staged as an ordinary source to
+  add. `foreign_search` looks up entry names (never contents) in an open foreign archive.
 
 ## The simplified main path (D10)
 
 Owner test, 2026-10-16: nobody knew where to start, the words were technical, and create and
-extract were confusing. The window now opens on **What would you like to do?** with two
-actions (Create archive, Open archive) and a short recent list. Everything else is under
-**Advanced** (a closed `<details>`, `data-testid="advanced"`, a drawer at the bottom of the
-window): search, passphrases, test and repair, other formats, the job self-test, settings.
-Nothing was removed.
+extract were confusing. The window opens on a drop area with two actions (Create archive, Open
+archive) and a short recent list. The technical tools are in the toolbar's More menu (0.9.4: in a
+tool window; until 0.9.3 an "Advanced" drawer). Nothing was removed.
 
-### The window (WinRAR-like, minimal)
+### The window (a desktop app, almost no text; 0.9.4)
 
-Owner feedback, 2026-10-19: "too many texts; design it like WinRAR, but more minimalistic". The
-window is one fixed frame (it never scrolls; the minimum size is set where the window is built,
-`build_main` in `src-tauri/src/lib.rs`):
+Owner feedback, 2026-10-20: no scroll bar, Advanced had too much text, it should look like a
+desktop app and not a web page, as little text as possible, a music-file icon, easy drag and drop
+in and out, and a search bar in place of the result banners; explanations belong in the docs,
+not on screen. The window is one fixed frame that never scrolls (only the file list and a
+dialog's own body do, with thin scroll bars):
 
-- **Toolbar** (`role="group"`, one row of icon-over-label buttons): Add, Extract, Test, Remove,
-  Find, Info, then More and Help at the right. A button is disabled when it does not apply (no
-  archive open, nothing selected, a foreign archive is read-only); its tooltip holds the longer
-  explanation or the reason it is off. **More** is a disclosure (not a role=menu) with New archive,
-  Open and extract, Passphrases, Repair, Other formats, Settings, Self-test. **Help** opens the
-  Help panel: what an archive is not (a second copy), the keys of the file list, and the User guide.
-- **Path bar** (an archive is open): back, folders toggle, the archive name and `N versions` (a
-  button that lists them, with each version's time, retention and holds, when there is more than
-  one), the crumbs (`Version 2 / folder / folder`), and Open another archive.
-- **File list** fills the window: Name / Size / Type, compact rows, file-type icons. The folder
-  tree (path bar) and the **Info** panel (toolbar) are optional panes; narrow windows lay them over
-  the list. Info holds the selected entry's details, and the archive's technical details and
-  encrypted-archive note; for a foreign archive, the notes that it is not a MOCHI archive.
-- **Status line**: `437 items · 1 selected` (tooltip: entries in this version) and the
-  Extract-selected action.
+- **Toolbar** (`role="group"`): icons only, each with its name as hidden text and as the
+  tooltip: Open (Ctrl+O), New archive, then Add, Extract, Test, Remove; at the right the
+  **search field** (Ctrl+F), Info, More and Help. A button is disabled when it does not apply;
+  its tooltip says why. **More** holds Open and extract, Other formats, Passphrases, Repair,
+  Settings, Self-test.
+- **Tools open in a window over the list** (`shell/ToolSheet.tsx`, `data-testid="tool-sheet"`),
+  one at a time, with a close button and Escape. Every tool stays mounted, so a running test or
+  an open report is still there when the user comes back. There is no Advanced drawer any more.
+- **Dialogs.** Create, Add, Remove, Extract, and the passphrase and password prompts are small
+  dialogs over the list (`a11y/Panel.tsx`, a close button and Escape where the dialog can be left).
+  Explanations that are not a decision's own words are an "i" whose tooltip holds them
+  (`a11y/Hint.tsx`; screen readers read them as a note). What the spec requires the user to see
+  where they decide stays as text: removing keeps the content in history, removing a passphrase
+  is not revocation, what cannot be extracted and why.
+- **Path bar**: back, folders toggle, the archive name with an encrypted badge (its tooltip lists
+  what stays visible without the passphrase), the version on screen (`v3`, a button that lists the
+  versions; its tooltip is `N versions`), the crumbs, and a small `!` mark for an archive
+  condition (retention could not be determined, catalog rebuilt from a manifest) whose tooltip
+  holds the words. A foreign archive shows its format as a badge (`ZIP`), "Partial" when the
+  listing stopped early, and the ZipCrypto mark.
+- **File list**: Name / Size / Type, 26 px rows, file-type icons from a fixed table
+  (`browser/fileKind.ts`): folder, image, **music**, video, archive, code, spreadsheet, PDF, text,
+  other, link. **Multiple selection** as in a file manager: Ctrl-click toggles, Shift-click selects
+  a range (fetched from Rust, since most of it is off screen), Ctrl+A the folder, Backspace goes up,
+  Delete asks to remove, Enter or a double click opens a folder. Extract takes the selection, or
+  everything when nothing is selected; Remove takes the selection.
+- **Search** (`search/`): the toolbar field searches names (never contents) in the archive on
+  screen, as you type. MOCHI archives run the search job over the version on screen
+  (`{ scope: "commit", seq }`); foreign archives are searched in Rust over the listing the
+  helper returned (`foreign_search`). The matches replace the folder (Name / Folder / Size / Type)
+  and can be selected, extracted and dragged like entries; a double click opens the folder a match
+  is in. The status bar says `N matches` (and `coverage PARTIAL` when the search did not cover
+  everything, spec §23.3 #8); its tooltip is the full coverage.
+- **Status bar** (always there): the count and the selection on the left; on the right what a job
+  is doing (a small progress bar and a cancel button) or did (one line, Show in folder, Details,
+  dismiss), and errors. Nothing appears above the list any more.
+- **Drag and drop in**: files dropped on an open archive are added at once (one commit, no
+  dialog; only on the latest version); with nothing open they start a new archive; one dropped
+  archive opens.
+- **Drag and drop out**: drag a row (or the selection it belongs to) onto the desktop or a folder.
+  Rust extracts the entries through the normal extract path into a folder of its own under the
+  app's cache directory and starts the system drag with them (`src-tauri/src/dragout.rs`); the
+  webview names no path and has no drag or file-system permission.
 - **How the toolbar is wired.** The component that owns an action keeps its state, test ids and
-  focus handling and only draws its button into the toolbar with `ToolSlot` (`src/shell/Shell.tsx`,
-  a portal into an empty element the window provides); outside the window (a component's own
-  tests) the same buttons are drawn in place. The foreign browser draws its archive into the same
-  area (`stage` slot) and its own Extract and Test into the same buttons, so a ZIP/7z/RAR/tar looks
-  like a MOCHI archive and keeps its own labelling.
-- **Where the wording went.** An archive is not a second copy: Help (`start-note`). What deleting
-  does and what removing a passphrase does not: in the Remove and Remove-passphrase dialogs, where
-  the decision is made. A foreign archive is not a MOCHI archive and what its check covers: the
-  Info panel and the Test button's tooltip, plus the "(foreign format)" in the path bar, and the
-  partial-listing and ZipCrypto warnings stay in view. Keyboard help: Help (also the list's
-  accessible description).
+  focus handling and only draws its button into the toolbar (or the status bar) with `ToolSlot`
+  (`src/shell/Shell.tsx`, a portal into an empty element the window provides); outside the window
+  (a component's own tests) the same buttons are drawn in place. The foreign browser draws its
+  archive into the same area (`stage` slot) and its own Extract and Test into the same buttons.
+- **Where the wording went.** An archive is not a second copy, the keys and shortcuts: Help.
+  What the format's check covers: the Test button's tooltip and the test result's Details.
+  The rest is in the user guide (`docs/user`).
 
 - **Plain words, precise terms secondary.** "Version" on the main path is a snapshot (one
   commit); IDs, hashes, checkpoint/delta, and the profile are in "Technical details"
@@ -412,8 +468,8 @@ window is one fixed frame (it never scrolls; the minimum size is set where the w
   makes it; `discard_extract_folder` removes it again, only while empty, when the plan is
   closed or another folder is picked). **Choose a different folder…** keeps the dialog.
   Collisions are listed and skipped exactly as before: nothing is overwritten.
-- **Drop.** Files dropped on the window go to the create panel (or add, with an archive open);
-  one dropped `.mochi` file is held by Rust (`DropEvent::Archive`) and opened on request
+- **Drop.** Files dropped on the window go to the create panel, or straight into the open
+  archive; one dropped archive file is held by Rust (`DropEvent::Archive`) and opened on request
   (`open_dropped_archive`).
 - **Recent archives** (`recent.rs`, `recent-archives.json` in the config folder, at most
   six, cleared by "Clear this list"): the window sees file and folder names and opens an
@@ -428,6 +484,6 @@ returns a path and no `fs`, `shell`, `opener`, or `dialog` permission was added.
 ## Foreign-format helper in the installers
 
 Both installers ship `mochi-foreign-helper` next to the app (T16), so a packaged
-build opens ZIP, 7z, RAR, and tar archives. How it is built, staged, licensed, and
+build opens ZIP, 7z, RAR, tar, tar.gz, and tar.zst archives. How it is built, staged, licensed, and
 smoke-tested: `crates/mochi-foreign/README.md` "Shipping the helper". Dev runs are
 unchanged (the helper is built into `target/<profile>`).

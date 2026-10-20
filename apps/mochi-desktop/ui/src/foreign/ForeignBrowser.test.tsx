@@ -89,6 +89,10 @@ function backend(opts: { opens?: (ForeignArchiveSummary | null | Err)[]; plan?: 
   const seq = new Map<number, number>();
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
+    // The window's start-up calls (tested in their own files).
+    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null };
+    if (cmd === "watch_drops" || cmd === "watch_launches") return null;
+    if (cmd === "recent_archives") return [];
     calls.push({ cmd, args: a });
     switch (cmd) {
       case "open_foreign_archive": {
@@ -128,10 +132,20 @@ function backend(opts: { opens?: (ForeignArchiveSummary | null | Err)[]; plan?: 
 
 afterEach(() => clearMocks());
 
+/** The window, with a foreign archive opened from More, Other formats. */
+function renderWindow() {
+  return render(<Browser foreign={<ForeignBrowser />} />);
+}
+
+async function chooseOther(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId("toolbar-more"));
+  await user.click(screen.getByTestId("menu-foreign"));
+}
+
 async function openIt() {
   const user = userEvent.setup();
-  render(<ForeignBrowser />);
-  await user.click(screen.getByTestId("foreign-open"));
+  renderWindow();
+  await chooseOther(user);
   await screen.findByTestId("foreign-meta");
   return user;
 }
@@ -140,12 +154,14 @@ test("an opened archive is labelled foreign, with no MOCHI health vocabulary", a
   backend();
   await openIt();
   expect(screen.getByTestId("foreign-meta")).toHaveTextContent("photos.7z");
-  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("7z archive (foreign format)");
-  expect(screen.getByTestId("foreign-label")).toHaveTextContent("not a MOCHI archive");
-  expect(screen.getByTestId("foreign-dimensions")).toHaveTextContent(
-    "Recoverability: UNSUPPORTED · Freshness: UNSUPPORTED · Retention: UNSUPPORTED",
+  // The format is a badge; its tooltip says what it is. No textbook in the window.
+  expect(screen.getByTestId("foreign-meta").querySelector(".format-badge")).toHaveAttribute(
+    "title",
+    "7z archive (foreign format)",
   );
-  expect(screen.getByTestId("foreign-checks")).toHaveTextContent("CRC32 per entry");
+  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("(read-only)");
+  expect(screen.queryByText(/not a MOCHI archive/)).toBeNull();
+  expect(screen.queryByText(/UNSUPPORTED/)).toBeNull();
   const text = document.body.textContent?.toLowerCase() ?? "";
   for (const w of BANNED) expect(text).not.toContain(w);
   // The test button does not say "verify". Its label is one word now (the toolbar's); what the check
@@ -167,9 +183,11 @@ test("names are text only, and a refused name cannot be selected for extraction"
   const refused = entries.find((e) => e.getAttribute("data-refused") === "true");
   expect(refused).toHaveTextContent("will not be extracted");
   await user.click(refused as HTMLElement);
-  expect(screen.getByTestId("foreign-extract-selected")).toBeDisabled();
+  expect(refused).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByTestId("foreign-count")).toHaveTextContent(/^4 items$/);
   await user.click(nth(entries, 1));
-  expect(screen.getByTestId("foreign-extract-selected")).toBeEnabled();
+  expect(nth(entries, 1)).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByTestId("foreign-count")).toHaveTextContent("4 items · 1 selected");
 });
 
 test("names that are encrypted ask for the password, which is sent once and cleared", async () => {
@@ -181,8 +199,8 @@ test("names that are encrypted ask for the password, which is sent once and clea
     ],
   });
   const user = userEvent.setup();
-  render(<ForeignBrowser />);
-  await user.click(screen.getByTestId("foreign-open"));
+  renderWindow();
+  await chooseOther(user);
   const note = await screen.findByTestId("foreign-password-note");
   expect(note).toHaveTextContent("names are encrypted");
   const input = screen.getByTestId("foreign-password-input") as HTMLInputElement;
@@ -259,10 +277,13 @@ test("a read-and-check job reports the checks that ran in the format's words", a
   expect(within(status).getByTestId("foreign-headline")).toHaveTextContent(
     "Read 3 entries of the 7z archive: 1 problem.",
   );
-  const counts = within(status).getAllByTestId("foreign-check-count").map((e) => e.textContent);
+  // The checks that ran, and what failed, are in Details.
+  await user.click(screen.getByTestId("foreign-details-toggle"));
+  const details = screen.getByTestId("foreign-details");
+  const counts = within(details).getAllByTestId("foreign-check-count").map((e) => e.textContent);
   expect(counts).toEqual(["2 × CRC32 matched", "1 × CRC32 did NOT match"]);
-  expect(within(status).getByTestId("foreign-problem")).toHaveTextContent("b.txt");
-  expect(status).toHaveTextContent("does not verify the archive the way MOCHI verifies its own");
+  expect(within(details).getByTestId("foreign-problem")).toHaveTextContent("b.txt");
+  expect(details).toHaveTextContent("does not verify the archive the way MOCHI verifies its own");
   expect(status).not.toHaveTextContent(/\bPASS\b/);
   const text = document.body.textContent?.toLowerCase() ?? "";
   for (const w of ["backed up", "backup", "preserved", "secure"]) expect(text).not.toContain(w);
@@ -312,7 +333,7 @@ test("extraction shows what cannot be extracted first, then skips it and lists w
   const status = await screen.findByTestId("foreign-status");
   expect(status).toHaveTextContent("Extracted 2 files");
   expect(status).toHaveTextContent("1 entry was not extracted");
-  expect(within(status).getByTestId("foreign-not-extracted-item")).toHaveTextContent("../evil");
+  expect(screen.getByTestId("foreign-not-extracted-item")).toHaveTextContent("../evil");
 });
 
 test("extracting the selected entry sends its key; cancelling is offered while it runs", async () => {
@@ -325,7 +346,7 @@ test("extracting the selected entry sends its key; cancelling is offered while i
   const user = await openIt();
   const entries = await screen.findAllByTestId("foreign-entry");
   await user.click(nth(entries, 1));
-  await user.click(screen.getByTestId("foreign-extract-selected"));
+  await user.click(screen.getByTestId("foreign-extract-all"));
   await screen.findByTestId("foreign-plan");
   await user.click(screen.getByTestId("foreign-extract-confirm"));
   await waitFor(() =>
@@ -345,17 +366,13 @@ test("extracting the selected entry sends its key; cancelling is offered while i
   expect(await screen.findByTestId("foreign-headline")).toHaveTextContent("Cancelled");
 });
 
-test("an archive opened while the Advanced area is collapsed shows in the main window, and rows get icons from a fixed set", async () => {
+test("an opened archive fills the window, and rows get icons from a fixed set", async () => {
   backend();
   const user = userEvent.setup();
-  const { container } = render(<Browser tools={<ForeignBrowser />} />);
-  const area = screen.getByTestId("advanced");
-  expect(area).not.toHaveAttribute("open");
-  await user.click(screen.getByTestId("foreign-open"));
+  const { container } = renderWindow();
+  await chooseOther(user);
   await screen.findAllByTestId("foreign-entry");
-  // The archive is drawn in the window's own area (the start screen steps aside), not inside the closed tools drawer.
-  expect(area).not.toHaveAttribute("open");
-  expect(area.contains(screen.getByTestId("foreign-meta"))).toBe(false);
+  // The archive is drawn in the window's own area; the start screen steps aside.
   expect(screen.queryByTestId("start-screen")).toBeNull();
   const entries = screen.getAllByTestId("foreign-entry");
   expect(entries.map((e) => e.querySelector(".type")?.textContent)).toEqual(["Folder", "TXT", "File", "File"]);

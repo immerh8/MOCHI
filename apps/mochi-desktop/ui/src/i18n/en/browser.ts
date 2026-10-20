@@ -1,7 +1,11 @@
 // The archive browser (plan D1): open, timeline, folder tree, list, details.
 export const browser = {
   "browser.heading": "Archive",
-  "browser.open": "Open another archive…",
+  "browser.versionShort": "v{seq}",
+  "browser.aboutArchive": "About this archive",
+  "browser.dragFailed": "Could not drag out",
+  "browser.colFolder": "Folder",
+  "browser.open": "Open",
   "browser.close": "Close",
     "browser.openFailed": "Could not open the archive",
   "browser.listFailed": "Could not list",
@@ -23,8 +27,6 @@ export const browser = {
   "browser.retentionExpired": "expired",
   "browser.retentionNotRetained": "not retained",
   "browser.retentionSeparator": ", ",
-  "browser.encryptedSummary": "Encrypted archive: what is sealed and what stays visible",
-  "browser.visibleWithoutKeyIntro": "Visible to anyone who has the file, without the passphrase:",
   "browser.retentionError":
     "Retention could not be determined ({code}): {message}",
   "browser.catalogRebuilt":
@@ -50,10 +52,7 @@ export const browser = {
   "browser.colName": "Name",
   "browser.colSize": "Size",
   "browser.colType": "Type",
-  "browser.back": "Close this archive and go back",
-  "browser.search": "Search inside this archive",
   "browser.paneFolders": "Folders",
-  "browser.details": "Details",
   "browser.detailPath": "Path",
   "browser.detailKind": "Kind",
   "browser.detailSize": "Size",
@@ -67,6 +66,4 @@ export const browser = {
   "browser.detailModified": "Modified",
   "browser.detailAttributes": "Attributes",
   "browser.detailAttributesError": "Not available ({code}): {message}",
-  "browser.detailsNote":
-    "Browsing reads the archive's catalog, which was hash-checked when the snapshot was opened. It does not read or check file content.",
 } as const;

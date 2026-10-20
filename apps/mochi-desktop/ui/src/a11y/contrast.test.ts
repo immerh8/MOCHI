@@ -104,7 +104,7 @@ test("focus is always drawn, and nothing turns the outline off", () => {
   expect(css).not.toMatch(/outline:\s*(none|0)\b/);
 });
 
-test.each(["icon-folder", "icon-image", "icon-sheet", "icon-pdf"])(
+test.each(["icon-folder", "icon-image", "icon-audio", "icon-video", "icon-archive", "icon-code", "icon-sheet", "icon-pdf"])(
   "the file-type icon colour --%s reaches 3:1 on every surface, and none is the pass green",
   (name) => {
     for (const surface of SURFACES) {

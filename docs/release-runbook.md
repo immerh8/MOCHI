@@ -202,6 +202,7 @@ WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, st
 4. **More > Open and extract…** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Press the toolbar's **Extract** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
 5. Close the archive. **Pass:** the start screen lists the archives you opened under **Recent archives**; one click reopens one; **Clear this list** empties it.
 6. Keyboard only (Tab, Enter): **Pass:** the toolbar (including **More** and its items), both start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
+7. Drag out (the archive list to Explorer; WebDriver cannot drive an operating-system drag). Open `Ärchive & ço.mochi`, select a file inside a sub-folder and a folder, drag them onto the desktop. **Pass:** the file appears on the desktop under its own name only (not inside its sub-folders), the folder appears with what is in it, and the archive is unchanged. Start a drag and press Esc: **Pass:** nothing appears, and the drag-out folder under `%LOCALAPPDATA%\<app id>\drag-out` for that drag is gone. Repeat with an open `.zip`. **Fail:** a path or an error naming a temporary folder in the window.
 
 ---
 
@@ -289,6 +290,7 @@ Done by <you> on <date>
 | W-07 foreign opt-in, each format, passwords, hostile names, `.zip` default unchanged |  | AUTO | N/A | N/A |
 | W-08 NVDA N-1 to N-5 |  | not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 |
 | W-09 contrast, 200 %, 1280×720 |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
+| W-09a step 7 drag out to Explorer / the file manager, Esc cleans up |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | X-1 start-up check off: no request |  | not run on client hardware for 1.0 | same | same |
 | X-2 on: one request |  | same | same | same |
 | X-3 network off message |  | same | same | same |

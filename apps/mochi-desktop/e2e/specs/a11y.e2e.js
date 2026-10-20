@@ -18,6 +18,22 @@ const active = () =>
     };
   });
 
+/** More, then Tab to Repair and Enter: the test and repair tool opens with focus on its heading. */
+async function openRepairByKeyboard() {
+  await tabTo("toolbar-more", { back: true }).catch(() => tabTo("toolbar-more"));
+  await browser.keys(["Enter"]);
+  for (let i = 0; i < 12; i++) {
+    if ((await active()).testid === "menu-repair") break;
+    await browser.keys(["Tab"]);
+  }
+  expect((await active()).testid).toBe("menu-repair");
+  await browser.keys(["Enter"]);
+  await $('[data-testid="tool-sheet"]').waitForDisplayed();
+  const now = await active();
+  expect(now.id).toBe("check-heading");
+  expect(now.tag).toBe("H2");
+}
+
 /** Press Tab (or Shift+Tab) until focus is on `testid`; fail if it never gets there. */
 async function tabTo(testid, { back = false, max = 160 } = {}) {
   for (let i = 0; i < max; i++) {
@@ -28,7 +44,7 @@ async function tabTo(testid, { back = false, max = 160 } = {}) {
 }
 
 describe("keyboard-only use", () => {
-  it("starts at the top of the page: the toolbar's More and Help, then the two start actions", async () => {
+  it("starts at the top of the page: the toolbar's Open, New, More and Help, then the two start actions", async () => {
     await $('[data-testid="start-screen"]').waitForExist();
     // WebView2 keeps its own sequential-focus starting point, so the first Tab of
     // a fresh session does not always begin at the top. Clicking the page title
@@ -36,12 +52,16 @@ describe("keyboard-only use", () => {
     // keyboard does everything after that.
     await $("h1").click();
     await browser.keys(["Tab"]);
-    // The toolbar comes first; with no archive open its archive actions are off (not tab stops),
-    // so the first stops are More and Help.
+    // The toolbar comes first; with no archive open its archive actions and the search
+    // field are off (not tab stops), so the first stops are Open, New archive, More and Help.
     const first = await active();
     expect(first.tag).toBe("BUTTON");
-    expect(first.testid).toBe("toolbar-more");
-    expect(first.text).toContain("More");
+    expect(first.testid).toBe("toolbar-open");
+    expect(first.text).toContain("Open");
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("new-archive");
+    await browser.keys(["Tab"]);
+    expect((await active()).testid).toBe("toolbar-more");
     await browser.keys(["Tab"]);
     expect((await active()).testid).toBe("toolbar-help");
     await browser.keys(["Tab"]);
@@ -58,29 +78,11 @@ describe("keyboard-only use", () => {
     expect(first.outlineWidth).toBe("3px");
   });
 
-  it("the Advanced tools open from the keyboard, and a section button moves focus to its heading", async () => {
-    // Tab to the Advanced disclosure and open it with Enter.
-    for (let i = 0; i < 30; i++) {
-      const here = await active();
-      if (here.tag === "SUMMARY") break;
-      await browser.keys(["Tab"]);
-    }
-    const summary = await active();
-    expect(summary.tag).toBe("SUMMARY");
-    expect(summary.text).toContain("Advanced");
-    await browser.keys(["Enter"]);
-    await $('[data-testid="advanced"] nav').waitForDisplayed();
-    // Walk the buttons with Tab until the one for the test and repair section.
-    for (let i = 0; i < 12; i++) {
-      const here = await active();
-      if (here.text === "Test, health, and repair") break;
-      await browser.keys(["Tab"]);
-    }
-    expect((await active()).text).toBe("Test, health, and repair");
-    await browser.keys(["Enter"]);
-    const now = await active();
-    expect(now.id).toBe("check-heading");
-    expect(now.tag).toBe("H2");
+  it("the More menu's tools open from the keyboard in their own window, and Escape closes it", async () => {
+    await openRepairByKeyboard();
+    await browser.keys(["Escape"]);
+    await $('[data-testid="tool-sheet"]').waitForDisplayed({ reverse: true });
+    expect((await active()).testid).toBe("toolbar-more");
   });
 
   it("opens an archive from the keyboard and reaches the list with one Tab stop", async () => {
@@ -129,27 +131,23 @@ describe("keyboard-only use", () => {
   });
 
   it("an opened panel takes focus, and Close gives it back to the button that opened it", async () => {
-    // New archive is in the More menu: open it by keyboard and take its first item.
-    await tabTo("toolbar-more", { back: true });
-    await browser.keys(["Enter"]);
-    await browser.keys(["Tab"]);
-    expect((await active()).testid).toBe("new-archive");
+    // New archive is a toolbar button.
+    await tabTo("new-archive", { back: true });
     await browser.keys(["Enter"]);
     await $('[data-testid="write-panel"]').waitForExist();
     const inPanel = await active();
     expect(inPanel.tag).toBe("H3");
     expect(inPanel.text).toBe("Create a new archive");
     // Tab leaves the heading for the panel's controls: no trap, no skipped content.
-    await browser.keys(["Tab"]);
-    expect((await active()).testid).toBe("stage-files");
+    await tabTo("stage-files", { max: 4 });
     await tabTo("write-close");
     await browser.keys(["Enter"]);
     await $('[data-testid="write-panel"]').waitForExist({ reverse: true });
-    // Choosing from the menu closed it and left focus on the More button, where the panel gives it back.
-    expect((await active()).testid).toBe("toolbar-more");
+    expect((await active()).testid).toBe("new-archive");
   });
 
   it("tests the open archive from the keyboard; the result is announced and focus stays put", async () => {
+    await openRepairByKeyboard();
     await tabTo("check-use-open");
     await browser.keys(["Enter"]);
     await $('[data-testid="check-subject"]').waitForExist();
@@ -177,6 +175,8 @@ describe("keyboard-only use", () => {
     for (const [id, role, live] of regions) {
       expect([id, role, live]).toEqual([id, "status", "polite"]);
     }
+    await browser.keys(["Escape"]);
+    await $('[data-testid="tool-sheet"]').waitForDisplayed({ reverse: true });
   });
 
   it("the whole tab cycle has no trap: Tab reaches the end of the page and wraps", async () => {

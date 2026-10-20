@@ -15,9 +15,10 @@ use crate::foreign::Foreign;
 use crate::ipc::{
     ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView, DropEvent,
     EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
-    ForeignExtractPlan, HealthView, IpcError, JobEvent, JobId, JobRequest, OpenOutcome, PathKey,
-    PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret, ShowTarget, SnapshotView,
-    SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource, SubjectView,
+    ForeignExtractPlan, ForeignSearchResult, HealthView, IpcError, JobEvent, JobId, JobRequest,
+    OpenOutcome, PathKey, PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret,
+    ShowTarget, SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource,
+    SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
@@ -87,19 +88,37 @@ async fn blocking<T: Send + 'static>(
         .map_err(IpcError::from)
 }
 
+/// Run `work` on the blocking pool and wait for it (the work reports an
+/// [`IpcError`] itself).
+async fn blocking_ipc<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
+) -> Result<T, IpcError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| IpcError {
+            code: mochi_core::ErrorCode::Cancelled.as_str().to_owned(),
+            message: "the operation stopped before it finished".to_owned(),
+        })?
+}
+
 /// Ask the user for an archive in the native open dialog (in Rust; the
-/// webview never names a path) and open it read-only. An Encrypted archive
-/// waits in Rust for `unlock_archive` (D5). `null` if the user cancelled the
-/// dialog.
+/// webview never names a path) and open it read-only: a MOCHI archive, or a
+/// ZIP, 7z, RAR, tar, tar.gz or tar.zst archive (`crate::route`; a file that
+/// starts like a MOCHI archive is one whatever its name). An Encrypted MOCHI
+/// archive waits in Rust for `unlock_archive` (D5); a foreign archive that
+/// needs a password is `foreign_password` and is retried with
+/// `open_foreign_archive`. `null` if the user cancelled the dialog.
 #[tauri::command]
 pub async fn open_archive(
     app: AppHandle,
     archives: State<'_, Arc<Archives>>,
+    foreign: State<'_, Arc<Foreign>>,
 ) -> Result<Option<OpenOutcome>, IpcError> {
     let archives = Arc::clone(&archives);
-    blocking(move || match crate::picker::pick_archive(&app) {
+    let foreign = Arc::clone(&foreign);
+    blocking_ipc(move || match crate::picker::pick_archive(&app) {
         None => Ok(None),
-        Some(path) => archives.open_or_pend(&path).map(Some),
+        Some(path) => crate::route::open_path(&archives, &foreign, &path).map(Some),
     })
     .await
 }
@@ -116,44 +135,61 @@ pub fn forget_recent_archives(recents: State<'_, Arc<Recents>>) {
     recents.clear();
 }
 
-/// Open entry `index` of the recent list. The window names no path.
+/// Open entry `index` of the recent list, a MOCHI or a foreign archive
+/// (both are recorded). The window names no path.
 #[tauri::command]
 pub async fn open_recent(
     index: u32,
     recents: State<'_, Arc<Recents>>,
     archives: State<'_, Arc<Archives>>,
+    foreign: State<'_, Arc<Foreign>>,
 ) -> Result<OpenOutcome, IpcError> {
     let recents = Arc::clone(&recents);
     let archives = Arc::clone(&archives);
-    blocking(move || {
+    let foreign = Arc::clone(&foreign);
+    blocking_ipc(move || {
         let path = usize::try_from(index)
             .ok()
             .and_then(|i| recents.get(i))
-            .ok_or_else(|| {
-                mochi_core::MochiError::new(
-                    mochi_core::ErrorCode::InvalidArgument,
-                    "that archive is no longer in the recent list",
-                )
+            .ok_or_else(|| IpcError {
+                code: mochi_core::ErrorCode::InvalidArgument.as_str().to_owned(),
+                message: "that archive is no longer in the recent list".to_owned(),
             })?;
-        archives.open_or_pend(&path)
+        crate::route::open_path(&archives, &foreign, &path)
     })
     .await
 }
 
-/// Open the `.mochi` file just dropped on the window (`DropEvent::Archive`).
-/// `null` if there is none waiting.
+/// Open the archive file just dropped on the window (`DropEvent::Archive`): a
+/// `.mochi` file or a foreign archive, routed as `open_archive` routes. `null`
+/// if there is none waiting.
 #[tauri::command]
 pub async fn open_dropped_archive(
     staging: State<'_, Arc<Staging>>,
     archives: State<'_, Arc<Archives>>,
+    foreign: State<'_, Arc<Foreign>>,
 ) -> Result<Option<OpenOutcome>, IpcError> {
     let staging = Arc::clone(&staging);
     let archives = Arc::clone(&archives);
-    blocking(move || match staging.take_dropped_archive() {
+    let foreign = Arc::clone(&foreign);
+    blocking_ipc(move || match staging.take_dropped_archive() {
         None => Ok(None),
-        Some(path) => archives.open_or_pend(&path).map(Some),
+        Some(path) => crate::route::open_path(&archives, &foreign, &path).map(Some),
     })
     .await
+}
+
+/// Stage the archive file just dropped on the window as an ordinary source to
+/// add, instead of opening it (the window uses this when a MOCHI archive is
+/// open and the user drops, say, a ZIP to store it). The file is the one Rust
+/// holds for `DropEvent::Archive`; the window names no path. An error if none
+/// is waiting or it cannot be staged.
+#[tauri::command]
+pub async fn stage_dropped_archive(
+    staging: State<'_, Arc<Staging>>,
+) -> Result<StagedView, IpcError> {
+    let staging = Arc::clone(&staging);
+    blocking_ipc(move || staging.stage_dropped_archive()).await
 }
 
 /// Show a folder in the operating system's file manager.
@@ -546,7 +582,7 @@ pub async fn repair_setup(
     .await
 }
 
-/// Open a ZIP, 7z, RAR, tar or tar.gz archive read-only (D8). Rust shows the
+/// Open a ZIP, 7z, RAR, tar, tar.gz or tar.zst archive read-only (D8). Rust shows the
 /// native dialog, so the webview names no path. `retry` re-uses the file whose
 /// password was asked for last (kept in Rust) instead of showing the dialog
 /// again; `password` is used for this call and kept in the open session only.
@@ -600,6 +636,21 @@ pub async fn foreign_children(
 ) -> Result<ForeignChildrenPage, IpcError> {
     let foreign = Arc::clone(&foreign);
     blocking(move || foreign.children(handle, dir.as_deref(), offset, limit)).await
+}
+
+/// Search the names of every entry of an open foreign archive for `query`
+/// (a byte substring of the full path; ASCII case folded when `ignore_case`).
+/// Names only, never contents. At most 1000 hits come back; the total is
+/// always given.
+#[tauri::command]
+pub async fn foreign_search(
+    handle: ArchiveHandle,
+    query: String,
+    ignore_case: bool,
+    foreign: State<'_, Arc<Foreign>>,
+) -> Result<ForeignSearchResult, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    blocking(move || foreign.search(handle, &query, ignore_case)).await
 }
 
 /// Plan extracting `keys` of a foreign archive: optionally show the native

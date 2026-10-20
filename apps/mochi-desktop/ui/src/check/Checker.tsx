@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Hint } from "../a11y/Hint";
 
 import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
@@ -363,7 +364,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
 
       <fieldset disabled={busy || subject === null}>
         <legend>{t("check.testLegend")}</legend>
-        <p className="note">{TEST_NOTE}</p>
+        <Hint text={TEST_NOTE} />
         <label>
           {t("check.level")}{" "}
           <select data-testid="check-level" value={level} onChange={(e) => setLevel(e.target.value as CheckLevel)}>
@@ -374,7 +375,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
             ))}
           </select>
         </label>{" "}
-        <span className="meta">{LEVELS.find((l) => l.level === level)?.detail}</span>
+        <Hint text={LEVELS.find((l) => l.level === level)?.detail ?? ""} />
         <div>
           <label>
             <input type="checkbox" data-testid="check-deep" checked={deep} onChange={(e) => setDeep(e.target.checked)} />{" "}
@@ -438,8 +439,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
 
       <fieldset disabled={busy || subject === null} data-testid="repair">
         <legend>{t("check.repairLegend")}</legend>
-        <p className="note">{t("check.repairIntro")}</p>
-        <p>{t("check.copiesIntro")}</p>
+        <Hint text={[t("check.repairIntro"), t("check.copiesIntro")]} />
         {setup.copies.length > 0 && (
           <ul className="staged" aria-label={t("check.copies")}>
             {keyed(setup.copies, (c) => c).map(({ key, item: c, index }) => (
@@ -500,7 +500,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
       {plan && plan.outcome !== "nothing_recoverable" && (
         <div className="panel" data-testid="repair-approve-panel" role="group" aria-label={t("check.approveGroup")}>
           <h3>{t("check.approveHeading")}</h3>
-          <p className="note">{APPROVAL_NOTE}</p>
+          <Hint text={APPROVAL_NOTE} />
           <div className="actions">
             <button
               type="button"
@@ -581,7 +581,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
           {result.durability_note && (
             <p className="warning">{t("check.durabilityDegraded", { note: result.durability_note })}</p>
           )}
-          <p className="note">{SOURCE_KEPT_NOTE}</p>
+          <Hint text={SOURCE_KEPT_NOTE} />
           <div className="actions">
             <button type="button" data-testid="repair-test-new" onClick={() => void testNewArchive()} disabled={busy}>
               {t("check.testNew")}
@@ -624,7 +624,7 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
       <p data-testid="repair-plan-line">
         <strong>{planLine(p)}</strong>
       </p>
-      <p className="note">{PLAN_NOTE}</p>
+      <Hint text={PLAN_NOTE} />
       <dl className="report-facts">
         <dt>{t("check.head")}</dt>
         <dd>

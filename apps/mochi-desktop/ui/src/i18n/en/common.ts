@@ -22,7 +22,6 @@ export const common = {
   "common.progress": "Progress",
   "common.progressStep": "Step {completed}",
   "common.progressStepOf": "Step {completed} of {total}",
-  "common.nameSeparator": " / ",
   "common.itemOne": "{n} item",
   "common.itemMany": "{n} items",
   "common.selectedCount": "{n} selected",

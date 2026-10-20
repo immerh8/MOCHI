@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, $$, expect } from "@wdio/globals";
-import { closeInfo, openInfo, openMore } from "./_ui.js";
+import { closeInfo, closeResultDetails, openInfo, openMore, openResultDetails } from "./_ui.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const foreign = path.resolve(here, "../../../../fixtures/foreign");
@@ -67,18 +67,14 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
   it("opens a ZIP labelled as a foreign format, with no MOCHI health vocabulary", async () => {
     await openForeign(path.join(foreign, "basic_infozip.zip"));
     await $('[data-testid="foreign-meta"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="foreign-meta"]')).toHaveText(
-      expect.stringContaining("ZIP archive (foreign format)"),
+    // The format is a badge in the path bar; what it means is its tooltip, not text on screen.
+    await expect($('[data-testid="foreign-meta"]')).toHaveText(expect.stringContaining("ZIP"));
+    await expect($('[data-testid="foreign-meta"] .format-badge')).toHaveAttribute(
+      "title",
+      "ZIP archive (foreign format)",
     );
-    // What the app says about the format is in the Info panel, which the toolbar's Info opens.
     await openInfo();
-    await expect($('[data-testid="foreign-label"]')).toHaveText(
-      expect.stringContaining("not a MOCHI archive"),
-    );
-    await expect($('[data-testid="foreign-dimensions"]')).toHaveText(
-      "Recoverability: UNSUPPORTED · Freshness: UNSUPPORTED · Retention: UNSUPPORTED",
-    );
-    await expect($('[data-testid="foreign-checks"]')).toHaveText(expect.stringContaining("CRC32"));
+    expect((await $("body").getText()).includes("UNSUPPORTED")).toBe(false);
     await closeInfo();
     await browser.waitUntil(async () => (await entryNames()).includes("a.txt"));
     expect(await entryNames()).toEqual(["empty", "sub", "a.txt"]);
@@ -101,14 +97,32 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     await expect($('[data-testid="foreign-crumbs"]')).toHaveText(expect.stringContaining("sub"));
   });
 
+  it("finds names anywhere in the archive from the toolbar's search field", async () => {
+    const field = await $('[data-testid="search-query"]');
+    await field.setValue("b.txt");
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => (await $$('[data-testid="search-hit"]')).length === 1, {
+      timeout: 30_000,
+      timeoutMsg: "the foreign search found no hit",
+    });
+    await expect($('[data-testid="search-hit"]')).toHaveText(expect.stringContaining("b.txt"));
+    await expect($('[data-testid="foreign-count"]')).toHaveText("1 match");
+    await $('[data-testid="search-clear"]').click();
+    await browser.waitUntil(async () => (await entryNames()).includes("b.txt"));
+  });
+
   it("reads and checks every entry and reports the check that ran, not a verification", async () => {
     await press("foreign-test");
     await waitForStatus("completed");
     const status = await $('[data-testid="foreign-status"]').getText();
     expect(status).toContain("Read 3 entries of the ZIP archive: 0 problems.");
-    expect(status).toContain("2 × CRC32 matched");
-    expect(status).toContain("does not verify the archive the way MOCHI verifies its own");
     expect(status).not.toMatch(/\bPASS\b/);
+    // The checks that ran are in the Details panel.
+    await openResultDetails("foreign");
+    const details = await $('[data-testid="foreign-details"]').getText();
+    expect(details).toContain("2 × CRC32 matched");
+    expect(details).toContain("does not verify the archive the way MOCHI verifies its own");
+    await closeResultDetails("foreign");
     await assertNoBannedWording();
   });
 
@@ -124,9 +138,11 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     expect(readFileSync(path.join(out, "a.txt"), "utf8")).toBe("hello\n");
     expect(readFileSync(path.join(out, "sub", "b.txt"), "utf8")).toBe("second file\n".repeat(50));
     expect(existsSync(path.join(out, "empty"))).toBe(true);
-    const status = await $('[data-testid="foreign-status"]').getText();
-    expect(status).toContain("CRC32 matched");
-    expect(status).toContain("not a verification");
+    await openResultDetails("foreign");
+    const details = await $('[data-testid="foreign-details"]').getText();
+    expect(details).toContain("CRC32 matched");
+    expect(details).toContain("not a verification");
+    await closeResultDetails("foreign");
     expect(readdirSync(out).some((n) => n.includes(".mochi-restore."))).toBe(false);
     await assertNoBannedWording();
   });
@@ -134,7 +150,7 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
   it("opens a 7z, tests it, and extracts it byte for byte", async () => {
     await openForeign(path.join(foreign, "7z", "basic.7z"));
     await browser.waitUntil(
-      async () => (await $('[data-testid="foreign-meta"]').getText()).includes("7z archive (foreign format)"),
+      async () => (await $('[data-testid="foreign-meta"]').getText()).includes("basic.7z"),
       { timeout: 60_000 },
     );
     await press("foreign-test");
@@ -168,9 +184,10 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     );
     await $('[data-testid="foreign-password-input"]').setValue("SECRET");
     await press("foreign-password-submit");
-    await browser.waitUntil(
-      async () => (await $('[data-testid="foreign-meta"]').getText()).includes("opened with a password"),
-      { timeout: 60_000 },
+    await $('[data-testid="foreign-password-badge"]').waitForExist({ timeout: 60_000 });
+    await expect($('[data-testid="foreign-password-badge"]')).toHaveAttribute(
+      "title",
+      expect.stringContaining("opened with a password"),
     );
     await browser.waitUntil(async () => (await entryNames()).includes("a.txt"));
   });
@@ -192,6 +209,7 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     await press("foreign-extract-confirm"); // "Extract the rest, skipping these"
     await waitForStatus("completed");
     expect(readdirSync(parent)).toEqual(before);
+    await openResultDetails("foreign");
     const skipped = await $('[data-testid="foreign-not-extracted"]').getText();
     expect(skipped).toContain("../evil.txt");
     expect(skipped).toContain("/abs/path.txt");

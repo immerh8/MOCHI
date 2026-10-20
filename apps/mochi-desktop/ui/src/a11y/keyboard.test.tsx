@@ -254,22 +254,21 @@ test("a wrong passphrase leaves focus in the passphrase field with the error att
   await waitFor(() => expect(screen.queryByTestId("unlock-panel")).toBeNull());
 });
 
-test("the section buttons move focus to a heading, so a keyboard user can skip ahead", async () => {
+test("a tool from the More menu opens in its own window and takes focus on its heading", async () => {
   backend();
   const user = userEvent.setup();
   render(<App />);
-  const nav = screen.getByRole("navigation", { name: "Sections" });
-  const link = nav.querySelector<HTMLButtonElement>('button[data-target="check-heading"]');
-  expect(link).not.toBeNull();
-  link?.focus();
+  screen.getByTestId("toolbar-more").focus();
   await user.keyboard("{Enter}");
+  screen.getByTestId("menu-repair").focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByTestId("tool-sheet")).toBeVisible();
   expect(focused()).toBe(document.getElementById("check-heading"));
   expect(focused()).toHaveTextContent("Test, health, and repair");
-  // Every section is reachable, and every button has a target. No anchors at all.
-  for (const b of nav.querySelectorAll("button")) {
-    const id = b.getAttribute("data-target") ?? "";
-    expect(document.getElementById(id), `target of ${b.textContent}`).not.toBeNull();
-  }
+  // Escape closes it and gives focus back to More. No anchors at all.
+  await user.keyboard("{Escape}");
+  expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
+  expect(focused()).toBe(screen.getByTestId("toolbar-more"));
   expect(document.querySelectorAll("a[href]")).toHaveLength(0);
 });
 
@@ -277,7 +276,7 @@ test("results and progress have live regions that exist before they are used", a
   backend();
   const user = userEvent.setup();
   render(<App />);
-  const regions = ["write-status", "search-coverage", "check-status", "report-exported", "crash-status"];
+  const regions = ["write-status", "check-status", "report-exported", "crash-status"];
   // Errors are alerts, which assistive technology announces at once.
   expect(screen.queryAllByRole("alert")).toHaveLength(0);
   // The extract section exists once an archive is open.
@@ -313,6 +312,7 @@ test("the self-test progress bar has a name and a spoken value", async () => {
   });
   const user = userEvent.setup();
   render(<App />);
+  await openSelfTest(user);
   await user.click(screen.getByTestId("start"));
   const bar = await screen.findByTestId("progress");
   expect(bar).toHaveAccessibleName("Progress");
@@ -361,10 +361,17 @@ function spyOnFocus() {
   return { given, stop: () => (HTMLElement.prototype.focus = original) };
 }
 
+/** Open the self-test from the More menu, as a person would. */
+async function openSelfTest(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId("toolbar-more"));
+  await user.click(screen.getByTestId("menu-self-test"));
+}
+
 test("when a job ends, focus goes back to the button that started it", async () => {
   const finish = jobBackend();
   const user = userEvent.setup();
   render(<App />);
+  await openSelfTest(user);
   const start = screen.getByTestId("start");
   start.focus();
   const spy = spyOnFocus();
@@ -386,13 +393,14 @@ test("…but focus the user moved elsewhere in the meantime is left alone", asyn
   const finish = jobBackend();
   const user = userEvent.setup();
   render(<App />);
+  await openSelfTest(user);
   const start = screen.getByTestId("start");
   start.focus();
   await user.keyboard("{Enter}");
   finish({ event: "started", job_id: 1 });
   loseFocus();
-  const link = screen.getByRole("navigation", { name: "Sections" }).querySelector("button");
-  link?.focus();
+  const link = screen.getByTestId("tool-sheet-close");
+  link.focus();
   const spy = spyOnFocus();
   try {
     finish({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "done" } });

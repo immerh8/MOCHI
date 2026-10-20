@@ -35,6 +35,7 @@ WinZip or 7-Zip; that is listed under Not done in the plan status.
 | `basic.tar`, `basic.tar.gz` | GNU tar: `d/`, `a.txt`, `d/b.txt` | no per-entry check; gzip stream CRC |
 | `pax.tar`, `longname_gnu.tar` | 301-byte pax path, 304-byte GNU long name | long names complete |
 | `traversal.tar` | `../evil.txt`, `/abs/path.txt`, `a/../../b.txt`, a symlink escaping, a hard link, a char device, a FIFO, `CON`, `Dup.txt`/`dup.txt` | names/kinds/link targets carried as found |
+| `basic.tar.zst` | `basic.tar` through libzstd 1.5.7 (the `zstd` crate), level 19, content checksum on; fuzz seed, not in `CORPUS.sha256` | zstd frame checksum |
 | `bomb_ratio.tar.gz` | 8 MiB of zeros in a tar in 8 KiB of gzip | ratio / total / entry-size limits mid-stream |
 | `bomb_count.tar`, `bomb_count.tar.gz` | 300 empty files | entry-count limit |
 | `gz_crc_corrupt.tar.gz` | trailer CRC-32 byte flipped | whole-stream check fails; entries not vouched |

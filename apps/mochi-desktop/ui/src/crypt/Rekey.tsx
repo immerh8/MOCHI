@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Hint } from "../a11y/Hint";
 
 import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
@@ -189,7 +190,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
               <p className="warning" data-testid="not-revocation">
                 {REMOVE_NOT_REVOCATION}
               </p>
-              <p className="note">{t("rekey.removeIntro")}</p>
+              <Hint text={t("rekey.removeIntro")} />
               <ul>
                 {envelopes.map((e) => (
                   <li key={e.envelope_id}>

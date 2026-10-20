@@ -6,6 +6,7 @@
 // The log itself is written by the panic hook, which the Rust tests cover; the
 // app has no way to panic on request, and none is added for a test.
 import { $, expect } from "@wdio/globals";
+import { openTool } from "./_ui.js";
 
 const enabled = () => $('[data-testid="crash-enabled"]');
 const details = () => $('[data-testid="crash-details"]');
@@ -34,6 +35,8 @@ describe("crash reports (opt-in, local)", () => {
     await browser.waitUntil(async () => details().isSelected());
 
     await browser.refresh();
+    // A reload starts with the tool window closed: open Settings again.
+    await openTool("start-settings");
     await $('[data-testid="crash-state"]').waitForExist();
     await browser.waitUntil(async () => enabled().isSelected(), { timeoutMsg: "the choice was not kept" });
     expect(await details().isSelected()).toBe(true);

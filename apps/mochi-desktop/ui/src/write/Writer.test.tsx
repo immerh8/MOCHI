@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -91,6 +91,9 @@ function backend(opts: { destination?: string | null; defaultDestination?: strin
       case "unstage_source":
         staged = staged.filter((_, i) => i !== a.index);
         return view();
+      case "stage_dropped_archive":
+        staged = [...staged, { name: { text: "photos.zip", verbatim: true }, kind: "file" }];
+        return view();
       case "clear_staged":
         staged = [];
         destination = null;
@@ -149,7 +152,7 @@ afterEach(() => clearMocks());
 function renderWriter(props: Partial<WriterProps> = {}) {
   const onCommitted = props.onCommitted ?? (() => undefined);
   return render(
-    <Writer archive={null} viewingHead selected={null} {...props} onCommitted={onCommitted} />,
+    <Writer archive={null} viewingHead selected={[]} {...props} onCommitted={onCommitted} />,
   );
 }
 
@@ -205,7 +208,7 @@ test("with a default place there is no dialog: one click creates, and the place 
   await user.click(screen.getByTestId("stage-folder"));
   await screen.findByTestId("staged-list");
   expect(screen.getByTestId("save-location")).toHaveTextContent("/home/me/photos.mochi");
-  expect(screen.getByTestId("create-step-where")).toHaveTextContent("An existing file is never replaced");
+  expect(screen.getByTestId("save-location").getAttribute("title")).toContain("An existing file is never replaced");
   await user.click(screen.getByTestId("create-confirm"));
   await screen.findByTestId("write-running");
   expect(b.cmds()).not.toContain("choose_destination");
@@ -221,9 +224,8 @@ test("Change… shows the save dialog and the chosen name replaces the default",
   await screen.findByTestId("staged-list");
   expect(screen.getByTestId("change-destination")).toBeEnabled();
   await user.click(screen.getByTestId("change-destination"));
-  await screen.findByText(/Saved as/);
+  await waitFor(() => expect(screen.getByTestId("save-location").getAttribute("title")).toMatch(/^Saved as .*\.mochi/));
   expect(b.cmds()).toContain("choose_destination");
-  expect(screen.getByTestId("save-location")).toHaveTextContent(/Saved as .*\.mochi/);
 });
 
 test("the TAR option names itself and states its trade-offs", async () => {
@@ -427,7 +429,7 @@ test("a removal says in one line that earlier versions keep the content, and the
   const user = userEvent.setup();
   const b = backend();
   const archive = summary(3, 2);
-  renderWriter({ archive, selected: { key: "6162", name: { text: "x", verbatim: true } } });
+  renderWriter({ archive, selected: [{ key: "6162", name: { text: "x", verbatim: true } }] });
   await user.click(screen.getByTestId("remove-entry"));
   await user.click(screen.getByTestId("delete-confirm"));
   await screen.findByTestId("write-running");
@@ -477,7 +479,7 @@ test("a job that cannot start shows the error and leaves the panel usable", asyn
   expect(screen.queryByTestId("write-running")).toBeNull();
 });
 
-test("a drop opens the create panel with what was dropped, as text; with an archive open it opens add", async () => {
+test("a drop opens the create panel with what was dropped, as text; with an archive open it is added at once", async () => {
   const b = backend();
   const { container, rerender } = renderWriter();
   b.drop({ event: "hover", active: true });
@@ -486,6 +488,7 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
     event: "dropped",
     staged: { items: [{ name: { text: HOSTILE, verbatim: true }, kind: "file" }], destination: null, default_destination: null },
     problems: [{ code: "INVALID_ARGUMENT", message: "x would be stored under the same name as y" }],
+    from_shell: false,
   });
   b.drop({ event: "hover", active: false });
   expect(screen.queryByTestId("drop-overlay")).toBeNull();
@@ -494,18 +497,67 @@ test("a drop opens the create panel with what was dropped, as text; with an arch
   expect(screen.getByTestId("write-problems")).toHaveTextContent("Not added (INVALID_ARGUMENT)");
   expect(container.querySelector("img")).toBeNull();
 
-  // With an archive open, a drop is an add to it.
+  // With an archive open, a drop is added to it at once: one commit, no dialog.
   const open = summary(3, 2);
-  rerender(<Writer archive={open} viewingHead selected={null} onCommitted={() => undefined} />);
-  // The panel already open stays what it is; a closed one picks add.
+  rerender(<Writer archive={open} viewingHead selected={[]} onCommitted={() => undefined} />);
   const user = userEvent.setup();
   await user.click(screen.getByTestId("write-close"));
   b.drop({
     event: "dropped",
     staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
     problems: [],
+    from_shell: false,
+  });
+  expect(screen.queryByTestId("write-panel")).toBeNull();
+  await waitFor(() => expect(b.request()).toEqual({ kind: "add_to_archive", handle: 3 }));
+});
+
+test("the shell's Add to archive opens the add dialog instead of adding at once", () => {
+  const b = backend();
+  render(<Writer archive={summary(3, 2)} viewingHead selected={[]} onCommitted={() => undefined} />);
+  b.drop({
+    event: "dropped",
+    staged: { items: [{ name: { text: "note.txt", verbatim: true }, kind: "file" }], destination: null, default_destination: null },
+    problems: [],
+    from_shell: true,
   });
   expect(screen.getByRole("group", { name: "Add to archive" })).toBeInTheDocument();
+  expect(screen.getByTestId("staged-item")).toHaveTextContent("note.txt");
+  expect(b.cmds()).not.toContain("start_job");
+});
+
+test("a drop on an older version adds nothing and says only the latest can be changed", async () => {
+  const b = backend();
+  render(<Writer archive={summary(3, 2)} viewingHead={false} selected={[]} onCommitted={() => undefined} />);
+  b.drop({
+    event: "dropped",
+    staged: { items: [{ name: { text: "more", verbatim: true }, kind: "folder" }], destination: null, default_destination: null },
+    problems: [],
+    from_shell: false,
+  });
+  expect(await screen.findByTestId("write-error")).toHaveTextContent("Only the latest version can be changed");
+  expect(b.cmds()).not.toContain("start_job");
+});
+
+test("an archive file dropped on an open archive is added to it, not opened", async () => {
+  const b = backend();
+  const opened: string[] = [];
+  render(
+    <Writer
+      archive={summary(3, 2)}
+      viewingHead
+      selected={[]}
+      onCommitted={() => undefined}
+      onArchiveDropped={() => opened.push("opened")}
+    />,
+  );
+  b.drop({ event: "archive", name: "photos.zip", foreign: true });
+  await waitFor(() => expect(b.request()).toEqual({ kind: "add_to_archive", handle: 3 }));
+  expect(b.cmds()).toContain("stage_dropped_archive");
+  expect(opened).toEqual([]);
+  // A .mochi file still opens.
+  b.drop({ event: "archive", name: "other.mochi", foreign: false });
+  expect(opened).toEqual(["opened"]);
 });
 
 test("add: starts an add job for the open archive and says the archive's profile was fixed at creation", async () => {
@@ -533,7 +585,7 @@ test("remove: asks first, states that history keeps the content, and Keep starts
   const user = userEvent.setup();
   const b = backend();
   const archive = summary(3, 2);
-  renderWriter({ archive, selected: { key: "6162", name: { text: HOSTILE, verbatim: true } } });
+  renderWriter({ archive, selected: [{ key: "6162", name: { text: HOSTILE, verbatim: true } }] });
   await user.click(screen.getByTestId("remove-entry"));
   const panel = screen.getByTestId("write-panel");
   expect(panel).toHaveTextContent(`Remove ${HOSTILE} from the current version?`);
@@ -558,7 +610,7 @@ test("only the latest version can be changed", () => {
   renderWriter({
     archive: summary(3, 2),
     viewingHead: false,
-    selected: { key: "61", name: { text: "a", verbatim: true } },
+    selected: [{ key: "61", name: { text: "a", verbatim: true } }],
   });
   expect(screen.getByTestId("remove-entry")).toBeDisabled();
   expect(screen.getByTestId("remove-entry")).toHaveAttribute("title", "Only the latest version can be changed");
@@ -570,7 +622,7 @@ test("the browser shows the archive as it stands after a commit: same handle for
   render(<Browser />);
   await user.click(screen.getByTestId("open-archive"));
   await screen.findByTestId("archive-meta");
-  expect(screen.getByTestId("archive-meta")).toHaveTextContent("1 version");
+  expect(screen.getByTestId("toggle-versions")).toHaveAttribute("title", "1 version");
 
   // Add to the open archive: now two commits, shown at the head.
   await user.click(screen.getByTestId("add-to-archive"));
@@ -578,7 +630,7 @@ test("the browser shows the archive as it stands after a commit: same handle for
   await user.click(await screen.findByTestId("add-confirm"));
   await screen.findByTestId("write-running");
   b.job({ event: "finished", job_id: 5, outcome: completed(commit("add", summary(3, 2))) });
-  await screen.findByText(/2 versions/);
+  await waitFor(() => expect(screen.getByTestId("toggle-versions")).toHaveAttribute("title", "2 versions"));
   const snaps = b.calls.filter((c) => c.cmd === "open_snapshot").map((c) => c.args);
   expect(snaps.at(-1)).toEqual({ handle: 3, seq: 1 });
   expect(b.cmds()).not.toContain("close_archive");

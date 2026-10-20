@@ -2,13 +2,15 @@
 //!
 //! A magic-number match is a candidate, not proof (AGENTS.md): ZIP needs a
 //! consistent end-of-central-directory record, tar needs a valid header
-//! checksum, `.tar.gz` needs a gzip stream whose first block is a tar header.
+//! checksum, `.tar.gz` and `.tar.zst` need a gzip or Zstandard stream whose first
+//! block is a tar header.
 
 use std::io::{Read, Seek, SeekFrom};
 
 use flate2::read::GzDecoder;
 
 use crate::types::{ErrorCode, ForeignError, ForeignFormat};
+use crate::zstdread::{ZstdReader, ZSTD_MAGIC};
 
 const SEVENZ_SIG: &[u8] = b"7z\xBC\xAF\x27\x1C";
 const RAR4_SIG: &[u8] = b"Rar!\x1A\x07\x00";
@@ -198,6 +200,35 @@ pub fn detect<R: Read + Seek>(r: &mut R) -> Result<ForeignFormat, ForeignError> 
         }
         return Ok(ForeignFormat::TarGz);
     }
+    if head.starts_with(&ZSTD_MAGIC) {
+        r.seek(SeekFrom::Start(0)).map_err(io_err)?;
+        let mut first = Vec::new();
+        let mut dec = ZstdReader::new(&mut *r).take(512);
+        match dec.read_to_end(&mut first) {
+            Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+                return Err(err(
+                    ErrorCode::UnsupportedFormat,
+                    "a zstd stream whose window is larger than this reader accepts (128 MiB)",
+                ));
+            }
+            // Zstandard is decoded in whole blocks and the decoder holds a
+            // window of output back, so damage before the first header could
+            // be read is reported as damage, not as "not a tar".
+            Err(_) => {
+                return Err(err(
+                    ErrorCode::MalformedArchive,
+                    "a zstd stream that is damaged or cut short before its first tar header could be read",
+                ));
+            }
+            Ok(_) if !looks_like_tar(&first) => {
+                return Err(err(
+                    ErrorCode::UnsupportedFormat,
+                    "a zstd stream that does not start with a tar header (only .tar.zst is supported, not a compressed single file)",
+                ));
+            }
+            Ok(_) => return Ok(ForeignFormat::TarZst),
+        }
+    }
     if looks_like_tar(&head) {
         return Ok(ForeignFormat::Tar);
     }
@@ -211,7 +242,7 @@ pub fn detect<R: Read + Seek>(r: &mut R) -> Result<ForeignFormat, ForeignError> 
     }
     Err(err(
         ErrorCode::NotAnArchive,
-        "not a ZIP, 7z, RAR, tar, or tar.gz archive",
+        "not a ZIP, 7z, RAR, tar, tar.gz, or tar.zst archive",
     ))
 }
 

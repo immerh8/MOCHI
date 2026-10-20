@@ -3,7 +3,7 @@
 export const write = {
   "write.heading": "Add and remove",
   "write.dropOverlay": "Drop files and folders to choose them.",
-  "write.new": "New archive…",
+  "write.new": "New archive",
   "write.add": "Add",
   "write.addTip": "Add files or folders to this archive",
   "write.remove": "Remove",
@@ -26,14 +26,14 @@ export const write = {
   "write.clear": "Clear",
   "write.dropHint": "You can also drop files and folders anywhere on this window.",
   "write.step1": "1. Choose what to put in the archive",
-  "write.step2": "2. Where it will be saved",
+  "write.step2": "Save to",
   "write.savedAs": "Saved as {name}, in the place you chose.",
   "write.saveNote":
     "Next to the first item you chose. An existing file is never replaced: a number is added to the name instead.",
   "write.saveUnknown": "Choose where to save it.",
   "write.change": "Change…",
   "write.options": "Options",
-  "write.nothingChosen": "Nothing chosen yet.",
+  "write.nothingChosen": "Drop files here, or add them below.",
   "write.chosenItems": "Chosen items",
   "write.unstage": "Remove from list",
   "write.unstageItem": "Remove {name} from the list",
@@ -67,6 +67,7 @@ export const write = {
   "write.panelRemove": "Remove from this version",
   "write.removeHeading": "Remove from this version",
   "write.removeQuestion": "Remove {name} from the current version?",
+  "write.removeQuestionMany": "Remove {n} items from the current version?",
   "write.removeConfirm": "Remove from this version",
   "write.keep": "Keep it",
   "write.deleteNote":

@@ -3,13 +3,11 @@
 // foreign "test" names the checks that ran, recoverability, freshness and
 // retention are UNSUPPORTED, and an extraction is never a verification.
 import { formatSize } from "../browser/format";
+import type { DetailRow, ResultDetails } from "../result/details";
 import { t, tc } from "../i18n";
 import type { ExtractReport } from "../ipc/extract";
-import type { ForeignArchiveSummary, ForeignTestReport } from "../ipc/foreign";
+import type { ForeignTestReport } from "../ipc/foreign";
 import type { JobOutcome } from "../ipc/jobs";
-
-/** Shown next to every opened foreign archive. */
-export const FOREIGN_NOTE = t("foreign.note");
 
 /** The only thing "Read and check" claims. */
 export const TEST_NOTE = t("foreign.testNote");
@@ -18,15 +16,6 @@ export const TEST_NOTE = t("foreign.testNote");
 export const EXTRACT_NOTE = t("foreign.extractNote");
 
 export const WEAK_NOTE = t("foreign.weakNote");
-
-/** The three health dimensions MOCHI archives have and foreign ones do not. */
-export function dimensionsLine(d: ForeignArchiveSummary["dimensions"]): string {
-  return t("foreign.dimensions", {
-    recoverability: d.recoverability,
-    freshness: d.freshness,
-    retention: d.retention,
-  });
-}
 
 /** Password errors the open flow handles by asking. */
 export function needsPassword(code: string): "ask" | "wrong" | null {
@@ -45,24 +34,95 @@ export function testHeadline(r: ForeignTestReport): string {
   });
 }
 
-/** How a finished job reads (extract or test). */
-export function describeOutcome(outcome: JobOutcome): { headline: string; notes: string[] } {
+/** How a finished job reads (extract or test): one line, and what Details holds. */
+export interface ForeignResult {
+  headline: string;
+  notes: string[];
+  /** Part of the job did not happen, or the test found problems. */
+  warn: boolean;
+  details: ResultDetails | null;
+}
+
+/** The Details panel of a test: the checks that ran, in the format's words, and what failed. */
+function testDetails(r: ForeignTestReport): ResultDetails {
+  const rows: DetailRow[] = [
+    {
+      label: t("foreign.whatChecked"),
+      items: r.checks.map((c) => ({ text: t("foreign.checkCount", { count: c.count.toLocaleString("en-US"), what: c.what }) })),
+      itemTestId: "foreign-check-count",
+      testId: "foreign-test-report",
+    },
+    { label: t("foreign.streamCheckLabel"), value: r.stream_check, testId: "foreign-stream-check" },
+  ];
+  if (r.stop_reason) {
+    rows.push({ label: t("foreign.stoppedEarlyLabel"), value: r.stop_reason.text, caution: true });
+  }
+  if (r.problems.length > 0) {
+    rows.push({
+      label: t("foreign.problems"),
+      caution: true,
+      items: r.problems.map((p) => ({ name: p.path, text: p.what.text })),
+      more: r.problems_total - r.problems.length,
+      testId: "foreign-problems",
+      itemTestId: "foreign-problem",
+    });
+  }
+  return { rows, notes: [TEST_NOTE] };
+}
+
+/** The Details panel of an extraction: what was not extracted, and why. */
+function extractDetails(r: ExtractReport, summary: string): ResultDetails {
+  const rows: DetailRow[] = [{ label: t("foreign.folder"), value: r.destination }];
+  if (r.not_extracted.length > 0) {
+    rows.push({
+      label: t("foreign.notExtractedList"),
+      caution: true,
+      items: r.not_extracted.map((e) => ({ name: e.path, code: e.code, text: e.reason.text })),
+      more: r.not_extracted_total - r.not_extracted.length,
+      testId: "foreign-not-extracted",
+      itemTestId: "foreign-not-extracted-item",
+    });
+  }
+  return { rows, notes: [summary, EXTRACT_NOTE] };
+}
+
+export function describeOutcome(outcome: JobOutcome): ForeignResult {
   switch (outcome.status) {
     case "completed": {
-      if (outcome.foreign_test) return { headline: testHeadline(outcome.foreign_test), notes: [TEST_NOTE] };
+      const test = outcome.foreign_test;
+      if (test) {
+        return {
+          headline: testHeadline(test),
+          notes: [],
+          warn: test.problems_total > 0 || !test.complete,
+          details: testDetails(test),
+        };
+      }
       const r = outcome.extract;
-      if (!r) return { headline: t("common.completed", { summary: outcome.summary }), notes: [] };
-      return { headline: extractedLine(r), notes: [outcome.summary] };
+      if (!r) return { headline: t("common.completed", { summary: outcome.summary }), notes: [], warn: false, details: null };
+      return {
+        headline: extractedLine(r),
+        notes: [],
+        warn: r.not_extracted_total > 0,
+        details: extractDetails(r, outcome.summary),
+      };
     }
     case "cancelled":
-      return { headline: t("foreign.cancelled"), notes: [t("foreign.cancelledNote")] };
+      return { headline: t("foreign.cancelled"), notes: [t("foreign.cancelledNote")], warn: false, details: null };
     case "failed":
       return {
         headline: t("common.failed", { code: outcome.code, message: outcome.message }),
         notes: [t("foreign.failedNote")],
+        warn: true,
+        details: null,
       };
     case "aborted":
-      return { headline: t("common.stoppedUnexpectedly", { message: outcome.message }), notes: [] };
+      return {
+        headline: t("common.stoppedUnexpectedly", { message: outcome.message }),
+        notes: [],
+        warn: true,
+        details: null,
+      };
   }
 }
 

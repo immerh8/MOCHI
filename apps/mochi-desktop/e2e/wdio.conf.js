@@ -76,6 +76,13 @@ process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt
 
 let tauriDriver;
 
+/** The spec files that are about one tool, and the More menu item that opens it. */
+const TOOL_OF_SPEC = [
+  [/check\.e2e\.js$/, "menu-repair"],
+  [/(crash|updates)\.e2e\.js$/, "start-settings"],
+  [/self-test\.e2e\.js$/, "menu-self-test"],
+];
+
 export const config = {
   runner: "local",
   hostname: "127.0.0.1",
@@ -109,20 +116,18 @@ export const config = {
     // Give the driver a moment to listen before the first session.
     return new Promise((resolve) => setTimeout(resolve, 1500));
   },
-  // The tools below "Advanced" are a closed disclosure on a fresh window (D10).
-  // Specs that are about those tools just need them open; the specs about the
-  // start screen and about keyboard use open it themselves, as a person would.
-  // The browser spec uses none of them: open, the drawer takes half the window
-  // and WebKitWebDriver does not scroll the start screen's own area to reach
-  // "Open archive" behind it.
+  // The tools (Test and repair, Settings, Self-test) open one at a time in a tool window over
+  // the list, from the toolbar's More menu. Specs that are only about one tool just need it open;
+  // the other specs open and close tools themselves, as a person would.
   beforeTest: async (test) => {
-    if (/(start|a11y|browse)\.e2e\.js$/.test(test.file ?? "")) return;
+    const tool = TOOL_OF_SPEC.find(([re]) => re.test(test.file ?? ""))?.[1];
+    if (tool === undefined) return;
     // The first test of a file can start before the page has rendered.
-    await $('details[data-testid="advanced"]').waitForExist({ timeout: 60_000 });
-    await browser.execute(() => {
-      const advanced = document.querySelector('details[data-testid="advanced"]');
-      if (advanced) advanced.open = true;
-    });
+    await $('[data-testid="toolbar-more"]').waitForExist({ timeout: 60_000 });
+    if (await $('[data-testid="tool-sheet"]').isDisplayed()) return;
+    await $('[data-testid="toolbar-more"]').click();
+    await $(`[data-testid="${tool}"]`).click();
+    await $('[data-testid="tool-sheet"]').waitForDisplayed();
   },
   onComplete: () => {
     tauriDriver?.kill();

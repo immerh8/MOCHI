@@ -34,9 +34,8 @@ describe("the start screen", () => {
     await openHelp();
     await expect($('[data-testid="start-note"]')).toHaveText(expect.stringContaining("not a second copy"));
     await closeHelp();
-    await expect($('[data-testid="advanced"]')).not.toHaveAttribute("open");
-    // The start screen itself (the closed Advanced area is not part of it; some
-    // engines report a closed disclosure's text, and it names the tools plainly).
+    await expect($('[data-testid="tool-sheet"]')).not.toBeDisplayed();
+    // The start screen itself (the closed tool window is not part of it).
     const text = (await $('[data-testid="start-screen"]').getText()).toLowerCase();
     for (const word of BANNED) expect(text).not.toContain(word);
     // None of the jargon is on the first screen.
@@ -54,7 +53,7 @@ describe("the start screen", () => {
     await $('[data-testid="start-screen"]').waitForExist();
     // The list is kept across app runs (and earlier specs opened archives), newest first.
     await browser.waitUntil(
-      async () => (await $$('[data-testid="recent-open"]')).length > 0 && (await $('[data-testid="recent-open"]').getText()) === "trip.mochi",
+      async () => (await $$('[data-testid="recent-open"]')).length > 0 && (await $('[data-testid="recent-open"] .recent-name').getText()) === "trip.mochi",
       { timeoutMsg: "the archive was not listed first among the recent ones" },
     );
   });

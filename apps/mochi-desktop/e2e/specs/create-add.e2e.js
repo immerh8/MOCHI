@@ -86,7 +86,8 @@ describe("create and add", () => {
     await $('[data-testid="stage-folder"]').click();
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await expect($('[data-testid="save-location"]')).toHaveText(path.join(src, "photos (2).mochi"));
-    await expect($('[data-testid="create-step-where"]')).toHaveText(
+    await expect($('[data-testid="save-location"]')).toHaveAttribute(
+      "title",
       expect.stringContaining("An existing file is never replaced"),
     );
     // Cancel: nothing was created, and the start screen is back.
@@ -135,7 +136,7 @@ describe("create and add", () => {
 
     // The new archive opened in the browser, at its head.
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("main.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("1 version"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "1 version");
     await browser.waitUntil(async () => (await entryNames()).includes("photos"));
   });
 
@@ -146,7 +147,7 @@ describe("create and add", () => {
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="add-confirm"]').click();
     await waitForStatus("Added to main.mochi");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "2 versions");
     await openVersions();
     await expect($('[data-testid="commit-1"]')).toHaveText(expect.stringContaining("(latest)"));
     await closeVersions();
@@ -167,7 +168,8 @@ describe("create and add", () => {
       const names = await entryNames();
       return names.includes("a.txt") && names.includes("b.txt");
     });
-    await expect($('[data-testid="crumbs"]')).toHaveText("Version 1 / photos");
+    await expect($('[data-testid="toggle-versions"]')).toHaveText("v1");
+    await expect($('[data-testid="crumbs"]')).toHaveText(expect.stringContaining("photos"));
     // Back to the root for the next step.
     await $('[data-testid="crumbs"] button').click();
     await browser.waitUntil(async () => (await entryNames()).includes("extra.txt"));
@@ -187,7 +189,7 @@ describe("create and add", () => {
     // Keep it: nothing happens.
     await $('[data-testid="delete-keep"]').click();
     await expect($('[data-testid="write-panel"]')).not.toBeExisting();
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("2 versions"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "2 versions");
 
     await $('[data-testid="remove-entry"]').click();
     await $('[data-testid="delete-confirm"]').click();
@@ -197,7 +199,7 @@ describe("create and add", () => {
     await openResultDetails("write");
     expect(await $('[data-testid="write-details"]').getText()).toContain("stays in the archive's history");
     await closeResultDetails("write");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("3 versions"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "3 versions");
     await browser.waitUntil(async () => {
       const names = await entryNames();
       return names.includes("photos") && !names.includes("extra.txt");
@@ -217,7 +219,8 @@ describe("create and add", () => {
     await browser.waitUntil(async () => (await $$('[data-testid="staged-item"]')).length === 1);
     await $('[data-testid="change-destination"]').click();
     await $('[data-testid="create-options"] summary').click();
-    await expect($('[data-testid="tar-notes"]')).toHaveText(
+    await expect($('[data-testid="tar-notes"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("not the latest snapshot"),
     );
     await $('[data-testid="preset-fast"]').click();

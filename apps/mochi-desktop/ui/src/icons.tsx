@@ -95,11 +95,23 @@ export function CaretUpIcon() {
 }
 
 /**
- * The file-type icons of a listing row: a folder, an image, a spreadsheet, a
- * PDF, a text file, any other file, and a link. Each is an outline with a faint
+ * The file-type icons of a listing row: a folder, an image, a music file, a
+ * video, an archive, source code, a spreadsheet, a PDF, a text file, any other
+ * file, and a link. Each is an outline with a faint
  * fill; the colour is the row's (`.file-icon-*` in the stylesheet).
  */
-export type FileIconKind = "folder" | "image" | "sheet" | "pdf" | "text" | "generic" | "link";
+export type FileIconKind =
+  | "folder"
+  | "image"
+  | "audio"
+  | "video"
+  | "archive"
+  | "code"
+  | "sheet"
+  | "pdf"
+  | "text"
+  | "generic"
+  | "link";
 
 const PAGE = "M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z";
 const FOLD = "M14 3v5h5";
@@ -119,6 +131,39 @@ export function FileTypeIcon({ kind }: { kind: FileIconKind }) {
           <rect className="fill" x="4" y="4" width="16" height="16" rx="2.5" />
           <circle cx="9" cy="9.5" r="1.4" />
           <path d="m5 17 4.5-4.5 3 3L15 13l4 4" />
+        </Icon>
+      );
+    case "audio":
+      return (
+        <Icon className={cls}>
+          <path className="fill" d={PAGE} />
+          <path d={FOLD} />
+          <path d="M11 17.2V10.5l4.5-1.2v6.4" />
+          <circle cx="9.6" cy="17.3" r="1.5" />
+          <circle cx="14.1" cy="15.8" r="1.5" />
+        </Icon>
+      );
+    case "video":
+      return (
+        <Icon className={cls}>
+          <rect className="fill" x="3.5" y="5.5" width="17" height="13" rx="2.5" />
+          <path d="m10.2 9.4 4.6 2.6-4.6 2.6z" />
+        </Icon>
+      );
+    case "archive":
+      return (
+        <Icon className={cls}>
+          <path className="fill" d={PAGE} />
+          <path d={FOLD} />
+          <path d="M11 3v2h1.5v2H11v2h1.5v2H11v2.5M10.2 14.5h2.6v3h-2.6z" />
+        </Icon>
+      );
+    case "code":
+      return (
+        <Icon className={cls}>
+          <path className="fill" d={PAGE} />
+          <path d={FOLD} />
+          <path d="m10 11.5-2.2 2.2 2.2 2.2M14 11.5l2.2 2.2-2.2 2.2" />
         </Icon>
       );
     case "sheet":
@@ -227,6 +272,75 @@ export function CaretDownIcon() {
   return (
     <Icon className="icon caret" size={14}>
       <path d="m6 9 6 6 6-6" />
+    </Icon>
+  );
+}
+
+export function OpenIcon() {
+  return (
+    <Icon>
+      <path d="M3.5 18.5V6.5a2 2 0 0 1 2-2h3.7l2 2.2H17a2 2 0 0 1 2 2v1.8" />
+      <path d="M3.5 18.5 6.2 11a1.5 1.5 0 0 1 1.4-1h12.6a1 1 0 0 1 .9 1.4l-2.6 6.4a1.5 1.5 0 0 1-1.4.9H3.5z" />
+    </Icon>
+  );
+}
+
+export function NewArchiveIcon() {
+  return (
+    <Icon>
+      <path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+      <path d="M13 3v6h6M12 12v6M9 15h6" />
+    </Icon>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <Icon>
+      <path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7M10 10.5v6.5M14 10.5v6.5" />
+    </Icon>
+  );
+}
+
+export function KeyIcon() {
+  return (
+    <Icon>
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2" />
+    </Icon>
+  );
+}
+
+export function WrenchIcon() {
+  return (
+    <Icon>
+      <path d="M14.5 6.5a4 4 0 0 0 5 5l-8 8a2.1 2.1 0 0 1-3-3l8-8a4 4 0 0 1-2-2z" />
+      <path d="m17.5 3.5-3 3 3 3 3-3" />
+    </Icon>
+  );
+}
+
+export function ActivityIcon() {
+  return (
+    <Icon>
+      <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+    </Icon>
+  );
+}
+
+export function ShowFolderIcon() {
+  return (
+    <Icon size={16}>
+      <path d="M3 7.5a2 2 0 0 1 2-2h4.2l2 2.3H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <path d="M10 15.5h5M13 13l2.5 2.5L13 18" />
+    </Icon>
+  );
+}
+
+export function RefreshIcon() {
+  return (
+    <Icon size={18}>
+      <path d="M19 12a7 7 0 1 1-2.05-4.95M19 4.5V8h-3.5" />
     </Icon>
   );
 }

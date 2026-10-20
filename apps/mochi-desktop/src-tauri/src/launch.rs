@@ -27,8 +27,9 @@
 //! * **Arguments are untrusted.** Every path is checked (empty, NUL, length,
 //!   Windows device namespace, a verb's path count) before anything touches
 //!   the file system, and a launch that does not parse changes nothing.
-//! * **Foreign formats are not parsed here.** A ZIP, 7z, RAR, tar, or tar.gz
-//!   path (by extension, [`foreign_kind`]) goes to the same open path as the
+//! * **Foreign formats are not parsed here.** A ZIP, 7z, RAR, tar, tar.gz, or
+//!   tar.zst path (by extension, [`foreign_kind`], unless the file starts with
+//!   the MOCHI descriptor frame: `crate::route`) goes to the same open path as the
 //!   in-app "Open foreign archive" button ([`Foreign::open`], plan D8): the
 //!   isolated helper lists it and the window shows the read-only foreign
 //!   browser. An archive that needs a password is remembered in Rust
@@ -529,7 +530,7 @@ impl Inner {
                 let Some(path) = launch.paths.first() else {
                     return;
                 };
-                if foreign_kind(path).is_some() {
+                if crate::route::route(path) == crate::route::Route::Foreign {
                     return self.open_foreign(true, path);
                 }
                 let action = if launch.verb == Verb::ExtractHere {
@@ -547,7 +548,7 @@ impl Inner {
 
     fn open(&self, path: &Path) {
         let shown = path.display();
-        if foreign_kind(path).is_some() {
+        if crate::route::route(path) == crate::route::Route::Foreign {
             return self.open_foreign(false, path);
         }
         match std::fs::metadata(path) {
@@ -618,12 +619,14 @@ impl Inner {
 /// for routing, never proof: the helper decides what the bytes are.
 pub fn foreign_kind(path: &Path) -> Option<&'static str> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-    const SUFFIXES: [(&str, &str); 7] = [
+    const SUFFIXES: [(&str, &str); 9] = [
         (".zip", "ZIP"),
         (".7z", "7z"),
         (".rar", "RAR"),
         (".tar.gz", "tar.gz"),
         (".tgz", "tar.gz"),
+        (".tar.zst", "tar.zst"),
+        (".tzst", "tar.zst"),
         (".tar", "tar"),
         (".gz", "gzip"),
     ];
@@ -814,12 +817,16 @@ mod tests {
             ("a.rar", "RAR"),
             ("a.tar.gz", "tar.gz"),
             ("a.tgz", "tar.gz"),
+            ("a.tar.zst", "tar.zst"),
+            ("a.TZST", "tar.zst"),
             ("a.tar", "tar"),
         ] {
             assert_eq!(foreign_kind(Path::new(name)), Some(kind), "{name}");
         }
         assert_eq!(foreign_kind(Path::new("a.mochi")), None);
         assert_eq!(foreign_kind(Path::new("zip")), None);
+        // A bare .zst is a compressed single file, not a tar archive.
+        assert_eq!(foreign_kind(Path::new("a.zst")), None);
     }
 
     // ---- handling --------------------------------------------------------
@@ -1360,7 +1367,12 @@ mod tests {
         l.inner.drops.set(drops.clone());
         let got = drops.0.lock().unwrap().clone();
         assert_eq!(got.len(), 1);
-        let crate::ipc::DropEvent::Dropped { staged, problems } = &got[0] else {
+        let crate::ipc::DropEvent::Dropped {
+            staged,
+            problems,
+            from_shell: true,
+        } = &got[0]
+        else {
             panic!("{got:?}")
         };
         assert_eq!(staged.items.len(), 1);

@@ -111,22 +111,20 @@ function backend(plans: (ExtractPlan | null | { error: { code: string; message: 
 afterEach(() => clearMocks());
 
 function renderExtractor(props: Partial<ExtractorProps> = {}) {
-  return render(<Extractor archive={summary()} seq={1} selected={null} {...props} />);
+  return render(<Extractor archive={summary()} seq={1} selected={[]} {...props} />);
 }
 
 const BANNED = ["backed up", "backup", "safe", "preserved", "secure"];
 
-test("nothing can be extracted without an archive; a selection is needed for 'selected'", () => {
+test("nothing can be extracted without an archive; with a selection, Extract takes the selection", () => {
   backend([plan()]);
-  const { rerender } = render(<Extractor archive={null} seq={null} selected={null} />);
+  const { rerender } = render(<Extractor archive={null} seq={null} selected={[]} />);
   expect(screen.getByTestId("extract-all")).toBeDisabled();
-  expect(screen.getByTestId("extract-selected")).toBeDisabled();
-  rerender(<Extractor archive={summary()} seq={1} selected={null} />);
+  rerender(<Extractor archive={summary()} seq={1} selected={[]} />);
   expect(screen.getByTestId("extract-all")).toBeEnabled();
-  expect(screen.getByTestId("extract-selected")).toBeDisabled();
-  expect(screen.getByTestId("extract-selected")).toHaveAttribute("title", "Select an entry first");
-  rerender(<Extractor archive={summary()} seq={1} selected={SELECTED} />);
-  expect(screen.getByTestId("extract-selected")).toBeEnabled();
+  expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Extract everything in this version");
+  rerender(<Extractor archive={summary()} seq={1} selected={[SELECTED]} />);
+  expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Extract the 1 selected");
 });
 
 test("extract all: a new folder next to the archive, no dialog, the plan is shown, and the job names no path", async () => {
@@ -138,7 +136,7 @@ test("extract all: a new folder next to the archive, no dialog, the plan is show
   expect(b.defaultCalls()).toEqual([{ handle: 3, seq: 1, keys: [] }]);
   expect(b.planCalls()).toEqual([]);
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/out");
-  expect(screen.getByTestId("extract-new-folder-note")).toHaveTextContent("A new folder was made");
+  expect(screen.getByTestId("extract-notes")).toHaveTextContent("A new folder was made");
   expect(screen.getByTestId("extract-scope")).toHaveTextContent("Everything in version 1 (5 entries)");
   expect(panel).toHaveTextContent("Extract into a folder only you can modify.");
   expect(screen.getByTestId("extract-no-conflicts")).toBeInTheDocument();
@@ -159,11 +157,11 @@ test("extract all: a new folder next to the archive, no dialog, the plan is show
 test("extract selected sends the selected entry's key and says the folders above are created", async () => {
   const user = userEvent.setup();
   const b = backend([plan({ entries: 3 })]);
-  renderExtractor({ selected: SELECTED });
-  await user.click(screen.getByTestId("extract-selected"));
+  renderExtractor({ selected: [SELECTED] });
+  await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-panel");
   expect(b.defaultCalls()).toEqual([{ handle: 3, seq: 1, keys: ["6162"] }]);
-  expect(screen.getByTestId("extract-scope")).toHaveTextContent("docs from version 1 (3 entries)");
+  expect(screen.getByTestId("extract-scope")).toHaveTextContent("docs (3 entries)");
   expect(screen.getByTestId("extract-panel")).toHaveTextContent("folders above a selected entry are created too");
   await user.click(screen.getByTestId("extract-confirm"));
   await screen.findByTestId("extract-running");
@@ -223,7 +221,7 @@ test("conflicts are listed as text before anything is written; the choice is ski
   expect(list).toHaveTextContent("202 entries cannot be extracted into this folder");
   expect(list).toHaveTextContent("…and 200 more.");
   expect(screen.getByTestId("extract-conflict-note")).toHaveTextContent("Nothing is overwritten and no name is changed");
-  expect(screen.getByTestId("extract-not-offered")).toHaveTextContent(
+  expect(screen.getByTestId("extract-conflict-note")).toHaveTextContent(
     "Replacing existing items, or keeping both under a new name, is not available yet",
   );
   // Archive text stays inert.
@@ -239,14 +237,14 @@ test("conflicts are listed as text before anything is written; the choice is ski
 test("choose a different folder asks Rust to pick again; check again re-plans the same folder", async () => {
   const user = userEvent.setup();
   const b = backend([CONFLICTS, plan({ destination: "/home/me/other" }), plan({ destination: "/home/me/other" })]);
-  renderExtractor({ selected: SELECTED });
-  await user.click(screen.getByTestId("extract-selected"));
+  renderExtractor({ selected: [SELECTED] });
+  await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-conflicts");
 
   await user.click(screen.getByTestId("extract-change-folder"));
   await screen.findByTestId("extract-no-conflicts");
   // A folder the user picked is not "a new folder made for this".
-  expect(screen.queryByTestId("extract-new-folder-note")).toBeNull();
+  expect(screen.getByTestId("extract-notes")).not.toHaveTextContent("A new folder was made");
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/other");
   expect(screen.getByTestId("extract-confirm")).toHaveTextContent(/^Extract$/);
 
@@ -451,12 +449,12 @@ test("showing another snapshot drops the plan and the last result", async () => 
   const { rerender } = renderExtractor();
   await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-panel");
-  rerender(<Extractor archive={summary()} seq={0} selected={null} />);
+  rerender(<Extractor archive={summary()} seq={0} selected={[]} />);
   expect(screen.queryByTestId("extract-panel")).toBeNull();
   expect(b.calls.map((c) => c.cmd)).not.toContain("start_job");
 });
 
-test("the browser shows the extract buttons and 'selected' follows the details pane", async () => {
+test("the browser's Extract takes the list's selection", async () => {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
@@ -502,14 +500,12 @@ test("the browser shows the extract buttons and 'selected' follows the details p
   render(<Browser />);
   // No archive: the toolbar's Extract is there but off (the Extract section itself is not mounted).
   expect(screen.getByTestId("extract-all")).toBeDisabled();
-  expect(screen.queryByTestId("extract-selected")).toBeNull();
   await user.click(screen.getByTestId("open-archive"));
   await screen.findByTestId("archive-meta");
   expect(screen.getByTestId("extract-all")).toBeEnabled();
-  expect(screen.getByTestId("extract-selected")).toBeDisabled();
+  expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Extract everything in this version");
   await user.click(await screen.findByTestId("entry"));
-  await screen.findByTestId("details");
-  expect(screen.getByTestId("extract-selected")).toBeEnabled();
+  expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Extract the 1 selected");
 });
 
 test("a degraded folder entry is a caution in the details: badge on the button, a neutral line", async () => {

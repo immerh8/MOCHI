@@ -128,7 +128,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
 
 afterEach(() => clearMocks());
 
-const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "toolbar-test", "remove-entry", "search-archive", "toolbar-info"];
+const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "toolbar-test", "remove-entry", "search-query", "toolbar-info"];
 
 async function openIt() {
   const user = userEvent.setup();
@@ -147,10 +147,14 @@ test("with nothing open, the archive's buttons are off and More and Help are on"
   for (const id of ARCHIVE_TOOLS) expect(within(bar).getByTestId(id), id).toBeDisabled();
   expect(within(bar).getByTestId("toolbar-more")).toBeEnabled();
   expect(within(bar).getByTestId("toolbar-help")).toBeEnabled();
-  // One or two words each, as the accessible name; the reason a button is off is its tooltip.
-  const names = ["Add", "Extract", "Test", "Remove", "Find", "Info", "More", "Help"];
-  expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(names);
+  // Icons only: one or two words each are the accessible name (hidden text); the
+  // reason a button is off is its tooltip.
+  const names = ["Open", "New archive", "Add", "Extract", "Test", "Remove", "Info", "More", "Help"];
+  const buttons = within(bar).getAllByRole("button");
+  expect(buttons.map((b) => b.textContent)).toEqual(names);
+  for (const b of buttons) expect(b.querySelector(".sr-only")?.textContent, b.textContent ?? "").toBe(b.textContent);
   expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Open an archive first");
+  expect(within(bar).getByRole("searchbox", { name: /Search names/ })).toBeDisabled();
 });
 
 test("with an archive open the buttons are on; Remove waits for a selection and says why", async () => {
@@ -184,12 +188,12 @@ test("Extract plans the whole version into a new folder; nothing is written", as
   expect(b.cmds()).not.toContain("start_job");
 });
 
-test("Test opens the tools drawer at its section and runs the test on the open archive", async () => {
+test("Test opens its tool window and runs the test on the open archive", async () => {
   const { user, b } = await openIt();
-  const advanced = screen.getByTestId("advanced");
-  expect(advanced).not.toHaveAttribute("open");
+  const sheet = screen.getByTestId("tool-sheet");
+  expect(sheet).not.toBeVisible();
   await user.click(screen.getByTestId("toolbar-test"));
-  expect(advanced).toHaveAttribute("open");
+  expect(sheet).toBeVisible();
   expect(document.activeElement).toBe(document.getElementById("check-heading"));
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
   expect(b.calls.find((c) => c.cmd === "choose_check_subject")?.args).toEqual({ from: { from: "open_archive", handle: 3 } });
@@ -201,11 +205,10 @@ test("Test opens the tools drawer at its section and runs the test on the open a
   });
 });
 
-test("Find opens the tools drawer at Search", async () => {
+test("Ctrl+F puts the cursor in the search field", async () => {
   const { user } = await openIt();
-  await user.click(screen.getByTestId("search-archive"));
-  expect(screen.getByTestId("advanced")).toHaveAttribute("open");
-  expect(document.activeElement).toBe(document.getElementById("search-heading"));
+  await user.keyboard("{Control>}f{/Control}");
+  expect(document.activeElement).toBe(screen.getByTestId("search-query"));
 });
 
 test("Info shows and hides the details pane, which is closed to start with", async () => {
@@ -237,11 +240,10 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
   expect(more).toHaveAttribute("aria-expanded", "true");
   expect(menu).toBeVisible();
   expect(within(menu).getAllByRole("button").map((x) => x.textContent)).toEqual([
-    "New archive…",
     "Open and extract…",
+    "Other formats…",
     "Passphrases",
     "Repair",
-    "Other formats…",
     "Settings",
     "Self-test",
   ]);
@@ -253,8 +255,12 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
   await user.click(more);
   await user.click(within(menu).getByText("Settings"));
   expect(menu).not.toBeVisible();
-  expect(screen.getByTestId("advanced")).toHaveAttribute("open");
+  expect(screen.getByTestId("tool-sheet")).toBeVisible();
   expect(document.activeElement).toBe(document.getElementById("settings-heading"));
+  // Escape closes the tool window and gives focus back to More.
+  await user.keyboard("{Escape}");
+  expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
+  expect(document.activeElement).toBe(more);
   await user.click(more);
   await user.click(within(menu).getByText("Other formats…"));
   await waitFor(() => expect(b.cmds()).toContain("open_foreign_archive"));
@@ -271,15 +277,14 @@ test("More closes when the pointer goes down outside it", async () => {
   expect(screen.getByTestId("toolbar-more")).toHaveAttribute("aria-expanded", "false");
 });
 
-test("New archive from More opens the create panel, and closing it gives focus back to More", async () => {
+test("New archive opens the create dialog, and closing it gives focus back to the button", async () => {
   const { user } = await openIt();
-  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(screen.getByTestId("new-archive"));
   const panel = await screen.findByRole("group", { name: "Create a new archive" });
   expect(panel.contains(document.activeElement)).toBe(true);
   await user.click(within(panel).getByTestId("write-close"));
   await waitFor(() => expect(screen.queryByTestId("write-panel")).toBeNull());
-  expect(document.activeElement).toBe(screen.getByTestId("toolbar-more"));
+  expect(document.activeElement).toBe(screen.getByTestId("new-archive"));
 });
 
 test("Help opens the panel with the keyboard keys and the honest limit, and ? again closes it", async () => {
@@ -288,15 +293,15 @@ test("Help opens the panel with the keyboard keys and the honest limit, and ? ag
   render(<App />);
   await screen.findByTestId("start-screen");
   const help = screen.getByTestId("toolbar-help");
-  expect(screen.getByTestId("help-sheet")).not.toBeVisible();
+  expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
   await user.click(help);
   expect(help).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByTestId("help-sheet")).toBeVisible();
+  expect(screen.getByTestId("tool-sheet")).toBeVisible();
   await waitFor(() => expect(document.activeElement).toBe(document.getElementById("help-heading")));
   expect(screen.getByTestId("help-keys")).toHaveTextContent("Page Up, Page Down, Home and End jump");
   expect(screen.getByTestId("start-note")).toHaveTextContent("not a second copy of them");
-  await user.click(help);
-  expect(screen.getByTestId("help-sheet")).not.toBeVisible();
+  await user.click(screen.getByTestId("tool-sheet-close"));
+  expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
 });
 
 test("the status line counts items, then the selection; the whole version is its tooltip", async () => {
@@ -306,8 +311,16 @@ test("the status line counts items, then the selection; the whole version is its
   expect(status).toHaveAttribute("title", "437 entries in this version");
   await user.click((await screen.findAllByTestId("entry"))[0] as HTMLElement);
   await waitFor(() => expect(status).toHaveTextContent("3 items · 1 selected"));
-  // The primary action sits at its right, and is the filled one once something is selected.
-  expect(within(status.parentElement as HTMLElement).getByTestId("extract-selected")).toHaveClass("primary");
+  // Ctrl and Shift add to the selection, as in a file manager.
+  const rows = await screen.findAllByTestId("entry");
+  await user.keyboard("{Control>}");
+  await user.click(rows[2] as HTMLElement);
+  await user.keyboard("{/Control}");
+  await waitFor(() => expect(status).toHaveTextContent("3 items · 2 selected"));
+  await user.keyboard("{Shift>}");
+  await user.click(rows[0] as HTMLElement);
+  await user.keyboard("{/Shift}");
+  await waitFor(() => expect(status).toHaveTextContent("3 items · 3 selected"));
 });
 
 test("a folder with one entry says '1 item'", async () => {
@@ -321,14 +334,16 @@ test("a folder with one entry says '1 item'", async () => {
 test("the path bar names the archive and lists its versions on request, at the version on screen", async () => {
   const { user, b } = await openIt();
   const meta = screen.getByTestId("archive-meta");
-  expect(meta).toHaveTextContent("tools.mochi · 2 versions");
+  expect(meta).toHaveTextContent(/^tools\.mochi$/);
   const toggle = screen.getByTestId("toggle-versions");
+  expect(toggle).toHaveTextContent(/^v1$/);
+  expect(toggle).toHaveAttribute("title", "2 versions");
   expect(screen.getByTestId("timeline")).not.toBeVisible();
   await user.click(toggle);
   expect(screen.getByTestId("timeline")).toBeVisible();
   await user.click(screen.getByTestId("commit-0"));
   expect(screen.getByTestId("timeline")).not.toBeVisible();
-  await waitFor(() => expect(screen.getByTestId("crumbs")).toHaveTextContent(/^Version 0$/));
+  await waitFor(() => expect(toggle).toHaveTextContent(/^v0$/));
   expect(b.calls.filter((c) => c.cmd === "open_snapshot").at(-1)?.args).toEqual({ handle: 3, seq: 0 });
 });
 
@@ -352,15 +367,15 @@ test("a foreign archive fills the window: its own Extract and Test, the rest off
   await user.click(screen.getByTestId("menu-foreign"));
   await screen.findByTestId("foreign-meta");
   expect(screen.queryByTestId("start-screen")).toBeNull();
-  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("photos.zip · ZIP archive (foreign format)");
-  // Add, Remove and Find do not apply to a read-only archive in another format.
-  for (const id of ["add-to-archive", "remove-entry", "search-archive"]) expect(screen.getByTestId(id), id).toBeDisabled();
+  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("photos.zip");
+  expect(screen.getByTestId("foreign-meta")).toHaveTextContent("ZIP");
+  // Add and Remove do not apply to a read-only archive in another format; search does.
+  for (const id of ["add-to-archive", "remove-entry"]) expect(screen.getByTestId(id), id).toBeDisabled();
+  expect(screen.getByTestId("search-query")).toBeEnabled();
   expect(screen.getByTestId("add-to-archive")).toHaveAttribute("title", "Archives in other formats are read-only");
   await waitFor(() => expect(screen.getByTestId("foreign-count")).toHaveTextContent(/^2 items$/));
-  // The notes that this is not a MOCHI archive are in Info; the check's limits are the Test tooltip.
-  await user.click(screen.getByTestId("toolbar-info"));
-  expect(screen.getByTestId("foreign-label")).toBeVisible();
-  expect(screen.getByTestId("foreign-label")).toHaveTextContent("not a MOCHI archive");
+  // No explanations on screen; the check's limits are the Test tooltip.
+  expect(screen.queryByText(/not a MOCHI archive/)).toBeNull();
   expect(screen.getByTestId("foreign-test")).toHaveAttribute("title", expect.stringContaining("does not verify the archive the way MOCHI verifies its own"));
   await user.click(screen.getByTestId("foreign-extract-all"));
   await screen.findByTestId("foreign-plan");

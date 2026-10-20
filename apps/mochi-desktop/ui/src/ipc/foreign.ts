@@ -9,7 +9,9 @@ import type { ForeignArchiveSummary } from "./generated/ForeignArchiveSummary";
 import type { ForeignChildrenPage } from "./generated/ForeignChildrenPage";
 import type { ForeignDimensionsView } from "./generated/ForeignDimensionsView";
 import type { ForeignExtractPlan } from "./generated/ForeignExtractPlan";
+import type { ForeignHit } from "./generated/ForeignHit";
 import type { ForeignRow } from "./generated/ForeignRow";
+import type { ForeignSearchResult } from "./generated/ForeignSearchResult";
 import type { ForeignTestReport } from "./generated/ForeignTestReport";
 
 export type {
@@ -18,7 +20,9 @@ export type {
   ForeignChildrenPage,
   ForeignDimensionsView,
   ForeignExtractPlan,
+  ForeignHit,
   ForeignRow,
+  ForeignSearchResult,
   ForeignTestReport,
 };
 
@@ -45,6 +49,19 @@ export function foreignChildren(
   limit: number,
 ): Promise<ForeignChildrenPage> {
   return invoke<ForeignChildrenPage>("foreign_children", { handle, dir, offset, limit });
+}
+
+/**
+ * Search the names (full paths, never contents) of every entry of an open
+ * foreign archive. `ignoreCase` folds ASCII letters only; an empty query finds
+ * nothing. At most 1000 hits come back, `total_hits` counts all of them.
+ */
+export function foreignSearch(
+  handle: number,
+  query: string,
+  ignoreCase: boolean,
+): Promise<ForeignSearchResult> {
+  return invoke<ForeignSearchResult>("foreign_search", { handle, query, ignoreCase });
 }
 
 /** Plan an extraction; `null` if the user cancelled the folder dialog. */

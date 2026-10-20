@@ -1,7 +1,9 @@
-/* Calm, warm, minimal. Neutral styling throughout: spec §23.3 allows success
-   styling only for a verification PASS. The one success style is .status-pass
-   (D4), given only to a PASS status; everything else stays neutral. Browsing
-   (D1) shows recorded facts and warnings, never a green state. */
+/* A desktop window, not a web page: one fixed frame (toolbar, path bar, the
+   list, a status bar), compact rows, icons instead of words, and dialogs over
+   the list. Neutral styling throughout: spec §23.3 allows success styling
+   only for a verification PASS. The one success style is .status-pass (D4),
+   given only to a PASS status; everything else stays neutral. Browsing (D1)
+   shows recorded facts and warnings, never a green state. */
 :root {
   /* Colour tokens (plan D7 accessibility). Every colour in this file comes from
      here, so that src/a11y/contrast.test.ts can check each pairing against
@@ -29,21 +31,71 @@
   /* File-type icons in a listing: decorative, and never a status colour. */
   --icon-folder: #9a6a14;
   --icon-image: #3a6ea5;
+  --icon-audio: #8a3d9e;
+  --icon-video: #1f6a8a;
+  --icon-archive: #7a5c2e;
+  --icon-code: #3d6b2f;
   --icon-sheet: #2b7a78;
   --icon-pdf: #b03a2e;
-  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.5;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--fg);
   background: var(--bg);
   accent-color: var(--accent);
 }
+html,
 body {
+  height: 100%;
   margin: 0;
-  background: var(--bg);
+  overflow: hidden;
 }
-/* The window is one fixed frame, like a file manager: toolbar, path bar, the
-   list (which takes the rest), and a status line. The page itself never
-   scrolls; a panel that opens inside the frame scrolls in its own area. */
+body {
+  background: var(--bg);
+  /* A desktop window: the chrome is not text to select, and the pointer is an arrow. */
+  user-select: none;
+  cursor: default;
+}
+input,
+textarea,
+pre,
+.hash,
+.json,
+.prose,
+.result-list dd,
+.details dd,
+[data-testid="extract-destination"],
+[data-testid="foreign-destination"] {
+  user-select: text;
+}
+body.drag-preparing,
+body.drag-preparing * {
+  cursor: progress !important;
+}
+/* Thin scroll bars, only where a list or a dialog scrolls; the window never does.
+   Text that is cut short with an ellipsis uses `overflow: clip`, not `hidden`:
+   the same look, and WebKit's WebDriver still reads the text (the E2E specs). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 2px solid transparent;
+  border-radius: 5px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
 [hidden] {
   display: none !important;
 }
@@ -62,28 +114,38 @@ h4 {
   font-weight: 600;
 }
 h2 {
-  font-size: 1.25rem;
-  margin: 1.5rem 0 0.75rem;
+  font-size: 1.15rem;
+  margin: 0 0 0.75rem;
 }
 h3 {
-  font-size: 1.05rem;
+  font-size: 1rem;
+  margin: 0.75rem 0 0.4rem;
+}
+h4 {
+  font-size: 0.95rem;
+  margin: 0.5rem 0 0.25rem;
+}
+p {
+  margin: 0.4rem 0;
 }
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1rem 0;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
 }
 /* Buttons: quiet by default (a hairline edge on the surface); the one primary
-   action per area is filled with the accent. */
+   action per dialog is filled with the accent. */
 button {
   font: inherit;
-  padding: 0.45rem 1rem;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.85rem;
   color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
-  cursor: pointer;
+  border-radius: 4px;
+  cursor: default;
 }
 button:hover:not(:disabled):not(.primary) {
   background: var(--accent-bg);
@@ -91,7 +153,6 @@ button:hover:not(:disabled):not(.primary) {
 button:disabled {
   color: var(--muted);
   border-color: var(--border);
-  cursor: not-allowed;
 }
 button.primary {
   color: var(--on-strong);
@@ -110,18 +171,20 @@ button.primary:disabled {
 /* A button that is only an icon: no edge until it is pointed at. */
 button.icon-button {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 1.85rem;
+  height: 1.85rem;
+  min-height: 0;
   padding: 0;
   color: var(--muted);
   background: none;
   border-color: transparent;
-  border-radius: 50%;
 }
 button.icon-button:hover:not(:disabled) {
   color: var(--fg);
+  background: var(--accent-bg);
 }
 .icon {
   flex: none;
@@ -133,31 +196,41 @@ textarea {
   color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
-  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  padding: 0.2rem 0.45rem;
+  min-height: 1.85rem;
+  box-sizing: border-box;
+}
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 fieldset {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.75rem 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 0.7rem;
+  border-radius: 6px;
+}
+legend {
+  padding: 0 0.25rem;
+  color: var(--muted);
 }
 .progress {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 progress {
-  width: 20rem;
+  width: 12rem;
+  height: 0.6rem;
 }
 [role="status"] {
-  min-height: 1.5em;
+  min-height: 1.4em;
 }
-
-/* ---- D1: browsing ---------------------------------------------------------- */
-/* Calm: the file list is the window. Folders, details and versions are
-   optional panes the toolbar and the path bar open and close. */
 .hash {
-  font-family: ui-monospace, monospace;
-  font-size: 0.85em;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
   overflow-wrap: anywhere;
 }
 .error {
@@ -174,58 +247,102 @@ progress {
 .name {
   white-space: pre;
 }
+.meta {
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.note {
+  font-size: 0.92em;
+  color: var(--muted);
+}
+.link {
+  color: var(--accent);
+  background: none;
+  border: 1px solid transparent;
+  padding: 0.1rem 0.25rem;
+  text-align: left;
+  text-decoration: underline;
+  min-height: 0;
+}
+summary {
+  cursor: default;
+}
+details.technical > summary,
+details.options > summary {
+  color: var(--muted);
+}
+details.options,
+details.technical {
+  margin: 0.5rem 0;
+}
+/* A note kept out of the way: an "i" whose tooltip holds the words. */
+.hint {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  color: var(--muted);
+}
+.hint .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- The frame: toolbar, path bar, list, status bar ------------------------- */
 .browser {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
 }
-/* The toolbar: one row of icon-over-label buttons. */
 .toolbar {
   display: flex;
   flex: none;
-  align-items: stretch;
-  gap: 0.15rem;
-  padding: 0.35rem 0.75rem;
+  align-items: center;
+  gap: 2px;
+  height: 2.9rem;
+  padding: 0 0.5rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin: 0 0.75rem 0 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  margin: 0 0.35rem 0 0;
 }
 .brand .mascot-face {
-  width: 2.4rem;
-  height: 1.8rem;
+  width: 2.1rem;
+  height: 1.6rem;
 }
 .tool-cell,
-.menu-cell,
-.statusbar-slot {
+.menu-cell {
   display: contents;
+}
+.toolbar-sep {
+  width: 1px;
+  height: 1.5rem;
+  margin: 0 0.3rem;
+  background: var(--border);
 }
 .toolbar-spacer {
   flex: 1;
 }
 button.tool {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.1rem;
-  min-width: 3.6rem;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.8rem;
-  line-height: 1.2;
+  width: 2.35rem;
+  height: 2.35rem;
+  min-height: 0;
+  padding: 0;
   color: var(--fg);
   background: none;
   border-color: transparent;
-  border-radius: 0.5rem;
+  border-radius: 5px;
+}
+button.tool .icon {
+  width: 22px;
+  height: 22px;
 }
 button.tool:hover:not(:disabled),
 button.tool[aria-expanded="true"] {
@@ -234,6 +351,51 @@ button.tool[aria-expanded="true"] {
 }
 button.tool:disabled {
   color: var(--muted);
+  opacity: 0.55;
+  border-color: transparent;
+}
+/* The search field, at the right of the toolbar. */
+.searchbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(17rem, 32vw);
+  margin: 0 0.35rem;
+  color: var(--muted);
+}
+.searchbox > .icon {
+  position: absolute;
+  left: 0.45rem;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.searchbox input[type="search"] {
+  width: 100%;
+  padding-left: 1.85rem;
+  padding-right: 1.7rem;
+  background: var(--bg);
+  border-color: var(--border-strong);
+  border-radius: 5px;
+}
+.searchbox input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}
+.searchbox[data-disabled] {
+  opacity: 0.6;
+}
+button.searchbox-clear {
+  position: absolute;
+  right: 0.15rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  min-height: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: none;
   border-color: transparent;
 }
 .more {
@@ -242,26 +404,40 @@ button.tool:disabled {
 }
 .menu {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 2px);
   right: 0;
-  z-index: 5;
+  z-index: 30;
   display: flex;
   flex-direction: column;
-  min-width: 13rem;
+  min-width: 14rem;
   padding: 0.25rem;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 0.6rem;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.menu hr {
+  width: 100%;
+  margin: 0.25rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 button.menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   width: 100%;
-  padding: 0.4rem 0.75rem;
+  min-height: 1.9rem;
+  padding: 0.15rem 0.6rem;
   text-align: left;
   color: var(--fg);
   background: none;
   border-color: transparent;
-  border-radius: 0.4rem;
+}
+button.menu-item .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
 }
 button.menu-item:hover:not(:disabled) {
   background: var(--accent-bg);
@@ -269,54 +445,93 @@ button.menu-item:hover:not(:disabled) {
 button.menu-item:disabled {
   color: var(--muted);
 }
-/* The path bar: back, folders, the archive and its versions, where you are. */
+/* The path bar: back, folders, the archive and its version, where you are. */
 .pathbar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.2rem 0.75rem;
+  gap: 0.2rem;
+  height: 2.1rem;
+  padding: 0 0.5rem;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
-.pathbar button.icon-button {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.4rem;
-}
-.pathbar button.icon-button:hover:not(:disabled),
-.pathbar button.icon-button[aria-expanded="true"] {
-  background: var(--accent-bg);
+.pathbar button.icon-button .icon {
+  width: 18px;
+  height: 18px;
 }
 .path-meta {
-  flex: none;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 40%;
+  margin-left: 0.2rem;
   white-space: nowrap;
-  font-size: 0.9rem;
 }
 .path-title {
+  overflow: clip;
+  text-overflow: ellipsis;
   font-weight: 600;
 }
-.path-sub {
+.badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0 0.35rem;
+  font-size: 0.85em;
   color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.badge .icon {
+  width: 14px;
+  height: 14px;
+}
+.badge-warn {
+  color: var(--fg);
+  border-color: var(--warning);
+  border-style: dashed;
+}
+/* An archive condition the user should know of: a small mark with the words as its tooltip. */
+.path-warn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  font-weight: 700;
+  font-size: 0.85em;
+  color: var(--on-strong);
+  background: var(--warning);
+  border-radius: 50%;
 }
 .versions {
   position: relative;
+  flex: none;
 }
-.version-button {
+button.version-button {
   display: inline-flex;
   align-items: center;
   gap: 0.1rem;
-  padding: 0;
-  font-size: inherit;
-  text-decoration: none;
+  min-height: 1.5rem;
+  padding: 0 0.35rem;
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+}
+button.version-button:disabled {
+  color: var(--muted);
+  border-color: transparent;
 }
 .popover {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 2px);
   left: 0;
-  z-index: 5;
+  z-index: 30;
   min-width: 15rem;
   max-height: 18rem;
   overflow: auto;
@@ -324,33 +539,42 @@ button.menu-item:disabled {
   white-space: normal;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 0.6rem;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 18%, transparent);
 }
 .crumbs {
+  display: flex;
   flex: 1;
+  align-items: center;
   min-width: 0;
-  margin-left: 0.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-left: 0.25rem;
+  overflow: clip;
   white-space: nowrap;
-  font-size: 0.9rem;
+  color: var(--muted);
 }
-.crumbs .link {
-  text-decoration: none;
+.crumb-part {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
 }
-.crumbs .link:hover {
-  text-decoration: underline;
+button.crumb {
+  min-height: 1.5rem;
+  max-width: 14rem;
+  overflow: clip;
+  text-overflow: ellipsis;
+  padding: 0 0.3rem;
+  color: var(--fg);
+  background: none;
+  border-color: transparent;
 }
-/* The middle of the window. Sheets (panels that open) sit above the list and
-   scroll in the stage when they are tall; the list never goes below a few rows. */
+/* The middle of the window. Dialogs open over it; it never scrolls itself. */
 .stage {
   position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  overflow: auto;
-  padding: 0 0.75rem;
+  overflow: hidden;
 }
 .stage-mochi,
 .foreign-stage {
@@ -359,8 +583,6 @@ button.menu-item:disabled {
   flex-direction: column;
   min-height: 0;
 }
-/* The foreign archive's area is empty (and takes no room) until it has an
-   archive, a password prompt, or an error to show. */
 .stage-foreign {
   display: flex;
   flex: none;
@@ -370,20 +592,13 @@ button.menu-item:disabled {
 .stage-foreign:has(> .foreign-stage:not([hidden])) {
   flex: 1;
 }
-.sheet {
-  flex: none;
-}
 .stage [role="status"]:empty {
   min-height: 0;
 }
-.foreign-stage > .pathbar {
-  margin: 0 -0.75rem;
-}
 .workspace {
   display: flex;
-  flex: 1 0 11rem;
-  min-height: 11rem;
-  margin: 0 -0.75rem;
+  flex: 1;
+  min-height: 0;
 }
 .listing {
   display: flex;
@@ -391,28 +606,34 @@ button.menu-item:disabled {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  background: var(--surface);
+}
+.list-empty {
+  margin: 0;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
 }
 .folders,
 .info {
   flex: none;
   box-sizing: border-box;
   overflow: auto;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.9rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
 }
 .folders {
-  width: 13rem;
+  width: 14rem;
   border-right: 1px solid var(--border);
 }
 .info {
-  width: 17rem;
+  width: 16rem;
   border-left: 1px solid var(--border);
 }
 .timeline,
 .tree {
   margin: 0;
   padding: 0;
-  font-size: 0.9rem;
 }
 .timeline {
   list-style: none;
@@ -424,9 +645,8 @@ button.menu-item:disabled {
   width: 100%;
   text-align: left;
   border: 1px solid transparent;
-  border-radius: 0.4rem;
   background: none;
-  padding: 0.3rem 0.5rem;
+  padding: 0.25rem 0.5rem;
 }
 .commit.current,
 .tree-label.current,
@@ -434,55 +654,57 @@ button.menu-item:disabled {
   border: 1px solid var(--accent);
   background: var(--accent-bg);
 }
-.meta {
-  font-size: 0.8em;
-  color: var(--muted);
+/* A selected row: the fill and a bar at its start, so that a run of selected
+   rows reads as one block. */
+.entry.selected {
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .tree ul {
   list-style: none;
   margin: 0;
-  padding-left: 0.9rem;
+  padding-left: 0.85rem;
 }
 .tree-row {
   display: flex;
   align-items: center;
 }
 .twisty,
-.tree-label,
-.link {
+.tree-label {
+  min-height: 1.5rem;
   background: none;
   border: 1px solid transparent;
-  padding: 0.1rem 0.25rem;
+  padding: 0 0.25rem;
   text-align: left;
-}
-.tree-label {
-  border-radius: 0.4rem;
 }
 .twisty {
   width: 1.4rem;
+  min-width: 1.4rem;
+  color: var(--muted);
 }
 .twisty:disabled {
   border-color: transparent;
 }
-.link {
-  color: var(--accent);
-  text-decoration: underline;
-}
-/* The file table: a header row, then compact rows with a hairline between.
-   Name, Size and Type share these columns. */
+/* The file table: a header row, then compact rows. Name, Size and Type (and
+   Folder, for search results) share these columns. */
 .table-head,
 .entry {
   display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr) 6rem 5.5rem;
+  grid-template-columns: 1.25rem minmax(0, 1fr) 6rem 4.5rem;
   column-gap: 0.5rem;
   align-items: center;
 }
+.table-head.with-folder,
+.vtable:has(.with-folder) .entry {
+  grid-template-columns: 1.25rem minmax(0, 1fr) minmax(0, 0.8fr) 6rem 4.5rem;
+}
 .table-head {
-  padding: 0.3rem 0.75rem;
-  padding-right: calc(0.75rem + var(--sbw, 0px));
-  font-size: 0.8rem;
+  height: 1.7rem;
+  padding: 0 0.6rem;
+  padding-right: calc(0.6rem + var(--sbw, 0px));
+  font-size: 0.92em;
   color: var(--muted);
-  background: var(--surface);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .col-name {
@@ -514,40 +736,43 @@ button.menu-item:disabled {
   left: 0;
   right: 0;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--border);
 }
 .entry {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 0 0.75rem;
+  min-height: 0;
+  padding: 0 0.6rem;
   font: inherit;
-  font-size: 0.9rem;
   background: none;
   border: 1px solid transparent;
   border-radius: 0;
   text-align: left;
 }
 .entry:hover:not(.selected) {
-  background: var(--accent-bg);
+  background: var(--bg);
 }
 .entry-name {
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .size,
-.type {
-  overflow: hidden;
+.type,
+.folder {
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.85rem;
   color: var(--muted);
 }
 .kind {
   display: inline-flex;
   align-items: center;
+}
+.kind .icon {
+  width: 18px;
+  height: 18px;
 }
 /* A file-type icon is an outline with a faint fill, in one colour per kind. */
 .file-icon {
@@ -563,6 +788,18 @@ button.menu-item:disabled {
 .file-icon-image {
   color: var(--icon-image);
 }
+.file-icon-audio {
+  color: var(--icon-audio);
+}
+.file-icon-video {
+  color: var(--icon-video);
+}
+.file-icon-archive {
+  color: var(--icon-archive);
+}
+.file-icon-code {
+  color: var(--icon-code);
+}
 .file-icon-sheet {
   color: var(--icon-sheet);
 }
@@ -574,69 +811,99 @@ button.menu-item:disabled {
 }
 .loading {
   color: var(--muted);
-  padding: 0 0.75rem;
+  padding: 0 0.6rem;
 }
 .details h3 {
-  margin: 0 0 0.35rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
+  margin: 0.1rem 0 0.4rem;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
 }
-.details dl {
+.details h3 .name {
+  white-space: pre-wrap;
+}
+.details dl,
+.info dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.2rem 0.6rem;
   margin: 0;
 }
 .details dt {
-  font-weight: 600;
-  font-size: 0.85em;
-  margin-top: 0.5rem;
+  color: var(--muted);
 }
 .details dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.note {
-  font-size: 0.8em;
-  color: var(--muted);
+.info details.technical dl {
+  grid-template-columns: minmax(0, 1fr);
 }
-/* The status line: counts on the left, the primary action on the right. */
+/* The status bar: counts on the left, then what a job is doing or did. */
 .statusbar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.5rem 1rem;
-  margin: 0 -0.75rem;
-  padding: 0.25rem 0.75rem;
+  gap: 0.75rem;
+  height: 1.75rem;
+  padding: 0 0.6rem;
+  overflow: clip;
+  font-size: 0.92em;
+  color: var(--muted);
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
-.statusbar-text {
-  flex: 1;
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-.statusbar-actions {
+.statusbar-count {
+  flex: none;
   display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
+  align-items: center;
 }
-.statusbar button {
-  padding: 0.25rem 0.9rem;
-  font-size: 0.9rem;
-  border-radius: 0.5rem;
+.statusbar-text {
+  white-space: nowrap;
 }
-.statusbar button:not(.primary) {
-  color: var(--accent);
-  background: none;
-  border-color: var(--border);
+.statusbar-status {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
 }
-.statusbar button:not(.primary):disabled {
-  color: var(--muted);
+.statusbar p {
+  margin: 0;
 }
-details.technical > summary {
-  font-size: 0.9rem;
+.statusbar [role="status"] {
+  min-height: 0;
+}
+.statusbar .progress {
+  flex: none;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+.statusbar progress {
+  width: 8rem;
+}
+.statusbar .icon-button {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.status-line,
+.statusbar-error {
+  min-width: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statusbar-error {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--error);
+}
+.statusbar-error-text {
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+.row-flag {
   color: var(--muted);
 }
 /* In a narrow window the folder tree and the details lie over the list
@@ -652,7 +919,6 @@ details.technical > summary {
     bottom: 0;
     z-index: 3;
     width: min(17rem, 80%);
-    background: var(--surface);
   }
   .folders {
     left: 0;
@@ -664,12 +930,130 @@ details.technical > summary {
 @media (max-width: 44rem) {
   .table-head,
   .entry {
-    grid-template-columns: 1.5rem minmax(0, 1fr) 5.5rem;
+    grid-template-columns: 1.25rem minmax(0, 1fr) 5.5rem;
   }
   .col-type,
-  .type {
+  .type,
+  .col-folder,
+  .folder {
     display: none;
   }
+  .searchbox {
+    width: 9rem;
+  }
+}
+
+/* ---- Dialogs ----------------------------------------------------------------
+   A panel the user opened (create, add, remove, extract, a passphrase) is a
+   small dialog over the list, as in a desktop app. Inside a tool it stays in
+   the tool's own flow. */
+.dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.dialog {
+  box-sizing: border-box;
+  width: min(32rem, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 0.75rem 1rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.dialog-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+.dialog-actions {
+  justify-content: flex-end;
+  margin-bottom: 0;
+}
+.dialog-actions .hint {
+  margin-right: auto;
+}
+.dialog dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.dialog dt {
+  color: var(--muted);
+}
+.dialog dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* The tools of the More menu: one at a time, in a larger window with a close
+   button and its own scrolling. */
+.tool-sheet {
+  position: relative;
+  width: min(46rem, 100%);
+  max-height: min(40rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.dialog-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+}
+.dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.85rem 1.1rem 1rem;
+}
+.tool-pane > section > h2:first-child {
+  margin-right: 2.5rem;
+}
+.tool-pane [role="status"]:empty {
+  min-height: 0;
+}
+.tool-pane .dialog-layer {
+  position: static;
+  display: block;
+  padding: 0;
+  background: none;
+}
+.tool-pane .dialog {
+  width: auto;
+  max-height: none;
+  margin: 0.5rem 0;
+  box-shadow: none;
+  border-color: var(--border);
+}
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+  margin: 0.5rem 0;
+}
+.panel fieldset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
 }
 
 /* ---- D2: create and add ------------------------------------------------------
@@ -682,60 +1066,91 @@ details.technical > summary {
 .writer [role="status"]:empty {
   min-height: 0;
 }
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.7rem;
-  padding: 0.5rem 1rem;
-  margin: 0.5rem 0;
-}
-.panel fieldset {
-  margin: 0.5rem 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.note {
-  font-size: 0.9em;
-  color: var(--muted);
-}
 .staged {
   list-style: none;
+  margin: 0.4rem 0;
   padding: 0;
   max-height: 12rem;
   overflow: auto;
 }
+.dialog .staged {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
 .staged li {
   display: flex;
   gap: 0.5rem;
-  align-items: baseline;
+  align-items: center;
+  min-height: 1.6rem;
+  padding: 0 0.25rem 0 0.5rem;
+}
+.staged li .name {
+  flex: 1;
+  min-width: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
 }
 .kind-label {
-  font-size: 0.8em;
+  flex: none;
+  width: 3.5rem;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
   color: var(--muted);
-  min-width: 4rem;
 }
-.drop-overlay {
-  border: 2px dashed var(--accent);
-  border-radius: 0.7rem;
-  background: var(--accent-bg);
-  padding: 0.75rem;
+.unstage .icon {
+  width: 14px;
+  height: 14px;
+}
+.drop-target {
+  margin: 0.4rem 0;
+  padding: 1.25rem 0.75rem;
   text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+}
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.save-row h4 {
+  flex: none;
+  margin: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+.save-row [data-testid="save-location"] {
+  flex: 1;
+  min-width: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Files dragged over the window: the whole window is the target. */
+.drop-overlay {
+  position: fixed;
+  inset: 0.5rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent-bg) 85%, transparent);
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  pointer-events: none;
 }
 
 /* ---- D3: extract ------------------------------------------------------------
    Neutral: an extraction is not a verification, so nothing here is green
    (spec §23.3 #2). Lists of names are text only. */
-.extractor dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-  margin: 0.5rem 0;
-}
-.extractor dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
 .extractor .staged li {
   flex-wrap: wrap;
 }
@@ -746,7 +1161,7 @@ details.technical > summary {
    DEGRADED, UNKNOWN, OVERDUE, and UNSUPPORTED stay neutral with an outline. */
 .status {
   display: inline-block;
-  font-family: ui-monospace, monospace;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 0.85em;
   padding: 0 0.4rem;
   border: 1px solid var(--muted);
@@ -768,7 +1183,7 @@ details.technical > summary {
   border-style: dashed;
 }
 .checker fieldset {
-  margin: 1rem 0;
+  margin: 0.75rem 0;
 }
 .dimensions {
   border-collapse: collapse;
@@ -777,7 +1192,7 @@ details.technical > summary {
 .dimensions th,
 .dimensions td {
   text-align: left;
-  padding: 0.2rem 0.75rem 0.2rem 0;
+  padding: 0.15rem 0.75rem 0.15rem 0;
 }
 .prose {
   white-space: pre-wrap;
@@ -788,14 +1203,13 @@ details.technical > summary {
   overflow-wrap: anywhere;
   max-height: 20rem;
   overflow: auto;
-  background: var(--surface);
+  background: var(--bg);
   border: 1px solid var(--border);
   padding: 0.5rem;
 }
 .report-facts dd {
   margin-left: 1rem;
 }
-
 .update-notes {
   max-height: 16rem;
   overflow: auto;
@@ -813,26 +1227,17 @@ details.technical > summary {
 .entry:focus-visible,
 .commit:focus-visible,
 .tree-label:focus-visible,
-.twisty:focus-visible {
+.twisty:focus-visible,
+.menu-item:focus-visible,
+.searchbox input:focus-visible {
   outline-offset: -3px;
 }
-/* Headings and panels take focus from code (a jump link, an opened panel); that
-   is not a tab stop, so it needs a marker but not a heavy one. */
-h2:focus,
-h3:focus {
+/* Headings take focus from code (a dialog that opened); that is not a tab
+   stop, so it needs a marker but not a heavy one. */
+h2:focus-visible,
+h3:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-}
-.sections {
-  margin: 0.5rem 0 1rem;
-}
-.sections ul {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1rem;
-  list-style: none;
-  margin: 0 0 0 0.5rem;
-  padding: 0;
 }
 /* A status is its word first; the glyph and the border style repeat it for
    people who cannot tell the colours apart. The second declaration gives the
@@ -840,21 +1245,6 @@ h3:focus {
 .status::before {
   content: attr(data-mark) " ";
   content: attr(data-mark) " " / "";
-}
-.twisty {
-  min-width: 1.75rem;
-  min-height: 1.5rem;
-}
-.sections li {
-  min-height: 1.5rem;
-}
-/* Reflow (WCAG 1.4.10): narrow windows stack the panes instead of scrolling
-   sideways. */
-@media (max-width: 64rem) {
-  progress {
-    width: 100%;
-    max-width: 20rem;
-  }
 }
 /* Windows high-contrast and other forced-colour modes drop our colours; keep
    the selection and the status shapes visible. */
@@ -872,7 +1262,7 @@ h3:focus {
   }
 }
 
-/* ---- D10: the start screen and the guided flows ------------------------- */
+/* ---- D10: the start screen ------------------------------------------------ */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -905,221 +1295,125 @@ h3:focus {
 }
 .mascot-hero {
   display: block;
-  width: min(11rem, 40vh);
+  width: min(8rem, 22vh);
   aspect-ratio: 480 / 398;
   background: url("./assets/mochi-hero.png") center / contain no-repeat;
 }
-.tagline {
-  color: var(--muted);
-}
 .start {
-  max-width: 34rem;
+  box-sizing: border-box;
+  width: min(30rem, 100%);
   margin: auto;
-  padding: 1rem 0;
+  padding: 1rem;
+  overflow: hidden;
 }
-.hero {
+.drop-zone {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0.5rem 0;
+  gap: 0.4rem;
+  padding: 1rem;
   text-align: center;
-}
-.wordmark {
-  margin-top: 0.25rem;
-  font-size: 2.5rem;
-  font-weight: 800;
-  line-height: 1.1;
-  letter-spacing: 0.04em;
-}
-.hero .tagline {
-  margin: 0.25rem 0 0;
-  font-size: 1.05rem;
-}
-.drop-zone {
-  margin: 1rem 0;
-  padding: 1.25rem 1rem;
-  text-align: center;
-  border: 2px dashed var(--border-strong);
-  border-radius: 0.9rem;
-}
-.drop-zone p {
-  margin: 0.25rem 0;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
 }
 .drop-zone-title {
-  font-size: 1.1rem;
+  margin: 0;
   color: var(--muted);
 }
 .big-actions {
   display: flex;
-  flex-wrap: wrap;
   justify-content: center;
-  gap: 0.75rem;
-  margin: 1rem 0;
+  gap: 0.5rem;
+  margin: 0.85rem 0;
 }
 button.big {
   display: flex;
-  flex: 1 1 9rem;
-  flex-direction: column;
+  flex: 1 1 0;
   align-items: center;
-  gap: 0.2rem;
-  padding: 0.8rem 1rem;
-  text-align: center;
-  border-radius: 0.7rem;
+  justify-content: center;
+  min-height: 2.4rem;
+  padding: 0.3rem 1rem;
 }
 .big-title {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   white-space: nowrap;
+  gap: 0.45rem;
+  font-weight: 600;
+}
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.recent-head h3 {
+  margin: 0;
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--muted);
+}
+.recent-list {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+}
+button.recent-item {
+  display: flex;
+  align-items: baseline;
   gap: 0.5rem;
-  font-weight: 600;
+  width: 100%;
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
+  text-align: left;
+  background: none;
+  border-color: transparent;
 }
-.recent h3 {
-  margin: 1rem 0 0.25rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-.note.quiet {
-  color: var(--muted);
-  font-size: 0.9em;
+.recent-name {
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .step {
-  margin: 1rem 0;
-}
-.step h4 {
-  margin: 0 0 0.25rem;
-}
-details.options,
-details.technical {
-  margin: 1rem 0;
-}
-/* The tools drawer at the bottom of the frame: one quiet word when closed,
-   a scrolling area (never more than half the window) when open. */
-details.advanced {
-  position: relative;
-  flex: none;
-  max-height: 50vh;
-  overflow: auto;
-  /* Whatever scrolls into view here (a focused control, a section heading)
-     stops below the sticky summary instead of under it. */
-  scroll-padding-top: 2.5rem;
-  padding: 0 0.75rem 0.5rem;
-  border-top: 1px solid var(--border);
-}
-details.advanced > summary {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0.2rem 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-  background: var(--bg);
-}
-.search form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1rem;
-}
-details.advanced > section {
-  border-top: 1px solid var(--border);
-  margin-top: 1rem;
-  padding-top: 0.25rem;
-}
-summary {
-  cursor: pointer;
-}
-
-/* ---- Quiet lower areas: Advanced and Help ----------------------------------
-   Below the main path: small muted headings, and buttons that show only a
-   hairline until they are pointed at. Fields keep their full edge. */
-.drop-zone .note {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-}
-details.advanced h2,
-.help h2 {
-  margin: 1.25rem 0 0.5rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-details.advanced h3,
-.help h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-details.advanced .panel h3 {
-  color: var(--fg);
-}
-details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)),
-.help button {
-  padding: 0.3rem 0.8rem;
-  font-size: 0.9rem;
-  color: var(--accent);
-  background: none;
-  border-color: var(--border);
-}
-details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)):hover:not(:disabled),
-.help button:hover:not(:disabled) {
-  background: var(--accent-bg);
-}
-details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .commit, .entry, .primary)):disabled,
-.help button:disabled {
-  color: var(--muted);
-  border-color: var(--border);
-}
-.help {
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
+  margin: 0.5rem 0;
 }
 .help .actions {
   margin: 0.5rem 0;
 }
 .help p {
-  font-size: 0.9rem;
   color: var(--muted);
 }
 
-/* ---- Results: one short line, details in a side panel -------------------------
+/* ---- Results: one short line in the status bar, details in a side panel -----
    A finished create, add, remove, or extract is one line with its actions on
-   the same row (owner request, release 0.9.3). Neutral by design: nothing here
-   is a verification, so nothing is green (spec §23.3 #2). A line that is
-   partial gets the warning bar, and the Details button carries a badge while
-   the panel holds anything that is not fully good. */
+   the same row. Neutral by design: nothing here is a verification, so nothing
+   is green (spec §23.3 #2). A line that is partial gets the warning bar, and
+   the Details button carries a badge while the panel holds anything that is
+   not fully good. */
 .result.has-result {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.75rem;
-  margin: 0.5rem 0;
-  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
 .result-text {
-  flex: 1 1 14rem;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
 }
 .result-text p {
-  margin: 0.15rem 0;
+  display: inline;
+  margin: 0;
 }
 .result-actions {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.25rem;
-}
-.result-actions button:not(.icon-button) {
-  padding: 0.25rem 0.75rem;
+  gap: 0.1rem;
 }
 .result-actions .icon-button {
-  width: 2.25rem;
-  height: 2.25rem;
   color: var(--fg);
 }
 .result-details-button {
@@ -1129,8 +1423,8 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
    the panel that needs a look. The accessible name says how many. */
 .result-badge {
   position: absolute;
-  top: 0.2rem;
-  right: 0.2rem;
+  top: 0;
+  right: 0;
   width: 0.55rem;
   height: 0.55rem;
   box-sizing: border-box;
@@ -1142,7 +1436,6 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
   position: relative;
   align-self: flex-start;
   padding: 0.2rem 1.4rem 0.2rem 0.75rem;
-  font-size: 0.9rem;
 }
 .result-inline-toggle .result-badge {
   top: 50%;
@@ -1154,7 +1447,7 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
   overflow: auto;
   padding: 0.25rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: 6px;
   background: var(--surface);
 }
 /* The side panel: non-modal, over the right edge of the window. */
@@ -1162,15 +1455,18 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
   position: fixed;
   top: 0;
   right: 0;
-  bottom: 0;
-  z-index: 20;
+  bottom: 1.75rem;
+  z-index: 35;
   box-sizing: border-box;
-  width: min(24rem, 100vw);
+  width: min(22rem, 100vw);
   overflow: auto;
-  padding: 0.75rem 1rem 1rem;
+  padding: 0.6rem 0.85rem 0.85rem;
+  color: var(--fg);
+  font-size: 1rem;
+  white-space: normal;
   background: var(--surface);
   border-left: 1px solid var(--border-strong);
-  font-size: 0.95rem;
+  box-shadow: -6px 0 18px color-mix(in srgb, var(--fg) 14%, transparent);
 }
 .result-drawer-head {
   display: flex;
@@ -1181,13 +1477,10 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
 .result-drawer-head h3 {
   margin: 0;
 }
-.result-drawer-head button {
-  padding: 0.25rem 0.75rem;
-}
 .result-list {
   display: grid;
-  grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr);
-  gap: 0.6rem 1rem;
+  grid-template-columns: minmax(5rem, 8rem) minmax(0, 1fr);
+  gap: 0.45rem 0.85rem;
   margin: 0.75rem 0;
 }
 .result-list dt {
@@ -1200,12 +1493,11 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
 .result-sub {
   display: block;
   color: var(--muted);
-  font-size: 0.85em;
+  font-size: 0.9em;
 }
 .result-reason {
   display: block;
   color: var(--muted);
-  font-size: 0.9em;
 }
 .result-items {
   margin: 0.25rem 0 0;
@@ -1224,6 +1516,12 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
 .result-list dd.result-caution .result-reason {
   color: var(--fg);
 }
+.result-items .name {
+  white-space: pre-wrap;
+}
+.statusbar .result-text.warning {
+  padding-left: 0.4rem;
+}
 @media (max-width: 30rem) {
   .result-list {
     grid-template-columns: minmax(0, 1fr);
@@ -1233,18 +1531,15 @@ details.advanced :where(button:not(.link, .icon-button, .twisty, .tree-label, .c
     margin-bottom: 0.5rem;
   }
 }
-.result-items .name {
-  white-space: pre-wrap;
-}
-/* The dot is the warning colour of the warning bar, never the success green. */
-.result-badge {
-  width: 0.65rem;
-  height: 0.65rem;
-}
 @media (forced-colors: active) {
   .result-badge {
     forced-color-adjust: none;
     background: Highlight;
     border-color: Canvas;
   }
+}
+
+/* ---- The compact window of the shell's quick verbs ---------------------------- */
+.quick {
+  padding: 0.75rem 1rem;
 }

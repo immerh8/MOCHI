@@ -38,7 +38,7 @@ describe("archive browser", () => {
   it("opens an archive and shows its history and hostile names as text", async () => {
     await openNext();
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("4 versions"));
+    await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "4 versions");
     await openVersions();
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
     await closeVersions();
@@ -48,7 +48,8 @@ describe("archive browser", () => {
       timeoutMsg: "the hostile name is not listed as text",
     });
     await enterFolder("hostile");
-    await expect($('[data-testid="crumbs"]')).toHaveText("Version 3 / hostile");
+    await expect($('[data-testid="toggle-versions"]')).toHaveText("v3");
+    await expect($('[data-testid="crumbs"]')).toHaveText(expect.stringContaining("hostile"));
     await browser.waitUntil(async () => (await entryNames()).length === 6);
     const names = await entryNames();
     for (const n of ["<script>alert(1)", '"><svg onload=alert(1)>', "javascript:alert(1)", "&lt;b&gt;entity"]) {
@@ -86,7 +87,7 @@ describe("archive browser", () => {
   it("switches snapshots from the timeline", async () => {
     await openVersions();
     await $('[data-testid="commit-0"]').click();
-    await expect($('[data-testid="crumbs"]')).toHaveText("Version 0");
+    await expect($('[data-testid="toggle-versions"]')).toHaveText("v0");
     await browser.waitUntil(async () => (await entryNames()).includes("docs"));
     // `hostile/` arrived in commit 3; commit 0 does not have it.
     expect(await entryNames()).not.toContain("hostile");

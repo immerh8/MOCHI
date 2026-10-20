@@ -35,6 +35,7 @@ fn main() {
         "open_foreign_archive",
         "close_foreign_archive",
         "foreign_children",
+        "foreign_search",
         "plan_extract_foreign",
         "watch_launches",
         "watch_quick",
@@ -61,7 +62,10 @@ fn main() {
         "forget_recent_archives",
         "open_recent",
         "open_dropped_archive",
+        "stage_dropped_archive",
         "show_in_folder",
+        "drag_out",
+        "drag_out_foreign",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()
