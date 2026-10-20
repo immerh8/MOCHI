@@ -34,7 +34,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mochi_core::publish::{open_head, ArchiveWriter, PublishDurability, ReadOptions};
-use mochi_core::storage::os::{OsDir, OsReadStorage, OsStorage, LOCK_FILE_SUFFIX};
+use mochi_core::storage::os::{OsDir, OsReadStorage, OsStorage};
 use mochi_core::storage::{
     DirectoryDurability, ReadStorage, RemoveOutcome, Storage, StorageDir, StorageError,
 };
@@ -121,9 +121,9 @@ impl StorageDir for CutDir {
         gate();
         self.0.publish_no_replace(from, to)
     }
-    // One gate, as for `publish_no_replace`: the OS backend creates the
-    // final name's writer lock file here first (Q54), which holds no archive
-    // bytes, so a cut between the two leaves only a harmless lock file.
+    // One gate, as for `publish_no_replace`: the OS backend's archive lock is
+    // already held on the temporary file (spec B.2.17), so publication is the
+    // rename and nothing else; the legacy sweep that follows it is best effort.
     fn publish_archive(
         &mut self,
         file: &mut CutFile,
@@ -194,17 +194,13 @@ fn check(dir: &Path, log: &Path) {
         .filter(|n| n != "lost+found")
         .collect();
     names.sort();
-    // The writer lock file (Q54) may survive any cut after it was created.
-    // It is never written: existence is not ownership, and it holds no bytes.
-    let lock = format!("{NAME}{LOCK_FILE_SUFFIX}");
+    // The writer lock is on the archive itself (spec B.2.17): no lock file
+    // exists, so only the archive and temporary files may be there.
     for n in &names {
         assert!(
-            n == NAME || is_temp(n) || *n == lock,
+            n == NAME || is_temp(n),
             "unexpected entry {n:?} in {names:?}"
         );
-    }
-    if names.contains(&lock) {
-        assert_eq!(std::fs::metadata(dir.join(&lock)).unwrap().len(), 0);
     }
 
     let at_name = names.iter().any(|n| n == NAME);

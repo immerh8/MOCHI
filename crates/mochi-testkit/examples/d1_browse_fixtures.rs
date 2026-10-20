@@ -128,10 +128,6 @@ fn damaged(path: &Path) {
     let mut bytes = std::fs::read(&pristine).unwrap();
     bytes[usize::try_from(at).unwrap()] ^= 0x01;
     std::fs::remove_file(&pristine).unwrap();
-    // The writer's lock file beside it (never removed by the writer).
-    let mut lock = pristine.into_os_string();
-    lock.push(".mochi-lock");
-    let _ = std::fs::remove_file(lock);
     // A new file, never replacing one.
     std::fs::OpenOptions::new()
         .write(true)
