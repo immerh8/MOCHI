@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
-import { clickNewArchive } from "./_ui.js";
+import { clickNewArchive, closeResultDetails, openResultDetails } from "./_ui.js";
 
 const pickFile = process.env.MOCHI_E2E_PICK_FILE;
 const queuePicks = (...paths) => writeFileSync(pickFile, paths.join("\n"));
@@ -105,7 +105,9 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await $('[data-testid="create-passphrase-again"]').setValue(PASS);
     await $('[data-testid="create-confirm"]').click();
     await waitForStatus("Created vault.mochi");
-    expect(await $('[data-testid="write-status"]').getText()).toContain("(LOCAL_COMMITTED)");
+    await openResultDetails("write");
+    expect(await $('[data-testid="write-details"]').getText()).toContain("LOCAL_COMMITTED");
+    await closeResultDetails("write");
     await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("Encrypted"));
     await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
     await assertNoBannedWording();

@@ -388,8 +388,17 @@ window is one fixed frame (it never scrolls; the minimum size is set where the w
 
 - **Plain words, precise terms secondary.** "Version" on the main path is a snapshot (one
   commit); IDs, hashes, checkpoint/delta, and the profile are in "Technical details"
-  disclosures. Results keep their honest status as a last "Technical detail" line
-  (`LOCAL_COMMITTED`); deleting still says earlier versions keep the content.
+  disclosures. A finished create, add, remove, or extract is **one short line** with
+  "Show in folder", a **Details** button, and a dismiss button on the same row
+  (`ui/src/result/`; release 0.9.3). Details open in a closed-by-default side panel (Esc or
+  Close shuts it) as label/value rows: counts, the status with its precise value
+  (`commit 0 · LOCAL_COMMITTED`), the directory-entry dimension (DEGRADED shows as "Not
+  confirmed" with a caution marker), what was not stored or extracted, and the one-file note.
+  Anything not fully good is never only in the panel: items not stored or extracted are in the
+  line too (warning bar), and a dot badge with an accessible "N notes" sits on the Details
+  button. Nothing is success-styled. A removal's line still says earlier versions keep the
+  content. The compact quick-verb window has the same rows behind an inline Details button.
+  The technical record is also written once per result to the console (`console.info`).
 - **Create** is a guided panel: choose items, see where it will be saved (default: next to the
   first item, named after it, `name (2).mochi` if taken; Rust computes it, `Staging`,
   `StagedView.default_destination`; `create_archive` never replaces), a closed **Options**

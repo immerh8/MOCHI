@@ -368,15 +368,22 @@ test("a finished extraction lists what was not extracted and which attributes we
   const status = screen.getByTestId("extract-status");
   expect(status).toHaveAttribute("data-state", "completed");
   expect(status).toHaveAttribute("data-complete", "false");
-  expect(screen.getByTestId("extract-headline")).toHaveTextContent("3 entries were not extracted.");
+  // The line is partial and says so; the list is in the Details panel.
+  expect(screen.getByTestId("extract-headline")).toHaveTextContent(
+    "Extracted 3 files · 1 folder · 100 bytes · 3 entries not extracted",
+  );
+  expect(status).toHaveClass("warning");
+  expect(screen.getByTestId("extract-details")).not.toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Details, 2 notes" }));
+  expect(screen.getByTestId("extract-details")).toBeVisible();
   const items = screen.getAllByTestId("extract-not-extracted-item");
   expect(items[0]).toHaveTextContent(`${HOSTILE} (NAME_UNSUPPORTED)`);
   expect(items[1]).toHaveTextContent("line\\u{a}break (escaped) (NAME_COLLISION)");
-  expect(status).toHaveTextContent("…and 1 more.");
+  expect(screen.getByTestId("extract-details")).toHaveTextContent("…and 1 more.");
   const notes = screen.getAllByTestId("extract-attribute-note");
   expect(notes[0]).toHaveTextContent("Not applied: owner and group, on 3 entries. First: a/b.");
   expect(notes[1]).toHaveTextContent("setuid and setgid bits");
-  expect(status).toHaveTextContent("not a verification of the archive");
+  expect(screen.getByTestId("extract-details")).toHaveTextContent("not a verification of the archive");
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("[src], a[href]")).toBeNull();
 });
@@ -390,9 +397,9 @@ test("a clean extraction is plain text: no success styling, no backed-up, safe, 
   await screen.findByTestId("extract-running");
   b.job({ event: "started", job_id: 7 });
   b.job({ event: "finished", job_id: 7, outcome: { status: "completed", summary: "s", extract: report() } });
-  expect(screen.getByTestId("extract-headline")).toHaveTextContent(
-    "Extracted 3 files (100 bytes) and 1 folder from version 1 to /home/me/out.",
-  );
+  expect(screen.getByTestId("extract-headline")).toHaveTextContent(/^Extracted 3 files · 1 folder · 100 bytes$/);
+  expect(screen.getByTestId("extract-status")).not.toHaveClass("warning");
+  expect(screen.queryByTestId("extract-badge")).toBeNull();
   expect(screen.getByTestId("extract-status")).toHaveAttribute("data-complete", "true");
   // The plan is stale once what it described has been written.
   expect(screen.queryByTestId("extract-panel")).toBeNull();
@@ -503,4 +510,29 @@ test("the browser shows the extract buttons and 'selected' follows the details p
   await user.click(await screen.findByTestId("entry"));
   await screen.findByTestId("details");
   expect(screen.getByTestId("extract-selected")).toBeEnabled();
+});
+
+test("a degraded folder entry is a caution in the details: badge on the button, a neutral line", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  const { container } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({
+    event: "finished",
+    job_id: 7,
+    outcome: { status: "completed", summary: "s", extract: report({ durability_note: "no directory sync" }) },
+  });
+  const status = screen.getByTestId("extract-status");
+  expect(status).toHaveTextContent(/^Extracted 3 files · 1 folder · 100 bytes$/);
+  expect(status).not.toHaveClass("warning");
+  const toggle = screen.getByRole("button", { name: "Details, 1 note" });
+  expect(screen.getByTestId("extract-badge")).toBeInTheDocument();
+  await user.click(toggle);
+  expect(screen.getByTestId("extract-details")).toHaveTextContent("Folder entries on disk");
+  expect(screen.getByTestId("extract-details")).toHaveTextContent("Not confirmed");
+  expect(screen.getByTestId("extract-details")).toHaveTextContent("no directory sync");
+  expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
 });
