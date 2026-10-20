@@ -160,8 +160,9 @@ hits=$(awk '
 [ -n "$hits" ] && report "unsafe without a SAFETY comment in the preceding lines (mochi-foreign / mochi-sys)" "$hits"
 #     (f2) `unsafe` is allowed only in mochi-foreign (above) and mochi-sys, the
 #     Win32 calls mochi-core may not make itself: the no-replace move and the
-#     volume name (owner decision 2026-10-15, G6a) and the one-byte writer lock
-#     (owner decision 2026-10-20, spec B.2.17). Library and app sources only;
+#     volume name (owner decision 2026-10-15, G6a), the one-byte writer lock
+#     and the file identity that checks its path (owner decision 2026-10-20,
+#     spec B.2.17). Library and app sources only;
 #     the testkit's counting allocator example and the fuzz targets are not
 #     shipped.
 hits=$(grep -rnE --include='*.rs' '\bunsafe\b' crates/*/src apps/mochi-desktop/src-tauri/src 2>/dev/null \

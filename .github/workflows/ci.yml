@@ -49,6 +49,95 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
+      # Spec B.2.17 items 2 and 7: the writer lock on Windows is a one-byte
+      # LockFileEx at offset 2^62 of the archive. Whether a filesystem accepts
+      # a byte-range lock that far past the end of a file is a property of the
+      # filesystem, and users keep archives on USB sticks (FAT32, exFAT). The
+      # runner's own volume is NTFS; this step makes small VHDs with diskpart,
+      # formats FAT32 and exFAT (both must work) and tries ReFS (the runner may
+      # refuse to format it; that is logged as a warning and the step goes on),
+      # then runs one focused test on each volume through MOCHI_LOCK_TEST_DIR:
+      # create, append, read while a writer holds the lock, and a second writer
+      # gets LOCK_CONFLICT.
+      - name: Writer lock on other filesystems (Windows; FAT32, exFAT, ReFS, NTFS)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testName = 'q54_windows_writer_lock_on_the_volume_named_by_the_environment'
+          $results = @()
+          $failed = $false
+
+          function Invoke-LockTest([string]$label, [string]$dir) {
+            Write-Host "::group::writer lock on $label ($dir)"
+            $env:MOCHI_LOCK_TEST_DIR = $dir
+            cargo test --locked -p mochi-testkit --test q54_writer_lock $testName -- --nocapture --exact
+            $ok = ($LASTEXITCODE -eq 0)
+            Remove-Item Env:MOCHI_LOCK_TEST_DIR
+            Write-Host '::endgroup::'
+            return $ok
+          }
+
+          function New-TestVolume([string]$name, [string]$fs, [int]$sizeMb, [string]$letter) {
+            $vhd = Join-Path $env:RUNNER_TEMP "$name.vhd"
+            $script = Join-Path $env:RUNNER_TEMP "$name.diskpart.txt"
+            @(
+              "create vdisk file=`"$vhd`" maximum=$sizeMb type=expandable",
+              "select vdisk file=`"$vhd`"",
+              'attach vdisk',
+              'create partition primary',
+              "format fs=$fs quick label=MOCHI",
+              "assign letter=$letter"
+            ) | Set-Content -Encoding ascii $script
+            Write-Host "::group::diskpart: $name ($fs, $sizeMb MiB)"
+            diskpart /s $script
+            Write-Host '::endgroup::'
+            if (-not (Test-Path "${letter}:\")) { return $null }
+            return (Get-Volume -DriveLetter $letter).FileSystem
+          }
+
+          # NTFS: the runner's own temp volume.
+          $tempDrive = $env:RUNNER_TEMP.Substring(0, 1)
+          $ntfsName = (Get-Volume -DriveLetter $tempDrive).FileSystem
+          Write-Host "runner temp volume ${tempDrive}: is $ntfsName"
+          $ok = Invoke-LockTest "runner temp volume ($ntfsName)" (Join-Path $env:RUNNER_TEMP 'lock-ntfs\t')
+          $results += "| runner temp volume | $ntfsName | $(if ($ok) {'pass'} else {'FAIL'}) |"
+          if (-not $ok) { $failed = $true }
+
+          # FAT32 and exFAT must format and must pass; ReFS may be refused.
+          $volumes = @(
+            @{ Name = 'fat32'; Fs = 'fat32'; Want = 'FAT32'; Mb = 64;   Letter = 'R'; Required = $true },
+            @{ Name = 'exfat'; Fs = 'exfat'; Want = 'exFAT'; Mb = 64;   Letter = 'S'; Required = $true },
+            @{ Name = 'refs';  Fs = 'refs';  Want = 'ReFS';  Mb = 2048; Letter = 'T'; Required = $false }
+          )
+          foreach ($v in $volumes) {
+            $got = New-TestVolume $v.Name $v.Fs $v.Mb $v.Letter
+            if ($null -eq $got) {
+              if ($v.Required) {
+                Write-Host "::error::could not create a $($v.Want) volume with diskpart"
+                $results += "| $($v.Want) | not created | FAIL |"
+                $failed = $true
+              } else {
+                Write-Host "::warning::$($v.Want) is not available on this runner (format was refused); not tested"
+                $results += "| $($v.Want) | not available on this runner (format refused) | not run |"
+              }
+              continue
+            }
+            if ($got -ne $v.Want) {
+              Write-Host "::error::expected $($v.Want), the volume reports $got"
+              $results += "| $($v.Want) | volume reports $got | FAIL |"
+              $failed = $true
+              continue
+            }
+            $ok = Invoke-LockTest "$got" "$($v.Letter):\t"
+            $results += "| $got | $got | $(if ($ok) {'pass'} else {'FAIL'}) |"
+            if (-not $ok) { $failed = $true }
+          }
+
+          $summary = @('### Writer lock (one byte at offset 2^62) per filesystem', '', '| volume | filesystem | result |', '| --- | --- | --- |') + $results
+          $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $summary | ForEach-Object { Write-Host $_ }
+          if ($failed) { exit 1 }
       # ts-rs writes the IPC types while the tests run (plan O1); the
       # checked-in copies must be exactly what the Rust types produce.
       - name: Generated IPC types are fresh

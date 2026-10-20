@@ -22,10 +22,14 @@
 //! * [`try_lock_byte`] / [`unlock_byte`]: `LockFileEx` (exclusive, fail
 //!   immediately) and `UnlockFileEx` on **one byte** at a caller-chosen
 //!   offset. This is the writer lock (spec Annex B.2.17, D27): MOCHI locks one
-//!   byte far beyond any possible file size, so the lock lives on the archive
+//!   byte far beyond any practical file size, so the lock lives on the archive
 //!   itself and still blocks no read or write of the file's real bytes
 //!   (`std`'s `File::try_lock` locks the whole range, which fails every other
 //!   handle's reads with error 33).
+//! * [`file_identity`]: `GetFileInformationByHandle`, the volume serial number
+//!   and file index of an open file. Two handles with the same pair are the
+//!   same file; `mochi-core` uses it to check, after locking, that a path
+//!   still names the file that was locked (spec Annex B.2.17 item 4).
 //!
 //! Every `unsafe` block carries a `// SAFETY:` comment, and
 //! `ci/check-invariants.sh` checks both that and that `unsafe` appears in no
@@ -44,9 +48,10 @@ use std::path::Path;
 
 use windows_sys::Win32::Foundation::{ERROR_IO_PENDING, ERROR_LOCK_VIOLATION};
 use windows_sys::Win32::Storage::FileSystem::{
-    GetVolumeInformationByHandleW, LockFileEx, MoveFileExW, UnlockFileEx,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, MOVEFILE_WRITE_THROUGH,
+    GetFileInformationByHandle, GetVolumeInformationByHandleW, LockFileEx, MoveFileExW,
+    UnlockFileEx, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, LOCKFILE_EXCLUSIVE_LOCK,
+    LOCKFILE_FAIL_IMMEDIATELY, MOVEFILE_WRITE_THROUGH,
 };
 use windows_sys::Win32::System::IO::{OVERLAPPED, OVERLAPPED_0, OVERLAPPED_0_0};
 
@@ -117,6 +122,39 @@ pub fn volume_filesystem_name(path: &Path) -> io::Result<String> {
     let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
     Ok(String::from_utf16_lossy(
         name.get(..len).unwrap_or_default(),
+    ))
+}
+
+/// The identity of the file `file` is open on: its volume serial number and
+/// its 64-bit file index (`GetFileInformationByHandle`). Two open handles
+/// that report the same pair are open on the same file, whatever names they
+/// were opened by (hard links included); the pair is stable while a handle is
+/// open. A filesystem that has no file index reports 0 for it, which callers
+/// must treat as "unknown".
+pub fn file_identity(file: &File) -> io::Result<(u32, u64)> {
+    // Plain integers, zero-initialised; the call fills them in.
+    let mut info = BY_HANDLE_FILE_INFORMATION {
+        dwFileAttributes: 0,
+        ftCreationTime: Default::default(),
+        ftLastAccessTime: Default::default(),
+        ftLastWriteTime: Default::default(),
+        dwVolumeSerialNumber: 0,
+        nFileSizeHigh: 0,
+        nFileSizeLow: 0,
+        nNumberOfLinks: 0,
+        nFileIndexHigh: 0,
+        nFileIndexLow: 0,
+    };
+    // SAFETY: the handle is open for the duration of the call (`file` is
+    // borrowed), and `info` is a valid, initialised, writable
+    // `BY_HANDLE_FILE_INFORMATION` that lives until the call returns.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((
+        info.dwVolumeSerialNumber,
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
     ))
 }
 
@@ -251,6 +289,23 @@ mod tests {
         assert!(try_lock_byte(&a, FAR).unwrap());
         assert!(!try_lock_byte(&b, FAR).unwrap());
         unlock_byte(&a, FAR).unwrap();
+    }
+
+    #[test]
+    fn identity_is_the_file_not_the_name() {
+        let td = tempfile::tempdir().unwrap();
+        let (one, two, other) = (
+            td.path().join("one"),
+            td.path().join("two"),
+            td.path().join("other"),
+        );
+        std::fs::write(&one, b"x").unwrap();
+        std::fs::hard_link(&one, &two).unwrap();
+        std::fs::write(&other, b"x").unwrap();
+        let id = |p: &Path| file_identity(&open_rw(p)).unwrap();
+        assert_eq!(id(&one), id(&two));
+        assert_ne!(id(&one), id(&other));
+        assert_ne!(id(&one).1, 0);
     }
 
     #[test]

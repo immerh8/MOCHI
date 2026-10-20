@@ -1,6 +1,6 @@
 [package]
 name = "mochi-sys"
-description = "The Win32 calls MOCHI needs and mochi-core cannot make (it forbids unsafe): a write-through, no-replace move, a volume filesystem name, and a one-byte file lock. Windows only."
+description = "The Win32 calls MOCHI needs and mochi-core cannot make (it forbids unsafe): a write-through, no-replace move, a volume filesystem name, a one-byte file lock, and a file identity. Windows only."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
