@@ -232,7 +232,10 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
 
 /// The arguments of this process, without the program name.
 pub fn from_environment() -> Result<Option<Launch>, LaunchError> {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.is_empty() {
+        args = crate::automation::launch_args();
+    }
     let cwd = std::env::current_dir().unwrap_or_default();
     parse(&args, &cwd)
 }

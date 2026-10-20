@@ -20,6 +20,11 @@
 //! milliseconds per entry, so that a spec can cancel one deterministically
 //! (`crate::write::Tree`, `crate::extract`). The folder dialog of an extraction
 //! takes its path from the same pick queue.
+//!
+//! On Windows tauri-driver passes a session's `args` to WebView2, not to the
+//! app, so a spec cannot start the app with a shell verb. With `e2e`, a start
+//! with no arguments reads them from `MOCHI_E2E_ARGS_FILE` (one per line) and
+//! empties the file, so only that one start sees them (`launch_args`).
 
 use tauri::{Manager, WebviewWindowBuilder, Wry};
 
@@ -78,4 +83,27 @@ pub fn next_pick() -> Option<std::path::PathBuf> {
             .unwrap_or_default()
     })
     .pop_front()
+}
+
+/// The arguments of a start with none on its command line, from
+/// `MOCHI_E2E_ARGS_FILE` (one per line), which is emptied: one start only.
+#[cfg(feature = "e2e")]
+pub fn launch_args() -> Vec<std::ffi::OsString> {
+    let Some(file) = std::env::var_os("MOCHI_E2E_ARGS_FILE") else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return Vec::new();
+    };
+    let _ = std::fs::write(&file, "");
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(std::ffi::OsString::from)
+        .collect()
+}
+
+/// Shipped builds take their arguments from the command line only.
+#[cfg(not(feature = "e2e"))]
+pub fn launch_args() -> Vec<std::ffi::OsString> {
+    Vec::new()
 }

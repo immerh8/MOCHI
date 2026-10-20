@@ -82,6 +82,13 @@ process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt
 const coldDir = path.join(os.tmpdir(), "mochi-e2e-cold", "trip");
 process.env.MOCHI_E2E_COLD_DIR = coldDir;
 const coldSpec = path.resolve(here, "specs/add-cold.e2e.js");
+const coldArgs = ["--add", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))];
+// On Windows, tauri-driver hands `tauri:options.args` to msedgedriver as WebView2 *browser*
+// arguments, never to the app (CI: the app started with no verb and showed the main window).
+// There the test build (feature e2e) reads its arguments, once, from this file instead, which
+// beforeSession fills for the cold spec only (`automation::launch_args`).
+process.env.MOCHI_E2E_ARGS_FILE = path.join(os.tmpdir(), "mochi-e2e-args.txt");
+const isWindows = process.platform === "win32";
 
 let tauriDriver;
 
@@ -107,10 +114,7 @@ export const config = {
     {
       maxInstances: 1,
       "wdio:specs": [coldSpec],
-      "tauri:options": {
-        application,
-        args: ["--add", ...["a.txt", "b.txt", "c.txt"].map((n) => path.join(coldDir, n))],
-      },
+      "tauri:options": isWindows ? { application } : { application, args: coldArgs },
     },
   ],
   logLevel: "warn",
@@ -118,6 +122,12 @@ export const config = {
   framework: "mocha",
   mochaOpts: { ui: "bdd", timeout: 60_000 },
   waitforTimeout: 15_000,
+
+  beforeSession: (_config, _caps, specs) => {
+    // One line per argument; the app empties the file when it reads it.
+    const cold = specs.some((s) => /add-cold\.e2e\.js$/.test(s));
+    writeFileSync(process.env.MOCHI_E2E_ARGS_FILE, cold && isWindows ? coldArgs.join("\n") : "");
+  },
 
   onPrepare: () => {
     // The files the cold start adds, made fresh.
@@ -128,6 +138,7 @@ export const config = {
     writeFileSync(process.env.MOCHI_E2E_PICK_FILE, "");
     writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
     writeFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "");
+    writeFileSync(process.env.MOCHI_E2E_ARGS_FILE, "");
     // On PATH after `cargo install tauri-driver` (~/.cargo/bin).
     const bin = process.env.TAURI_DRIVER ?? "tauri-driver";
     tauriDriver = spawn(bin, driverArgs, { stdio: [null, process.stdout, process.stderr] });
