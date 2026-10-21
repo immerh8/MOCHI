@@ -16,6 +16,7 @@ use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, HMODULE,
     S_FALSE, S_OK, TRUE,
 };
+use windows::Win32::Globalization::GetUserDefaultUILanguage;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
@@ -183,6 +184,13 @@ impl Drop for MochiMenu {
         let _ =
             LIVE_OBJECTS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
+}
+
+/// The menu language: the user's Windows display language. The app's own
+/// language setting lives in the webview and is not readable from here.
+fn display_language() -> plan::Lang {
+    // SAFETY: takes no arguments, reads no memory of ours, and cannot fail.
+    plan::Lang::from_langid(unsafe { GetUserDefaultUILanguage() })
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -455,7 +463,10 @@ impl IContextMenu_Impl for MochiMenu_Impl {
                 return none;
             }
             let icon = menu_icon();
-            for (n, entry) in plan::menu_entries(&items).iter().enumerate() {
+            for (n, entry) in plan::menu_entries(&items, display_language())
+                .iter()
+                .enumerate()
+            {
                 let mut text = wide(&entry.label);
                 let mut mii = MENUITEMINFOW {
                     cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,

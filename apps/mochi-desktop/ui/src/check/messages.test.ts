@@ -52,16 +52,16 @@ test("plans and results are labelled by their outcome; partial salvage says so",
 
 test("no message uses a banned word", () => {
   const texts: string[] = [
-    m.TEST_NOTE,
-    m.FRESHNESS_NOTE,
-    m.KEYLESS_NOTE,
-    m.HEALTH_NOTE,
-    m.PLAN_NOTE,
-    m.APPROVAL_NOTE,
-    m.SOURCE_KEPT_NOTE,
-    ...Object.values(m.STATUS_MEANING),
-    ...Object.values(m.OUTCOME_LABEL),
-    ...m.LEVELS.flatMap((l) => [l.label, l.detail]),
+    m.testNote(),
+    m.freshnessNote(),
+    m.keylessNote(),
+    m.healthNote(),
+    m.planNote(),
+    m.approvalNote(),
+    m.sourceKeptNote(),
+    ...Object.values(m.statusMeaning()),
+    ...Object.values(m.outcomeLabel()),
+    ...m.levels().flatMap((l) => [l.label, l.detail]),
     m.overallLine(report()),
     m.headline(report()),
     m.scopeLine(report({ deep: true })),
@@ -89,11 +89,11 @@ test("no message uses a banned word", () => {
 });
 
 test("freshness UNKNOWN is explained as not a failure and never a pass", () => {
-  expect(m.FRESHNESS_NOTE).toMatch(/UNKNOWN/);
-  expect(m.FRESHNESS_NOTE).toMatch(/not a failure/);
-  expect(m.FRESHNESS_NOTE).toMatch(/never shown as a pass/);
-  expect(m.KEYLESS_NOTE).toMatch(/without its passphrase/);
-  expect(m.KEYLESS_NOTE).toMatch(/never PASS overall/);
+  expect(m.freshnessNote()).toMatch(/UNKNOWN/);
+  expect(m.freshnessNote()).toMatch(/not a failure/);
+  expect(m.freshnessNote()).toMatch(/never shown as a pass/);
+  expect(m.keylessNote()).toMatch(/without its passphrase/);
+  expect(m.keylessNote()).toMatch(/never PASS overall/);
 });
 
 test("the verdict never reads better than the report", () => {

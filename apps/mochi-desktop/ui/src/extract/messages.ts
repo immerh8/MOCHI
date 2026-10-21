@@ -3,23 +3,23 @@
 // styling, and never calls the archive or the copies "safe" or "backed up".
 // A cancelled or failed extraction says plainly what may remain in the folder.
 import { formatSize } from "../browser/format";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type { ExtractReport } from "../ipc/extract";
 import { countParts, joinParts } from "../result/details";
 import type { DetailRow, ResultDetails } from "../result/details";
 
 /** Shown with every extraction: what the engine checked, and what it did not. */
-export const CHECK_NOTE = t("extract.checkNote");
+export const checkNote = () => t("extract.checkNote");
 
 /** The rule every collision follows (plan C6): shown with the conflict list. */
-export const CONFLICT_NOTE = t("extract.conflictNote");
+export const conflictNote = () => t("extract.conflictNote");
 
 /** The options the extraction engine does not have (plan D3 "Gap"). */
-export const NOT_OFFERED_NOTE = t("extract.notOffered");
+export const notOfferedNote = () => t("extract.notOffered");
 
 /** Restores into a folder others can change are refused or limited (C6). */
-export const FOLDER_NOTE = t("extract.folderNote");
+export const folderNote = () => t("extract.folderNote");
 
 export interface Described {
   /** First line: what happened. */
@@ -116,8 +116,8 @@ function reportDetails(r: ExtractReport): ResultDetails {
   const rows: DetailRow[] = [
     { label: t("extract.rowFolder"), value: r.destination, testId: "extract-destination-result" },
     { label: t("extract.rowVersion"), value: String(r.seq) },
-    { label: t("extract.rowFiles"), value: r.files.toLocaleString("en-US") },
-    { label: t("extract.rowFolders"), value: r.directories.toLocaleString("en-US") },
+    { label: t("extract.rowFiles"), value: formatNumber(r.files) },
+    { label: t("extract.rowFolders"), value: formatNumber(r.directories) },
     { label: t("extract.rowSize"), value: formatSize(String(r.bytes)) },
   ];
   if (r.durability_note) {
@@ -164,7 +164,7 @@ function reportDetails(r: ExtractReport): ResultDetails {
   }
   const notes: string[] = [];
   if (r.case_insensitive) notes.push(t("extract.caseInsensitive"));
-  notes.push(CHECK_NOTE);
+  notes.push(checkNote());
   return { rows, notes };
 }
 

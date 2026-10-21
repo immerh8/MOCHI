@@ -37,12 +37,26 @@
   --icon-code: #3d6b2f;
   --icon-sheet: #2b7a78;
   --icon-pdf: #b03a2e;
-  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  /* Latin first; Thai and Chinese glyphs fall through to the system fonts named
+     after it. No remote fonts (the CSP is strict). */
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", "Leelawadee UI",
+    "Noto Sans Thai", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
   font-size: 13px;
   line-height: 1.4;
   color: var(--fg);
   background: var(--bg);
   accent-color: var(--accent);
+}
+/* With the language set, name the right script's fonts first so that shared Han
+   characters use the Simplified Chinese forms and Thai gets a Thai face. */
+:root:lang(th) {
+  font-family: "Leelawadee UI", "Noto Sans Thai", "Noto Sans Thai UI", "Segoe UI", system-ui, Ubuntu, Cantarell,
+    "Noto Sans", sans-serif;
+}
+:root:lang(zh-CN) {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "WenQuanYi Micro Hei", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
 }
 html,
 body {

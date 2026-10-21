@@ -10,7 +10,7 @@ import { BackIcon, CheckIcon, CloseIcon, ExtractDesktopIcon, ExtractIcon, KeyIco
 import { useDesktopRun } from "../extract/useDesktopRun";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot, useShell } from "../shell/Shell";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
 import { dragOutForeign } from "../ipc/dragout";
@@ -37,8 +37,8 @@ import { listKeys, rowHandlers } from "../list/rows";
 import { ResultBar } from "../result/Result";
 import { SearchResults } from "../search/SearchResults";
 import type { HitRow, SearchView } from "../search/SearchResults";
-import { foundText, IDLE, RUNNING } from "../search/useArchiveSearch";
-import { describeOutcome, EXTRACT_NOTE, needsPassword, progressText, TEST_NOTE, WEAK_NOTE } from "./messages";
+import { foundText, IDLE, running } from "../search/useArchiveSearch";
+import { describeOutcome, extractNote, needsPassword, progressText, testNote, weakNote } from "./messages";
 
 /** Row height of the list, in pixels (the same as the MOCHI browser's). */
 const ROW_HEIGHT = 26;
@@ -75,7 +75,7 @@ function kindLabel(row: Pick<ForeignRow, "kind">): string {
 
 function sizeText(row: ForeignRow): string {
   if (row.kind === "directory") {
-    return t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") });
+    return t("browser.itemsCount", { n: formatNumber(row.child_dirs + row.child_files) });
   }
   return row.size === null ? "" : shortSize(row.size);
 }
@@ -119,7 +119,7 @@ function useForeignSearch(handle: number | null, query: string): SearchView<Fore
     };
   }, [handle, query]);
   if (handle === null || query === "") return IDLE;
-  return found?.id === id ? found.view : RUNNING;
+  return found?.id === id ? found.view : running();
 }
 
 /**
@@ -529,8 +529,8 @@ export function ForeignBrowser() {
             </span>
           )}
           {open.weak_encryption && (
-            <span role="note" className="path-warn" data-testid="foreign-weak" title={WEAK_NOTE}>
-              !<span className="sr-only">{WEAK_NOTE}</span>
+            <span role="note" className="path-warn" data-testid="foreign-weak" title={weakNote()}>
+              !<span className="sr-only">{weakNote()}</span>
             </span>
           )}
         </div>
@@ -573,7 +573,7 @@ export function ForeignBrowser() {
               )}{" "}
               (
               {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
-                n: plan.plan.plan.entries.toLocaleString("en-US"),
+                n: formatNumber(plan.plan.plan.entries),
               })}
               )
             </dd>
@@ -581,7 +581,7 @@ export function ForeignBrowser() {
           {plan.plan.skipped_kinds > 0 && (
             <p role="note" className="warning" data-testid="foreign-skipped-kinds">
               {t(plan.plan.skipped_kinds === 1 ? "foreign.skippedKindsOne" : "foreign.skippedKindsMany", {
-                n: plan.plan.skipped_kinds.toLocaleString("en-US"),
+                n: formatNumber(plan.plan.skipped_kinds),
               })}
             </p>
           )}
@@ -589,7 +589,7 @@ export function ForeignBrowser() {
             <div data-testid="foreign-conflicts">
               <p role="note" className="warning">
                 {t(plan.plan.plan.conflicts_total === 1 ? "foreign.cannotOne" : "foreign.cannotMany", {
-                  n: plan.plan.plan.conflicts_total.toLocaleString("en-US"),
+                  n: formatNumber(plan.plan.plan.conflicts_total),
                 })}
               </p>
               <ul className="staged" aria-label={t("foreign.cannotList")}>
@@ -603,7 +603,7 @@ export function ForeignBrowser() {
           )}
           {progressLine}
           <div className="actions dialog-actions">
-            <Hint text={EXTRACT_NOTE} />
+            <Hint text={extractNote()} />
             <button
               type="button"
               className="primary"
@@ -803,7 +803,7 @@ export function ForeignBrowser() {
             title={tipFor(
               avail.extract,
               selectedCount > 0
-                ? t("extract.selectedTip", { n: selectedCount.toLocaleString("en-US") })
+                ? t("extract.selectedTip", { n: formatNumber(selectedCount) })
                 : t("foreign.extractAllTip"),
             )}
           />
@@ -820,7 +820,7 @@ export function ForeignBrowser() {
             title={tipFor(
               avail.extractDesktop,
               selectedCount > 0
-                ? t("extract.desktopSelectedTip", { n: selectedCount.toLocaleString("en-US") })
+                ? t("extract.desktopSelectedTip", { n: formatNumber(selectedCount) })
                 : t("extract.desktopTip"),
             )}
           />
@@ -834,7 +834,7 @@ export function ForeignBrowser() {
             testId="foreign-test"
             disabled={!avail.test.enabled}
             onClick={() => begin({ kind: "test_foreign", handle: open.handle })}
-            title={tipFor(avail.test, TEST_NOTE)}
+            title={tipFor(avail.test, testNote())}
           />
         </ToolSlot>
       )}

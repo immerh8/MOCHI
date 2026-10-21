@@ -5,10 +5,10 @@ import { errorText } from "../browser/format";
 import { t } from "../i18n";
 import { isIpcError } from "../ipc/jobs";
 import {
-  DEDUP_LEAK as DEDUP,
-  LOST_PASSPHRASE as LOST,
-  WRONG_PASSPHRASE,
-  WRONG_PASSPHRASE_NOTE,
+  dedupLeak as DEDUP,
+  lostPassphrase as LOST,
+  wrongPassphrase,
+  wrongPassphraseNote,
 } from "./messages";
 
 export interface PassphraseFormProps {
@@ -72,7 +72,7 @@ export function PassphraseForm(props: PassphraseFormProps) {
         // A wrong passphrase is an operational answer, never damage.
         setError(
           isIpcError(err) && err.code === "KEY_UNAVAILABLE"
-            ? `${WRONG_PASSPHRASE} ${WRONG_PASSPHRASE_NOTE}`
+            ? `${wrongPassphrase()} ${wrongPassphraseNote()}`
             : errorText(t("crypt.notDone"), err),
         );
       },
@@ -135,11 +135,11 @@ export function EncryptionNotes({ creating }: { creating: boolean }) {
   return (
     <>
       <p className="warning" data-testid="lost-passphrase">
-        {LOST}
+        {LOST()}
       </p>
       {creating && (
         <p className="note" data-testid="dedup-leak">
-          {DEDUP}
+          {DEDUP()}
         </p>
       )}
     </>

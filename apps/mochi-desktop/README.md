@@ -349,9 +349,9 @@ NVDA on Windows and Orca on Ubuntu, Windows high-contrast themes, and 200 % zoom
 ## Messages (i18n scaffolding, plan D7)
 
 All user-visible wording is in the typed catalogue `ui/src/i18n/en/*.ts` (one file per
-screen, merged in `en.ts`); screens call `t("area.key", { param })`. One locale, English,
-ships; adding another is a catalogue plus a language switch, which is deliberately not
-built. A key that does not exist, or a placeholder that is not supplied, fails
+screen, merged in `en.ts`); screens call `t("area.key", { param })`. English, Thai (`th/`)
+and Simplified Chinese (`zh-CN/`) ship, chosen in Settings (default: the webview language);
+how to translate or add one is `ui/src/i18n/README.md`. A key that does not exist, or a placeholder that is not supplied, fails
 `pnpm typecheck`. The rules:
 
 - Wording did not change in the move (the existing screen tests assert it).
@@ -363,8 +363,12 @@ built. A key that does not exist, or a placeholder that is not supplied, fails
   nothing uses.
 - ESLint refuses English text in JSX and in `aria-label`/`title`/`placeholder`/`alt`
   attributes outside tests, so wording cannot bypass the catalogue.
-- Constants exported from `*/messages.ts` are evaluated once at import (fine for one
-  locale); a second locale turns them into functions.
+- Wording in `*/messages.ts` that does not depend on a value is a function (`checkNote()`),
+  not a constant, because the language can change while the app runs; the root of each
+  window calls `useLocale()` so a change re-renders in place. Numbers go through
+  `formatNumber`, never a hard-coded locale.
+- Each translation must have exactly the English keys and the same `{placeholders}`
+  (`tsc` and `i18n.test.ts`), and the §23.3 banned words are checked per language.
 
 ## Crash reports (plan D7): opt-in, local, never sent
 

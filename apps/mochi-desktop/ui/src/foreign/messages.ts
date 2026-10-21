@@ -4,18 +4,18 @@
 // retention are UNSUPPORTED, and an extraction is never a verification.
 import { formatSize } from "../browser/format";
 import type { DetailRow, ResultDetails } from "../result/details";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc } from "../i18n";
 import type { ExtractReport } from "../ipc/extract";
 import type { ForeignTestReport } from "../ipc/foreign";
 import type { JobOutcome } from "../ipc/jobs";
 
 /** The only thing "Read and check" claims. */
-export const TEST_NOTE = t("foreign.testNote");
+export const testNote = () => t("foreign.testNote");
 
 /** The rule every extraction follows (plan D8 rule 4). */
-export const EXTRACT_NOTE = t("foreign.extractNote");
+export const extractNote = () => t("foreign.extractNote");
 
-export const WEAK_NOTE = t("foreign.weakNote");
+export const weakNote = () => t("foreign.weakNote");
 
 /** Password errors the open flow handles by asking. */
 export function needsPassword(code: string): "ask" | "wrong" | null {
@@ -48,7 +48,7 @@ function testDetails(r: ForeignTestReport): ResultDetails {
   const rows: DetailRow[] = [
     {
       label: t("foreign.whatChecked"),
-      items: r.checks.map((c) => ({ text: t("foreign.checkCount", { count: c.count.toLocaleString("en-US"), what: c.what }) })),
+      items: r.checks.map((c) => ({ text: t("foreign.checkCount", { count: formatNumber(c.count), what: c.what }) })),
       itemTestId: "foreign-check-count",
       testId: "foreign-test-report",
     },
@@ -67,7 +67,7 @@ function testDetails(r: ForeignTestReport): ResultDetails {
       itemTestId: "foreign-problem",
     });
   }
-  return { rows, notes: [TEST_NOTE] };
+  return { rows, notes: [testNote()] };
 }
 
 /** The Details panel of an extraction: what was not extracted, and why. */
@@ -83,7 +83,7 @@ function extractDetails(r: ExtractReport, summary: string): ResultDetails {
       itemTestId: "foreign-not-extracted-item",
     });
   }
-  return { rows, notes: [summary, EXTRACT_NOTE] };
+  return { rows, notes: [summary, extractNote()] };
 }
 
 export function describeOutcome(outcome: JobOutcome): ForeignResult {
@@ -134,7 +134,7 @@ function extractedLine(r: ExtractReport): string {
   });
   const line = t("foreign.extracted", { what, dest: r.destination });
   if (r.not_extracted_total === 0) return line;
-  const n = r.not_extracted_total.toLocaleString("en-US");
+  const n = formatNumber(r.not_extracted_total);
   return `${line} ${t(r.not_extracted_total === 1 ? "foreign.notExtractedOne" : "foreign.notExtractedMany", { n })}`;
 }
 

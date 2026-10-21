@@ -41,14 +41,14 @@ export function statusMark(s: StatusView): string {
 }
 
 /** Spec §20.4, in words. */
-export const STATUS_MEANING: Record<StatusView, string> = {
+export const statusMeaning = (): Record<StatusView, string> => ({
   PASS: t("status.meaning.PASS"),
   FAIL: t("status.meaning.FAIL"),
   DEGRADED: t("status.meaning.DEGRADED"),
   UNKNOWN: t("status.meaning.UNKNOWN"),
   OVERDUE: t("status.meaning.OVERDUE"),
   UNSUPPORTED: t("status.meaning.UNSUPPORTED"),
-};
+});
 
 /**
  * The CSS classes of a status. Only PASS gets the success class; FAIL gets
@@ -85,7 +85,7 @@ export function dimensionLabel(name: string): string {
   }
 }
 
-export const LEVELS: { level: CheckLevel; label: string; detail: string }[] = [
+export const levels = (): { level: CheckLevel; label: string; detail: string }[] => [
   { level: "restoration", label: t("level.restoration"), detail: t("level.restorationDetail") },
   { level: "content_integrity", label: t("level.content_integrity"), detail: t("level.content_integrityDetail") },
   { level: "stored_integrity", label: t("level.stored_integrity"), detail: t("level.stored_integrityDetail") },
@@ -94,22 +94,22 @@ export const LEVELS: { level: CheckLevel; label: string; detail: string }[] = [
 ];
 
 /** Shown with every test: what "Test archive" is. */
-export const TEST_NOTE = t("check.testNote");
+export const testNote = () => t("check.testNote");
 
 /** Explains UNKNOWN freshness the first time it appears (spec §5.7, D8). */
-export const FRESHNESS_NOTE = t("check.freshnessNote");
+export const freshnessNote = () => t("check.freshnessNote");
 
 /** Shown when an Encrypted archive was checked without its key. */
-export const KEYLESS_NOTE = t("check.keylessNote");
+export const keylessNote = () => t("check.keylessNote");
 
 /** Shown with every health summary (plan D4 "Gap"). */
-export const HEALTH_NOTE = t("check.healthNote");
+export const healthNote = () => t("check.healthNote");
 
 /** Shown with every repair plan. */
-export const PLAN_NOTE = t("check.planNote");
+export const planNote = () => t("check.planNote");
 
 /** Shown with the approval. */
-export const APPROVAL_NOTE = t("check.approvalNote");
+export const approvalNote = () => t("check.approvalNote");
 
 /** The overall line of a report: never hides a failing dimension. */
 export function overallLine(r: ReportView): string {
@@ -142,11 +142,11 @@ export function coverageLine(r: ReportView): string | null {
   return t("check.coverage", { checked: c.checked_objects, expected: c.expected_objects, bytes });
 }
 
-export const OUTCOME_LABEL: Record<RepairOutcomeView, string> = {
+export const outcomeLabel = (): Record<RepairOutcomeView, string> => ({
   complete: t("check.outcome.complete"),
   partial: t("check.outcome.partial"),
   nothing_recoverable: t("check.outcome.nothing_recoverable"),
-};
+});
 
 /** The plan's verdict, in one line. Partial salvage is labelled as such. */
 export function planLine(p: RepairPlanView): string {
@@ -207,7 +207,7 @@ export function reverificationLine(r: RepairResultView): string {
   });
 }
 
-export const SOURCE_KEPT_NOTE = t("check.sourceKept");
+export const sourceKeptNote = () => t("check.sourceKept");
 
 /** A job that ended without a result, in words. */
 export function failedLine(what: string, outcome: JobOutcome): string | null {

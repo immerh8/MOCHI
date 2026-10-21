@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { formatSize } from "../browser/format";
 import { progressText as extractProgress } from "../extract/messages";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc, useLocale } from "../i18n";
 import {
   cancelQuick,
   closeQuick,
@@ -18,7 +18,7 @@ import { attentionHint, cautionCount, countParts, joinParts, logRecord } from ".
 import type { DetailRow, ResultDetails } from "../result/details";
 import { InlineDetails } from "../result/Result";
 import { formatLabel } from "../write/format";
-import { LOCAL_COMMIT_NOTE, progressText as writeProgress } from "../write/messages";
+import { localCommitNote, progressText as writeProgress } from "../write/messages";
 import { AddForm } from "./AddForm";
 import type { AddFormStart } from "./AddForm";
 import "./quick.css";
@@ -67,8 +67,8 @@ function finished(event: QuickEvent): View | null {
       const plain = add && event.format !== "mochi";
       const rows: DetailRow[] = [
         { label: t("quick.rowLocation"), value: event.location.text },
-        { label: t("quick.rowFiles"), value: event.files.toLocaleString("en-US") },
-        { label: t("quick.rowFolders"), value: event.directories.toLocaleString("en-US") },
+        { label: t("quick.rowFiles"), value: formatNumber(event.files) },
+        { label: t("quick.rowFolders"), value: formatNumber(event.directories) },
         { label: t("quick.rowSize"), value: formatSize(String(event.bytes)) },
       ];
       if (plain) {
@@ -106,7 +106,7 @@ function finished(event: QuickEvent): View | null {
           : t("quick.doneExtract", { parts, name: event.name.text });
       const line =
         event.skipped > 0
-          ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: event.skipped.toLocaleString("en-US") })}`
+          ? `${head}${t("common.statusSeparator")}${t(add ? "quick.lineNotAdded" : "quick.lineNotExtracted", { n: formatNumber(event.skipped) })}`
           : head;
       const record = [
         plain ? `export ${event.format}` : add ? `add commit ${event.status ?? ""}` : "extract",
@@ -124,7 +124,7 @@ function finished(event: QuickEvent): View | null {
         warn: event.skipped > 0,
         details: {
           rows,
-          notes: [plain ? t("quick.exportNote") : add ? LOCAL_COMMIT_NOTE : t("quick.extractNote")],
+          notes: [plain ? t("quick.exportNote") : add ? localCommitNote() : t("quick.extractNote")],
         },
         record,
       };
@@ -186,6 +186,7 @@ function finished(event: QuickEvent): View | null {
  * passphrase here, once.
  */
 export function QuickWindow() {
+  useLocale();
   const [job, setJob] = useState<Job | null>(null);
   const [view, setView] = useState<View>({ kind: "waiting" });
   // The Add form: what was chosen (updated when another item joins) and the form's starting values.

@@ -4,14 +4,14 @@ import type { ReportView, StatusView } from "../ipc/check";
 import {
   coverageLine,
   dimensionLabel,
-  FRESHNESS_NOTE,
+  freshnessNote,
   headline,
   isQuiet,
   keyed,
-  KEYLESS_NOTE,
+  keylessNote,
   overallLine,
   scopeLine,
-  STATUS_MEANING,
+  statusMeaning,
   statusClass,
   statusLabel,
   statusMark,
@@ -45,7 +45,7 @@ export function StatusBadge({ status }: { status: StatusView }) {
       data-testid="status-badge"
       data-status={status}
       data-mark={statusMark(status)}
-      title={STATUS_MEANING[status]}
+      title={statusMeaning()[status]}
     >
       {statusLabel(status)}
     </span>
@@ -123,7 +123,7 @@ export function Report({ report: r, onExport, exporting, onRepair }: ReportProps
       </p>
       {r.keyless && (
         <p role="note" className="warning" data-testid="report-keyless-note">
-          {KEYLESS_NOTE}
+          {keylessNote()}
         </p>
       )}
       {shown.length > 0 && <DimensionRows dims={shown} testId="dimension" />}
@@ -165,7 +165,7 @@ export function Report({ report: r, onExport, exporting, onRepair }: ReportProps
         )}
         {freshness && freshness.status === "UNKNOWN" && (
           <p role="note" className="note" data-testid="report-freshness-note">
-            {FRESHNESS_NOTE}
+            {freshnessNote()}
           </p>
         )}
         <dl className="report-facts">
