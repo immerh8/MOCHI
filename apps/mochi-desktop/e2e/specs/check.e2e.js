@@ -87,6 +87,12 @@ async function testArchive() {
   return JSON.parse(await text('[data-testid="report-json"]'));
 }
 
+/** The technical part of the report is folded under Details; open it so its text is visible. */
+async function openDetails() {
+  const d = $('[data-testid="report"] [data-testid="report-details"]');
+  if (!(await d.getAttribute("open"))) await d.$("summary").click();
+}
+
 const dimensionStatus = (name) =>
   browser.execute(
     (n) => document.querySelector(`[data-testid="report"] [data-dimension="${n}"]`)?.getAttribute("data-status"),
@@ -118,6 +124,7 @@ describe("test, health, and repair", () => {
     expect(await dimensionStatus("integrity")).toBe("PASS");
     expect(await dimensionStatus("recoverability")).toBe("PASS");
     expect(await dimensionStatus("freshness")).toBe("UNKNOWN");
+    await openDetails();
     await expect($('[data-testid="report-freshness-note"]')).toHaveText(expect.stringContaining("not a failure"));
     expect(await $('[data-testid="report"]').getAttribute("data-overall")).not.toBe("PASS");
     await assertOnlyPassLooksLikeSuccess();
@@ -152,6 +159,8 @@ describe("test, health, and repair", () => {
     expect(await dimensionStatus("integrity")).toBe("FAIL");
     await expect($('[data-testid="report"]')).toHaveAttribute("data-overall", "FAIL");
     await expect($('[data-testid="report"]')).toHaveAttribute("data-exit", "1");
+    await expect($('[data-testid="report-headline"]')).toHaveText("Problems found");
+    await openDetails();
     await expect($('[data-testid="report-overall"]')).toHaveText(expect.stringContaining("Failing: Integrity"));
     await expect($('[data-testid="report-overall"]')).toHaveText(expect.stringContaining("exit code 1"));
     await assertOnlyPassLooksLikeSuccess();

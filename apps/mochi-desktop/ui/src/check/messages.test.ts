@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
 import type { StatusView } from "../ipc/check";
+import { t, type MessageKey } from "../i18n";
 import { planView, report, resultView } from "./fixtures";
 import * as m from "./messages";
 
@@ -63,8 +64,14 @@ test("no message uses a banned word", () => {
     ...m.LEVELS.flatMap((l) => [l.label, l.detail]),
     m.overallLine(report()),
     m.headline(report()),
+    m.scopeLine(report({ deep: true })),
+    m.scopeLine(report({ kind: "health" })),
     m.coverageLine(report()) ?? "",
   ];
+  for (const k of ["ok", "problems", "degraded", "incomplete", "keyless", "failed", "ranOk"]) {
+    const tt = t as (key: MessageKey, ...a: unknown[]) => string;
+    texts.push(tt(`verdict.${k}` as MessageKey), tt(`verdict.${k}Line` as MessageKey, { where: "x" }));
+  }
   for (const outcome of ["complete", "partial", "nothing_recoverable"] as const) {
     for (const salvage_used of [false, true]) {
       texts.push(m.planLine(planView({ outcome, salvage_used })));
@@ -87,6 +94,36 @@ test("freshness UNKNOWN is explained as not a failure and never a pass", () => {
   expect(m.FRESHNESS_NOTE).toMatch(/never shown as a pass/);
   expect(m.KEYLESS_NOTE).toMatch(/without its passphrase/);
   expect(m.KEYLESS_NOTE).toMatch(/never PASS overall/);
+});
+
+test("the verdict never reads better than the report", () => {
+  const dims = (d: [string, StatusView, boolean][]) =>
+    d.map(([dimension, status, required]) => ({ dimension, status, required }));
+  const ok = m.verdict(report({ overall_status: "PASS", dimensions: dims([["integrity", "PASS", true]]) }));
+  expect([ok.kind, ok.tone, ok.title]).toEqual(["ok", "pass", "No problems found"]);
+  // Not required and unknown: nothing to show but the report's own overall (UNKNOWN) is not success.
+  const ran = m.verdict(report());
+  expect([ran.kind, ran.tone]).toEqual(["ranOk", "attention"]);
+  // A failing dimension wins over everything, even a PASS overall or a keyless report.
+  for (const extra of [{ overall_status: "PASS" as const }, { keyless: true }, { operational_error: true }]) {
+    const v = m.verdict(report({ ...extra, dimensions: dims([["searchability", "FAIL", false]]) }));
+    expect([v.kind, v.tone]).toEqual(["problems", "fail"]);
+    expect(v.line).toBe("Failed: Searchability.");
+  }
+  // Keyless is never ok, even if the report claims PASS.
+  expect(m.verdict(report({ keyless: true, overall_status: "PASS", dimensions: [] })).kind).toBe("keyless");
+  expect(m.verdict(report({ dimensions: dims([["durability", "DEGRADED", true]]) })).kind).toBe("degraded");
+  expect(m.verdict(report({ dimensions: dims([["freshness", "OVERDUE", false]]) })).kind).toBe("degraded");
+  expect(m.verdict(report({ operational_error: true })).title).toBe("Could not finish the check");
+});
+
+test("only checks that say nothing about this archive are folded away", () => {
+  expect(m.isQuiet({ status: "UNSUPPORTED", required: false })).toBe(true);
+  expect(m.isQuiet({ status: "UNKNOWN", required: false })).toBe(true);
+  for (const status of ["PASS", "FAIL", "DEGRADED", "OVERDUE"] as StatusView[]) {
+    expect(m.isQuiet({ status, required: false })).toBe(false);
+  }
+  for (const status of ALL) expect(m.isQuiet({ status, required: true })).toBe(false);
 });
 
 test("keys are unique and stable for repeated items", () => {

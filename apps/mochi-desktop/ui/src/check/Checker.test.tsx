@@ -120,7 +120,7 @@ test("nothing runs before an archive is chosen; choosing names no path", async (
   expect(screen.getByTestId("check-test")).toBeEnabled();
 });
 
-test("Test archive runs the chosen level as a job and shows every dimension", async () => {
+test("Test archive runs the chosen level as a job and shows a plain verdict", async () => {
   const b = backend();
   const user = await chosen();
   await user.selectOptions(screen.getByTestId("check-level"), "stored_integrity");
@@ -134,18 +134,30 @@ test("Test archive runs the chosen level as a job and shows every dimension", as
   b.send({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "", check: { kind: "test", report: report() } } });
   const r = screen.getByTestId("report");
   expect(r.dataset.overall).toBe("UNKNOWN");
+  // Overall is UNKNOWN: the verdict says what ran and is not styled as success.
+  expect(within(r).getByTestId("report-headline")).toHaveTextContent("No problems found in the checks that ran");
+  expect(within(r).getByTestId("report-verdict").className).not.toContain("verdict-pass");
+  expect(within(r).getByTestId("report-scope")).toHaveTextContent("a.mochi: Read all data");
+  // The default view lists only the checks that apply; the rest are one line under Details.
   const rows = within(r).getAllByTestId("dimension");
   expect(rows.map((x) => [x.dataset.dimension, x.dataset.status])).toEqual([
-    ["durability", "UNKNOWN"],
     ["integrity", "PASS"],
     ["recoverability", "PASS"],
-    ["freshness", "UNKNOWN"],
   ]);
+  expect(within(r).getAllByTestId("dimension-quiet").map((x) => x.dataset.dimension)).toEqual([
+    "durability",
+    "freshness",
+  ]);
+  const details = within(r).getByTestId("report-details");
+  expect(details).not.toHaveAttribute("open");
+  expect(within(details).getByTestId("report-quiet")).toHaveTextContent("2 checks do not apply to this archive.");
+  expect(within(details).getByTestId("report-freshness-note")).toBeInTheDocument();
   const badges = assertBadges();
   expect(badges.filter((x) => x.classList.contains("status-pass"))).toHaveLength(2);
   // The overall indicator is UNKNOWN, so it is not styled as success.
   expect(within(screen.getByTestId("report-overall")).getByTestId("status-badge")).not.toHaveClass("status-pass");
   expect(screen.getByTestId("report-freshness-note")).toHaveTextContent(FRESHNESS_NOTE);
+  expect(screen.queryByTestId("report-repair")).toBeNull();
   expect(screen.getByTestId("report-json").textContent).toBe(report().json);
   expect(screen.queryByTestId("report-keyless-note")).toBeNull();
   assertNoBannedWords();
@@ -180,11 +192,19 @@ test("a failing report shows FAIL overall and names the failing dimension", asyn
     }),
   });
   expect(screen.getByTestId("report").dataset.overall).toBe("FAIL");
+  expect(screen.getByTestId("report-headline")).toHaveTextContent("Problems found");
+  expect(screen.getByTestId("report-verdict-line")).toHaveTextContent("Failed: Integrity.");
+  expect(screen.getByTestId("report-verdict").className).toContain("verdict-fail");
+  // The failing and the reduced dimensions are in the default view; none is folded away.
+  const shown = within(screen.getByTestId("report")).getAllByTestId("dimension");
+  expect(shown.map((x) => x.dataset.dimension)).toEqual(["integrity", "recoverability", "freshness"]);
+  expect(screen.getByTestId("report-quiet")).toHaveTextContent("1 check does not apply");
   expect(screen.getByTestId("report-overall")).toHaveTextContent("Failing: Integrity");
   expect(screen.getByTestId("report-overall")).toHaveTextContent("exit code 1");
   const badges = assertBadges();
   expect(badges.some((x) => x.classList.contains("status-pass"))).toBe(false);
   expect(badges.filter((x) => x.classList.contains("status-fail")).length).toBe(2);
+  expect(screen.getByTestId("finding-code")).toHaveTextContent("STORED_INTEGRITY_FAILED");
   // Archive text is text: the markup is shown, never parsed.
   expect(screen.getByTestId("finding")).toHaveTextContent(HOSTILE);
   expect(document.querySelector("img")).toBeNull();
@@ -204,7 +224,81 @@ test("an encrypted archive's keyless test says the check needs the key", async (
     }),
   });
   expect(screen.getByTestId("report-keyless-note")).toHaveTextContent(KEYLESS_NOTE);
+  expect(screen.getByTestId("report-headline")).toHaveTextContent("Only part of this archive was checked");
+  expect(screen.getByTestId("report-verdict").className).not.toContain("verdict-pass");
+  expect(screen.getByTestId("report").dataset.overall).not.toBe("PASS");
   assertBadges();
+});
+
+test("a passing report says no problems; an unfinished one says it could not finish", async () => {
+  const b = backend();
+  const user = await chosen();
+  await user.click(screen.getByTestId("check-test"));
+  b.finish({
+    kind: "test",
+    report: report({
+      dimensions: [
+        { dimension: "integrity", status: "PASS", required: true },
+        { dimension: "recoverability", status: "PASS", required: true },
+        { dimension: "retention_compliance", status: "UNSUPPORTED", required: false },
+        { dimension: "searchability", status: "UNSUPPORTED", required: false },
+        { dimension: "key_availability", status: "UNKNOWN", required: false },
+      ],
+      overall_status: "PASS",
+    }),
+  });
+  expect(screen.getByTestId("report-headline")).toHaveTextContent("No problems found");
+  expect(screen.getByTestId("report-headline")).not.toHaveTextContent("in the checks that ran");
+  expect(screen.getByTestId("report-verdict").className).toContain("verdict-pass");
+  expect(screen.getAllByTestId("dimension-quiet")).toHaveLength(3);
+  expect(screen.getByTestId("report-quiet")).toHaveTextContent("3 checks do not apply to this archive.");
+  // Nothing shown by default is UNSUPPORTED or UNKNOWN.
+  for (const row of screen.getAllByTestId("dimension")) expect(row.dataset.status).toBe("PASS");
+  assertBadges();
+
+  await user.click(screen.getByTestId("check-test"));
+  b.finish({
+    kind: "test",
+    report: report({ overall_status: "UNKNOWN", operational_error: true, exit_code: 3, dimensions: [] }),
+  });
+  expect(screen.getByTestId("report-headline")).toHaveTextContent("Could not finish the check");
+  expect(screen.getByTestId("report-verdict").className).not.toContain("verdict-pass");
+  assertNoBannedWords();
+});
+
+test("a required check without an answer is shown, not folded away", async () => {
+  const b = backend();
+  const user = await chosen();
+  await user.click(screen.getByTestId("check-test"));
+  b.finish({
+    kind: "test",
+    report: report({
+      dimensions: [
+        { dimension: "integrity", status: "UNKNOWN", required: true },
+        { dimension: "searchability", status: "UNSUPPORTED", required: true },
+      ],
+      overall_status: "UNKNOWN",
+    }),
+  });
+  expect(screen.getByTestId("report-headline")).toHaveTextContent("Not everything could be checked");
+  expect(screen.getAllByTestId("dimension")).toHaveLength(2);
+  expect(screen.queryByTestId("report-quiet")).toBeNull();
+});
+
+test("problems offer Repair, which moves to the repair section", async () => {
+  const b = backend();
+  const user = await chosen();
+  await user.click(screen.getByTestId("check-test"));
+  b.finish({
+    kind: "test",
+    report: report({
+      dimensions: [{ dimension: "integrity", status: "FAIL", required: true }],
+      overall_status: "FAIL",
+      exit_code: 1,
+    }),
+  });
+  await user.click(screen.getByTestId("report-repair"));
+  expect(within(screen.getByTestId("repair")).getByTestId("repair-add-copy")).toHaveFocus();
 });
 
 test("Export report JSON asks Rust to write that report, and says where", async () => {
