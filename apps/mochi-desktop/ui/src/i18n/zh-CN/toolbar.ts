@@ -1,27 +1,25 @@
-// TODO(translate): replace every value with Simplified Chinese text. Keep the keys, the {placeholders}, and
-// the spec section 23.3 wording rules (see ../README.md). Do not translate error codes.
 import type { Catalogue } from "../types";
 import type { toolbar as enToolbar } from "../en/toolbar";
 // The toolbar and its menu. Labels are one or two words; the longer
 // explanation is the button's tooltip.
 export const toolbar = {
-  "toolbar.label": "Actions",
-  "toolbar.test": "Test",
-  "toolbar.testTip": "Test this archive",
-  "toolbar.readOnly": "Archives in other formats are read-only",
-  "toolbar.info": "Info",
-  "toolbar.infoTip": "Show or hide details",
-  "toolbar.openFirst": "Open an archive first",
-  "toolbar.openTip": "Open an archive (Ctrl+O)",
-  "toolbar.more": "More",
-  "toolbar.repair": "Repair",
-  "toolbar.foreign": "Other formats…",
-  "toolbar.helpTip": "Help and keyboard keys",
+  "toolbar.label": "操作",
+  "toolbar.test": "测试",
+  "toolbar.testTip": "测试此压缩文件",
+  "toolbar.readOnly": "其他格式的压缩文件为只读",
+  "toolbar.info": "信息",
+  "toolbar.infoTip": "显示或隐藏详细信息",
+  "toolbar.openFirst": "请先打开压缩文件",
+  "toolbar.openTip": "打开压缩文件（Ctrl+O）",
+  "toolbar.more": "更多",
+  "toolbar.repair": "修复",
+  "toolbar.foreign": "其他格式…",
+  "toolbar.helpTip": "帮助和键盘快捷键",
   // Why a button or menu item is off (shell/availability.ts); the item stays visible.
-  "avail.noArchive": "Open an archive first",
-  "avail.locked": "Enter the archive's passphrase first",
-  "avail.noSelection": "Select an entry first",
-  "avail.emptyList": "There is nothing here to select",
-  "avail.busy": "Wait for the current task to finish",
-  "avail.notEncrypted": "Only an encrypted MOCHI archive has passphrases",
+  "avail.noArchive": "请先打开压缩文件",
+  "avail.locked": "请先输入压缩文件的口令",
+  "avail.noSelection": "请先选择一个项目",
+  "avail.emptyList": "这里没有可选择的项目",
+  "avail.busy": "请等待当前任务完成",
+  "avail.notEncrypted": "只有加密的 MOCHI 压缩文件才有口令",
 } satisfies Catalogue<typeof enToolbar>;
