@@ -18,6 +18,11 @@ function Get-ClassDefault($sub) {
   if (-not $k) { return $null }
   try { return [string]$k.GetValue("") } finally { $k.Close() }
 }
+function Get-ClassValue($sub, $name) {
+  $k = $classes.OpenSubKey("Software\Classes\$sub")
+  if (-not $k) { return $null }
+  try { return [string]$k.GetValue($name) } finally { $k.Close() }
+}
 function Test-ClassKey($sub) {
   $k = $classes.OpenSubKey("Software\Classes\$sub")
   if ($k) { $k.Close(); return $true }
@@ -132,6 +137,8 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
     $k = "SystemFileAssociations\.mochi\shell\$v"
     $text = Get-ClassDefault $k
     if ($text -ne $mochiVerbs[$v][1]) { Fail "menu entry $k has text '$text', expected '$($mochiVerbs[$v][1])'" }
+    $icon = Get-ClassValue $k "Icon"
+    if ($icon -ne "`"$exePath`",0") { Fail "menu entry $k has Icon '$icon', expected the MOCHI icon '`"$exePath`",0'" }
     $cmd = Get-ClassDefault "$k\command"
     $expect = "`"$exePath`" $($mochiVerbs[$v][0]) -- `"%1`""
     if ($cmd -ne $expect) { Fail "menu entry $k runs '$cmd', expected '$expect'" }

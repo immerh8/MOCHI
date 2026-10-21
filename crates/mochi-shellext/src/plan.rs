@@ -33,6 +33,39 @@ pub struct Item {
     pub is_dir: bool,
 }
 
+/// Command offsets of the two entries (added to the first id the shell grants).
+pub const CMD_PANEL: u32 = 0;
+pub const CMD_NOW: u32 = 1;
+/// Number of ids the handler uses.
+pub const CMD_COUNT: u32 = 2;
+
+/// One menu row: its command offset and its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub offset: u32,
+    pub label: String,
+}
+
+/// The rows in the order they are inserted: both at the top level of the
+/// classic menu (never in a submenu), "Add to archive..." directly followed by
+/// Add to "<Name>.mochi", so they sit next to each other. Both carry the MOCHI
+/// icon when the handler can load it (`shell.rs`). No items, no rows.
+pub fn menu_entries(items: &[Item]) -> Vec<Entry> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        Entry {
+            offset: CMD_PANEL,
+            label: PANEL_LABEL.to_owned(),
+        },
+        Entry {
+            offset: CMD_NOW,
+            label: add_now_label(items),
+        },
+    ]
+}
+
 /// The archive's name, without `.mochi`, exactly as the app chooses it.
 pub fn archive_stem(items: &[Item]) -> String {
     let stem = match items {
@@ -93,6 +126,17 @@ mod tests {
             path: PathBuf::from(p),
             is_dir: true,
         }
+    }
+
+    #[test]
+    fn two_top_level_entries_adjacent_and_in_order() {
+        let rows = menu_entries(&[file("/x/notes.txt")]);
+        assert_eq!(rows.len() as u32, CMD_COUNT);
+        assert_eq!(rows[0].offset, CMD_PANEL);
+        assert_eq!(rows[0].label, "Add to archive...");
+        assert_eq!(rows[1].offset, CMD_NOW);
+        assert_eq!(rows[1].label, "Add to \"notes.mochi\"");
+        assert!(menu_entries(&[]).is_empty());
     }
 
     #[test]
