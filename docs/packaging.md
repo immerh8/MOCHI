@@ -25,7 +25,7 @@ script merges an overlay that adds the generated license list, so `cargo build` 
 
 `packaging/licenses.py` runs `cargo about` over the desktop crate (Windows and Linux
 x86-64 targets, no dev or build dependencies) and `pnpm licenses list --prod` over the
-UI, and writes one text file: MOCHI's own `LICENSE-MIT` / `LICENSE-APACHE`,
+UI, and writes one text file: MOCHI's own `LICENSE`,
 `THIRD-PARTY-NOTICES.md`, then every dependency grouped by license text. It is
 installed at `<install dir>\licenses\` (Windows) and
 `/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt` (`.deb`).

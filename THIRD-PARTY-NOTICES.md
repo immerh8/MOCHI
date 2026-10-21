@@ -1,8 +1,8 @@
 # Third-party notices
 
-MOCHI is licensed under MIT OR Apache-2.0 (see `LICENSE-MIT`, `LICENSE-APACHE`).
+MOCHI is licensed under the MIT license (see `LICENSE`).
 Some components it distributes are under other licenses. This file lists the
-ones that impose conditions beyond MIT/Apache-2.0. A complete, generated list of
+ones that impose conditions beyond the MIT license. A complete, generated list of
 every dependency's license ships with each release (plan D7).
 
 ## UnRAR (RARLAB) — in the foreign-archive helper only
