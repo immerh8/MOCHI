@@ -130,6 +130,90 @@ fn default_folder(archive: &Path) -> Result<PathBuf> {
         .ok_or_else(|| invalid("too many folders with this name already exist; choose one"))
 }
 
+/// The name of the folder an archive extracts into: its file name without
+/// the extension, and without a `.tar` before a compression suffix
+/// (`photos.tar.gz` gives `photos`). `None` when nothing usable is left.
+pub fn folder_stem(file_name: &str) -> Option<String> {
+    let path = Path::new(file_name);
+    let mut stem = path.file_stem()?.to_str()?.to_owned();
+    if stem.len() > 4 && stem.to_ascii_lowercase().ends_with(".tar") {
+        stem.truncate(stem.len() - 4);
+    }
+    let stem = stem.trim().to_owned();
+    (!stem.is_empty() && stem != "." && stem != "..").then_some(stem)
+}
+
+/// The `n`th candidate name for a folder: `name`, `name (2)`, `name (3)`, ...
+fn numbered(stem: &str, n: u32) -> String {
+    if n <= 1 {
+        stem.to_owned()
+    } else {
+        format!("{stem} ({n})")
+    }
+}
+
+/// Most numbered folders tried before giving up.
+const MAX_NUMBERED: u32 = 999;
+
+/// Make a new, empty folder `parent/stem`, or `parent/stem (2)`, `(3)`, ...
+/// when that name is taken. The folder is made with `create_dir`, which fails
+/// if the name exists, so an existing folder or file is never reused and the
+/// check and the creation cannot be raced.
+pub fn create_unique_dir(parent: &Path, stem: &str) -> Result<PathBuf> {
+    for n in 1..=MAX_NUMBERED {
+        let candidate = parent.join(numbered(stem, n));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(MochiError::new(
+                    ErrorCode::IoError,
+                    format!("could not create the folder {}: {e}", candidate.display()),
+                ))
+            }
+        }
+    }
+    Err(invalid("too many folders with this name already exist"))
+}
+
+impl Destination {
+    /// Make a new folder named after `archive` inside `parent` (the Desktop),
+    /// remember it as the folder to tidy up if nothing is extracted into it
+    /// (`discard_made`). An earlier unused one of this kind is removed first.
+    pub fn make_new_in(&self, parent: &Path, archive: &Path) -> Result<PathBuf> {
+        self.discard_made();
+        let stem = archive
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(folder_stem)
+            .ok_or_else(|| invalid("this archive's name cannot be used for a folder"))?;
+        let folder = create_unique_dir(parent, &stem)?;
+        *lock(&self.made) = Some(folder.clone());
+        Ok(folder)
+    }
+}
+
+/// Plan an extraction of a MOCHI archive into a new folder named after it in
+/// `parent` (the Desktop), made now. The caller starts the extraction itself;
+/// the folder is removed again if the plan fails.
+pub fn plan_in_new_folder(
+    archives: &Archives,
+    destination: &Destination,
+    parent: &Path,
+    handle: u32,
+    seq: u32,
+    keys: &[PathKey],
+) -> Result<ExtractPlan> {
+    let folder = destination.make_new_in(parent, &archives.path(handle)?)?;
+    match plan(archives, destination, Some(folder), handle, seq, keys) {
+        Ok(p) => Ok(p),
+        Err(e) => {
+            destination.discard_made();
+            Err(e)
+        }
+    }
+}
+
 /// Plan an extraction into a new folder next to the archive, which is made
 /// now (an extraction needs its folder to exist) and removed again if the
 /// plan is closed unused (`Destination::discard_made`). An earlier unused
@@ -1251,5 +1335,67 @@ mod tests {
             "a folder with files stays"
         );
         assert_eq!(std::fs::read(base.join("mine.txt")).unwrap(), b"mine");
+    }
+
+    #[test]
+    fn folder_names_drop_the_extension_and_a_tar_before_a_compression_suffix() {
+        assert_eq!(folder_stem("photos.mochi").as_deref(), Some("photos"));
+        assert_eq!(folder_stem("photos.tar.gz").as_deref(), Some("photos"));
+        assert_eq!(folder_stem("Photos.TAR.zst").as_deref(), Some("Photos"));
+        assert_eq!(folder_stem("a.b.zip").as_deref(), Some("a.b"));
+        assert_eq!(folder_stem("noext").as_deref(), Some("noext"));
+        assert_eq!(folder_stem(""), None);
+        assert_eq!(folder_stem(".."), None);
+    }
+
+    #[test]
+    fn a_new_desktop_folder_is_numbered_when_the_name_is_taken_and_nothing_is_reused() {
+        let desktop = tempfile::tempdir().unwrap();
+        let archive = Path::new("/somewhere/photos.tar.gz");
+        let d = Destination::default();
+        let first = d.make_new_in(desktop.path(), archive).unwrap();
+        assert_eq!(first, desktop.path().join("photos"));
+        std::fs::write(first.join("mine.txt"), b"mine").unwrap();
+        let second = d.make_new_in(desktop.path(), archive).unwrap();
+        assert_eq!(second, desktop.path().join("photos (2)"));
+        // The unused second folder is tidied up when the next one is made, so
+        // its number is free again; the used first one stays.
+        let third = d.make_new_in(desktop.path(), archive).unwrap();
+        assert_eq!(third, desktop.path().join("photos (2)"));
+        assert_eq!(std::fs::read(first.join("mine.txt")).unwrap(), b"mine");
+        // A file with the name counts as taken too.
+        std::fs::write(desktop.path().join("photos (3)"), b"file").unwrap();
+        assert_eq!(
+            create_unique_dir(desktop.path(), "photos").unwrap(),
+            desktop.path().join("photos (4)")
+        );
+    }
+
+    #[test]
+    fn a_missing_desktop_is_an_error_not_a_created_path() {
+        let desktop = tempfile::tempdir().unwrap();
+        let gone = desktop.path().join("no-such-desktop");
+        let e = create_unique_dir(&gone, "x").unwrap_err();
+        assert_eq!(e.code, ErrorCode::IoError);
+        assert!(!gone.exists());
+    }
+
+    #[test]
+    fn the_desktop_plan_extracts_into_a_new_folder_named_after_the_archive() {
+        let f = fx();
+        let desktop = tempfile::tempdir().unwrap();
+        let plan = plan_in_new_folder(
+            &f.archives,
+            &f.destination,
+            desktop.path(),
+            f.handle,
+            1,
+            &[],
+        )
+        .unwrap();
+        let made = desktop.path().join("fixture");
+        assert!(made.is_dir());
+        assert_eq!(plan.destination, made.display().to_string());
+        assert_eq!(f.destination.get(), Some(made));
     }
 }

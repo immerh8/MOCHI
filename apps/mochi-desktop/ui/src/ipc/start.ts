@@ -50,6 +50,16 @@ export function planExtractDefault(handle: number, seq: number, keys: string[]):
   return invoke<ExtractPlan>("plan_extract_default", { handle, seq, keys });
 }
 
+/**
+ * Quick extract: make a new folder named after the archive on the Desktop
+ * (Rust resolves it; `name`, `name (2)`, ... never an existing one) and plan
+ * extracting `keys` (empty: everything) into it. The extraction itself is
+ * started with `start_job` and writes into that folder.
+ */
+export function planExtractDesktop(handle: number, seq: number, keys: string[]): Promise<ExtractPlan> {
+  return invoke<ExtractPlan>("plan_extract_desktop", { handle, seq, keys });
+}
+
 /** Remove the new folder a default plan made, if nothing was extracted into it. */
 export function discardExtractFolder(): Promise<null> {
   return invoke<null>("discard_extract_folder");
