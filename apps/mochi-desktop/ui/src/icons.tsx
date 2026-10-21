@@ -251,6 +251,17 @@ export function HelpIcon() {
   );
 }
 
+/** A monitor with an arrow: Extract to Desktop. */
+export function ExtractDesktopIcon() {
+  return (
+    <Icon>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M9 20h6M12 16v4" />
+      <path d="M12 6.5v6M9.6 10.4 12 12.8l2.4-2.4" />
+    </Icon>
+  );
+}
+
 export function FoldersIcon() {
   return (
     <Icon size={18}>

@@ -729,6 +729,20 @@ button.crumb {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* The rubber band is positioned in the scrolling content; dragging over the
+     rows must not select their text. */
+  position: relative;
+  user-select: none;
+}
+/* The rubber band of a file list: a translucent rectangle, never in the way of the pointer. */
+.marquee-band {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  opacity: 0.75;
+  z-index: 2;
 }
 .vspacer {
   position: relative;

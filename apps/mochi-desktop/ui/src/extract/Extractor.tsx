@@ -5,14 +5,16 @@ import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { CloseIcon, ExtractIcon, RefreshIcon } from "../icons";
+import { CloseIcon, ExtractDesktopIcon, ExtractIcon, RefreshIcon } from "../icons";
+import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { t, tc } from "../i18n";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
+import { useDesktopRun } from "./useDesktopRun";
 import { planExtract } from "../ipc/extract";
-import { discardExtractFolder, planExtractDefault, showInFolder } from "../ipc/start";
+import { discardExtractFolder, planExtractDefault, planExtractDesktop, showInFolder } from "../ipc/start";
 import type { ConflictChoice, ExtractPlan } from "../ipc/extract";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -47,6 +49,12 @@ export interface ExtractorProps {
    * "pick a folder" path).
    */
   selectedRequest?: number;
+  /**
+   * The list's menu asked for Extract to Desktop: when this changes, extract
+   * the selection (everything when nothing is selected) into a new folder on
+   * the Desktop, without asking for a folder.
+   */
+  desktopRequest?: number;
 }
 
 /** Where the folder comes from: made next to the archive, picked, or the one already chosen. */
@@ -73,7 +81,14 @@ type JobView =
  * holds a path the user did not see, and the job runs in Rust over the shared
  * job channel. What was not extracted, and why, is listed as text.
  */
-export function Extractor({ archive, seq, selected, autoPlan = null, selectedRequest = 0 }: ExtractorProps) {
+export function Extractor({
+  archive,
+  seq,
+  selected,
+  autoPlan = null,
+  selectedRequest = 0,
+  desktopRequest = 0,
+}: ExtractorProps) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [plan, setPlan] = useState<ExtractPlan | null>(null);
   // The plan's folder is the new one made next to the archive (it is removed
@@ -84,8 +99,15 @@ export function Extractor({ archive, seq, selected, autoPlan = null, selectedReq
   const [error, setError] = useState<string | null>(null);
 
   const busy = job.state === "starting" || job.state === "running";
+  // Set while the running job extracts into a new Desktop folder.
+  const desktopRun = useDesktopRun();
+  const startForRef = useRef<((s: Scope, c: ConflictChoice) => void) | null>(null);
   const rememberFocus = useJobFocus(busy);
   const handle = archive?.handle ?? null;
+  const avail = availableActions(
+    { kind: archive === null ? "none" : "mochi", viewingHead: true, busy },
+    { selected: selected.length, total: 0 },
+  );
 
   // The panel takes focus when it opens (which scrolls it into view); the
   // result opens below the buttons, so bring it into view when it appears.
@@ -177,6 +199,10 @@ export function Extractor({ archive, seq, selected, autoPlan = null, selectedReq
   }, [selectedRequest, busy, planFor]);
 
   const onEvent = useCallback((event: JobEvent) => {
+    if (event.event === "finished" && desktopRun.take()) {
+      // Nothing was extracted: do not leave an empty folder on the Desktop.
+      if (event.outcome.status !== "completed") void discardExtractFolder().catch(() => undefined);
+    }
     setJob((prev) => {
       switch (event.event) {
         case "started":
@@ -207,20 +233,62 @@ export function Extractor({ archive, seq, selected, autoPlan = null, selectedReq
       setPlan(null);
       setMadeFolder(false);
     }
-  }, []);
+  }, [desktopRun]);
 
-  const start = (on_conflict: ConflictChoice) => {
-    if (handle === null || seq === null || scope === null) return;
+  const startFor = (s: Scope, on_conflict: ConflictChoice) => {
+    if (handle === null || seq === null) return;
     rememberFocus();
     setError(null);
     setJob({ state: "starting" });
-    startJob({ kind: "extract_archive", handle, seq, keys: keysOf(scope), on_conflict }, onEvent).catch(
+    startJob({ kind: "extract_archive", handle, seq, keys: keysOf(s), on_conflict }, onEvent).catch(
       (e: unknown) => {
         setJob({ state: "idle" });
         setError(errorText(t("extract.startFailed"), e));
+        if (desktopRun.take()) void discardExtractFolder().catch(() => undefined);
       },
     );
   };
+  const start = (on_conflict: ConflictChoice) => {
+    if (scope !== null) startFor(scope, on_conflict);
+  };
+
+  /**
+   * Extract to Desktop: Rust makes a new folder named after the archive on the
+   * Desktop and remembers it; the extraction starts at once, with no folder
+   * question and no plan panel. Entries that cannot be written there are skipped
+   * and listed in the result, as in the panel's "Extract the rest". An unused
+   * folder (the job failed or was cancelled before writing anything) is removed
+   * again by Rust.
+   */
+  const extractToDesktop = useCallback(
+    (s: Scope) => {
+      if (handle === null || seq === null) return;
+      setError(null);
+      setJob({ state: "idle" });
+      planExtractDesktop(handle, seq, s.kind === "all" ? [] : s.entries.map((e) => e.key)).then(
+        (p) => {
+          desktopRun.set();
+          startForRef.current?.(s, p.conflicts_total > 0 ? "skip_conflicts" : "stop");
+        },
+        (e: unknown) => setError(errorText(t("extract.desktopFailed"), e)),
+      );
+    },
+    [handle, seq, desktopRun],
+  );
+
+  useEffect(() => {
+    startForRef.current = startFor;
+  });
+
+  // The list's menu: Extract to Desktop.
+  const seenDesktopRef = useRef(desktopRequest);
+  useEffect(() => {
+    if (desktopRequest === seenDesktopRef.current) return;
+    seenDesktopRef.current = desktopRequest;
+    if (busy) return;
+    const entries = [...selectedRef.current];
+    queueMicrotask(() => extractToDesktop(entries.length > 0 ? { kind: "selected", entries } : { kind: "all" }));
+  }, [desktopRequest, busy, extractToDesktop]);
 
   const cancel = () => {
     if (job.state !== "running") return;
@@ -296,14 +364,30 @@ export function Extractor({ archive, seq, selected, autoPlan = null, selectedReq
           onClick={() =>
             planFor(selected.length > 0 ? { kind: "selected", entries: [...selected] } : { kind: "all" }, "default")
           }
-          disabled={busy || archive === null || seq === null}
-          title={
-            !archive
-              ? t("extract.openFirst")
-              : selected.length > 0
-                ? t("extract.selectedTip", { n: selected.length.toLocaleString("en-US") })
-                : t("extract.allTip")
+          disabled={!avail.extract.enabled || seq === null}
+          title={tipFor(
+            avail.extract,
+            selected.length > 0
+              ? t("extract.selectedTip", { n: selected.length.toLocaleString("en-US") })
+              : t("extract.allTip"),
+          )}
+        />
+      </ToolSlot>
+      <ToolSlot name="desktop">
+        <ToolButton
+          icon={<ExtractDesktopIcon />}
+          label={t("extract.desktop")}
+          testId="extract-desktop"
+          onClick={() =>
+            extractToDesktop(selected.length > 0 ? { kind: "selected", entries: [...selected] } : { kind: "all" })
           }
+          disabled={!avail.extractDesktop.enabled || seq === null}
+          title={tipFor(
+            avail.extractDesktop,
+            selected.length > 0
+              ? t("extract.desktopSelectedTip", { n: selected.length.toLocaleString("en-US") })
+              : t("extract.desktopTip"),
+          )}
         />
       </ToolSlot>
 

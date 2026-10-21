@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode, UIEvent } from "react";
 
 import { t } from "../i18n";
+import { useMarquee } from "../list/marquee";
+import type { MarqueeEvent } from "../list/selection";
 
 /** Rows fetched per request. */
 export const PAGE = 200;
@@ -36,6 +38,12 @@ type Props<T> = {
   hintId?: string;
   /** Put keyboard focus on the first row as soon as it is loaded (after a folder opened by key). */
   focusFirst?: boolean;
+  /**
+   * Turns on the rubber band: pressing on empty space and dragging draws a
+   * rectangle, and the list reports the rows it touches here (the selection's
+   * `marquee`). See `pressIntent` in `list/selection.ts` for where a press may start it.
+   */
+  onMarquee?: ((e: MarqueeEvent) => void) | undefined;
   onError: (e: unknown) => void;
 };
 
@@ -55,6 +63,7 @@ export function VirtualList<T>({
   testId,
   hintId,
   focusFirst = false,
+  onMarquee,
   onError,
 }: Props<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -90,6 +99,8 @@ export function VirtualList<T>({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  const { band, handlers: bandHandlers } = useMarquee({ viewportRef, rowHeight, total, onMarquee });
 
   const visible = height > 0 ? Math.ceil(height / rowHeight) : FALLBACK_VISIBLE;
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
@@ -204,6 +215,7 @@ export function VirtualList<T>({
         data-testid={testId}
         data-total={total}
         onScroll={(e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop)}
+        {...bandHandlers}
       >
         <div
           role="list"
@@ -219,6 +231,14 @@ export function VirtualList<T>({
         >
           {items}
         </div>
+        {band && (
+          <div
+            className="marquee-band"
+            data-testid="marquee-band"
+            aria-hidden="true"
+            style={{ left: band.left, top: band.top, width: band.width, height: band.height }}
+          />
+        )}
       </div>
     </div>
   );

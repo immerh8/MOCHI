@@ -4,6 +4,7 @@ import { ListHead } from "../browser/ListHead";
 import { VirtualList } from "../browser/VirtualList";
 import { t } from "../i18n";
 import type { NameText } from "../ipc/browse";
+import type { MarqueeEvent } from "../list/selection";
 
 /** One match, as both browsers list it: selectable, openable, draggable. */
 export type HitRow = {
@@ -36,12 +37,15 @@ export function SearchResults<H extends HitRow>({
   hintId,
   testId,
   renderRow,
+  onMarquee,
 }: {
   search: SearchView<H>;
   rowHeight: number;
   hintId: string;
   testId: string;
   renderRow: (hit: H, index: number, tabIndex: 0 | -1) => ReactNode;
+  /** The rubber band's reports (the hits' selection). */
+  onMarquee?: ((e: MarqueeEvent) => void) | undefined;
 }) {
   if (search.state === "failed") {
     return (
@@ -76,6 +80,7 @@ export function SearchResults<H extends HitRow>({
       hintId={hintId}
       testId={testId}
       onError={() => undefined}
+      onMarquee={onMarquee}
       renderRow={renderRow}
     />
   );
