@@ -70,6 +70,8 @@ export const browser = {
   "menu.selectAll": "Select all",
   "menu.copyNames": "Copy full names",
   "menu.extractTo": "Extract to...",
+  "menu.extractDesktop": "Extract to Desktop",
+  "menu.add": "Add files...",
   "menu.delete": "Delete",
   "browser.copyFailed": "Could not copy the names",
 } as const;

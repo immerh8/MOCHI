@@ -17,6 +17,7 @@ export type SlotName =
   | "add"
   | "remove"
   | "extract"
+  | "desktop"
   | "test"
   | "new"
   | "stage"

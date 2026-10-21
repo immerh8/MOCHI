@@ -130,6 +130,8 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::choose_destination,
             commands::plan_extract,
             commands::plan_extract_default,
+            commands::plan_extract_desktop,
+            commands::plan_extract_foreign_desktop,
             commands::discard_extract_folder,
             commands::recent_archives,
             commands::forget_recent_archives,

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::browse::Archives;
 use crate::check::{Checks, SubjectPick};
@@ -545,6 +545,57 @@ pub async fn plan_extract_default(
     let destination = Arc::clone(&destination);
     blocking(move || crate::extract::plan_default(&archives, &destination, handle, seq, &keys))
         .await
+}
+
+/// The user's Desktop folder, from Tauri's path resolver (Rust only).
+fn desktop_folder(app: &AppHandle) -> mochi_core::Result<std::path::PathBuf> {
+    app.path().desktop_dir().map_err(|_| {
+        mochi_core::MochiError::new(
+            mochi_core::ErrorCode::InvalidArgument,
+            "this computer has no Desktop folder; use Extract to... instead",
+        )
+    })
+}
+
+/// Quick extract (WinRAR's "Extract to Desktop"): make a new folder named
+/// after the archive on the Desktop (`name`, `name (2)`, ...; never an
+/// existing one) and plan extracting `keys` (empty: everything) into it. The
+/// webview names no path; it starts the extraction itself with `start_job`,
+/// which writes into the folder Rust remembers. Nothing is extracted here.
+#[tauri::command]
+pub async fn plan_extract_desktop(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    seq: u32,
+    keys: Vec<PathKey>,
+    archives: State<'_, Arc<Archives>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<ExtractPlan, IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let desktop = desktop_folder(&app)?;
+        crate::extract::plan_in_new_folder(&archives, &destination, &desktop, handle, seq, &keys)
+    })
+    .await
+}
+
+/// `plan_extract_desktop` for an open ZIP, 7z, RAR, or tar archive.
+#[tauri::command]
+pub async fn plan_extract_foreign_desktop(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    keys: Vec<PathKey>,
+    foreign: State<'_, Arc<Foreign>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<ForeignExtractPlan, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let desktop = desktop_folder(&app)?;
+        foreign.plan_in_new_folder(&destination, &desktop, handle, &keys)
+    })
+    .await
 }
 
 /// Remove the new folder a default plan made, if nothing was extracted into it.

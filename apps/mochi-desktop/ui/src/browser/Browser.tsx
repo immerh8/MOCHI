@@ -7,6 +7,7 @@ import {
   CaretDownIcon,
   CheckIcon,
   CloseIcon,
+  ExtractDesktopIcon,
   ExtractIcon,
   FoldersIcon,
   GearIcon,
@@ -59,6 +60,7 @@ import { useArchiveSearch } from "../search/useArchiveSearch";
 import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
 import { Writer } from "../write/Writer";
+import { availableActions, tipFor } from "../shell/availability";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
 import type { ForeignHandoff, Shell, SlotName } from "../shell/Shell";
 import { ToolSheet } from "../shell/ToolSheet";
@@ -231,6 +233,7 @@ export function Browser({
   const [recents, setRecents] = useState<RecentView[]>([]);
   const [createRequest, setCreateRequest] = useState(0);
   const [removeRequest, setRemoveRequest] = useState(0);
+  const [addRequest, setAddRequest] = useState(0);
   const [creating, setCreating] = useState(false);
   const [extractAfterUnlock, setExtractAfterUnlock] = useState(false);
   // The window around the list (toolbar, panels that open and close).
@@ -634,6 +637,16 @@ export function Browser({
   const hitDrag = useDragOut(dragFrom(hitSel));
 
   const viewingHead = open !== null && open.snapshot.seq === (open.archive.commits.at(-1)?.seq ?? -1);
+  // Which actions are on, for the toolbar, the More menu, the list's menu, and the Delete key.
+  const avail = availableActions(
+    {
+      kind: foreignOpen ? "foreign" : open !== null ? "mochi" : "none",
+      viewingHead,
+      encrypted: open?.archive.profile.encrypted ?? false,
+      locked: waiting !== null,
+    },
+    { selected: selected.length, total: searching ? hits.length : (total ?? 0) },
+  );
   const listKeyHandlers = {
     all: () => (searching ? hitSel.all(hits.length) : total !== null && folderSel.all(total)),
     none: () => {
@@ -646,16 +659,16 @@ export function Browser({
       if (!searching && path.length > 0) navigate(path.slice(0, -1), true);
     },
     remove: () => {
-      if (viewingHead && selected.length > 0) setRemoveRequest((n) => n + 1);
+      if (avail.remove.enabled) setRemoveRequest((n) => n + 1);
     },
   };
 
   // The list's right-click menu. Names are the full in-archive paths, as text.
   const [extractSelectedRequest, setExtractSelectedRequest] = useState(0);
+  const [desktopRequest, setDesktopRequest] = useState(0);
   const listMenu = useListMenu(
     listMenuItems({
-      selected: selected.length,
-      total: searching ? hits.length : (total ?? 0),
+      available: avail,
       selectAll: () => listKeyHandlers.all(),
       copyNames: () => {
         const names = searching
@@ -664,7 +677,9 @@ export function Browser({
         copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
       },
       extract: () => setExtractSelectedRequest((n) => n + 1),
-      remove: viewingHead ? () => setRemoveRequest((n) => n + 1) : null,
+      extractDesktop: () => setDesktopRequest((n) => n + 1),
+      add: () => setAddRequest((n) => n + 1),
+      remove: () => setRemoveRequest((n) => n + 1),
     }),
   );
 
@@ -704,6 +719,7 @@ export function Browser({
           <span className="toolbar-sep" aria-hidden="true" />
           <SlotHost name="add" />
           <SlotHost name="extract" />
+          <SlotHost name="desktop" />
           <SlotHost name="test" />
           <SlotHost name="remove" />
           <span className="toolbar-spacer" />
@@ -743,7 +759,14 @@ export function Browser({
                 {t("toolbar.foreign")}
               </button>
               <hr />
-              <button type="button" className="menu-item" data-testid="menu-passphrases" onClick={() => showTool("passphrases")}>
+              <button
+                type="button"
+                className="menu-item"
+                data-testid="menu-passphrases"
+                disabled={!avail.passphrases.enabled}
+                title={tipFor(avail.passphrases, t("app.sectionPassphrases"))}
+                onClick={() => showTool("passphrases")}
+              >
                 <KeyIcon />
                 {t("app.sectionPassphrases")}
               </button>
@@ -787,10 +810,10 @@ export function Browser({
           />
         </ToolSlot>
         <ToolSlot name="add" owner="foreign">
-          <ToolButton icon={<PlusIcon />} label={t("write.add")} testId="add-to-archive" title={t("toolbar.readOnly")} disabled onClick={doTest} />
+          <ToolButton icon={<PlusIcon />} label={t("write.add")} testId="add-to-archive" title={tipFor(avail.add, t("write.addTip"))} disabled={!avail.add.enabled} onClick={() => setAddRequest((n) => n + 1)} />
         </ToolSlot>
         <ToolSlot name="remove" owner="foreign">
-          <ToolButton icon={<TrashIcon />} label={t("write.remove")} testId="remove-entry" title={t("toolbar.readOnly")} disabled onClick={doTest} />
+          <ToolButton icon={<TrashIcon />} label={t("write.remove")} testId="remove-entry" title={tipFor(avail.remove, t("write.removeTip"))} disabled={!avail.remove.enabled} onClick={() => setRemoveRequest((n) => n + 1)} />
         </ToolSlot>
         <ToolSlot name="extract" owner="mochi">
           {open === null && (
@@ -798,7 +821,19 @@ export function Browser({
               icon={<ExtractIcon />}
               label={t("extract.toolbar")}
               testId="extract-all"
-              title={t("extract.openFirst")}
+              title={tipFor(avail.extract, t("extract.allTip"))}
+              disabled
+              onClick={doTest}
+            />
+          )}
+        </ToolSlot>
+        <ToolSlot name="desktop" owner="mochi">
+          {open === null && (
+            <ToolButton
+              icon={<ExtractDesktopIcon />}
+              label={t("extract.desktop")}
+              testId="extract-desktop"
+              title={tipFor(avail.extractDesktop, t("extract.desktopTip"))}
               disabled
               onClick={doTest}
             />
@@ -926,6 +961,7 @@ export function Browser({
             showToolbar
             createRequest={createRequest}
             removeRequest={removeRequest}
+            addRequest={addRequest}
             onCreating={setCreating}
             onArchiveDropped={() => void doOpenDropped()}
           />
@@ -969,6 +1005,7 @@ export function Browser({
                   selected={selected}
                   autoPlan={autoExtract}
                   selectedRequest={extractSelectedRequest}
+                  desktopRequest={desktopRequest}
                 />
                 <div className="workspace">
                   {foldersShown && (
@@ -994,6 +1031,7 @@ export function Browser({
                         rowHeight={ROW_HEIGHT}
                         hintId="entry-hint"
                         testId="search-hits"
+                        onMarquee={hitSel.marquee}
                         renderRow={(hit, index, tabIndex) => (
                           <button
                             type="button"
@@ -1026,6 +1064,7 @@ export function Browser({
                           hintId="entry-hint"
                           focusFirst={focusList}
                           testId="entries"
+                          onMarquee={folderSel.marquee}
                           onError={listError}
                           renderRow={(row: EntryRow, index: number, tabIndex: 0 | -1) => (
                             <button

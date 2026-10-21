@@ -269,17 +269,19 @@ test("dragging a row out asks Rust to drag the selection (or the row), naming no
   await user.keyboard("{Control>}");
   await user.click(rows[2] as HTMLElement);
   await user.keyboard("{/Control}");
+  // A press on the name text (not on the row's empty parts, which start a rubber band).
+  const nameOf = (row: HTMLElement) => row.querySelector<HTMLElement>(".name") ?? row;
   const drag = (el: HTMLElement) => {
     act(() => {
       el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, buttons: 1, clientX: 10, clientY: 10, pointerId: 1, pointerType: "mouse" }));
       el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, button: 0, buttons: 1, clientX: 40, clientY: 12, pointerId: 1, pointerType: "mouse" }));
     });
   };
-  drag(rows[2] as HTMLElement);
+  drag(nameOf(rows[2] as HTMLElement));
   await waitFor(() => expect(b.calls.filter((c) => c.cmd === "drag_out")).toHaveLength(1));
   expect(b.calls.find((c) => c.cmd === "drag_out")?.args).toEqual({ handle: 3, seq: 0, keys: [hex("song.mp3"), hex("track.flac")] });
   // A row outside the selection drags alone.
-  drag(rows[3] as HTMLElement);
+  drag(nameOf(rows[3] as HTMLElement));
   await waitFor(() => expect(b.calls.filter((c) => c.cmd === "drag_out")).toHaveLength(2));
   expect(b.calls.filter((c) => c.cmd === "drag_out")[1]?.args).toEqual({ handle: 3, seq: 0, keys: [hex("notes.txt")] });
 });

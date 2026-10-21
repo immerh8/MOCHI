@@ -64,6 +64,11 @@ export function foreignSearch(
   return invoke<ForeignSearchResult>("foreign_search", { handle, query, ignoreCase });
 }
 
+/** `planExtractDesktop` (ipc/start.ts) for an open ZIP, 7z, RAR, or tar archive. */
+export function planExtractForeignDesktop(handle: number, keys: string[]): Promise<ForeignExtractPlan> {
+  return invoke<ForeignExtractPlan>("plan_extract_foreign_desktop", { handle, keys });
+}
+
 /** Plan an extraction; `null` if the user cancelled the folder dialog. */
 export function planExtractForeign(
   handle: number,

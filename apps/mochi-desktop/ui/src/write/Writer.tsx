@@ -22,6 +22,7 @@ import {
 } from "../ipc/write";
 import type { ArchiveFormat, CompressionPreset, SourcePick, StagedView } from "../ipc/write";
 import { CloseIcon, NewArchiveIcon, PlusIcon, TrashIcon } from "../icons";
+import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
 import {
@@ -67,6 +68,8 @@ export interface WriterProps {
   createRequest?: number;
   /** Changes when the list asks to remove its selection (the Delete key). */
   removeRequest?: number;
+  /** Changes when the list's menu asks to add files (ignored when Add is off). */
+  addRequest?: number;
   /** Told when the create panel opens or closes (the start screen steps aside). */
   onCreating?: (creating: boolean) => void;
   /** A single archive file was dropped on the window; Rust holds it. */
@@ -116,6 +119,7 @@ export function Writer({
   showToolbar = true,
   createRequest = 0,
   removeRequest = 0,
+  addRequest = 0,
   onCreating,
   onArchiveDropped,
 }: WriterProps) {
@@ -319,7 +323,18 @@ export function Writer({
     setSeenRequest(createRequest);
     open("create");
   }
-  const canRemove = archive !== null && viewingHead && selected.length > 0;
+  // Which of Add and Remove are on: one answer, shared with the menus (shell/availability.ts).
+  const avail = availableActions(
+    { kind: archive === null ? "none" : "mochi", viewingHead },
+    { selected: selected.length, total: 0 },
+  );
+  const canAdd = avail.add.enabled;
+  const canRemove = avail.remove.enabled;
+  const [seenAdd, setSeenAdd] = useState(addRequest);
+  if (seenAdd !== addRequest) {
+    setSeenAdd(addRequest);
+    if (canAdd && !busy) open("add");
+  }
   const [seenRemove, setSeenRemove] = useState(removeRequest);
   if (seenRemove !== removeRequest) {
     setSeenRemove(removeRequest);
@@ -431,7 +446,6 @@ export function Writer({
     setArchiveFormat(next).then(setStaged, (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)));
   };
 
-  const canAdd = archive !== null;
   // A problem shows where the user is looking: in the open panel, else in the status bar.
   const errorLine = error && (
     <p role="alert" className="error status-line" data-testid="write-error" title={error}>
@@ -550,7 +564,7 @@ export function Writer({
               testId="add-to-archive"
               onClick={() => open("add")}
               disabled={busy || !canAdd}
-              title={canAdd ? t("write.addTip") : t("write.openFirst")}
+              title={tipFor(avail.add, t("write.addTip"))}
             />
           </ToolSlot>
           <ToolSlot name="remove">
@@ -560,15 +574,7 @@ export function Writer({
               testId="remove-entry"
               onClick={() => open("remove")}
               disabled={busy || !canRemove}
-              title={
-                !archive
-                  ? t("write.openFirst")
-                  : !viewingHead
-                    ? t("write.onlyLatest")
-                    : selected.length > 0
-                      ? t("write.removeTip")
-                      : t("write.selectFirst")
-              }
+              title={tipFor(avail.remove, t("write.removeTip"))}
             />
           </ToolSlot>
         </>

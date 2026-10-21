@@ -60,6 +60,8 @@ fn main() {
         "clear_crash_log",
         "open_user_guide",
         "plan_extract_default",
+        "plan_extract_desktop",
+        "plan_extract_foreign_desktop",
         "discard_extract_folder",
         "recent_archives",
         "forget_recent_archives",
