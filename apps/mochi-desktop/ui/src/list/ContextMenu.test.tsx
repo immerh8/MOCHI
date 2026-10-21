@@ -206,7 +206,7 @@ test("Extract to... plans the selection with the folder dialog", async () => {
   fireEvent.contextMenu(rows[2] as HTMLElement);
   await user.click(await screen.findByTestId("menu-extract-to"));
   await waitFor(() => expect(calls.some((c) => c.cmd === "plan_extract")).toBe(true));
-  expect(calls.find((c) => c.cmd === "plan_extract")?.args).toEqual({
+  expect(calls.find((c) => c.cmd === "plan_extract")?.args).toMatchObject({
     handle: 3,
     seq: 0,
     keys: [hex("song.mp3"), hex("track.flac")],

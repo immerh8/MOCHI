@@ -8,6 +8,8 @@
 // mounts twice in development) still hears the whole job.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import { destinationDialog } from "./dialogs";
+
 import type { ArchiveFormat } from "./generated/ArchiveFormat";
 import type { QuickAction } from "./generated/QuickAction";
 import type { QuickAddRequest } from "./generated/QuickAddRequest";
@@ -73,7 +75,11 @@ export function closeQuick(): Promise<null> {
  * the dialog was cancelled.
  */
 export function chooseQuickLocation(name: string, format: ArchiveFormat): Promise<QuickLocation | null> {
-  return invoke<QuickLocation | null>("quick_choose_location", { name, format });
+  return invoke<QuickLocation | null>("quick_choose_location", {
+    name,
+    format,
+    text: destinationDialog(format),
+  });
 }
 
 /**

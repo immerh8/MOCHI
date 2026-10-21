@@ -398,7 +398,7 @@ export function Writer({
       go();
       return;
     }
-    chooseDestination().then(
+    chooseDestination(format).then(
       (view) => {
         if (view === null) return; // the user cancelled the dialog
         setStaged(view);
@@ -411,7 +411,7 @@ export function Writer({
   /** Let the user pick a different place (the dialog starts at the default). */
   const changeDestination = () => {
     setError(null);
-    chooseDestination().then(
+    chooseDestination(format).then(
       (view) => {
         if (view !== null) setStaged(view);
       },

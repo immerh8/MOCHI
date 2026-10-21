@@ -83,10 +83,6 @@ export const write = {
     "The commit may or may not have been published. Open the archive again to see what it holds.",
   "write.nothingCommitted": "Nothing was committed.",
   "write.openAgain": "Open the archive again to see what it holds.",
-  "write.committedDelete": "Removed {items} from this version. Earlier versions still have {them}.",
-  "write.committedAdd": "{verb} {file} · {parts}",
-  "write.verbCreated": "Created",
-  "write.verbAdded": "Added to",
   "write.lineNotStoredOne": "{n} item not stored",
   "write.lineNotStoredMany": "{n} items not stored",
   "write.lineNotReopened": "could not be opened again",
@@ -125,4 +121,9 @@ export const write = {
   "write.progressExport": "Writing: {done} of {total}",
   "write.progressPhase": "{phase}: {completed}",
   "write.progressPhaseOf": "{phase}: {completed} of {total}",
+  "write.committedDeleteOne": "Removed {items} from this version. Earlier versions still have it.",
+  "write.committedDeleteMany":
+    "Removed {items} from this version. Earlier versions still have them.",
+  "write.committedCreate": "Created {file} · {parts}",
+  "write.committedAdd": "Added to {file} · {parts}",
 } as const;

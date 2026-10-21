@@ -145,11 +145,34 @@ test("every catalogue key is used, so the catalogue does not collect dead wordin
   const text = Object.values(SOURCES).join("\n");
   expect(Object.keys(SOURCES).length).toBeGreaterThan(20);
   // Keys built from a value (`status.${s}`) are named by their prefix.
-  const dynamic = ["status.", "status.meaning.", "status.mark.", "dimension.", "check.outcome."];
+  const dynamic = [
+    "status.",
+    "status.meaning.",
+    "status.mark.",
+    "dimension.",
+    "check.outcome.",
+    "check.enum.",
+    "common.phase.",
+  ];
   const unused = Object.keys(en).filter(
     (k) => !text.includes(`"${k}"`) && !dynamic.some((p) => k.startsWith(p)),
   );
   expect(unused).toEqual([]);
+});
+
+test("no message parameter is an English word or phrase written in the code", () => {
+  // `t("key", { them: n === 1 ? "it" : "them" })` would leak English into Thai
+  // and Chinese. Words belong in the catalogue, as separate full sentences;
+  // a parameter is archive data, a number, or the result of another lookup.
+  const call = /\bt[nc]?\(\s*(?:[^,()]+,\s*)*?(?:"[A-Za-z._-]+"|`[^`]*`)\s*,\s*(?:[^{}]*,\s*)?\{([^{}]*)\}/g;
+  const offenders: string[] = [];
+  for (const [file, text] of Object.entries(SOURCES)) {
+    for (const m of text.matchAll(call)) {
+      const params = m[1] ?? "";
+      if (/(?:[:?]\s*)"[^"]*[A-Za-z][^"]*"/.test(params)) offenders.push(`${file}: ${params.trim()}`);
+    }
+  }
+  expect(offenders).toEqual([]);
 });
 
 test("the page declares a default language and has a title", () => {

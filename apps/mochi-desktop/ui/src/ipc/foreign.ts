@@ -4,6 +4,8 @@
 // call that opens the archive; Rust keeps it, this side does not.
 import { invoke } from "@tauri-apps/api/core";
 
+import { extractFolderDialog, openForeignDialog } from "./dialogs";
+
 import type { CheckCount } from "./generated/CheckCount";
 import type { ForeignArchiveSummary } from "./generated/ForeignArchiveSummary";
 import type { ForeignChildrenPage } from "./generated/ForeignChildrenPage";
@@ -35,7 +37,11 @@ export function openForeignArchive(
   retry: boolean,
   password: string | null,
 ): Promise<ForeignArchiveSummary | null> {
-  return invoke<ForeignArchiveSummary | null>("open_foreign_archive", { retry, password });
+  return invoke<ForeignArchiveSummary | null>("open_foreign_archive", {
+    retry,
+    password,
+    text: openForeignDialog(),
+  });
 }
 
 export function closeForeignArchive(handle: number): Promise<boolean> {
@@ -75,5 +81,10 @@ export function planExtractForeign(
   keys: string[],
   pick: boolean,
 ): Promise<ForeignExtractPlan | null> {
-  return invoke<ForeignExtractPlan | null>("plan_extract_foreign", { handle, keys, pick });
+  return invoke<ForeignExtractPlan | null>("plan_extract_foreign", {
+    handle,
+    keys,
+    pick,
+    text: extractFolderDialog(),
+  });
 }

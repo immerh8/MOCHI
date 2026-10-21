@@ -16,16 +16,18 @@ export const foreign = {
     "จะไม่เขียนทับและไม่เปลี่ยนชื่อใด จะไม่สร้างลิงก์ อุปกรณ์ เส้นทางสัมบูรณ์ และชื่อที่มี .. ไฟล์แต่ละไฟล์จะถูกเก็บไว้ก็ต่อเมื่อผ่านการตรวจของรูปแบบนั้นเอง (ถ้ามี)",
   "foreign.weakNote":
     "บางรายการใช้ ZipCrypto ซึ่งเป็นการเข้ารหัสแบบอ่อนที่การโจมตีแบบ known-plaintext เจาะได้",
-  "foreign.testHeadline": "อ่าน {entries} ของไฟล์บีบอัด {format}: {problems}{early}",
-  "foreign.testEarly": " การอ่านหยุดก่อนครบ ผลนี้จึงครอบคลุมเพียงบางส่วนของไฟล์บีบอัด",
+  "foreign.testHeadline": "อ่าน {entries} ของไฟล์บีบอัด {format}: {problems}",
+  "foreign.testHeadlineEarly":
+    "อ่าน {entries} ของไฟล์บีบอัด {format}: {problems} การอ่านหยุดก่อนครบ ผลนี้จึงครอบคลุมเพียงบางส่วนของไฟล์บีบอัด",
   "foreign.cancelled": "ยกเลิกแล้ว การทำงานหยุดก่อนเสร็จ",
   "foreign.cancelledNote":
     "ไฟล์ที่แตกก่อนที่คุณยกเลิกยังอยู่ในโฟลเดอร์ และแต่ละไฟล์สมบูรณ์ ไฟล์ที่กำลังเขียนถูกทิ้ง",
   "foreign.failedNote": "ไม่ได้เขียนอะไร เว้นแต่ข้อความจะระบุไว้เป็นอย่างอื่น",
-  "foreign.extracted": "แตก {what} ไปที่ {dest} แล้ว",
-  "foreign.what": "{files} ({size}) และ {folders}",
-  "foreign.notExtractedOne": "{n} รายการยังไม่ได้แตก",
-  "foreign.notExtractedMany": "{n} รายการยังไม่ได้แตก",
+  "foreign.extracted": "แตก {files} ({size}) และ {folders} ไปที่ {dest} แล้ว",
+  "foreign.extractedSkippedOne":
+    "แตก {files} ({size}) และ {folders} ไปที่ {dest} แล้ว {n} รายการยังไม่ได้แตก",
+  "foreign.extractedSkippedMany":
+    "แตก {files} ({size}) และ {folders} ไปที่ {dest} แล้ว {n} รายการยังไม่ได้แตก",
   "foreign.progressReading": "กำลังอ่าน: {completed} จาก {total} รายการ",
   "foreign.progressReadingNoTotal": "กำลังอ่าน: {completed} รายการ",
   "foreign.progressExtracting": "กำลังแตกไฟล์: {completed} จาก {total} รายการ",

@@ -179,3 +179,19 @@ export function tc(n: number, one: CountKey, many: CountKey): string {
 export function allMessages(): readonly string[] {
   return Object.values(CATALOGUES[current]);
 }
+
+/**
+ * The wording of a closed vocabulary the backend reports as a code (`not_needed`,
+ * `copy_confirmed`): `prefix` + `.` + the code is a catalogue key. A code the
+ * catalogue does not know is shown as the backend spelled it, never guessed at.
+ */
+export function tCode(prefix: string, code: string): string {
+  const catalogue: Record<string, string> = CATALOGUES[current];
+  return catalogue[`${prefix}.${code}`] ?? code;
+}
+
+/** A job phase (core's phase identifier) in the current language; an unknown one reads "Working". */
+export function phaseLabel(phase: string): string {
+  const label = tCode("common.phase", phase);
+  return label === phase ? t("common.phase.unknown") : label;
+}

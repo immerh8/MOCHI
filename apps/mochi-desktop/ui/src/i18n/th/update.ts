@@ -44,4 +44,5 @@ export const update = {
   "update.failUnavailable": "รุ่นนี้ไม่มีการอัปเดต ({detail})",
   "update.failOther": "การตรวจหาการอัปเดตไม่เสร็จ ({detail})",
   "update.couldNotStart": "เริ่มไม่ได้",
+  "update.unknownError": "ข้อผิดพลาดที่ไม่ทราบสาเหตุ",
 } satisfies Catalogue<typeof enUpdate>;

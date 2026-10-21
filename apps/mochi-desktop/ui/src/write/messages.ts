@@ -3,7 +3,7 @@
 // up, safe, or preserved (#6). A deletion is removal from the current
 // snapshot, with a clear statement that the content stays in history (#5).
 // Nothing here is a verification, so none of it gets success styling.
-import { formatNumber, t, tc } from "../i18n";
+import { formatNumber, phaseLabel, t, tc, tn } from "../i18n";
 import type { CommitReport, ExportReportView } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
 import { formatSize } from "../browser/format";
@@ -82,12 +82,10 @@ export function commitView(c: CommitReport): ResultView {
   const warn = c.skipped.length > 0 || c.reopen_error !== null;
 
   const head = isDelete
-    ? t("write.committedDelete", {
+    ? tn(c.removed, "write.committedDeleteOne", "write.committedDeleteMany", {
         items: tc(c.removed, "common.itemOne", "common.itemMany"),
-        them: c.removed === 1 ? "it" : "them",
       })
-    : t("write.committedAdd", {
-        verb: t(c.operation === "create" ? "write.verbCreated" : "write.verbAdded"),
+    : t(c.operation === "create" ? "write.committedCreate" : "write.committedAdd", {
         file,
         parts: joinParts(countParts(c.files, c.directories, c.bytes)),
       });
@@ -215,6 +213,6 @@ export function progressText(phase: string, completed: number, total: number | n
     return t("write.progressDelete", { completed, total: total ?? t("write.progressTotalUnknown") });
   }
   return total === null
-    ? t("write.progressPhase", { phase, completed })
-    : t("write.progressPhaseOf", { phase, completed, total });
+    ? t("write.progressPhase", { phase: phaseLabel(phase), completed })
+    : t("write.progressPhaseOf", { phase: phaseLabel(phase), completed, total });
 }

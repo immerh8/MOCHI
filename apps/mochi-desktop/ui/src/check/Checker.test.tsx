@@ -116,7 +116,7 @@ test("nothing runs before an archive is chosen; choosing names no path", async (
   await user.click(screen.getByTestId("check-use-open"));
   await screen.findByText("chosen.mochi");
   await user.click(screen.getByTestId("check-choose"));
-  expect(b.of("choose_check_subject")).toEqual([{ from: { from: "open_archive", handle: 3 } }, { from: { from: "dialog" } }]);
+  expect(b.of("choose_check_subject")).toMatchObject([{ from: { from: "open_archive", handle: 3 } }, { from: { from: "dialog" } }]);
   expect(screen.getByTestId("check-test")).toBeEnabled();
 });
 
@@ -307,7 +307,7 @@ test("Export report JSON asks Rust to write that report, and says where", async 
   await user.click(screen.getByTestId("check-test"));
   b.finish({ kind: "test", report: report({ report_id: 42 }) });
   await user.click(screen.getByTestId("report-export"));
-  expect(b.of("export_report")).toEqual([{ report: 42 }]);
+  expect(b.of("export_report")).toMatchObject([{ report: 42 }]);
   expect(await screen.findByTestId("report-exported")).toHaveTextContent("a-test-report.json");
 });
 
@@ -349,7 +349,7 @@ test("repair: plan, review, choose a new file, approve, write, re-verify, test t
   await user.click(screen.getByTestId("repair-approve"));
   expect(screen.getByTestId("repair-apply")).toBeDisabled();
   await user.click(screen.getByTestId("repair-choose-output"));
-  expect(b.of("repair_setup")).toEqual([{ action: { action: "choose_output" } }]);
+  expect(b.of("repair_setup")).toMatchObject([{ action: { action: "choose_output" } }]);
   expect(await screen.findByTestId("repair-output")).toHaveTextContent("new.mochi");
   expect(screen.getByTestId("repair-apply")).toBeEnabled();
   // Withdrawing the approval disables writing again.
@@ -367,7 +367,7 @@ test("repair: plan, review, choose a new file, approve, write, re-verify, test t
   assertBadges();
   assertNoBannedWords();
   await user.click(screen.getByTestId("repair-test-new"));
-  expect(b.of("choose_check_subject").at(-1)).toEqual({ from: { from: "repair_output" } });
+  expect(b.of("choose_check_subject").at(-1)).toMatchObject({ from: { from: "repair_output" } });
   await screen.findByText("chosen.mochi");
   expect(b.requests()[2]).toEqual({ kind: "test_archive", subject: 5, level: "restoration", deep: false });
 });

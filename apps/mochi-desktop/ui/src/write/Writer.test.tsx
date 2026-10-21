@@ -184,7 +184,7 @@ test("create: choose items, options, a location, then a job with those options",
     expect.stringContaining("Folder"),
     expect.stringContaining("File"),
   ]);
-  expect(b.calls.filter((c) => c.cmd === "stage_sources").map((c) => c.args)).toEqual([
+  expect(b.calls.filter((c) => c.cmd === "stage_sources").map((c) => c.args)).toMatchObject([
     { pick: "folder" },
     { pick: "files" },
   ]);

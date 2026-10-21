@@ -79,7 +79,7 @@ test("no message uses a banned word", () => {
     }
   }
   texts.push(m.reverificationLine(resultView()));
-  for (const kind of ["The test", "Planning", "Writing the new archive"]) {
+  for (const kind of ["test", "plan", "apply"] as const) {
     texts.push(m.failedLine(kind, { status: "cancelled" }) ?? "");
     texts.push(m.failedLine(kind, { status: "failed", code: "IO_ERROR", message: "x" }) ?? "");
   }

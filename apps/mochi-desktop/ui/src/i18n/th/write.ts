@@ -85,10 +85,6 @@ export const write = {
     "คอมมิตอาจถูกเผยแพร่แล้วหรือยังไม่ถูกเผยแพร่ เปิดไฟล์บีบอัดอีกครั้งเพื่อดูว่ามีอะไรอยู่ในนั้น",
   "write.nothingCommitted": "ไม่ได้บันทึกคอมมิตใด",
   "write.openAgain": "เปิดไฟล์บีบอัดอีกครั้งเพื่อดูว่ามีอะไรอยู่ในนั้น",
-  "write.committedDelete": "นำ {items} ออกจากเวอร์ชันนี้แล้ว เวอร์ชันก่อนหน้ายังมีรายการนั้นอยู่ ({them})",
-  "write.committedAdd": "{verb} {file} · {parts}",
-  "write.verbCreated": "สร้างแล้ว",
-  "write.verbAdded": "เพิ่มใน",
   "write.lineNotStoredOne": "{n} รายการยังไม่ได้เก็บ",
   "write.lineNotStoredMany": "{n} รายการยังไม่ได้เก็บ",
   "write.lineNotReopened": "เปิดอีกครั้งไม่ได้",
@@ -127,4 +123,10 @@ export const write = {
   "write.progressExport": "กำลังเขียน: {done} จาก {total}",
   "write.progressPhase": "{phase}: {completed}",
   "write.progressPhaseOf": "{phase}: {completed} จาก {total}",
+  "write.committedDeleteOne":
+    "นำ {items} ออกจากเวอร์ชันนี้แล้ว เวอร์ชันก่อนหน้ายังมีรายการนั้นอยู่",
+  "write.committedDeleteMany":
+    "นำ {items} ออกจากเวอร์ชันนี้แล้ว เวอร์ชันก่อนหน้ายังมีรายการเหล่านั้นอยู่",
+  "write.committedCreate": "สร้าง {file} แล้ว · {parts}",
+  "write.committedAdd": "เพิ่มใน {file} แล้ว · {parts}",
 } satisfies Catalogue<typeof enWrite>;

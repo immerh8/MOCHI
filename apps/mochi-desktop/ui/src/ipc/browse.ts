@@ -3,6 +3,8 @@
 // a file: `openArchive` asks Rust to show the native dialog.
 import { invoke } from "@tauri-apps/api/core";
 
+import { openArchiveDialog } from "./dialogs";
+
 import type { ArchiveSummary } from "./generated/ArchiveSummary";
 import type { AttributesView } from "./generated/AttributesView";
 import type { ChildrenPage } from "./generated/ChildrenPage";
@@ -33,7 +35,7 @@ export const MAX_PAGE = 1000;
  * Encrypted archive comes back as `needs_passphrase` and waits in Rust.
  */
 export function openArchive(): Promise<OpenOutcome | null> {
-  return invoke<OpenOutcome | null>("open_archive");
+  return invoke<OpenOutcome | null>("open_archive", { text: openArchiveDialog() });
 }
 
 export function closeArchive(handle: number): Promise<boolean> {

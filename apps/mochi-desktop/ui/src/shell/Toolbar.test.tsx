@@ -196,7 +196,7 @@ test("Test opens its tool window and runs the test on the open archive", async (
   expect(sheet).toBeVisible();
   expect(document.activeElement).toBe(document.getElementById("check-heading"));
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.calls.find((c) => c.cmd === "choose_check_subject")?.args).toEqual({ from: { from: "open_archive", handle: 3 } });
+  expect(b.calls.find((c) => c.cmd === "choose_check_subject")?.args).toMatchObject({ from: { from: "open_archive", handle: 3 } });
   expect(b.calls.find((c) => c.cmd === "start_job")?.args.request).toEqual({
     kind: "test_archive",
     subject: 5,

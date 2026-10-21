@@ -76,7 +76,7 @@ function profileText(a: ArchiveSummary): string {
   if (a.profile.redundancy_percent !== null) {
     parts.push(t("browser.profileRecovery", { percent: a.profile.redundancy_percent }));
   }
-  return parts.join(", ");
+  return parts.join(t("common.listSeparator"));
 }
 
 /** Retention wording for one commit. Unknown is said as unknown. */
@@ -167,7 +167,7 @@ function Details({ details }: { details: EntryDetails }) {
             {a.windows && (
               <>
                 <dt>{t("browser.detailWindows")}</dt>
-                <dd>{a.windows.join(", ") || t("browser.detailNoneSet")}</dd>
+                <dd>{a.windows.join(t("common.listSeparator")) || t("browser.detailNoneSet")}</dd>
               </>
             )}
           </>

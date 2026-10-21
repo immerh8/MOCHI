@@ -5,7 +5,7 @@ import { useJobFocus } from "../a11y/focus";
 import { Live } from "../a11y/Live";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { t } from "../i18n";
+import { t, tCode } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary } from "../ipc/browse";
 import { chooseCheckSubject, exportReport, healthReport, repairSetup } from "../ipc/check";
@@ -67,16 +67,6 @@ type JobView =
       cancelRequested: boolean;
     };
 
-const WHAT: Record<Kind, () => string> = {
-  test: () => t("check.wasTest"),
-  plan: () => t("check.wasPlan"),
-  apply: () => t("check.wasApply"),
-};
-const FAILED_WHAT: Record<Kind, () => string> = {
-  test: () => t("check.whatTest"),
-  plan: () => t("check.whatPlan"),
-  apply: () => t("check.whatApply"),
-};
 
 /**
  * Plan D4: test an archive (the core library's verification, read-only), see
@@ -140,12 +130,8 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
 
   /** Show what a job produced; a job without a result says why. */
   const finished = useCallback((kind: Kind, outcome: JobOutcome) => {
-    const note = failedLine(FAILED_WHAT[kind](), outcome);
-    if (outcome.status === "cancelled") {
-      setJobNote(t("check.wasCancelled", { was: WHAT[kind]() }));
-      return;
-    }
-    setJobNote(note);
+    setJobNote(failedLine(kind, outcome));
+    if (outcome.status === "cancelled") return;
     if (outcome.status !== "completed" || !outcome.check) return;
     const c = outcome.check;
     switch (c.kind) {
@@ -229,7 +215,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
     setExporting(true);
     try {
       const name = await exportReport(r.report_id);
-      if (name !== null) setExported(t("check.exported", { kind: r.kind, name }));
+      if (name !== null) setExported(t(r.kind === "health" ? "check.exportedHealth" : "check.exportedTest", { name }));
     } catch (e) {
       setError(errorText(t("check.exportFailed"), e));
     } finally {
@@ -552,7 +538,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
                 onChange={(e) => setApproved(e.target.checked)}
                 disabled={busy}
               />{" "}
-              {t("check.approve", { extra: plan.outcome === "partial" ? t("check.approveExtra") : "" })}
+              {t(plan.outcome === "partial" ? "check.approvePartial" : "check.approve")}
             </label>
           </div>
           <div className="actions">
@@ -620,7 +606,7 @@ function OmittedList({ items, total }: { items: RepairPlanView["omitted"]; total
         {keyed(items, (o) => `${o.path.text}:${o.code}`).map(({ key, item: o }) => (
           <li key={key} data-testid="repair-omitted">
             <Name name={o.path} /> <span className="meta">
-              {t("check.omittedMeta", { kind: o.kind, code: o.code, snapshots: o.snapshots.join(", ") })}
+              {t("check.omittedMeta", { kind: tCode("check.enum.kind", o.kind), code: o.code, snapshots: o.snapshots.join(t("common.listSeparator")) })}
             </span>{" "}
             <Prose text={o.reason} />
           </li>
@@ -647,12 +633,12 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
         <dd>
           {p.head_seq === null
             ? t("check.headNone")
-            : t("check.headFound", { seq: p.head_seq, by: p.head_found_by ?? t("check.headFoundUnknown") })}
+            : t("check.headFound", { seq: p.head_seq, by: p.head_found_by === null ? t("check.headFoundUnknown") : tCode("check.enum.headFoundBy", p.head_found_by) })}
         </dd>
         {p.tail_state && (
           <>
             <dt>{t("check.afterHead")}</dt>
-            <dd>{t("check.afterHeadValue", { state: p.tail_state, len: p.tail_len ?? "" })}</dd>
+            <dd>{t("check.afterHeadValue", { state: tCode("check.enum.tail", p.tail_state), len: p.tail_len ?? "" })}</dd>
           </>
         )}
         {p.chain_break_at !== null && (
@@ -675,7 +661,7 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
       <ol className="ladder">
         {p.ladder.map((l) => (
           <li key={l.step} data-testid="ladder-step" data-step={l.step} data-status={l.status}>
-            {t("check.ladderStep", { name: l.name })}<strong>{l.status.replaceAll("_", " ").toUpperCase()}</strong> — <Prose text={l.detail} />
+            {t("check.ladderStep", { name: l.name })}<strong>{tCode("check.enum.step", l.status)}</strong> — <Prose text={l.detail} />
           </li>
         ))}
       </ol>
@@ -683,9 +669,9 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
         {t("check.snapshotsHeld", { n: p.snapshots.length })}
         {p.snapshots
           .map((s) =>
-            s.trust === "chain" ? `${s.seq}` : t("check.snapshotTrust", { seq: s.seq, trust: s.trust.replaceAll("_", " ") }),
+            s.trust === "chain" ? `${s.seq}` : t("check.snapshotTrust", { seq: s.seq, trust: tCode("check.enum.trust", s.trust) }),
           )
-          .join(", ") || t("check.snapshotsNone")}
+          .join(t("common.listSeparator")) || t("check.snapshotsNone")}
       </p>
       {p.lost.length > 0 && (
         <ul className="staged" aria-label={t("check.snapshotsNotWritten")}>
@@ -703,11 +689,13 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
       )}
       {p.retention?.state === "carried" && (
         <p data-testid="repair-retention">
-          {t("check.retentionCarried", {
-            holds: p.retention.holds,
-            lost: p.retention.holds_lost > 0 ? t("check.retentionCarriedLost", { n: p.retention.holds_lost }) : "",
-            expired: p.retention.expired,
-          })}
+          {p.retention.holds_lost > 0
+            ? t("check.retentionCarriedWithLost", {
+                holds: p.retention.holds,
+                lost: p.retention.holds_lost,
+                expired: p.retention.expired,
+              })
+            : t("check.retentionCarried", { holds: p.retention.holds, expired: p.retention.expired })}
         </p>
       )}
       {p.retention?.state === "unresolved" && (
@@ -729,7 +717,7 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
         <ul className="staged" aria-label={t("check.copiesUsed")}>
           {keyed(p.copies, (c) => c.file_name).map(({ key, item: c }) => (
             <li key={key} data-testid="repair-copy-status" data-status={c.status}>
-              {t("check.copyStatus", { file: c.file_name, status: c.status.replaceAll("_", " "), frames: c.frames_donated })}
+              {t("check.copyStatus", { file: c.file_name, status: tCode("check.enum.step", c.status), frames: c.frames_donated })}
               <Prose text={c.detail} />
             </li>
           ))}
@@ -737,11 +725,10 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
       )}
       {p.salvage && (
         <p className={p.salvage.limit_reached ? "warning" : undefined}>
-          {t("check.salvageLine", {
+          {t(p.salvage.limit_reached ? "check.salvageLineLimit" : "check.salvageLine", {
             confirmed: p.salvage.confirmed_commits,
             unconfirmed: p.salvage.unconfirmed_commits,
             orphans: p.salvage.orphan_data_objects,
-            limit: p.salvage.limit_reached ? t("check.salvageLimit") : "",
           })}
         </p>
       )}

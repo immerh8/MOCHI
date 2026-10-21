@@ -26,11 +26,10 @@ export function needsPassword(code: string): "ask" | "wrong" | null {
 
 /** One line for the test result, in the format's own words. */
 export function testHeadline(r: ForeignTestReport): string {
-  return t("foreign.testHeadline", {
+  return t(r.complete ? "foreign.testHeadline" : "foreign.testHeadlineEarly", {
     entries: tc(r.entries, "count.entryOne", "count.entryMany"),
     format: r.format,
     problems: tc(r.problems_total, "count.problemOne", "count.problemMany"),
-    early: r.complete ? "" : t("foreign.testEarly"),
   });
 }
 
@@ -127,15 +126,17 @@ export function describeOutcome(outcome: JobOutcome): ForeignResult {
 }
 
 function extractedLine(r: ExtractReport): string {
-  const what = t("foreign.what", {
+  const params = {
     files: tc(r.files, "count.fileOne", "count.fileMany"),
     size: formatSize(String(r.bytes)),
     folders: tc(r.directories, "count.folderOne", "count.folderMany"),
-  });
-  const line = t("foreign.extracted", { what, dest: r.destination });
-  if (r.not_extracted_total === 0) return line;
+    dest: r.destination,
+  };
+  if (r.not_extracted_total === 0) return t("foreign.extracted", params);
   const n = formatNumber(r.not_extracted_total);
-  return `${line} ${t(r.not_extracted_total === 1 ? "foreign.notExtractedOne" : "foreign.notExtractedMany", { n })}`;
+  return r.not_extracted_total === 1
+    ? t("foreign.extractedSkippedOne", { ...params, n })
+    : t("foreign.extractedSkippedMany", { ...params, n });
 }
 
 export function progressText(phase: string, completed: number, total: number | null): string {

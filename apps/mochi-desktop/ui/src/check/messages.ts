@@ -5,7 +5,7 @@
 // its report establishes; nothing here calls an archive "repaired", "safe",
 // "backed up", or "preserved", or says it was "recovered completely".
 import { formatSize } from "../browser/format";
-import { t, tn } from "../i18n";
+import { phaseLabel, t, tn } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type {
   CheckLevel,
@@ -122,14 +122,12 @@ export function overallLine(r: ReportView): string {
 
 /** What was checked, in one line. */
 export function headline(r: ReportView): string {
-  return r.kind === "health"
-    ? t("check.headlineHealth", { file: r.file_name, status: r.overall_status })
-    : t("check.headlineTest", {
-        file: r.file_name,
-        level: r.level,
-        deep: r.deep ? t("check.deepSuffix") : "",
-        status: r.overall_status,
-      });
+  if (r.kind === "health") return t("check.headlineHealth", { file: r.file_name, status: r.overall_status });
+  return t(r.deep ? "check.headlineTestDeep" : "check.headlineTest", {
+    file: r.file_name,
+    level: r.level,
+    status: r.overall_status,
+  });
 }
 
 export function coverageLine(r: ReportView): string | null {
@@ -157,15 +155,11 @@ export function planLine(p: RepairPlanView): string {
       const lost = lostSummary(p.lost.length, p.omitted_total);
       return p.salvage_used
         ? t("check.planPartialSalvage", { lost })
-        : t("check.planPartial", { lost: capitalize(lost) });
+        : t("check.planPartial", { lost });
     }
     case "nothing_recoverable":
       return t("check.planNothing");
   }
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function lostSummary(lost: number, omitted: string): string {
@@ -209,17 +203,34 @@ export function reverificationLine(r: RepairResultView): string {
 
 export const sourceKeptNote = () => t("check.sourceKept");
 
+/** The job a note is about: each has its own full sentences in the catalogue. */
+export type JobKind = "test" | "plan" | "apply";
+
 /** A job that ended without a result, in words. */
-export function failedLine(what: string, outcome: JobOutcome): string | null {
+export function failedLine(kind: JobKind, outcome: JobOutcome): string | null {
   switch (outcome.status) {
     case "completed":
       return null;
     case "cancelled":
-      return t("check.jobCancelled", { what });
-    case "failed":
-      return t("check.jobFailed", { what, code: outcome.code, message: outcome.message });
-    case "aborted":
-      return t("check.jobStopped", { what, message: outcome.message });
+      return t(
+        kind === "test" ? "check.cancelledTest" : kind === "plan" ? "check.cancelledPlan" : "check.cancelledApply",
+      );
+    case "failed": {
+      const params = { code: outcome.code, message: outcome.message };
+      return kind === "test"
+        ? t("check.failedTest", params)
+        : kind === "plan"
+          ? t("check.failedPlan", params)
+          : t("check.failedApply", params);
+    }
+    case "aborted": {
+      const params = { message: outcome.message };
+      return kind === "test"
+        ? t("check.stoppedTest", params)
+        : kind === "plan"
+          ? t("check.stoppedPlan", params)
+          : t("check.stoppedApply", params);
+    }
   }
 }
 
@@ -233,7 +244,7 @@ export function progressText(phase: string, completed: number, total: number | n
     "repair-copy": t("check.progressCopy"),
     "repair-verify": t("check.progressVerify"),
   };
-  const label = names[phase] ?? (phase.startsWith("verify") ? t("check.progressChecking", { phase }) : phase);
+  const label = names[phase] ?? phaseLabel(phase);
   return t("check.progressLine", { label, n });
 }
 
@@ -267,7 +278,7 @@ export function scopeLine(r: ReportView): string {
     structural: t("verdict.scope.structural"),
   };
   const what = r.kind === "health" ? t("verdict.health") : (byLevel[r.level] ?? t("verdict.scope.other"));
-  return t("verdict.checked", { file: r.file_name, what: what + (r.deep && r.kind !== "health" ? t("verdict.deep") : "") });
+  return t(r.deep && r.kind !== "health" ? "verdict.checkedDeep" : "verdict.checked", { file: r.file_name, what });
 }
 
 /**

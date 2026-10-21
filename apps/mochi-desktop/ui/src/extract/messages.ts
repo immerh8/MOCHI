@@ -3,7 +3,7 @@
 // styling, and never calls the archive or the copies "safe" or "backed up".
 // A cancelled or failed extraction says plainly what may remain in the folder.
 import { formatSize } from "../browser/format";
-import { formatNumber, t, tc } from "../i18n";
+import { formatNumber, phaseLabel, t, tc } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type { ExtractReport } from "../ipc/extract";
 import { countParts, joinParts } from "../result/details";
@@ -197,6 +197,6 @@ export function progressText(phase: string, completed: number, total: number | n
       : t("extract.progressRestoreOf", { completed, total });
   }
   return total === null
-    ? t("extract.progressPhase", { phase, completed })
-    : t("extract.progressPhaseOf", { phase, completed, total });
+    ? t("extract.progressPhase", { phase: phaseLabel(phase), completed })
+    : t("extract.progressPhaseOf", { phase: phaseLabel(phase), completed, total });
 }

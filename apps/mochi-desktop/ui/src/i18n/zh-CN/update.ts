@@ -43,4 +43,5 @@ export const update = {
   "update.failUnavailable": "此版本不支持更新。（{detail}）",
   "update.failOther": "检查更新未能完成。（{detail}）",
   "update.couldNotStart": "无法启动",
+  "update.unknownError": "未知错误",
 } satisfies Catalogue<typeof enUpdate>;
