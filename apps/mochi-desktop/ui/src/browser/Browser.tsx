@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
 import {
-  ActivityIcon,
   BackIcon,
   CaretDownIcon,
   CheckIcon,
@@ -209,7 +208,7 @@ export function Browser({
 }: {
   /** The foreign-archive browser (D8); it draws into the stage slot. */
   foreign?: ReactNode;
-  /** The tools the More menu opens, by id ("settings", "selfTest"). */
+  /** The tools the More menu opens, by id ("settings", "check", ...). */
   tools?: Partial<Record<ToolId, ReactNode>>;
   help?: ReactNode;
 }) {
@@ -756,10 +755,6 @@ export function Browser({
               <button type="button" className="menu-item" data-testid="start-settings" onClick={() => showTool("settings")}>
                 <GearIcon />
                 {t("start.settings")}
-              </button>
-              <button type="button" className="menu-item" data-testid="menu-self-test" onClick={() => showTool("selfTest")}>
-                <ActivityIcon />
-                {t("toolbar.selfTest")}
               </button>
             </div>
           </div>

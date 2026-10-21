@@ -12,6 +12,5 @@ export const toolbar = {
   "toolbar.more": "More",
   "toolbar.repair": "Repair",
   "toolbar.foreign": "Other formats…",
-  "toolbar.selfTest": "Self-test",
   "toolbar.helpTip": "Help and keyboard keys",
 } as const;

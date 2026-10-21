@@ -245,7 +245,6 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
     "Passphrases",
     "Repair",
     "Settings",
-    "Self-test",
   ]);
   await user.keyboard("{Escape}");
   expect(menu).not.toBeVisible();
