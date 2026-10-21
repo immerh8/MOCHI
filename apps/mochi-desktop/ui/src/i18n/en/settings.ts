@@ -1,5 +1,8 @@
-// Settings (plan D7): the opt-in crash log. Nothing is ever sent anywhere.
+// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
 export const settings = {
+  "settings.languageHeading": "Language",
+  "settings.languageLabel": "Display language",
+  "settings.languageNote": "Applies at once and is remembered on this computer. Names of files and folders in archives are never translated.",
   "settings.heading": "Settings",
   "settings.crashHeading": "Crash reports",
   "settings.crashPolicy":

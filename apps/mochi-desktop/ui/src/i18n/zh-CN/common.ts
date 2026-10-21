@@ -1,0 +1,40 @@
+// TODO(translate): replace every value with Simplified Chinese text. Keep the keys, the {placeholders}, and
+// the spec section 23.3 wording rules (see ../README.md). Do not translate error codes.
+import type { Catalogue } from "../types";
+import type { common as enCommon } from "../en/common";
+// Wording shared by more than one screen.
+export const common = {
+  "common.cancel": "Cancel",
+  "common.close": "Close",
+  "common.starting": "Starting…",
+  "common.loading": "Loading…",
+  "common.cancelling": " (cancelling…)",
+  "common.folder": "Folder",
+  "common.file": "File",
+  "common.escapedMarker": " (escaped)",
+  "common.escapedHint":
+    "Shown with escapes: the stored name has control characters, direction overrides, a backslash, or bytes that are not UTF-8.",
+  "common.errorWithCode": "{what} ({code}): {message}",
+  "common.errorPlain": "{what}.",
+  "common.completed": "Completed: {summary}.",
+  "common.failed": "Failed ({code}): {message}",
+  "common.stoppedUnexpectedly": "Stopped unexpectedly: {message}",
+  "common.byteOne": "{n} byte",
+  "common.bytesMany": "{n} bytes",
+  "common.sizeWithExact": "{human} ({exact})",
+  "common.sizeHuman": "{value} {unit}",
+  "common.progress": "Progress",
+  "common.itemOne": "{n} item",
+  "common.itemMany": "{n} items",
+  "common.selectedCount": "{n} selected",
+  "common.statusSeparator": " · ",
+  "count.fileOne": "{n} file",
+  "count.fileMany": "{n} files",
+  "count.folderOne": "{n} folder",
+  "count.folderMany": "{n} folders",
+  "count.entryOne": "{n} entry",
+  "count.entryMany": "{n} entries",
+  "count.problemOne": "{n} problem",
+  "count.problemMany": "{n} problems",
+  "common.andMore": "…and {n} more.",
+} satisfies Catalogue<typeof enCommon>;

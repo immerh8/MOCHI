@@ -1,0 +1,41 @@
+// TODO(translate): replace every value with Thai text. Keep the keys, the {placeholders}, and
+// the spec section 23.3 wording rules (see ../README.md). Do not translate error codes.
+import type { Catalogue } from "../types";
+import type { settings as enSettings } from "../en/settings";
+// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
+export const settings = {
+  "settings.languageHeading": "Language",
+  "settings.languageLabel": "Display language",
+  "settings.languageNote": "Applies at once and is remembered on this computer. Names of files and folders in archives are never translated.",
+  "settings.heading": "Settings",
+  "settings.crashHeading": "Crash reports",
+  "settings.crashPolicy":
+    "MOCHI never sends crash reports. There is no crash-report server, and this app makes no network request for it. If you turn the log on, a record of each crash is kept in a file on this computer, which you can read, save, or delete here.",
+  "settings.crashCollected":
+    "A record holds the time, the app version, the platform, the name of the thread that failed, where in the program it failed, and a list of function names. It never holds passphrases or archive contents. It holds no file or folder names unless you also turn on the panic message below.",
+  "settings.crashLimits":
+    "Only crashes inside the program are recorded. A fault in the system's web view, or the system ending the app, leaves no record. The log keeps the most recent records only.",
+  "settings.enable": "Keep a local crash log (off unless you turn it on)",
+  "settings.details": "Include the panic message in each record",
+  "settings.detailsWarning":
+    "The panic message is the program's own description of what went wrong. It can quote the name of a file or folder you were working with. Passphrases and archive contents are never put in it by this app, but it is text you should read before you share it.",
+  "settings.state": "{entries} in the log, {size} on disk.",
+  "settings.entryOne": "{n} record",
+  "settings.entryMany": "{n} records",
+  "settings.show": "Show the log",
+  "settings.hide": "Hide the log",
+  "settings.export": "Save a copy of the log…",
+  "settings.clear": "Delete the log",
+  "settings.logLabel": "Crash log text",
+  "settings.logEmpty": "The log is empty.",
+  "settings.logTruncated": "Older records are not shown here; saving a copy includes them.",
+  "settings.exported": "Saved a copy of the crash log to {name}.",
+  "settings.cleared": "The crash log was deleted.",
+  "settings.enabledNow": "The local crash log is on.",
+  "settings.disabledNow": "The local crash log is off.",
+  "settings.loadFailed": "Could not read the crash-report settings",
+  "settings.saveFailed": "Could not change the crash-report settings",
+  "settings.readFailed": "Could not read the crash log",
+  "settings.exportFailed": "Could not save the crash log",
+  "settings.clearFailed": "Could not delete the crash log",
+} satisfies Catalogue<typeof enSettings>;

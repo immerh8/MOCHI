@@ -4,7 +4,7 @@ import type { CommitReport } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
 import { cautionCount } from "../result/details";
 import type { ResultDetails } from "../result/details";
-import { DELETE_NOTE, LOCAL_COMMIT_NOTE, outcomeResult, TAR_NOTES } from "./messages";
+import { deleteNote, localCommitNote, outcomeResult, tarNotes } from "./messages";
 import type { WriteResult } from "./messages";
 import type { Operation } from "./messages";
 
@@ -93,9 +93,9 @@ test("no message claims the data is backed up, safe, or preserved (spec §23.3 #
   const banned = [/backed up/i, /backup/i, /\bsafe/i, /preserv/i, /secure/i, /protected/i];
   const text = [
     ...ALL.flatMap(([op, o]) => allText(outcomeResult(op, o))),
-    DELETE_NOTE,
-    LOCAL_COMMIT_NOTE,
-    ...TAR_NOTES,
+    deleteNote(),
+    localCommitNote(),
+    ...tarNotes(),
   ].join("\n");
   for (const b of banned) expect(text).not.toMatch(b);
 });
@@ -124,8 +124,8 @@ test("the details hold the counts, the status with its technical value, and the 
   expect(row("Status")?.value).toBe("Committed on this computer");
   expect(row("Status")?.sub).toBe("commit 4 · LOCAL_COMMITTED");
   expect(row("Status")?.caution).toBeUndefined();
-  expect(r.details.notes).toEqual([LOCAL_COMMIT_NOTE]);
-  expect(LOCAL_COMMIT_NOTE).toBe(
+  expect(r.details.notes).toEqual([localCommitNote()]);
+  expect(localCommitNote()).toBe(
     "This archive is one file on this computer. Keep a separate copy of anything you cannot lose.",
   );
   expect(cautionCount(r.details)).toBe(0);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { t } from "../i18n";
+import { formatNumber, t } from "../i18n";
 import { listChildren } from "../ipc/browse";
 import type { EntryRow } from "../ipc/browse";
 import { Name } from "./Name";
@@ -58,7 +58,7 @@ function Subdirs({ dir, ancestors, ctx }: { dir: string | null; ancestors: Crumb
       {rows.length < total && (
         <li>
           <button type="button" className="link" onClick={more}>
-            {t("browser.showMoreFolders", { n: (total - rows.length).toLocaleString("en-US") })}
+            {t("browser.showMoreFolders", { n: formatNumber(total - rows.length) })}
           </button>
         </li>
       )}

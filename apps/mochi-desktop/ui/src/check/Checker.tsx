@@ -25,19 +25,19 @@ import { PassphraseForm } from "../crypt/PassphraseForm";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome, JobRequest } from "../ipc/jobs";
 import {
-  APPROVAL_NOTE,
+  approvalNote,
   failedLine,
-  HEALTH_NOTE,
+  healthNote,
   keyed,
-  LEVELS,
-  OUTCOME_LABEL,
-  PLAN_NOTE,
+  levels,
+  outcomeLabel,
+  planNote,
   planLine,
   progressText,
   resultLine,
   reverificationLine,
-  SOURCE_KEPT_NOTE,
-  TEST_NOTE,
+  sourceKeptNote,
+  testNote,
 } from "./messages";
 import { Prose, Report, StatusBadge } from "./Report";
 
@@ -371,18 +371,18 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
 
       <fieldset disabled={busy || subject === null}>
         <legend>{t("check.testLegend")}</legend>
-        <Hint text={TEST_NOTE} />
+        <Hint text={testNote()} />
         <label>
           {t("check.level")}{" "}
           <select data-testid="check-level" value={level} onChange={(e) => setLevel(e.target.value as CheckLevel)}>
-            {LEVELS.map((l) => (
+            {levels().map((l) => (
               <option key={l.level} value={l.level}>
                 {l.label}
               </option>
             ))}
           </select>
         </label>{" "}
-        <Hint text={LEVELS.find((l) => l.level === level)?.detail ?? ""} />
+        <Hint text={levels().find((l) => l.level === level)?.detail ?? ""} />
         <div>
           <label>
             <input type="checkbox" data-testid="check-deep" checked={deep} onChange={(e) => setDeep(e.target.checked)} />{" "}
@@ -441,7 +441,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
           <div data-testid="health">
             <h3>{t("check.healthHeading")}</h3>
             <p className="note" data-testid="health-note">
-              {HEALTH_NOTE}
+              {healthNote()}
               {t("check.recordsUsed", { n: health.records })}
             </p>
             <Report
@@ -517,7 +517,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
       {plan && plan.outcome !== "nothing_recoverable" && (
         <div className="panel" data-testid="repair-approve-panel" role="group" aria-label={t("check.approveGroup")}>
           <h3>{t("check.approveHeading")}</h3>
-          <Hint text={APPROVAL_NOTE} />
+          <Hint text={approvalNote()} />
           <div className="actions">
             <button
               type="button"
@@ -571,7 +571,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
           data-exit={result.exit_code}
           role="status"
         >
-          <h3>{t("check.resultHeading", { outcome: OUTCOME_LABEL[result.outcome] })}</h3>
+          <h3>{t("check.resultHeading", { outcome: outcomeLabel()[result.outcome] })}</h3>
           <p data-testid="repair-result-line">{resultLine(result)}</p>
           <p data-testid="repair-reverification" data-status={result.reverification.overall_status}>
             <StatusBadge status={result.reverification.overall_status} /> {reverificationLine(result)}
@@ -598,7 +598,7 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
           {result.durability_note && (
             <p className="warning">{t("check.durabilityDegraded", { note: result.durability_note })}</p>
           )}
-          <Hint text={SOURCE_KEPT_NOTE} />
+          <Hint text={sourceKeptNote()} />
           <div className="actions">
             <button type="button" data-testid="repair-test-new" onClick={() => void testNewArchive()} disabled={busy}>
               {t("check.testNew")}
@@ -641,7 +641,7 @@ function PlanReview({ plan: p }: { plan: RepairPlanView }) {
       <p data-testid="repair-plan-line">
         <strong>{planLine(p)}</strong>
       </p>
-      <Hint text={PLAN_NOTE} />
+      <Hint text={planNote()} />
       <dl className="report-facts">
         <dt>{t("check.head")}</dt>
         <dd>

@@ -5,7 +5,7 @@ import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { t } from "../i18n";
+import { formatNumber, t } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -26,16 +26,16 @@ import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
 import {
-  HIDDEN_WITH_KEY,
-  NO_GENERIC_TOOLS,
+  hiddenWithKey,
+  noGenericTools,
   RECOVERY_CHOICES,
-  RECOVERY_NOTES,
+  recoveryNotes,
   recoveryLabel,
-  VISIBLE_WITHOUT_KEY,
+  visibleWithoutKey,
 } from "../crypt/messages";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
-import { commitView, DELETE_NOTE, exportView, outcomeResult, progressText, TAR_NOTES } from "./messages";
+import { commitView, deleteNote, exportView, outcomeResult, progressText, tarNotes } from "./messages";
 import type { Operation, WriteResult } from "./messages";
 import { FormatSelect, PRESETS } from "./FormatFields";
 import { hasLevel, isMochi } from "./format";
@@ -664,7 +664,7 @@ export function Writer({
                     />{" "}
                     {t("write.encrypt")}
                   </label>
-                  {tar && <Hint text={NO_GENERIC_TOOLS} />}
+                  {tar && <Hint text={noGenericTools()} />}
                   {encrypt && (
                     <div data-testid="encrypt-panel">
                       <label>
@@ -690,7 +690,7 @@ export function Writer({
                       <EncryptionNotes creating />
                       <Hint
                         testId="visible-without-key"
-                        text={[HIDDEN_WITH_KEY, t("write.visibleIntro"), ...VISIBLE_WITHOUT_KEY, t("write.fixedAtCreation")]}
+                        text={[hiddenWithKey(), t("write.visibleIntro"), ...visibleWithoutKey(), t("write.fixedAtCreation")]}
                       />
                     </div>
                   )}
@@ -719,7 +719,7 @@ export function Writer({
                       {recoveryLabel(p)}
                     </label>
                   ))}
-                  <Hint testId="recovery-notes" text={RECOVERY_NOTES} />
+                  <Hint testId="recovery-notes" text={recoveryNotes()} />
                 </fieldset>
                 <fieldset disabled={busy}>
                   <legend>{t("write.compatibility")}</legend>
@@ -733,7 +733,7 @@ export function Writer({
                     />{" "}
                     {t("write.tarCompatible")}
                   </label>
-                  <Hint testId="tar-notes" text={TAR_NOTES} />
+                  <Hint testId="tar-notes" text={tarNotes()} />
                 </fieldset>
               </>
             )}
@@ -797,10 +797,10 @@ export function Writer({
           <p>
             {selected.length === 1 && selected[0]
               ? t("write.removeQuestion", { name: selected[0].name.text })
-              : t("write.removeQuestionMany", { n: selected.length.toLocaleString("en-US") })}
+              : t("write.removeQuestionMany", { n: formatNumber(selected.length) })}
           </p>
           <p className="note" data-testid="delete-note">
-            {DELETE_NOTE}
+            {deleteNote()}
           </p>
           {errorLine}
           {progressLine}

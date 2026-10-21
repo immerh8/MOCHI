@@ -1,6 +1,6 @@
 // Presentation helpers. Sizes arrive as decimal strings (an archive may
 // claim values above 2^53), so they are handled as BigInt.
-import { t } from "../i18n";
+import { formatNumber, t } from "../i18n";
 import { isIpcError } from "../ipc/jobs";
 
 const UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
@@ -13,7 +13,7 @@ function sizeParts(decimal: string): { exact: string; human: string | null } | s
   } catch {
     return decimal;
   }
-  const exact = t(n === 1n ? "common.byteOne" : "common.bytesMany", { n: n.toLocaleString("en-US") });
+  const exact = t(n === 1n ? "common.byteOne" : "common.bytesMany", { n: formatNumber(n) });
   if (n < 1024n) return { exact, human: null };
   let unit = 0;
   let base = 1024n;

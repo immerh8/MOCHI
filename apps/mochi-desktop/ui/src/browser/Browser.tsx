@@ -20,7 +20,7 @@ import {
   TrashIcon,
   WrenchIcon,
 } from "../icons";
-import { t, tc, tn } from "../i18n";
+import { formatNumber, t, tc, tn } from "../i18n";
 
 import { closeArchive, entryDetails, listChildren, openArchive, openSnapshot } from "../ipc/browse";
 import type {
@@ -46,7 +46,7 @@ import { VirtualList } from "./VirtualList";
 import { Checker } from "../check/Checker";
 import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
 import { Rekey } from "../crypt/Rekey";
-import { HIDDEN_WITH_KEY, NOT_SIGNED, VISIBLE_WITHOUT_KEY } from "../crypt/messages";
+import { hiddenWithKey, notSigned, visibleWithoutKey } from "../crypt/messages";
 import { useDragOut } from "../list/dragOut";
 import { copyNames, listMenuItems, useListMenu } from "../list/ContextMenu";
 import { ancestorsOf } from "../list/keys";
@@ -875,7 +875,7 @@ export function Browser({
                 <span
                   className="badge"
                   data-testid="encrypted-note"
-                  title={[t("browser.profileEncrypted"), HIDDEN_WITH_KEY, ...VISIBLE_WITHOUT_KEY, NOT_SIGNED].join("\n")}
+                  title={[t("browser.profileEncrypted"), hiddenWithKey(), ...visibleWithoutKey(), notSigned()].join("\n")}
                 >
                   <KeyIcon />
                   <span className="sr-only">{t("browser.profileEncrypted")}</span>
@@ -1092,7 +1092,7 @@ export function Browser({
                                 size={
                                   row.kind === "directory"
                                     ? t("browser.itemsCount", {
-                                        n: (row.child_dirs + row.child_files).toLocaleString("en-US"),
+                                        n: formatNumber(row.child_dirs + row.child_files),
                                       })
                                     : shortSize(row.size)
                                 }
@@ -1131,7 +1131,7 @@ export function Browser({
                     title={
                       searching && search.state === "done" && search.detail !== undefined
                         ? search.detail
-                        : t("browser.entriesInVersion", { n: open.snapshot.entries.toLocaleString("en-US") })
+                        : t("browser.entriesInVersion", { n: formatNumber(open.snapshot.entries) })
                     }
                   >
                     {searching ? search.statusText : statusText}

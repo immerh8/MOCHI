@@ -8,7 +8,7 @@ import { errorText } from "../browser/format";
 import { CloseIcon, ExtractDesktopIcon, ExtractIcon, RefreshIcon } from "../icons";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc } from "../i18n";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
@@ -20,10 +20,10 @@ import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import {
-  CONFLICT_NOTE,
+  conflictNote,
   describe,
-  FOLDER_NOTE,
-  NOT_OFFERED_NOTE,
+  folderNote,
+  notOfferedNote,
   progressText,
 } from "./messages";
 
@@ -368,7 +368,7 @@ export function Extractor({
           title={tipFor(
             avail.extract,
             selected.length > 0
-              ? t("extract.selectedTip", { n: selected.length.toLocaleString("en-US") })
+              ? t("extract.selectedTip", { n: formatNumber(selected.length) })
               : t("extract.allTip"),
           )}
         />
@@ -385,7 +385,7 @@ export function Extractor({
           title={tipFor(
             avail.extractDesktop,
             selected.length > 0
-              ? t("extract.desktopSelectedTip", { n: selected.length.toLocaleString("en-US") })
+              ? t("extract.desktopSelectedTip", { n: formatNumber(selected.length) })
               : t("extract.desktopTip"),
           )}
         />
@@ -422,7 +422,7 @@ export function Extractor({
             <div data-testid="extract-conflicts">
               <p role="note" className="warning">
                 {t(plan.conflicts_total === 1 ? "extract.cannotOne" : "extract.cannotMany", {
-                  n: plan.conflicts_total.toLocaleString("en-US"),
+                  n: formatNumber(plan.conflicts_total),
                 })}
               </p>
               <ul className="staged" aria-label={t("extract.cannotList")}>
@@ -434,10 +434,10 @@ export function Extractor({
               </ul>
               {plan.conflicts_total > plan.conflicts.length && (
                 <p className="note">
-                  {t("common.andMore", { n: (plan.conflicts_total - plan.conflicts.length).toLocaleString("en-US") })}
+                  {t("common.andMore", { n: formatNumber(plan.conflicts_total - plan.conflicts.length) })}
                 </p>
               )}
-              <Hint testId="extract-conflict-note" text={[CONFLICT_NOTE, NOT_OFFERED_NOTE]} />
+              <Hint testId="extract-conflict-note" text={[conflictNote(), notOfferedNote()]} />
             </div>
           ) : (
             <span className="sr-only" data-testid="extract-no-conflicts">
@@ -456,7 +456,7 @@ export function Extractor({
               text={[
                 ...(scope.kind === "selected" ? [t("extract.parentsNote")] : []),
                 ...(madeFolder ? [t("extract.newFolderNote")] : []),
-                FOLDER_NOTE,
+                folderNote(),
                 ...(plan.case_insensitive ? [t("extract.caseInsensitive")] : []),
               ]}
             />

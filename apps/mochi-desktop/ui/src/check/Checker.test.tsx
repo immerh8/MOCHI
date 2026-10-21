@@ -9,7 +9,7 @@ import type { CheckResult, HealthView, RepairSetupView, SubjectView } from "../i
 import type { JobEvent } from "../ipc/jobs";
 import { Checker } from "./Checker";
 import { planView, report, resultView } from "./fixtures";
-import { BANNED, FRESHNESS_NOTE, HEALTH_NOTE, KEYLESS_NOTE } from "./messages";
+import { BANNED, freshnessNote, healthNote, keylessNote } from "./messages";
 
 type Internals = { runCallback: (id: number, data: unknown) => void };
 const internals = () => (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
@@ -156,7 +156,7 @@ test("Test archive runs the chosen level as a job and shows a plain verdict", as
   expect(badges.filter((x) => x.classList.contains("status-pass"))).toHaveLength(2);
   // The overall indicator is UNKNOWN, so it is not styled as success.
   expect(within(screen.getByTestId("report-overall")).getByTestId("status-badge")).not.toHaveClass("status-pass");
-  expect(screen.getByTestId("report-freshness-note")).toHaveTextContent(FRESHNESS_NOTE);
+  expect(screen.getByTestId("report-freshness-note")).toHaveTextContent(freshnessNote());
   expect(screen.queryByTestId("report-repair")).toBeNull();
   expect(screen.getByTestId("report-json").textContent).toBe(report().json);
   expect(screen.queryByTestId("report-keyless-note")).toBeNull();
@@ -223,7 +223,7 @@ test("an encrypted archive's keyless test says the check needs the key", async (
       exit_code: 2,
     }),
   });
-  expect(screen.getByTestId("report-keyless-note")).toHaveTextContent(KEYLESS_NOTE);
+  expect(screen.getByTestId("report-keyless-note")).toHaveTextContent(keylessNote());
   expect(screen.getByTestId("report-headline")).toHaveTextContent("Only part of this archive was checked");
   expect(screen.getByTestId("report-verdict").className).not.toContain("verdict-pass");
   expect(screen.getByTestId("report").dataset.overall).not.toBe("PASS");
@@ -321,7 +321,7 @@ test("the health view shows its own report with the evidence note", async () => 
   await user.click(screen.getByTestId("check-health"));
   expect(b.of("health_report")).toEqual([{ subject: 5 }]);
   const h = await screen.findByTestId("health");
-  expect(within(h).getByTestId("health-note")).toHaveTextContent(HEALTH_NOTE);
+  expect(within(h).getByTestId("health-note")).toHaveTextContent(healthNote());
   expect(within(h).getByTestId("report").dataset.kind).toBe("health");
   assertBadges();
   assertNoBannedWords();
