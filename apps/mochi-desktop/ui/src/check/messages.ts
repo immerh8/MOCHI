@@ -5,7 +5,7 @@
 // its report establishes; nothing here calls an archive "repaired", "safe",
 // "backed up", or "preserved", or says it was "recovered completely".
 import { formatSize } from "../browser/format";
-import { t, tn } from "../i18n";
+import { phaseLabel, t, tn } from "../i18n";
 import type { JobOutcome } from "../ipc/jobs";
 import type {
   CheckLevel,
@@ -41,14 +41,14 @@ export function statusMark(s: StatusView): string {
 }
 
 /** Spec §20.4, in words. */
-export const STATUS_MEANING: Record<StatusView, string> = {
+export const statusMeaning = (): Record<StatusView, string> => ({
   PASS: t("status.meaning.PASS"),
   FAIL: t("status.meaning.FAIL"),
   DEGRADED: t("status.meaning.DEGRADED"),
   UNKNOWN: t("status.meaning.UNKNOWN"),
   OVERDUE: t("status.meaning.OVERDUE"),
   UNSUPPORTED: t("status.meaning.UNSUPPORTED"),
-};
+});
 
 /**
  * The CSS classes of a status. Only PASS gets the success class; FAIL gets
@@ -85,7 +85,7 @@ export function dimensionLabel(name: string): string {
   }
 }
 
-export const LEVELS: { level: CheckLevel; label: string; detail: string }[] = [
+export const levels = (): { level: CheckLevel; label: string; detail: string }[] => [
   { level: "restoration", label: t("level.restoration"), detail: t("level.restorationDetail") },
   { level: "content_integrity", label: t("level.content_integrity"), detail: t("level.content_integrityDetail") },
   { level: "stored_integrity", label: t("level.stored_integrity"), detail: t("level.stored_integrityDetail") },
@@ -94,22 +94,22 @@ export const LEVELS: { level: CheckLevel; label: string; detail: string }[] = [
 ];
 
 /** Shown with every test: what "Test archive" is. */
-export const TEST_NOTE = t("check.testNote");
+export const testNote = () => t("check.testNote");
 
 /** Explains UNKNOWN freshness the first time it appears (spec §5.7, D8). */
-export const FRESHNESS_NOTE = t("check.freshnessNote");
+export const freshnessNote = () => t("check.freshnessNote");
 
 /** Shown when an Encrypted archive was checked without its key. */
-export const KEYLESS_NOTE = t("check.keylessNote");
+export const keylessNote = () => t("check.keylessNote");
 
 /** Shown with every health summary (plan D4 "Gap"). */
-export const HEALTH_NOTE = t("check.healthNote");
+export const healthNote = () => t("check.healthNote");
 
 /** Shown with every repair plan. */
-export const PLAN_NOTE = t("check.planNote");
+export const planNote = () => t("check.planNote");
 
 /** Shown with the approval. */
-export const APPROVAL_NOTE = t("check.approvalNote");
+export const approvalNote = () => t("check.approvalNote");
 
 /** The overall line of a report: never hides a failing dimension. */
 export function overallLine(r: ReportView): string {
@@ -122,14 +122,12 @@ export function overallLine(r: ReportView): string {
 
 /** What was checked, in one line. */
 export function headline(r: ReportView): string {
-  return r.kind === "health"
-    ? t("check.headlineHealth", { file: r.file_name, status: r.overall_status })
-    : t("check.headlineTest", {
-        file: r.file_name,
-        level: r.level,
-        deep: r.deep ? t("check.deepSuffix") : "",
-        status: r.overall_status,
-      });
+  if (r.kind === "health") return t("check.headlineHealth", { file: r.file_name, status: r.overall_status });
+  return t(r.deep ? "check.headlineTestDeep" : "check.headlineTest", {
+    file: r.file_name,
+    level: r.level,
+    status: r.overall_status,
+  });
 }
 
 export function coverageLine(r: ReportView): string | null {
@@ -142,11 +140,11 @@ export function coverageLine(r: ReportView): string | null {
   return t("check.coverage", { checked: c.checked_objects, expected: c.expected_objects, bytes });
 }
 
-export const OUTCOME_LABEL: Record<RepairOutcomeView, string> = {
+export const outcomeLabel = (): Record<RepairOutcomeView, string> => ({
   complete: t("check.outcome.complete"),
   partial: t("check.outcome.partial"),
   nothing_recoverable: t("check.outcome.nothing_recoverable"),
-};
+});
 
 /** The plan's verdict, in one line. Partial salvage is labelled as such. */
 export function planLine(p: RepairPlanView): string {
@@ -157,15 +155,11 @@ export function planLine(p: RepairPlanView): string {
       const lost = lostSummary(p.lost.length, p.omitted_total);
       return p.salvage_used
         ? t("check.planPartialSalvage", { lost })
-        : t("check.planPartial", { lost: capitalize(lost) });
+        : t("check.planPartial", { lost });
     }
     case "nothing_recoverable":
       return t("check.planNothing");
   }
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function lostSummary(lost: number, omitted: string): string {
@@ -207,19 +201,36 @@ export function reverificationLine(r: RepairResultView): string {
   });
 }
 
-export const SOURCE_KEPT_NOTE = t("check.sourceKept");
+export const sourceKeptNote = () => t("check.sourceKept");
+
+/** The job a note is about: each has its own full sentences in the catalogue. */
+export type JobKind = "test" | "plan" | "apply";
 
 /** A job that ended without a result, in words. */
-export function failedLine(what: string, outcome: JobOutcome): string | null {
+export function failedLine(kind: JobKind, outcome: JobOutcome): string | null {
   switch (outcome.status) {
     case "completed":
       return null;
     case "cancelled":
-      return t("check.jobCancelled", { what });
-    case "failed":
-      return t("check.jobFailed", { what, code: outcome.code, message: outcome.message });
-    case "aborted":
-      return t("check.jobStopped", { what, message: outcome.message });
+      return t(
+        kind === "test" ? "check.cancelledTest" : kind === "plan" ? "check.cancelledPlan" : "check.cancelledApply",
+      );
+    case "failed": {
+      const params = { code: outcome.code, message: outcome.message };
+      return kind === "test"
+        ? t("check.failedTest", params)
+        : kind === "plan"
+          ? t("check.failedPlan", params)
+          : t("check.failedApply", params);
+    }
+    case "aborted": {
+      const params = { message: outcome.message };
+      return kind === "test"
+        ? t("check.stoppedTest", params)
+        : kind === "plan"
+          ? t("check.stoppedPlan", params)
+          : t("check.stoppedApply", params);
+    }
   }
 }
 
@@ -233,8 +244,93 @@ export function progressText(phase: string, completed: number, total: number | n
     "repair-copy": t("check.progressCopy"),
     "repair-verify": t("check.progressVerify"),
   };
-  const label = names[phase] ?? (phase.startsWith("verify") ? t("check.progressChecking", { phase }) : phase);
+  const label = names[phase] ?? phaseLabel(phase);
   return t("check.progressLine", { label, n });
+}
+
+/**
+ * A check that says nothing about this archive: not required by the policy
+ * and either UNSUPPORTED or UNKNOWN. These are folded into one line under
+ * Details. A required check, or any other status, is never folded away, so
+ * a failing (or degraded, overdue) dimension is always in the default view.
+ */
+export function isQuiet(d: { status: StatusView; required: boolean }): boolean {
+  return !d.required && (d.status === "UNSUPPORTED" || d.status === "UNKNOWN");
+}
+
+export type VerdictKind = "ok" | "ranOk" | "problems" | "degraded" | "incomplete" | "keyless" | "failed";
+
+export interface Verdict {
+  kind: VerdictKind;
+  /** Only "ok" (overall PASS) looks like success; "problems" looks like a failure. */
+  tone: "pass" | "fail" | "attention";
+  title: string;
+  line: string;
+}
+
+/** One line on what was checked, from the level the report carries. */
+export function scopeLine(r: ReportView): string {
+  const byLevel: Record<string, string> = {
+    restoration: t("verdict.scope.restoration"),
+    content_integrity: t("verdict.scope.content_integrity"),
+    stored_integrity: t("verdict.scope.stored_integrity"),
+    referential: t("verdict.scope.referential"),
+    structural: t("verdict.scope.structural"),
+  };
+  const what = r.kind === "health" ? t("verdict.health") : (byLevel[r.level] ?? t("verdict.scope.other"));
+  return t(r.deep && r.kind !== "health" ? "verdict.checkedDeep" : "verdict.checked", { file: r.file_name, what });
+}
+
+/**
+ * The plain-language verdict. It never reads better than the report: the
+ * success tone needs an overall PASS; a failing dimension always gives
+ * "problems"; keyless checks of an encrypted archive are never "ok"; and
+ * a report with UNKNOWN overall says what ran, not that all is well.
+ */
+export function verdict(r: ReportView): Verdict {
+  const sep = t("verdict.whereJoin");
+  const names = (pred: (d: ReportView["dimensions"][number]) => boolean) =>
+    r.dimensions
+      .filter(pred)
+      .map((d) => dimensionLabel(d.dimension))
+      .join(sep);
+  const failing = names((d) => d.status === "FAIL");
+  if (failing !== "" || r.overall_status === "FAIL") {
+    return {
+      kind: "problems",
+      tone: "fail",
+      title: t("verdict.problems"),
+      line: t("verdict.problemsLine", { where: failing || r.overall_status }),
+    };
+  }
+  if (r.operational_error) {
+    return { kind: "failed", tone: "attention", title: t("verdict.failed"), line: t("verdict.failedLine") };
+  }
+  if (r.keyless) {
+    return { kind: "keyless", tone: "attention", title: t("verdict.keyless"), line: t("verdict.keylessLine") };
+  }
+  const reduced = names((d) => d.status === "DEGRADED" || d.status === "OVERDUE");
+  if (reduced !== "") {
+    return {
+      kind: "degraded",
+      tone: "attention",
+      title: t("verdict.degraded"),
+      line: t("verdict.degradedLine", { where: reduced }),
+    };
+  }
+  const open = names((d) => d.required && d.status !== "PASS");
+  if (open !== "") {
+    return {
+      kind: "incomplete",
+      tone: "attention",
+      title: t("verdict.incomplete"),
+      line: t("verdict.incompleteLine", { where: open }),
+    };
+  }
+  if (r.overall_status === "PASS") {
+    return { kind: "ok", tone: "pass", title: t("verdict.ok"), line: t("verdict.okLine") };
+  }
+  return { kind: "ranOk", tone: "attention", title: t("verdict.ranOk"), line: t("verdict.ranOkLine") };
 }
 
 /**

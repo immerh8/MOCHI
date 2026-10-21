@@ -443,6 +443,69 @@ pub enum CompressionPreset {
     Smaller,
 }
 
+/// The words of a native dialog, in the language the window is showing
+/// (`mochi-desktop/ui/src/i18n`). The native dialog is Rust's, so the webview
+/// can only pass text; every field is optional and an absent, empty, too long
+/// or control-character-bearing one falls back to the English default, so the
+/// webview can never put anything but a short plain label on a dialog. The
+/// extensions a filter matches are Rust's and are not passed.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct DialogText {
+    /// The dialog's title.
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// The label of the dialog's own file type (what the dialog is for).
+    #[serde(default)]
+    #[ts(optional)]
+    pub filter: Option<String>,
+    /// The label of the "MOCHI archive" file type, where the dialog lists others too.
+    #[serde(default)]
+    #[ts(optional)]
+    pub mochi_archive: Option<String>,
+    /// The label of the "All files" file type.
+    #[serde(default)]
+    #[ts(optional)]
+    pub all_files: Option<String>,
+}
+
+impl DialogText {
+    /// The longest label accepted, in characters. Longer is refused, not cut.
+    pub const MAX_CHARS: usize = 120;
+
+    /// `value` if it is a short plain string, else `fallback`.
+    fn plain(value: &Option<String>, fallback: &str) -> String {
+        match value.as_deref().map(str::trim) {
+            Some(v)
+                if !v.is_empty()
+                    && v.chars().count() <= Self::MAX_CHARS
+                    && !v.chars().any(char::is_control) =>
+            {
+                v.to_owned()
+            }
+            _ => fallback.to_owned(),
+        }
+    }
+
+    pub fn title(&self, fallback: &str) -> String {
+        Self::plain(&self.title, fallback)
+    }
+
+    pub fn filter(&self, fallback: &str) -> String {
+        Self::plain(&self.filter, fallback)
+    }
+
+    pub fn mochi_archive(&self) -> String {
+        Self::plain(&self.mochi_archive, "MOCHI archive")
+    }
+
+    pub fn all_files(&self) -> String {
+        Self::plain(&self.all_files, "All files")
+    }
+}
+
 /// Which native dialog `stage_sources` shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]

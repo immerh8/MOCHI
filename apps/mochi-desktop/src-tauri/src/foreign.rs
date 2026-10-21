@@ -479,6 +479,27 @@ impl Foreign {
         })
     }
 
+    /// Plan extracting `keys` into a new folder named after the archive in
+    /// `parent` (the Desktop), made now. The folder is removed again if the
+    /// plan fails.
+    pub fn plan_in_new_folder(
+        &self,
+        destination: &Destination,
+        parent: &Path,
+        handle: u32,
+        keys: &[PathKey],
+    ) -> Result<ForeignExtractPlan> {
+        let s = self.session(handle)?;
+        let folder = destination.make_new_in(parent, &s.path)?;
+        match self.plan(destination, Some(folder), handle, keys) {
+            Ok(p) => Ok(p),
+            Err(e) => {
+                destination.discard_made();
+                Err(e)
+            }
+        }
+    }
+
     /// Refuse a request that cannot work, before a job starts.
     pub fn validate(&self, destination: &Destination, request: &JobRequest) -> Result<()> {
         match request {

@@ -37,12 +37,26 @@
   --icon-code: #3d6b2f;
   --icon-sheet: #2b7a78;
   --icon-pdf: #b03a2e;
-  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  /* Latin first; Thai and Chinese glyphs fall through to the system fonts named
+     after it. No remote fonts (the CSP is strict). */
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", "Leelawadee UI",
+    "Noto Sans Thai", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
   font-size: 13px;
   line-height: 1.4;
   color: var(--fg);
   background: var(--bg);
   accent-color: var(--accent);
+}
+/* With the language set, name the right script's fonts first so that shared Han
+   characters use the Simplified Chinese forms and Thai gets a Thai face. */
+:root:lang(th) {
+  font-family: "Leelawadee UI", "Noto Sans Thai", "Noto Sans Thai UI", "Segoe UI", system-ui, Ubuntu, Cantarell,
+    "Noto Sans", sans-serif;
+}
+:root:lang(zh-CN) {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "WenQuanYi Micro Hei", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
 }
 html,
 body {
@@ -729,6 +743,20 @@ button.crumb {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* The rubber band is positioned in the scrolling content; dragging over the
+     rows must not select their text. */
+  position: relative;
+  user-select: none;
+}
+/* The rubber band of a file list: a translucent rectangle, never in the way of the pointer. */
+.marquee-band {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  opacity: 0.75;
+  z-index: 2;
 }
 .vspacer {
   position: relative;
@@ -1552,4 +1580,29 @@ button.recent-item {
 }
 .context-menu hr {
   margin: 0.2rem 0;
+}
+
+/* ---- Test result verdict --------------------------------------------------- */
+.verdict {
+  border-left: 0.35rem solid var(--border);
+  padding: 0.25rem 0.75rem;
+  margin: 0 0 0.5rem;
+}
+.verdict p {
+  margin: 0.2rem 0;
+}
+.verdict-title {
+  font-size: 1.15em;
+}
+.verdict-pass {
+  border-left-color: var(--fg);
+}
+.verdict-fail {
+  border-left-color: var(--error);
+}
+.verdict-title::before {
+  content: attr(data-mark) " ";
+}
+.verdict-attention {
+  border-left-style: dashed;
 }

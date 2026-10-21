@@ -14,16 +14,18 @@ export const foreign = {
     "Nothing is overwritten and no name is changed. Links, devices, absolute paths, and names containing .. are never created. Each file is kept only if the format's own check, where it has one, passed.",
   "foreign.weakNote":
     "Some entries use ZipCrypto, a weak form of encryption that known-plaintext attacks break.",
-  "foreign.testHeadline": "Read {entries} of the {format} archive: {problems}.{early}",
-  "foreign.testEarly": " The run stopped early, so this covers only part of the archive.",
+  "foreign.testHeadline": "Read {entries} of the {format} archive: {problems}.",
+  "foreign.testHeadlineEarly":
+    "Read {entries} of the {format} archive: {problems}. The run stopped early, so this covers only part of the archive.",
   "foreign.cancelled": "Cancelled. The operation stopped before it finished.",
   "foreign.cancelledNote":
     "Files extracted before you cancelled stay in the folder, each one complete. The file being written was discarded.",
   "foreign.failedNote": "Nothing was written unless the message says otherwise.",
-  "foreign.extracted": "Extracted {what} to {dest}.",
-  "foreign.what": "{files} ({size}) and {folders}",
-  "foreign.notExtractedOne": "{n} entry was not extracted.",
-  "foreign.notExtractedMany": "{n} entries were not extracted.",
+  "foreign.extracted": "Extracted {files} ({size}) and {folders} to {dest}.",
+  "foreign.extractedSkippedOne":
+    "Extracted {files} ({size}) and {folders} to {dest}. {n} entry was not extracted.",
+  "foreign.extractedSkippedMany":
+    "Extracted {files} ({size}) and {folders} to {dest}. {n} entries were not extracted.",
   "foreign.progressReading": "Reading: {completed} of {total} entries",
   "foreign.progressReadingNoTotal": "Reading: {completed} entries",
   "foreign.progressExtracting": "Extracting: {completed} of {total} entries",

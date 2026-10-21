@@ -5,6 +5,8 @@
 // keeps the choice. The test and repair jobs start through start_job.
 import { invoke } from "@tauri-apps/api/core";
 
+import { checkSubjectDialog, reportDialog, repairCopyDialog, repairOutputDialog } from "./dialogs";
+
 import type { CheckLevel } from "./generated/CheckLevel";
 import type { CheckResult } from "./generated/CheckResult";
 import type { CopyView } from "./generated/CopyView";
@@ -53,7 +55,7 @@ export type {
  * the last repair wrote. Nothing is read yet.
  */
 export function chooseCheckSubject(from: SubjectSource): Promise<SubjectView | null> {
-  return invoke<SubjectView | null>("choose_check_subject", { from });
+  return invoke<SubjectView | null>("choose_check_subject", { from, text: checkSubjectDialog() });
 }
 
 /** The health summary of the chosen archive (runs no check). */
@@ -66,10 +68,13 @@ export function healthReport(subject: number): Promise<HealthView> {
  * produced to a new file. The file's name, or `null` if the user cancelled.
  */
 export function exportReport(report: number): Promise<string | null> {
-  return invoke<string | null>("export_report", { report });
+  return invoke<string | null>("export_report", { report, text: reportDialog() });
 }
 
 /** Change (or only read) the repair's copies and new file. */
 export function repairSetup(action: RepairSetupAction): Promise<RepairSetupView> {
-  return invoke<RepairSetupView>("repair_setup", { action });
+  return invoke<RepairSetupView>("repair_setup", {
+    action,
+    text: action.action === "choose_output" ? repairOutputDialog() : repairCopyDialog(),
+  });
 }

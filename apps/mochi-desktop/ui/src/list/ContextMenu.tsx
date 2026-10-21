@@ -2,12 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { t } from "../i18n";
+import { reasonText } from "../shell/availability";
+import type { ActionId, AvailableActions } from "../shell/availability";
 
 /** One entry of a context menu: a fixed label from the catalogue, never archive text. */
 export interface MenuItem {
   id: string;
   label: string;
   disabled?: boolean;
+  /** Why the item is disabled, as the tooltip. */
+  title?: string | undefined;
   /** Draw a rule above this item. */
   separator?: boolean;
   run: () => void;
@@ -207,6 +211,7 @@ export function ContextMenu({
             className="menu-item"
             data-testid={`menu-${item.id}`}
             aria-disabled={item.disabled === true ? true : undefined}
+            title={item.title}
             tabIndex={i === active ? 0 : -1}
             onClick={() => choose(item)}
             onPointerMove={() => item.disabled !== true && setActive(i)}
@@ -243,31 +248,40 @@ export function useListMenu(items: readonly MenuItem[]) {
 
 /** What a file list's menu does; the list supplies each action. */
 export interface ListActions {
-  /** Entries selected now. */
-  selected: number;
-  /** Entries in the list (nothing to select in an empty one). */
-  total: number;
+  /** Which items are on, from `availableActions` (one answer for menu, toolbar, and keys). */
+  available: AvailableActions;
   selectAll: () => void;
   copyNames: () => void;
   extract: () => void;
-  /** Delete; `null` when this archive cannot change (foreign, an older version). */
-  remove: (() => void) | null;
+  extractDesktop: () => void;
+  add: () => void;
+  remove: () => void;
 }
 
-/** The items of a file list's menu, disabled where they do not apply. */
+/**
+ * The items of a file list's menu. Every item is always listed; the ones that
+ * do not apply (Delete in a read-only archive, anything on an empty selection)
+ * are disabled, announced as disabled, and say why in their tooltip.
+ */
 export function listMenuItems(a: ListActions): MenuItem[] {
-  const none = a.selected === 0;
+  const item = (id: string, label: string, action: ActionId, run: () => void, separator = false): MenuItem => {
+    const avail = a.available[action];
+    return {
+      id,
+      label,
+      disabled: !avail.enabled,
+      title: avail.reason === null ? undefined : reasonText(avail.reason),
+      separator,
+      run,
+    };
+  };
   return [
-    { id: "select-all", label: t("menu.selectAll"), disabled: a.total === 0, run: a.selectAll },
-    { id: "copy-names", label: t("menu.copyNames"), disabled: none, run: a.copyNames },
-    { id: "extract-to", label: t("menu.extractTo"), disabled: none, run: a.extract },
-    {
-      id: "delete",
-      label: t("menu.delete"),
-      disabled: none || a.remove === null,
-      separator: true,
-      run: () => a.remove?.(),
-    },
+    item("select-all", t("menu.selectAll"), "selectAll", a.selectAll),
+    item("copy-names", t("menu.copyNames"), "copyNames", a.copyNames),
+    item("extract-to", t("menu.extractTo"), "extractTo", a.extract),
+    item("extract-desktop", t("menu.extractDesktop"), "extractDesktop", a.extractDesktop),
+    item("add", t("menu.add"), "add", a.add, true),
+    item("delete", t("menu.delete"), "remove", a.remove),
   ];
 }
 

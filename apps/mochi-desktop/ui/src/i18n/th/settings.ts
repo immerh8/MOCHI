@@ -1,0 +1,39 @@
+import type { Catalogue } from "../types";
+import type { settings as enSettings } from "../en/settings";
+// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
+export const settings = {
+  "settings.languageHeading": "ภาษา",
+  "settings.languageLabel": "ภาษาที่แสดง",
+  "settings.languageNote": "มีผลทันทีและจำไว้บนคอมพิวเตอร์เครื่องนี้ ชื่อไฟล์และโฟลเดอร์ในไฟล์บีบอัดจะไม่ถูกแปล",
+  "settings.heading": "การตั้งค่า",
+  "settings.crashHeading": "รายงานการขัดข้อง",
+  "settings.crashPolicy":
+    "MOCHI ไม่ส่งรายงานการขัดข้องเลย ไม่มีเซิร์ฟเวอร์รับรายงาน และแอปนี้ไม่ส่งคำขอเครือข่ายเพื่อการนี้ หากเปิดบันทึก ระเบียนของการขัดข้องแต่ละครั้งจะถูกเก็บในไฟล์บนคอมพิวเตอร์เครื่องนี้ ซึ่งคุณอ่าน บันทึก หรือลบได้ที่นี่",
+  "settings.crashCollected":
+    "ระเบียนมีเวลา เวอร์ชันแอป แพลตฟอร์ม ชื่อเธรดที่ล้มเหลว ตำแหน่งในโปรแกรมที่ล้มเหลว และรายชื่อฟังก์ชัน ไม่มีวลีรหัสผ่านหรือเนื้อหาไฟล์บีบอัด และไม่มีชื่อไฟล์หรือโฟลเดอร์ เว้นแต่คุณเปิดข้อความ panic ด้านล่างด้วย",
+  "settings.crashLimits":
+    "บันทึกเฉพาะการขัดข้องภายในโปรแกรม หากเว็บวิวของระบบผิดพลาด หรือระบบปิดแอป จะไม่มีระเบียน บันทึกเก็บเฉพาะระเบียนล่าสุด",
+  "settings.enable": "เก็บบันทึกการขัดข้องในเครื่อง (ปิดไว้จนกว่าคุณจะเปิด)",
+  "settings.details": "ใส่ข้อความ panic ในแต่ละระเบียน",
+  "settings.detailsWarning":
+    "ข้อความ panic คือคำอธิบายของโปรแกรมเองว่าผิดพลาดอย่างไร อาจอ้างชื่อไฟล์หรือโฟลเดอร์ที่คุณกำลังใช้ แอปนี้ไม่ใส่วลีรหัสผ่านหรือเนื้อหาไฟล์บีบอัดลงไป แต่เป็นข้อความที่คุณควรอ่านก่อนแบ่งปัน",
+  "settings.state": "มี {entries} ในบันทึก ใช้พื้นที่ดิสก์ {size}",
+  "settings.entryOne": "{n} ระเบียน",
+  "settings.entryMany": "{n} ระเบียน",
+  "settings.show": "แสดงบันทึก",
+  "settings.hide": "ซ่อนบันทึก",
+  "settings.export": "บันทึกสำเนาของบันทึก…",
+  "settings.clear": "ลบบันทึก",
+  "settings.logLabel": "ข้อความบันทึกการขัดข้อง",
+  "settings.logEmpty": "บันทึกว่างเปล่า",
+  "settings.logTruncated": "ระเบียนที่เก่ากว่านี้ไม่แสดงที่นี่ แต่สำเนาที่บันทึกจะรวมไว้",
+  "settings.exported": "บันทึกสำเนาบันทึกการขัดข้องไปที่ {name} แล้ว",
+  "settings.cleared": "ลบบันทึกการขัดข้องแล้ว",
+  "settings.enabledNow": "เปิดบันทึกการขัดข้องในเครื่องแล้ว",
+  "settings.disabledNow": "ปิดบันทึกการขัดข้องในเครื่องแล้ว",
+  "settings.loadFailed": "อ่านการตั้งค่ารายงานการขัดข้องไม่สำเร็จ",
+  "settings.saveFailed": "เปลี่ยนการตั้งค่ารายงานการขัดข้องไม่สำเร็จ",
+  "settings.readFailed": "อ่านบันทึกการขัดข้องไม่สำเร็จ",
+  "settings.exportFailed": "บันทึกบันทึกการขัดข้องไม่สำเร็จ",
+  "settings.clearFailed": "ลบบันทึกการขัดข้องไม่สำเร็จ",
+} satisfies Catalogue<typeof enSettings>;

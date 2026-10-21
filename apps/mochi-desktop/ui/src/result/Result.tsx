@@ -3,7 +3,7 @@ import type { Ref } from "react";
 
 import { Live } from "../a11y/Live";
 import { Name } from "../browser/Name";
-import { t } from "../i18n";
+import { formatNumber, t } from "../i18n";
 import { CloseIcon, InfoIcon, ShowFolderIcon } from "../icons";
 import type { DetailItem, DetailRow, ResultDetails } from "./details";
 import { attentionHint, attentionText, cautionCount } from "./details";
@@ -65,7 +65,7 @@ function Row({ row }: { row: DetailRow }) {
         </ul>
       )}
       {row.more !== undefined && row.more > 0 && (
-        <span className="result-reason">{t("common.andMore", { n: row.more.toLocaleString("en-US") })}</span>
+        <span className="result-reason">{t("common.andMore", { n: formatNumber(row.more) })}</span>
       )}
     </>
   );

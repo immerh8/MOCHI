@@ -101,7 +101,10 @@ test("the log can be shown as text, saved through a dialog Rust shows, and delet
     expect(screen.getByTestId("crash-status")).toHaveTextContent("Saved a copy of the crash log to mochi-crash-log.txt."),
   );
   // The webview sends no path: the export command takes no arguments.
-  expect(calls.find((c) => c.cmd === "export_crash_log")?.args).toEqual({});
+  // Rust shows the dialog; the window passes only its words, never a path.
+  expect(calls.find((c) => c.cmd === "export_crash_log")?.args).toEqual({
+    text: { title: expect.any(String), filter: expect.any(String) },
+  });
 
   await user.click(screen.getByTestId("crash-clear"));
   await waitFor(() => expect(screen.getByTestId("crash-status")).toHaveTextContent("The crash log was deleted."));

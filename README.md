@@ -89,7 +89,7 @@ Product decisions (plan §9): the desktop app is Tauri v2 with React and TypeScr
 (O11); and it opens ZIP, 7z, RAR, and `.tar.gz` read-only (O9, phase D8; RAR is read-only
 for good, and in 1.0 it has no hostile-input fixtures and no complete multi-volume
 test, [owner, 2026-10-15]). The
-project is licensed MIT OR Apache-2.0 (O23), which permits distributing UnRAR
+project is licensed MIT (O23), which permits distributing UnRAR
 in the D8 helper; its notice is in `THIRD-PARTY-NOTICES.md`.
 
 - **C3.** Reversible archive paths (byte components; Windows names as WTF-8, so
@@ -181,8 +181,5 @@ and post-1.0 commands (`inventory`, `split`, `join`, `mount`) exit `4` with
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
-[MIT license](LICENSE-MIT), at your option. Unless you state otherwise, any
-contribution you submit for inclusion is dual-licensed as above, without
-additional terms. Third-party components with other conditions are listed in
+Licensed under the [MIT license](LICENSE). Third-party components with other conditions are listed in
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

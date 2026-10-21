@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::browse::Archives;
 use crate::check::{Checks, SubjectPick};
@@ -14,11 +14,11 @@ use crate::extract::Destination;
 use crate::foreign::Foreign;
 use crate::ipc::{
     ArchiveFormat, ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView,
-    DropEvent, EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary, ForeignChildrenPage,
-    ForeignExtractPlan, ForeignSearchResult, HealthView, IpcError, JobEvent, JobId, JobRequest,
-    OpenOutcome, PathKey, PendingId, RepairSetupAction, RepairSetupView, ReportId, Secret,
-    ShowTarget, SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId, SubjectSource,
-    SubjectView,
+    DialogText, DropEvent, EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary,
+    ForeignChildrenPage, ForeignExtractPlan, ForeignSearchResult, HealthView, IpcError, JobEvent,
+    JobId, JobRequest, OpenOutcome, PathKey, PendingId, RepairSetupAction, RepairSetupView,
+    ReportId, Secret, ShowTarget, SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId,
+    SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
@@ -111,12 +111,14 @@ async fn blocking_ipc<T: Send + 'static>(
 #[tauri::command]
 pub async fn open_archive(
     app: AppHandle,
+    text: Option<DialogText>,
     archives: State<'_, Arc<Archives>>,
     foreign: State<'_, Arc<Foreign>>,
 ) -> Result<Option<OpenOutcome>, IpcError> {
     let archives = Arc::clone(&archives);
     let foreign = Arc::clone(&foreign);
-    blocking_ipc(move || match crate::picker::pick_archive(&app) {
+    let text = text.unwrap_or_default();
+    blocking_ipc(move || match crate::picker::pick_archive(&app, &text) {
         None => Ok(None),
         Some(path) => crate::route::open_path(&archives, &foreign, &path).map(Some),
     })
@@ -389,12 +391,14 @@ pub async fn quick_choose_location(
     app: AppHandle,
     name: String,
     format: ArchiveFormat,
+    text: Option<DialogText>,
     quick: State<'_, Arc<Quick>>,
 ) -> Result<Option<QuickLocation>, IpcError> {
     let quick = Arc::clone(&quick);
+    let text = text.unwrap_or_default();
     blocking(move || {
         let suggested = quick.suggested_location(&name, format)?;
-        match crate::picker::pick_destination(&app, Some(&suggested), format) {
+        match crate::picker::pick_destination(&app, Some(&suggested), format, &text) {
             Some(path) => quick.set_location(&path, format).map(Some),
             None => Ok(None),
         }
@@ -434,11 +438,13 @@ pub fn staged_sources(staging: State<'_, Arc<Staging>>) -> StagedView {
 pub async fn stage_sources(
     app: AppHandle,
     pick: SourcePick,
+    text: Option<DialogText>,
     staging: State<'_, Arc<Staging>>,
 ) -> Result<StageOutcome, IpcError> {
     let staging = Arc::clone(&staging);
+    let text = text.unwrap_or_default();
     blocking(move || {
-        Ok(match crate::picker::pick_sources(&app, pick) {
+        Ok(match crate::picker::pick_sources(&app, pick, &text) {
             Some(paths) => staging.add(&paths),
             None => StageOutcome {
                 staged: staging.view(),
@@ -470,14 +476,16 @@ pub fn clear_staged(staging: State<'_, Arc<Staging>>) -> StagedView {
 #[tauri::command]
 pub async fn choose_destination(
     app: AppHandle,
+    text: Option<DialogText>,
     staging: State<'_, Arc<Staging>>,
 ) -> Result<Option<StagedView>, IpcError> {
     let staging = Arc::clone(&staging);
+    let text = text.unwrap_or_default();
     blocking(move || {
         let suggested = staging.suggested_destination();
         let format = staging.format();
         Ok(
-            crate::picker::pick_destination(&app, suggested.as_deref(), format)
+            crate::picker::pick_destination(&app, suggested.as_deref(), format, &text)
                 .map(|path| staging.set_destination(path)),
         )
     })
@@ -506,14 +514,16 @@ pub async fn plan_extract(
     seq: u32,
     keys: Vec<PathKey>,
     pick: bool,
+    text: Option<DialogText>,
     archives: State<'_, Arc<Archives>>,
     destination: State<'_, Arc<Destination>>,
 ) -> Result<Option<ExtractPlan>, IpcError> {
+    let text = text.unwrap_or_default();
     let archives = Arc::clone(&archives);
     let destination = Arc::clone(&destination);
     blocking(move || {
         let picked = if pick {
-            match crate::picker::pick_extract_folder(&app) {
+            match crate::picker::pick_extract_folder(&app, &text) {
                 Some(folder) => {
                     // The unused new folder of the default plan is not needed now.
                     destination.discard_made();
@@ -547,6 +557,57 @@ pub async fn plan_extract_default(
         .await
 }
 
+/// The user's Desktop folder, from Tauri's path resolver (Rust only).
+fn desktop_folder(app: &AppHandle) -> mochi_core::Result<std::path::PathBuf> {
+    app.path().desktop_dir().map_err(|_| {
+        mochi_core::MochiError::new(
+            mochi_core::ErrorCode::InvalidArgument,
+            "this computer has no Desktop folder; use Extract to... instead",
+        )
+    })
+}
+
+/// Quick extract (WinRAR's "Extract to Desktop"): make a new folder named
+/// after the archive on the Desktop (`name`, `name (2)`, ...; never an
+/// existing one) and plan extracting `keys` (empty: everything) into it. The
+/// webview names no path; it starts the extraction itself with `start_job`,
+/// which writes into the folder Rust remembers. Nothing is extracted here.
+#[tauri::command]
+pub async fn plan_extract_desktop(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    seq: u32,
+    keys: Vec<PathKey>,
+    archives: State<'_, Arc<Archives>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<ExtractPlan, IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let desktop = desktop_folder(&app)?;
+        crate::extract::plan_in_new_folder(&archives, &destination, &desktop, handle, seq, &keys)
+    })
+    .await
+}
+
+/// `plan_extract_desktop` for an open ZIP, 7z, RAR, or tar archive.
+#[tauri::command]
+pub async fn plan_extract_foreign_desktop(
+    app: AppHandle,
+    handle: ArchiveHandle,
+    keys: Vec<PathKey>,
+    foreign: State<'_, Arc<Foreign>>,
+    destination: State<'_, Arc<Destination>>,
+) -> Result<ForeignExtractPlan, IpcError> {
+    let foreign = Arc::clone(&foreign);
+    let destination = Arc::clone(&destination);
+    blocking(move || {
+        let desktop = desktop_folder(&app)?;
+        foreign.plan_in_new_folder(&destination, &desktop, handle, &keys)
+    })
+    .await
+}
+
 /// Remove the new folder a default plan made, if nothing was extracted into it.
 #[tauri::command]
 pub fn discard_extract_folder(destination: State<'_, Arc<Destination>>) {
@@ -561,14 +622,16 @@ pub fn discard_extract_folder(destination: State<'_, Arc<Destination>>) {
 pub async fn choose_check_subject(
     app: AppHandle,
     from: SubjectSource,
+    text: Option<DialogText>,
     archives: State<'_, Arc<Archives>>,
     checks: State<'_, Arc<Checks>>,
 ) -> Result<Option<SubjectView>, IpcError> {
+    let text = text.unwrap_or_default();
     let archives = Arc::clone(&archives);
     let checks = Arc::clone(&checks);
     blocking(move || {
         let pick = match from {
-            SubjectSource::Dialog => match crate::picker::pick_check_subject(&app) {
+            SubjectSource::Dialog => match crate::picker::pick_check_subject(&app, &text) {
                 Some(path) => SubjectPick::Path(path),
                 None => return Ok(None),
             },
@@ -598,12 +661,14 @@ pub async fn health_report(
 pub async fn export_report(
     app: AppHandle,
     report: ReportId,
+    text: Option<DialogText>,
     checks: State<'_, Arc<Checks>>,
 ) -> Result<Option<String>, IpcError> {
     let checks = Arc::clone(&checks);
+    let text = text.unwrap_or_default();
     blocking(move || {
         let (suggested, json) = checks.report_json(report)?;
-        let Some(path) = crate::picker::pick_report_destination(&app, &suggested) else {
+        let Some(path) = crate::picker::pick_report_destination(&app, &suggested, &text) else {
             return Ok(None);
         };
         crate::check::write_new_file(&path, json.as_bytes())?;
@@ -622,13 +687,15 @@ pub async fn export_report(
 pub async fn repair_setup(
     app: AppHandle,
     action: RepairSetupAction,
+    text: Option<DialogText>,
     checks: State<'_, Arc<Checks>>,
 ) -> Result<RepairSetupView, IpcError> {
     let checks = Arc::clone(&checks);
+    let text = text.unwrap_or_default();
     blocking(move || {
         let picked = match action {
-            RepairSetupAction::AddCopy => crate::picker::pick_copy(&app),
-            RepairSetupAction::ChooseOutput => crate::picker::pick_repair_output(&app),
+            RepairSetupAction::AddCopy => crate::picker::pick_copy(&app, &text),
+            RepairSetupAction::ChooseOutput => crate::picker::pick_repair_output(&app, &text),
             _ => None,
         };
         checks.setup(action, picked)
@@ -647,9 +714,11 @@ pub async fn open_foreign_archive(
     app: AppHandle,
     retry: bool,
     password: Option<String>,
+    text: Option<DialogText>,
     foreign: State<'_, Arc<Foreign>>,
 ) -> Result<Option<ForeignArchiveSummary>, IpcError> {
     let foreign = Arc::clone(&foreign);
+    let text = text.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let path = if retry {
             foreign.pending().ok_or_else(|| IpcError {
@@ -657,7 +726,7 @@ pub async fn open_foreign_archive(
                 message: "there is no archive waiting for a password".to_owned(),
             })?
         } else {
-            match crate::picker::pick_foreign_archive(&app) {
+            match crate::picker::pick_foreign_archive(&app, &text) {
                 Some(p) => p,
                 None => return Ok(None),
             }
@@ -716,14 +785,16 @@ pub async fn plan_extract_foreign(
     handle: ArchiveHandle,
     keys: Vec<PathKey>,
     pick: bool,
+    text: Option<DialogText>,
     foreign: State<'_, Arc<Foreign>>,
     destination: State<'_, Arc<Destination>>,
 ) -> Result<Option<ForeignExtractPlan>, IpcError> {
+    let text = text.unwrap_or_default();
     let foreign = Arc::clone(&foreign);
     let destination = Arc::clone(&destination);
     blocking(move || {
         let picked = if pick {
-            match crate::picker::pick_extract_folder(&app) {
+            match crate::picker::pick_extract_folder(&app, &text) {
                 Some(folder) => Some(folder),
                 None => return Ok(None),
             }
@@ -827,11 +898,13 @@ pub async fn read_crash_log(log: State<'_, Arc<CrashLog>>) -> Result<CrashLogVie
 #[tauri::command]
 pub async fn export_crash_log(
     app: AppHandle,
+    text: Option<DialogText>,
     log: State<'_, Arc<CrashLog>>,
 ) -> Result<Option<String>, IpcError> {
     let log = Arc::clone(&log);
+    let text = text.unwrap_or_default();
     blocking(move || {
-        let Some(path) = crate::picker::pick_crash_log_destination(&app) else {
+        let Some(path) = crate::picker::pick_crash_log_destination(&app, &text) else {
             return Ok(None);
         };
         crate::check::write_new_file(&path, &log.export_bytes())?;

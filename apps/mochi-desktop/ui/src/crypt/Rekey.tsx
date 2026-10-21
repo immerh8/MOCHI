@@ -13,7 +13,7 @@ import { cancelJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome, JobRequest } from "../ipc/jobs";
 import { chooseDestination } from "../ipc/write";
 import { EncryptionNotes, PassphraseForm } from "./PassphraseForm";
-import { REENCRYPT_NOTE, REMOVE_NOT_REVOCATION, rekeyLines } from "./messages";
+import { reencryptNote, removeNotRevocation, rekeyLines } from "./messages";
 
 export interface RekeyProps {
   /** The open archive, if any. */
@@ -188,7 +188,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
               fallbackId="rekey-heading"
             >
               <p className="warning" data-testid="not-revocation">
-                {REMOVE_NOT_REVOCATION}
+                {removeNotRevocation()}
               </p>
               <Hint text={t("rekey.removeIntro")} />
               <ul>
@@ -228,7 +228,7 @@ export function Rekey({ archive, onChanged }: RekeyProps) {
               fallbackId="rekey-heading"
             >
               <p className="note" data-testid="reencrypt-note">
-                {REENCRYPT_NOTE}
+                {reencryptNote()}
               </p>
               {destination && <p>{t("rekey.newFile", { path: destination })}</p>}
               <PassphraseForm

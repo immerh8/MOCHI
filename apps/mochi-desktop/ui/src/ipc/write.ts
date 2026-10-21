@@ -4,6 +4,8 @@
 // sees only display names.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import { destinationDialog, sourcesDialog } from "./dialogs";
+
 import type { ArchiveFormat } from "./generated/ArchiveFormat";
 import type { CommitReport } from "./generated/CommitReport";
 import type { CompressionPreset } from "./generated/CompressionPreset";
@@ -39,7 +41,7 @@ export function stagedSources(): Promise<StagedView> {
 
 /** Show the native files or folder dialog and stage the choice. */
 export function stageSources(pick: SourcePick): Promise<StageOutcome> {
-  return invoke<StageOutcome>("stage_sources", { pick });
+  return invoke<StageOutcome>("stage_sources", { pick, text: sourcesDialog(pick === "folder") });
 }
 
 export function unstageSource(index: number): Promise<StagedView> {
@@ -51,8 +53,8 @@ export function clearStaged(): Promise<StagedView> {
 }
 
 /** Show the save dialog; `null` if the user cancelled it. */
-export function chooseDestination(): Promise<StagedView | null> {
-  return invoke<StagedView | null>("choose_destination");
+export function chooseDestination(format: ArchiveFormat = "mochi"): Promise<StagedView | null> {
+  return invoke<StagedView | null>("choose_destination", { text: destinationDialog(format) });
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { errorText, shortSize } from "../browser/format";
-import { t, tn } from "../i18n";
+import { formatNumber, t, tn } from "../i18n";
 import { coverageLines } from "../crypt/messages";
 import { cancelJob, startJob } from "../ipc/jobs";
 import type { HitView } from "../ipc/crypt";
@@ -10,7 +10,7 @@ import type { HitRow, SearchView } from "./SearchResults";
 
 /** No search: one value, so that effects keyed on the view do not run again. */
 export const IDLE: { state: "idle"; statusText: string } = { state: "idle", statusText: "" };
-export const RUNNING: { state: "running"; statusText: string } = { state: "running", statusText: t("search.searching") };
+export const running = (): { state: "running"; statusText: string } => ({ state: "running", statusText: t("search.searching") });
 
 /** A MOCHI search hit as a list row. */
 export function hitRow(h: HitView): HitRow {
@@ -28,8 +28,8 @@ export function hitRow(h: HitView): HitRow {
 /** "12 found", with the cut and a partial coverage said (spec §23.3 #8). */
 export function foundText(shown: number, total: number, complete: boolean): string {
   return (
-    tn(total, "search.foundOne", "search.foundMany", { n: total.toLocaleString("en-US") }) +
-    (total > shown ? t("search.firstShown", { n: shown.toLocaleString("en-US") }) : "") +
+    tn(total, "search.foundOne", "search.foundMany", { n: formatNumber(total) }) +
+    (total > shown ? t("search.firstShown", { n: formatNumber(shown) }) : "") +
     (complete ? "" : t("search.partial"))
   );
 }
@@ -86,5 +86,5 @@ export function useArchiveSearch(handle: number | null, seq: number | null, quer
   }, [handle, seq, query]);
 
   if (handle === null || seq === null || query === "") return IDLE;
-  return found?.id === id ? found.view : RUNNING;
+  return found?.id === id ? found.view : running();
 }

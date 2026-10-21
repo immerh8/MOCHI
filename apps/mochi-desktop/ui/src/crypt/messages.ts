@@ -3,46 +3,46 @@
 // profile"). Nothing here may say an archive is "safe", "secure", "backed
 // up", or "preserved", or that a passphrase was "revoked": removing one is
 // not revocation, and a recovery record is a repair aid, not a second copy.
-import { t, tn } from "../i18n";
+import { formatNumber, t, tn } from "../i18n";
 import type { RekeyReport, SearchCoverageView } from "../ipc/crypt";
 
 // These are fixed for the one shipped locale; a second locale would turn them
 // into functions (the screens only import the names).
 
 /** Shown whenever a passphrase is being chosen. */
-export const LOST_PASSPHRASE = t("crypt.lostPassphrase");
+export const lostPassphrase = () => t("crypt.lostPassphrase");
 
 /** Shown whenever encryption is chosen: deduplication is always on. */
-export const DEDUP_LEAK = t("crypt.dedupLeak");
+export const dedupLeak = () => t("crypt.dedupLeak");
 
-export const HIDDEN_WITH_KEY = t("crypt.hiddenWithKey");
+export const hiddenWithKey = () => t("crypt.hiddenWithKey");
 
 /** What stays visible to anyone holding the file (docs/c11-encrypted.md). */
-export const VISIBLE_WITHOUT_KEY = [
+export const visibleWithoutKey = () => [
   t("crypt.visible1"),
   t("crypt.visible2"),
   t("crypt.visible3"),
   t("crypt.visible4"),
 ];
 
-export const NOT_SIGNED = t("crypt.notSigned");
+export const notSigned = () => t("crypt.notSigned");
 
-export const NO_GENERIC_TOOLS = t("crypt.noGenericTools");
+export const noGenericTools = () => t("crypt.noGenericTools");
 
 /** The wrong-passphrase answer: an operational error, not a finding. */
-export const WRONG_PASSPHRASE = t("crypt.wrongPassphrase");
-export const WRONG_PASSPHRASE_NOTE = t("crypt.wrongPassphraseNote");
+export const wrongPassphrase = () => t("crypt.wrongPassphrase");
+export const wrongPassphraseNote = () => t("crypt.wrongPassphraseNote");
 
-export const REMOVE_NOT_REVOCATION = t("crypt.removeNotRevocation");
+export const removeNotRevocation = () => t("crypt.removeNotRevocation");
 
-export const REENCRYPT_NOTE = t("crypt.reencryptNote");
+export const reencryptNote = () => t("crypt.reencryptNote");
 
-export const REKEY_NEEDS_UNLOCK = t("crypt.rekeyNeedsUnlock");
+export const rekeyNeedsUnlock = () => t("crypt.rekeyNeedsUnlock");
 
 /** Recovery-record choices (percent of each commit's bytes). */
 export const RECOVERY_CHOICES = [5, 10, 20, 50] as const;
 
-export const RECOVERY_NOTES = [
+export const recoveryNotes = () => [
   t("crypt.recovery1"),
   t("crypt.recovery2"),
   t("crypt.recovery3"),
@@ -67,7 +67,7 @@ export function rekeyLines(r: RekeyReport): string[] {
       lines.push(t("crypt.rekeyAdded", committed));
       break;
     case "removed":
-      lines.push(t("crypt.rekeyRemoved", committed), REMOVE_NOT_REVOCATION);
+      lines.push(t("crypt.rekeyRemoved", committed), removeNotRevocation());
       break;
     case "reencrypted":
       lines.push(
@@ -75,7 +75,7 @@ export function rekeyLines(r: RekeyReport): string[] {
           file: r.file_name,
           n: r.snapshots,
         }),
-        REENCRYPT_NOTE,
+        reencryptNote(),
       );
       break;
   }
@@ -107,7 +107,7 @@ export function coverageLines(c: SearchCoverageView): string[] {
       searched: c.searched_count,
       requested: c.requested_count,
       ranges: rangeText(c.searched),
-      examined: c.entries_examined.toLocaleString("en-US"),
+      examined: formatNumber(c.entries_examined),
     }),
   ];
   lines.push(t(c.complete ? "crypt.coverageComplete" : "crypt.coveragePartial"));

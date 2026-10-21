@@ -33,7 +33,7 @@ apps/mochi-desktop/
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
 │       ├── picker.rs   # D1/D2: the native open, choose, and save dialogs, shown from Rust
-│       ├── self_test.rs# the D0 sample job (no archive I/O)
+│       ├── self_test.rs# sample job for the job-runner tests (no UI; no archive I/O)
 │       └── write.rs    # D2: staged sources, drop handling, create/add/remove jobs
 ├── ui/                 # React + TypeScript + Vite
 │   ├── src/browser/    # D1: Browser, Tree, VirtualList, Name (text-only names)
@@ -197,6 +197,9 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   Extraction happens before the drag starts, so the interface should call the command as the
   drag gesture begins. Not covered by headless tests: the native drag itself (the E2E job
   cannot drive an OS drag; the release checklist covers it by hand on Windows and Ubuntu).
+- **Extract to Desktop (`extract.rs`, `commands.rs`).** `plan_extract_desktop` (MOCHI) and `plan_extract_foreign_desktop` (ZIP, 7z, RAR, tar) take only an archive handle, the snapshot, and entry keys. Rust resolves the Desktop with Tauri's path resolver (`desktop_dir`, no capability needed), makes a new folder named after the archive in it (`create_unique_dir`: `name`, `name (2)`, `name (3)`, ... by `create_dir`, which fails on an existing name, so nothing is ever reused or overwritten; a `.tar.gz` is named without `.tar`), remembers it as the extract destination, and returns the usual plan text. The interface then starts the ordinary extract job at once (no folder question, no plan panel; entries the folder cannot take are skipped and listed in the result) and shows the ordinary result with its Show in folder button. If the job fails or is cancelled before writing anything, the empty folder is removed again (`discard_extract_folder` removes only an empty one).
+- **Which actions are on (`ui/src/shell/availability.ts`).** One pure function, `availableActions(archive, selection)`, decides every toolbar button, More item, list-menu item and key (Add, Remove/Delete, Extract, Extract to..., Extract to Desktop, Test, Copy names, Select all, Passphrases) from the archive kind (none, MOCHI latest or older version, foreign read-only, locked), the selection and a running job. A disabled action stays visible, is announced as disabled (`aria-disabled` in the list menu, `disabled` on buttons) and its tooltip says why. Repair is not in it: it chooses its own archive.
+- **Rubber-band selection (`ui/src/list/marquee.ts`, `selection.ts`).** Pressing on empty space in a file list, or on a row's non-name columns (Size, Type, the gap right of a short name), and dragging draws a translucent band and selects the rows it touches (Ctrl toggles against the selection the drag began with); pressing on a row's icon or name, or anywhere on a selected row, keeps the drag out to the file manager. The list scrolls while the pointer is held past its top or bottom edge. The rule is `pressIntent`.
 - **CSP.** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none';
   form-action 'none'; frame-ancestors 'none'`. `connect-src` names Tauri's IPC
@@ -346,9 +349,9 @@ NVDA on Windows and Orca on Ubuntu, Windows high-contrast themes, and 200 % zoom
 ## Messages (i18n scaffolding, plan D7)
 
 All user-visible wording is in the typed catalogue `ui/src/i18n/en/*.ts` (one file per
-screen, merged in `en.ts`); screens call `t("area.key", { param })`. One locale, English,
-ships; adding another is a catalogue plus a language switch, which is deliberately not
-built. A key that does not exist, or a placeholder that is not supplied, fails
+screen, merged in `en.ts`); screens call `t("area.key", { param })`. English, Thai (`th/`)
+and Simplified Chinese (`zh-CN/`) ship, chosen in Settings (default: the webview language);
+how to translate or add one is `ui/src/i18n/README.md`. A key that does not exist, or a placeholder that is not supplied, fails
 `pnpm typecheck`. The rules:
 
 - Wording did not change in the move (the existing screen tests assert it).
@@ -360,8 +363,12 @@ built. A key that does not exist, or a placeholder that is not supplied, fails
   nothing uses.
 - ESLint refuses English text in JSX and in `aria-label`/`title`/`placeholder`/`alt`
   attributes outside tests, so wording cannot bypass the catalogue.
-- Constants exported from `*/messages.ts` are evaluated once at import (fine for one
-  locale); a second locale turns them into functions.
+- Wording in `*/messages.ts` that does not depend on a value is a function (`checkNote()`),
+  not a constant, because the language can change while the app runs; the root of each
+  window calls `useLocale()` so a change re-renders in place. Numbers go through
+  `formatNumber`, never a hard-coded locale.
+- Each translation must have exactly the English keys and the same `{placeholders}`
+  (`tsc` and `i18n.test.ts`), and the §23.3 banned words are checked per language.
 
 ## Crash reports (plan D7): opt-in, local, never sent
 
@@ -428,7 +435,7 @@ dialog's own body do, with thin scroll bars):
   tooltip: Open (Ctrl+O), New archive, then Add, Extract, Test, Remove; at the right the
   **search field** (Ctrl+F), Info, More and Help. A button is disabled when it does not apply;
   its tooltip says why. **More** holds Open and extract, Other formats, Passphrases, Repair,
-  Settings, Self-test.
+  Settings.
 - **Tools open in a window over the list** (`shell/ToolSheet.tsx`, `data-testid="tool-sheet"`),
   one at a time, with a close button and Escape. Every tool stays mounted, so a running test or
   an open report is still there when the user comes back. There is no Advanced drawer any more.

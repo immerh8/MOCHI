@@ -1,6 +1,7 @@
-//! The D0 sample job: synthetic, multi-step, no archive I/O (plan D0 exit:
-//! "a sample job streams progress and cancels cleanly"). It exercises the
-//! same `mochi_core::job` interface every real job uses.
+//! A synthetic sample job: multi-step, no archive I/O. It is no longer reachable
+//! from the UI; it stays as the job runner's test fixture (progress, cancel,
+//! argument limits in `jobs.rs` tests) and exercises the same
+//! `mochi_core::job` interface every real job uses.
 
 use std::time::Duration;
 

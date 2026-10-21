@@ -1,21 +1,7 @@
-// The window itself: title, section navigation, and the D0 job self-test.
+// The window itself: title and section navigation.
 export const app = {
   "app.title": "MOCHI",
   "app.sectionPassphrases": "Passphrases",
   "app.sectionCheck": "Test, health, and repair",
-  "app.sectionSelfTest": "Job runner self-test",
   "app.sectionSettings": "Settings",
-  "selfTest.heading": "Job runner self-test",
-  "selfTest.intro":
-    "A sample job that reads and writes nothing. It reports progress and can be cancelled, which is how every long operation in this app will behave.",
-  "selfTest.start": "Start self-test",
-  "selfTest.cancel": "Cancel",
-  "selfTest.idle": "Not started.",
-  "selfTest.running": "Running.",
-  "selfTest.completed": "Completed: {summary}.",
-  "selfTest.cancelled": "Cancelled. The self-test stopped before finishing.",
-  "selfTest.failed": "Failed ({code}): {message}",
-  "selfTest.aborted": "Stopped unexpectedly: {message}",
-  "selfTest.couldNotStart": "Could not start ({code}): {message}",
-  "selfTest.couldNotStartPlain": "Could not start.",
 } as const;

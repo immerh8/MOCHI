@@ -5,7 +5,7 @@ import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { t } from "../i18n";
+import { formatNumber, t } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -22,19 +22,20 @@ import {
 } from "../ipc/write";
 import type { ArchiveFormat, CompressionPreset, SourcePick, StagedView } from "../ipc/write";
 import { CloseIcon, NewArchiveIcon, PlusIcon, TrashIcon } from "../icons";
+import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { EncryptionNotes } from "../crypt/PassphraseForm";
 import {
-  HIDDEN_WITH_KEY,
-  NO_GENERIC_TOOLS,
+  hiddenWithKey,
+  noGenericTools,
   RECOVERY_CHOICES,
-  RECOVERY_NOTES,
+  recoveryNotes,
   recoveryLabel,
-  VISIBLE_WITHOUT_KEY,
+  visibleWithoutKey,
 } from "../crypt/messages";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
-import { commitView, DELETE_NOTE, exportView, outcomeResult, progressText, TAR_NOTES } from "./messages";
+import { commitView, deleteNote, exportView, outcomeResult, progressText, tarNotes } from "./messages";
 import type { Operation, WriteResult } from "./messages";
 import { FormatSelect, PRESETS } from "./FormatFields";
 import { hasLevel, isMochi } from "./format";
@@ -67,6 +68,8 @@ export interface WriterProps {
   createRequest?: number;
   /** Changes when the list asks to remove its selection (the Delete key). */
   removeRequest?: number;
+  /** Changes when the list's menu asks to add files (ignored when Add is off). */
+  addRequest?: number;
   /** Told when the create panel opens or closes (the start screen steps aside). */
   onCreating?: (creating: boolean) => void;
   /** A single archive file was dropped on the window; Rust holds it. */
@@ -116,6 +119,7 @@ export function Writer({
   showToolbar = true,
   createRequest = 0,
   removeRequest = 0,
+  addRequest = 0,
   onCreating,
   onArchiveDropped,
 }: WriterProps) {
@@ -319,7 +323,18 @@ export function Writer({
     setSeenRequest(createRequest);
     open("create");
   }
-  const canRemove = archive !== null && viewingHead && selected.length > 0;
+  // Which of Add and Remove are on: one answer, shared with the menus (shell/availability.ts).
+  const avail = availableActions(
+    { kind: archive === null ? "none" : "mochi", viewingHead },
+    { selected: selected.length, total: 0 },
+  );
+  const canAdd = avail.add.enabled;
+  const canRemove = avail.remove.enabled;
+  const [seenAdd, setSeenAdd] = useState(addRequest);
+  if (seenAdd !== addRequest) {
+    setSeenAdd(addRequest);
+    if (canAdd && !busy) open("add");
+  }
   const [seenRemove, setSeenRemove] = useState(removeRequest);
   if (seenRemove !== removeRequest) {
     setSeenRemove(removeRequest);
@@ -383,7 +398,7 @@ export function Writer({
       go();
       return;
     }
-    chooseDestination().then(
+    chooseDestination(format).then(
       (view) => {
         if (view === null) return; // the user cancelled the dialog
         setStaged(view);
@@ -396,7 +411,7 @@ export function Writer({
   /** Let the user pick a different place (the dialog starts at the default). */
   const changeDestination = () => {
     setError(null);
-    chooseDestination().then(
+    chooseDestination(format).then(
       (view) => {
         if (view !== null) setStaged(view);
       },
@@ -431,7 +446,6 @@ export function Writer({
     setArchiveFormat(next).then(setStaged, (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)));
   };
 
-  const canAdd = archive !== null;
   // A problem shows where the user is looking: in the open panel, else in the status bar.
   const errorLine = error && (
     <p role="alert" className="error status-line" data-testid="write-error" title={error}>
@@ -550,7 +564,7 @@ export function Writer({
               testId="add-to-archive"
               onClick={() => open("add")}
               disabled={busy || !canAdd}
-              title={canAdd ? t("write.addTip") : t("write.openFirst")}
+              title={tipFor(avail.add, t("write.addTip"))}
             />
           </ToolSlot>
           <ToolSlot name="remove">
@@ -560,15 +574,7 @@ export function Writer({
               testId="remove-entry"
               onClick={() => open("remove")}
               disabled={busy || !canRemove}
-              title={
-                !archive
-                  ? t("write.openFirst")
-                  : !viewingHead
-                    ? t("write.onlyLatest")
-                    : selected.length > 0
-                      ? t("write.removeTip")
-                      : t("write.selectFirst")
-              }
+              title={tipFor(avail.remove, t("write.removeTip"))}
             />
           </ToolSlot>
         </>
@@ -658,7 +664,7 @@ export function Writer({
                     />{" "}
                     {t("write.encrypt")}
                   </label>
-                  {tar && <Hint text={NO_GENERIC_TOOLS} />}
+                  {tar && <Hint text={noGenericTools()} />}
                   {encrypt && (
                     <div data-testid="encrypt-panel">
                       <label>
@@ -684,7 +690,7 @@ export function Writer({
                       <EncryptionNotes creating />
                       <Hint
                         testId="visible-without-key"
-                        text={[HIDDEN_WITH_KEY, t("write.visibleIntro"), ...VISIBLE_WITHOUT_KEY, t("write.fixedAtCreation")]}
+                        text={[hiddenWithKey(), t("write.visibleIntro"), ...visibleWithoutKey(), t("write.fixedAtCreation")]}
                       />
                     </div>
                   )}
@@ -713,7 +719,7 @@ export function Writer({
                       {recoveryLabel(p)}
                     </label>
                   ))}
-                  <Hint testId="recovery-notes" text={RECOVERY_NOTES} />
+                  <Hint testId="recovery-notes" text={recoveryNotes()} />
                 </fieldset>
                 <fieldset disabled={busy}>
                   <legend>{t("write.compatibility")}</legend>
@@ -727,7 +733,7 @@ export function Writer({
                     />{" "}
                     {t("write.tarCompatible")}
                   </label>
-                  <Hint testId="tar-notes" text={TAR_NOTES} />
+                  <Hint testId="tar-notes" text={tarNotes()} />
                 </fieldset>
               </>
             )}
@@ -791,10 +797,10 @@ export function Writer({
           <p>
             {selected.length === 1 && selected[0]
               ? t("write.removeQuestion", { name: selected[0].name.text })
-              : t("write.removeQuestionMany", { n: selected.length.toLocaleString("en-US") })}
+              : t("write.removeQuestionMany", { n: formatNumber(selected.length) })}
           </p>
           <p className="note" data-testid="delete-note">
-            {DELETE_NOTE}
+            {deleteNote()}
           </p>
           {errorLine}
           {progressLine}

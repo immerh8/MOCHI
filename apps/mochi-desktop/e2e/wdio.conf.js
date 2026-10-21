@@ -96,7 +96,6 @@ let tauriDriver;
 const TOOL_OF_SPEC = [
   [/check\.e2e\.js$/, "menu-repair"],
   [/(crash|updates)\.e2e\.js$/, "start-settings"],
-  [/self-test\.e2e\.js$/, "menu-self-test"],
 ];
 
 export const config = {
@@ -149,7 +148,7 @@ export const config = {
     // Give the driver a moment to listen before the first session.
     return new Promise((resolve) => setTimeout(resolve, 1500));
   },
-  // The tools (Test and repair, Settings, Self-test) open one at a time in a tool window over
+  // The tools (Test and repair, Settings) open one at a time in a tool window over
   // the list, from the toolbar's More menu. Specs that are only about one tool just need it open;
   // the other specs open and close tools themselves, as a person would.
   beforeTest: async (test) => {

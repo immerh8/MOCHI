@@ -141,7 +141,7 @@ test("a right-click on a row selects it and opens the menu with its items", asyn
   const rows = screen.getAllByTestId("entry");
   fireEvent.contextMenu(rows[1] as HTMLElement);
   const menu = await screen.findByRole("menu");
-  expect(itemNames()).toEqual(["Select all", "Copy full names", "Extract to...", "Delete"]);
+  expect(itemNames()).toEqual(["Select all", "Copy full names", "Extract to...", "Extract to Desktop", "Add files...", "Delete"]);
   expect(menu).toContainElement(screen.getByTestId("menu-delete"));
   expect(rows[1]).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByTestId("menu-delete")).not.toHaveAttribute("aria-disabled");
@@ -206,7 +206,7 @@ test("Extract to... plans the selection with the folder dialog", async () => {
   fireEvent.contextMenu(rows[2] as HTMLElement);
   await user.click(await screen.findByTestId("menu-extract-to"));
   await waitFor(() => expect(calls.some((c) => c.cmd === "plan_extract")).toBe(true));
-  expect(calls.find((c) => c.cmd === "plan_extract")?.args).toEqual({
+  expect(calls.find((c) => c.cmd === "plan_extract")?.args).toMatchObject({
     handle: 3,
     seq: 0,
     keys: [hex("song.mp3"), hex("track.flac")],

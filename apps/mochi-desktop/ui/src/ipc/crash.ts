@@ -2,6 +2,8 @@
 // opt-in; Rust owns the file, shows the save dialog, and keeps the paths.
 import { invoke } from "@tauri-apps/api/core";
 
+import { crashLogDialog } from "./dialogs";
+
 import type { CrashLogView } from "./generated/CrashLogView";
 import type { CrashSettingsView } from "./generated/CrashSettingsView";
 
@@ -21,7 +23,7 @@ export function readCrashLog(): Promise<CrashLogView> {
 
 /** Save a copy through a native dialog; the file's name, or `null` if cancelled. */
 export function exportCrashLog(): Promise<string | null> {
-  return invoke<string | null>("export_crash_log");
+  return invoke<string | null>("export_crash_log", { text: crashLogDialog() });
 }
 
 export function clearCrashLog(): Promise<CrashSettingsView> {

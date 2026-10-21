@@ -3,7 +3,7 @@
 // up, safe, or preserved (#6). A deletion is removal from the current
 // snapshot, with a clear statement that the content stays in history (#5).
 // Nothing here is a verification, so none of it gets success styling.
-import { t, tc } from "../i18n";
+import { formatNumber, phaseLabel, t, tc, tn } from "../i18n";
 import type { CommitReport, ExportReportView } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
 import { formatSize } from "../browser/format";
@@ -14,13 +14,13 @@ import type { DetailRow, ResultView } from "../result/details";
 export type Operation = "create" | "add" | "delete" | "export";
 
 /** Shown with every commit: the honest limit of a local commit (spec §5.3). */
-export const LOCAL_COMMIT_NOTE = t("write.localCommitNote");
+export const localCommitNote = () => t("write.localCommitNote");
 
 /** The deletion statement (spec §23.3 #5, §16.3). */
-export const DELETE_NOTE = t("write.deleteNote");
+export const deleteNote = () => t("write.deleteNote");
 
 /** The trade-offs of the TAR-compatible option (plan O4, spec D4, D19). */
-export const TAR_NOTES = [t("write.tar1"), t("write.tar2"), t("write.tar3"), t("write.tar4")];
+export const tarNotes = () => [t("write.tar1"), t("write.tar2"), t("write.tar3"), t("write.tar4")];
 
 /**
  * What a finished job shows: plain lines (a cancel or a failure), a compact commit result, or
@@ -82,12 +82,10 @@ export function commitView(c: CommitReport): ResultView {
   const warn = c.skipped.length > 0 || c.reopen_error !== null;
 
   const head = isDelete
-    ? t("write.committedDelete", {
+    ? tn(c.removed, "write.committedDeleteOne", "write.committedDeleteMany", {
         items: tc(c.removed, "common.itemOne", "common.itemMany"),
-        them: c.removed === 1 ? "it" : "them",
       })
-    : t("write.committedAdd", {
-        verb: t(c.operation === "create" ? "write.verbCreated" : "write.verbAdded"),
+    : t(c.operation === "create" ? "write.committedCreate" : "write.committedAdd", {
         file,
         parts: joinParts(countParts(c.files, c.directories, c.bytes)),
       });
@@ -101,8 +99,8 @@ export function commitView(c: CommitReport): ResultView {
     rows.push({ label: t("write.rowRemoved"), value: tc(c.removed, "common.itemOne", "common.itemMany") });
   } else {
     rows.push(
-      { label: t("write.rowFiles"), value: c.files.toLocaleString("en-US") },
-      { label: t("write.rowFolders"), value: c.directories.toLocaleString("en-US") },
+      { label: t("write.rowFiles"), value: formatNumber(c.files) },
+      { label: t("write.rowFolders"), value: formatNumber(c.directories) },
       { label: t("write.rowSize"), value: formatSize(String(c.bytes)) },
     );
   }
@@ -139,7 +137,7 @@ export function commitView(c: CommitReport): ResultView {
       caution: true,
     });
   }
-  const notes = isDelete ? [DELETE_NOTE, LOCAL_COMMIT_NOTE] : [LOCAL_COMMIT_NOTE];
+  const notes = isDelete ? [deleteNote(), localCommitNote()] : [localCommitNote()];
 
   const record = [
     `${c.operation} commit ${c.seq} ${c.status}`,
@@ -168,8 +166,8 @@ export function exportView(e: ExportReportView): ResultView {
       : `${head}${t("common.statusSeparator")}${tc(e.skipped.length, "write.lineNotStoredOne", "write.lineNotStoredMany")}`;
   const rows: DetailRow[] = [
     { label: t("write.rowFormat"), value: formatLabel(e.format) },
-    { label: t("write.rowFiles"), value: e.files.toLocaleString("en-US") },
-    { label: t("write.rowFolders"), value: e.directories.toLocaleString("en-US") },
+    { label: t("write.rowFiles"), value: formatNumber(e.files) },
+    { label: t("write.rowFolders"), value: formatNumber(e.directories) },
     { label: t("write.rowSize"), value: formatSize(String(e.bytes)) },
     { label: t("write.rowFileSize"), value: formatSize(String(e.output_bytes)) },
   ];
@@ -204,7 +202,7 @@ export function exportView(e: ExportReportView): ResultView {
 
 /** How a running job's progress reads. */
 export function progressText(phase: string, completed: number, total: number | null): string {
-  if (phase === "export_scan") return t("write.progressScan", { n: completed.toLocaleString("en-US") });
+  if (phase === "export_scan") return t("write.progressScan", { n: formatNumber(completed) });
   if (phase === "export") {
     return total === null
       ? t("write.progressImport", { size: formatSize(String(completed)) })
@@ -215,6 +213,6 @@ export function progressText(phase: string, completed: number, total: number | n
     return t("write.progressDelete", { completed, total: total ?? t("write.progressTotalUnknown") });
   }
   return total === null
-    ? t("write.progressPhase", { phase, completed })
-    : t("write.progressPhaseOf", { phase, completed, total });
+    ? t("write.progressPhase", { phase: phaseLabel(phase), completed })
+    : t("write.progressPhaseOf", { phase: phaseLabel(phase), completed, total });
 }

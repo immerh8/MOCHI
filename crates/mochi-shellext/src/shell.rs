@@ -11,10 +11,15 @@ use std::process::Command;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use windows::core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, PCWSTR, PSTR};
+use windows::core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, HMODULE,
     S_FALSE, S_OK, TRUE,
+};
+use windows::Win32::Globalization::GetUserDefaultUILanguage;
+use windows::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
 };
 use windows::Win32::System::Com::{
     IClassFactory, IClassFactory_Impl, IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL,
@@ -22,14 +27,18 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Ole::{ReleaseStgMedium, CF_HDROP};
 use windows::Win32::System::Registry::HKEY;
-use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
+use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    DragQueryFileW, IContextMenu, IContextMenu_Impl, IShellExtInit, IShellExtInit_Impl,
-    CMF_DEFAULTONLY, CMINVOKECOMMANDINFO, GCS_HELPTEXTA, GCS_HELPTEXTW, GCS_VALIDATEA,
-    GCS_VALIDATEW, GCS_VERBA, GCS_VERBW, HDROP,
+    DragQueryFileW, ExtractIconExW, IContextMenu, IContextMenu_Impl, IShellExtInit,
+    IShellExtInit_Impl, CMF_DEFAULTONLY, CMINVOKECOMMANDINFO, GCS_HELPTEXTA, GCS_HELPTEXTW,
+    GCS_VALIDATEA, GCS_VALIDATEW, GCS_VERBA, GCS_VERBW, HDROP,
 };
-use windows::Win32::UI::WindowsAndMessaging::{InsertMenuW, HMENU, MF_BYPOSITION, MF_STRING};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DestroyIcon, DrawIconEx, GetSystemMetrics, InsertMenuItemW, DI_NORMAL, HICON, HMENU,
+    MENUITEMINFOW, MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID, MIIM_STRING, SM_CXSMICON,
+    SM_CYSMICON,
+};
 
 use crate::plan::{self, Item};
 
@@ -64,9 +73,12 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// # Safety
 /// Called by the loader with the DLL's own handle.
 #[no_mangle]
-pub unsafe extern "system" fn DllMain(hinst: HMODULE, reason: u32, _reserved: *mut c_void) -> BOOL {
+pub unsafe extern "system" fn DllMain(hinst: HMODULE, reason: u32, reserved: *mut c_void) -> BOOL {
     if reason == DLL_PROCESS_ATTACH {
         MODULE.store(hinst.0 as isize, Ordering::Relaxed);
+    } else if reason == DLL_PROCESS_DETACH && reserved.is_null() {
+        // FreeLibrary (not process exit): release the cached icon bitmap.
+        let _ = catch_unwind(free_menu_icon);
     }
     TRUE
 }
@@ -174,6 +186,13 @@ impl Drop for MochiMenu {
     }
 }
 
+/// The menu language: the user's Windows display language. The app's own
+/// language setting lives in the webview and is not readable from here.
+fn display_language() -> plan::Lang {
+    // SAFETY: takes no arguments, reads no memory of ours, and cannot fail.
+    plan::Lang::from_langid(unsafe { GetUserDefaultUILanguage() })
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -261,6 +280,127 @@ impl IShellExtInit_Impl for MochiMenu_Impl {
     }
 }
 
+/// The cached menu bitmap: 0 = not tried yet, -1 = tried and failed (no icon
+/// in the menu), otherwise an `HBITMAP`. One per process, freed on DLL unload.
+static MENU_BITMAP: AtomicIsize = AtomicIsize::new(0);
+
+/// The MOCHI icon as a 32-bit premultiplied-alpha bitmap at the small-icon
+/// size, or `None`. Any failure means "no icon", never a failed menu.
+fn menu_icon() -> Option<HBITMAP> {
+    match MENU_BITMAP.load(Ordering::Acquire) {
+        0 => {
+            let made = catch_unwind(build_menu_icon).ok().flatten();
+            let raw = made.map_or(-1, |b| b.0 as isize);
+            // Two threads may race: the loser frees its copy.
+            match MENU_BITMAP.compare_exchange(0, raw, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => made,
+                Err(current) => {
+                    if let Some(b) = made {
+                        // SAFETY: `b` was created above and never shared.
+                        let _ = unsafe { DeleteObject(HGDIOBJ(b.0)) };
+                    }
+                    (current > 0).then_some(HBITMAP(current as *mut c_void))
+                }
+            }
+        }
+        n if n > 0 => Some(HBITMAP(n as *mut c_void)),
+        _ => None,
+    }
+}
+
+fn free_menu_icon() {
+    let raw = MENU_BITMAP.swap(0, Ordering::AcqRel);
+    if raw > 0 {
+        // SAFETY: the handle came from `build_menu_icon` and was swapped out,
+        // so it is deleted once.
+        let _ = unsafe { DeleteObject(HGDIOBJ(raw as *mut c_void)) };
+    }
+}
+
+/// Small icon of the app's exe (resource 0, the one `Icon` values name),
+/// drawn into a top-down 32-bit DIB section.
+fn build_menu_icon() -> Option<HBITMAP> {
+    let exe = wide_path(&app_path()?);
+    let mut small = HICON::default();
+    // SAFETY: `exe` is NUL-terminated; one small-icon out slot is supplied.
+    let got = unsafe { ExtractIconExW(PCWSTR(exe.as_ptr()), 0, None, Some(&mut small), 1) };
+    if got == 0 || small.is_invalid() {
+        return None;
+    }
+    let bitmap = icon_to_bitmap(small);
+    // SAFETY: `small` was returned by ExtractIconExW and is destroyed once.
+    let _ = unsafe { DestroyIcon(small) };
+    bitmap
+}
+
+fn wide_path(p: &std::path::Path) -> Vec<u16> {
+    p.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn icon_to_bitmap(icon: HICON) -> Option<HBITMAP> {
+    // SAFETY: plain metric queries.
+    let (w, h) = unsafe { (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) };
+    if !(8..=256).contains(&w) || !(8..=256).contains(&h) {
+        return None;
+    }
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h, // top-down
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `info` is initialised; `bits` receives the DIB's pixel pointer.
+    let dib = unsafe { CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0) }.ok()?;
+    if bits.is_null() {
+        // SAFETY: `dib` was just created.
+        let _ = unsafe { DeleteObject(HGDIOBJ(dib.0)) };
+        return None;
+    }
+    // SAFETY: a memory DC compatible with the screen.
+    let dc = unsafe { CreateCompatibleDC(None) };
+    if dc.is_invalid() {
+        // SAFETY: `dib` was just created.
+        let _ = unsafe { DeleteObject(HGDIOBJ(dib.0)) };
+        return None;
+    }
+    // SAFETY: `dc` and `dib` are valid; the old object is restored before the DC goes.
+    let old = unsafe { SelectObject(dc, HGDIOBJ(dib.0)) };
+    // SAFETY: the DIB is selected into `dc`; `icon` is valid. Drawing onto the
+    // zeroed DIB leaves premultiplied alpha for an icon with an alpha channel.
+    let drawn = unsafe { DrawIconEx(dc, 0, 0, icon, w, h, 0, None, DI_NORMAL) }.is_ok();
+    // SAFETY: restores the DC's original bitmap, then deletes the DC once.
+    unsafe {
+        SelectObject(dc, old);
+        let _ = DeleteDC(dc);
+    }
+    if drawn {
+        // SAFETY: the DIB section owns w * h 32-bit pixels at `bits`, no longer
+        // selected into any DC.
+        let px = unsafe { std::slice::from_raw_parts_mut(bits.cast::<u32>(), (w * h) as usize) };
+        // An icon without an alpha channel leaves alpha 0 everywhere: make the
+        // painted pixels opaque.
+        if px.iter().all(|p| p >> 24 == 0) {
+            for p in px.iter_mut().filter(|p| **p != 0) {
+                *p |= 0xFF00_0000;
+            }
+        }
+        return Some(dib);
+    }
+    // SAFETY: `dib` is ours and unused.
+    let _ = unsafe { DeleteObject(HGDIOBJ(dib.0)) };
+    None
+}
+
 /// The app that sits next to this DLL.
 fn app_path() -> Option<PathBuf> {
     let module = HMODULE(MODULE.load(Ordering::Relaxed) as *mut c_void);
@@ -286,9 +426,7 @@ fn launch(verb: &str, items: &[Item]) -> Result<()> {
         .map_err(|_| E_FAIL.into())
 }
 
-const CMD_PANEL: u32 = 0;
-const CMD_NOW: u32 = 1;
-const CMD_COUNT: u32 = 2;
+use plan::{CMD_COUNT, CMD_NOW, CMD_PANEL};
 
 fn verb_for(offset: u32) -> Option<&'static str> {
     match offset {
@@ -324,23 +462,29 @@ impl IContextMenu_Impl for MochiMenu_Impl {
             if items.is_empty() || last_id < first_id || last_id - first_id + 1 < CMD_COUNT {
                 return none;
             }
-            let entries = [
-                (CMD_PANEL, plan::PANEL_LABEL.to_owned()),
-                (CMD_NOW, plan::add_now_label(&items)),
-            ];
-            for (n, (offset, label)) in entries.iter().enumerate() {
-                let text = wide(label);
-                // SAFETY: `menu` is the shell's live menu; `text` is NUL-terminated
-                // and outlives the call, which copies it.
-                let added = unsafe {
-                    InsertMenuW(
-                        menu,
-                        index + n as u32,
-                        MF_BYPOSITION | MF_STRING,
-                        (first_id + offset) as usize,
-                        PCWSTR(text.as_ptr()),
-                    )
+            let icon = menu_icon();
+            for (n, entry) in plan::menu_entries(&items, display_language())
+                .iter()
+                .enumerate()
+            {
+                let mut text = wide(&entry.label);
+                let mut mii = MENUITEMINFOW {
+                    cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+                    fMask: MIIM_FTYPE | MIIM_ID | MIIM_STRING,
+                    fType: MFT_STRING,
+                    wID: first_id + entry.offset,
+                    dwTypeData: PWSTR(text.as_mut_ptr()),
+                    ..Default::default()
                 };
+                if let Some(bitmap) = icon {
+                    mii.fMask |= MIIM_BITMAP;
+                    mii.hbmpItem = bitmap;
+                }
+                // SAFETY: `menu` is the shell's live menu; `mii` is fully
+                // initialised, `text` is NUL-terminated and outlives the call,
+                // which copies it. The bitmap is owned by the DLL-wide cache and
+                // stays alive until the DLL unloads.
+                let added = unsafe { InsertMenuItemW(menu, index + n as u32, true, &mii) };
                 if added.is_err() {
                     return none;
                 }

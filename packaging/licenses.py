@@ -112,9 +112,9 @@ def js_entries(accepted):
 def render(rust, js):
     parts = ["MOCHI - third-party licenses\n"
              "============================\n\n"
-             "MOCHI is licensed under MIT OR Apache-2.0. Generated at build time from the\n"
+             "MOCHI is licensed under the MIT license. Generated at build time from the\n"
              "dependency graph of this installer's app and UI bundle (plan D7, O23).\n\n"]
-    for f in ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.md"):
+    for f in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
         body = (ROOT / f).read_text(encoding="utf-8")
         parts.append(f"\n{'#' * 78}\n# {f}\n{'#' * 78}\n\n{body}\n")
     for title, entries in (("Rust crates", rust), ("npm packages (UI bundle)", js)):

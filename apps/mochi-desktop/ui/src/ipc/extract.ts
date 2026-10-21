@@ -5,6 +5,8 @@
 // handle, a snapshot, and entry keys.
 import { invoke } from "@tauri-apps/api/core";
 
+import { extractFolderDialog } from "./dialogs";
+
 import type { AttributeNote } from "./generated/AttributeNote";
 import type { ConflictChoice } from "./generated/ConflictChoice";
 import type { ConflictView } from "./generated/ConflictView";
@@ -33,5 +35,11 @@ export function planExtract(
   keys: string[],
   pick: boolean,
 ): Promise<ExtractPlan | null> {
-  return invoke<ExtractPlan | null>("plan_extract", { handle, seq, keys, pick });
+  return invoke<ExtractPlan | null>("plan_extract", {
+    handle,
+    seq,
+    keys,
+    pick,
+    text: extractFolderDialog(),
+  });
 }

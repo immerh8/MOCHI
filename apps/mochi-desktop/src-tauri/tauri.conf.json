@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MOCHI",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "identifier": "io.github.immerh8.mochi",
   "build": {
     "devUrl": "http://localhost:5173",
@@ -28,7 +28,7 @@
     "longDescription": "MOCHI creates, browses, tests, and repairs .mochi archives. An archive is not a backup.",
     "publisher": "The MOCHI Project contributors",
     "copyright": "Copyright (c) 2026 The MOCHI Project contributors",
-    "license": "MIT OR Apache-2.0",
+    "license": "MIT",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

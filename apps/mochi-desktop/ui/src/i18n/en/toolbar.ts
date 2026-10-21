@@ -12,6 +12,12 @@ export const toolbar = {
   "toolbar.more": "More",
   "toolbar.repair": "Repair",
   "toolbar.foreign": "Other formats…",
-  "toolbar.selfTest": "Self-test",
   "toolbar.helpTip": "Help and keyboard keys",
+  // Why a button or menu item is off (shell/availability.ts); the item stays visible.
+  "avail.noArchive": "Open an archive first",
+  "avail.locked": "Enter the archive's passphrase first",
+  "avail.noSelection": "Select an entry first",
+  "avail.emptyList": "There is nothing here to select",
+  "avail.busy": "Wait for the current task to finish",
+  "avail.notEncrypted": "Only an encrypted MOCHI archive has passphrases",
 } as const;

@@ -205,7 +205,7 @@ test("a password-protected foreign archive asks in the window and sends the pass
   await waitFor(() => expect(screen.getByTestId("foreign-meta")).toHaveTextContent("retried.7z"));
   const opens = b.calls.filter((c) => c.cmd === "open_foreign_archive");
   // The retry names no file (Rust remembers it) and carries the password once.
-  expect(opens.map((c) => c.args)).toEqual([{ retry: true, password: "SECRET" }]);
+  expect(opens.map((c) => c.args)).toMatchObject([{ retry: true, password: "SECRET" }]);
   expect(screen.queryByTestId("foreign-password")).toBeNull();
   expect(JSON.stringify(b.calls.filter((c) => c.cmd !== "open_foreign_archive"))).not.toContain("SECRET");
 });

@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 
 import type { ExtractReport } from "../ipc/extract";
 import type { JobOutcome } from "../ipc/jobs";
-import { attributeLine, CHECK_NOTE, describe, progressText } from "./messages";
+import { attributeLine, checkNote, describe, progressText } from "./messages";
 
 const text = (s: string, verbatim = true) => ({ text: s, verbatim });
 
@@ -48,8 +48,8 @@ test("a completed extraction is one short line; the details say what it checked 
   expect(d.completed).toBe(true);
   expect(d.warn).toBe(false);
   expect(d.notes).toEqual([]);
-  expect(d.details?.notes).toContain(CHECK_NOTE);
-  expect(CHECK_NOTE).toContain("not a verification of the archive");
+  expect(d.details?.notes).toContain(checkNote());
+  expect(checkNote()).toContain("not a verification of the archive");
   expect(row(done(report()), "Folder")?.value).toBe("/home/me/out");
   expect(row(done(report()), "From version")?.value).toBe("3");
   expect(row(done(report()), "Size")?.value).toBe("2.0 KiB (2,048 bytes)");
@@ -139,7 +139,7 @@ test("no outcome is described as backed up, safe, preserved, or verified", () =>
     const s = everything(o);
     for (const word of BANNED.filter((w) => w !== "verified")) expect(s).not.toContain(word);
     // "verification" appears only in the sentence that denies it.
-    const without = s.replace(CHECK_NOTE.toLowerCase(), "");
+    const without = s.replace(checkNote().toLowerCase(), "");
     expect(without).not.toContain("verified");
     expect(without).not.toContain("verification");
   }

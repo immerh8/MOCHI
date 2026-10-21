@@ -42,4 +42,5 @@ export const update = {
   "update.failUnavailable": "Updates are not available in this build. ({detail})",
   "update.failOther": "The check for updates did not finish. ({detail})",
   "update.couldNotStart": "could not start",
+  "update.unknownError": "unknown error",
 } as const;

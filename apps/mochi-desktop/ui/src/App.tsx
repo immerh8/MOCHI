@@ -1,165 +1,23 @@
-import { useCallback, useState } from "react";
-
-import { useJobFocus } from "./a11y/focus";
-import { Hint } from "./a11y/Hint";
-import { ProgressMeter } from "./a11y/ProgressMeter";
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
 import { Help } from "./help/Help";
 import { Updates } from "./update/Updates";
-import { t } from "./i18n";
 import { CrashReports } from "./settings/CrashReports";
-import { cancelJob, isIpcError, startJob } from "./ipc/jobs";
-import type { JobEvent, JobOutcome } from "./ipc/jobs";
-
-/** The D0 sample job: about five seconds, so it can be watched and cancelled. */
-export const SELF_TEST = { kind: "self_test", steps: 50, step_ms: 100 } as const;
-
-type View =
-  | { state: "idle" }
-  | { state: "starting" }
-  | {
-      state: "running";
-      jobId: number;
-      completed: number;
-      total: number | null;
-      cancelRequested: boolean;
-    }
-  | { state: "finished"; outcome: JobOutcome }
-  | { state: "error"; text: string };
-
-/**
- * Status wording follows spec §23.3: only a completed job is reported as
- * complete, nothing gets success styling (this is not a verification, so
- * there is no PASS to show), and a cancelled or failed job says plainly
- * that it did not finish.
- */
-export function outcomeText(outcome: JobOutcome): string {
-  switch (outcome.status) {
-    case "completed":
-      return t("selfTest.completed", { summary: outcome.summary });
-    case "cancelled":
-      return t("selfTest.cancelled");
-    case "failed":
-      return t("selfTest.failed", { code: outcome.code, message: outcome.message });
-    case "aborted":
-      return t("selfTest.aborted", { message: outcome.message });
-  }
-}
-
-function SelfTest() {
-  const [view, setView] = useState<View>({ state: "idle" });
-  const running = view.state === "running";
-  const busy = running || view.state === "starting";
-  // Starting disables the button that was pressed; give focus back at the end.
-  const rememberFocus = useJobFocus(busy);
-
-  const onEvent = useCallback((event: JobEvent) => {
-    setView((prev) => {
-      switch (event.event) {
-        case "started":
-          return prev.state === "running"
-            ? prev
-            : {
-                state: "running",
-                jobId: event.job_id,
-                completed: 0,
-                total: null,
-                cancelRequested: false,
-              };
-        case "progress":
-          if (prev.state === "finished") return prev;
-          return {
-            state: "running",
-            jobId: event.job_id,
-            completed: event.completed,
-            total: event.total,
-            cancelRequested: prev.state === "running" && prev.cancelRequested,
-          };
-        case "finished":
-          return { state: "finished", outcome: event.outcome };
-      }
-    });
-  }, []);
-
-  const start = useCallback(() => {
-    rememberFocus();
-    setView({ state: "starting" });
-    startJob(SELF_TEST, onEvent).catch((e: unknown) => {
-      setView({
-        state: "error",
-        text: isIpcError(e)
-          ? t("selfTest.couldNotStart", { code: e.code, message: e.message })
-          : t("selfTest.couldNotStartPlain"),
-      });
-    });
-  }, [onEvent, rememberFocus]);
-
-  const cancel = useCallback(() => {
-    if (view.state !== "running") return;
-    const { jobId } = view;
-    setView({ ...view, cancelRequested: true });
-    cancelJob(jobId).catch(() => {
-      // The job's own `finished` event reports how it ended.
-    });
-  }, [view]);
-
-  return (
-    <section aria-labelledby="self-test-heading">
-      <h2 id="self-test-heading" tabIndex={-1}>
-        {t("selfTest.heading")}
-      </h2>
-      <Hint text={t("selfTest.intro")} />
-      <div className="actions">
-        <button type="button" data-testid="start" onClick={start} disabled={busy}>
-          {t("selfTest.start")}
-        </button>
-        <button
-          type="button"
-          data-testid="cancel"
-          onClick={cancel}
-          disabled={!running || view.cancelRequested}
-        >
-          {t("selfTest.cancel")}
-        </button>
-      </div>
-      {running && (
-        <div className="progress">
-          <ProgressMeter
-            completed={view.completed}
-            total={view.total}
-            barTestId="progress"
-            textTestId="progress-text"
-            text={
-              (view.total === null
-                ? t("common.progressStep", { completed: view.completed })
-                : t("common.progressStepOf", { completed: view.completed, total: view.total })) +
-              (view.cancelRequested ? t("common.cancelling") : "")
-            }
-          />
-        </div>
-      )}
-      <p role="status" data-testid="status" data-state={view.state}>
-        {view.state === "idle" && t("selfTest.idle")}
-        {view.state === "starting" && t("common.starting")}
-        {view.state === "running" && t("selfTest.running")}
-        {view.state === "finished" && outcomeText(view.outcome)}
-        {view.state === "error" && view.text}
-      </p>
-    </section>
-  );
-}
+import { Language } from "./settings/Language";
+import { useLocale } from "./i18n";
 
 export function App() {
+  // Re-render the whole tree when the language changes (no reload, no lost state).
+  useLocale();
   return (
     <main>
       <Browser
         help={<Help />}
         foreign={<ForeignBrowser />}
         tools={{
-          selfTest: <SelfTest />,
           settings: (
             <CrashReports>
+              <Language />
               <Updates />
             </CrashReports>
           ),

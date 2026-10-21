@@ -6,9 +6,11 @@ import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
 import { EntryCells, ListHead } from "../browser/ListHead";
-import { BackIcon, CheckIcon, CloseIcon, ExtractIcon, KeyIcon } from "../icons";
+import { BackIcon, CheckIcon, CloseIcon, ExtractDesktopIcon, ExtractIcon, KeyIcon } from "../icons";
+import { useDesktopRun } from "../extract/useDesktopRun";
+import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot, useShell } from "../shell/Shell";
-import { t, tc } from "../i18n";
+import { formatNumber, t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
 import { dragOutForeign } from "../ipc/dragout";
@@ -18,9 +20,11 @@ import {
   foreignSearch,
   openForeignArchive,
   planExtractForeign,
+  planExtractForeignDesktop,
 } from "../ipc/foreign";
 import type { ForeignArchiveSummary, ForeignExtractPlan, ForeignHit, ForeignRow } from "../ipc/foreign";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
+import { discardExtractFolder, showInFolder } from "../ipc/start";
 import { subscribeLaunches } from "../ipc/launch";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import type { NameText } from "../ipc/browse";
@@ -33,8 +37,8 @@ import { listKeys, rowHandlers } from "../list/rows";
 import { ResultBar } from "../result/Result";
 import { SearchResults } from "../search/SearchResults";
 import type { HitRow, SearchView } from "../search/SearchResults";
-import { foundText, IDLE, RUNNING } from "../search/useArchiveSearch";
-import { describeOutcome, EXTRACT_NOTE, needsPassword, progressText, TEST_NOTE, WEAK_NOTE } from "./messages";
+import { foundText, IDLE, running } from "../search/useArchiveSearch";
+import { describeOutcome, extractNote, needsPassword, progressText, testNote, weakNote } from "./messages";
 
 /** Row height of the list, in pixels (the same as the MOCHI browser's). */
 const ROW_HEIGHT = 26;
@@ -71,7 +75,7 @@ function kindLabel(row: Pick<ForeignRow, "kind">): string {
 
 function sizeText(row: ForeignRow): string {
   if (row.kind === "directory") {
-    return t("browser.itemsCount", { n: (row.child_dirs + row.child_files).toLocaleString("en-US") });
+    return t("browser.itemsCount", { n: formatNumber(row.child_dirs + row.child_files) });
   }
   return row.size === null ? "" : shortSize(row.size);
 }
@@ -115,7 +119,7 @@ function useForeignSearch(handle: number | null, query: string): SearchView<Fore
     };
   }, [handle, query]);
   if (handle === null || query === "") return IDLE;
-  return found?.id === id ? found.view : RUNNING;
+  return found?.id === id ? found.view : running();
 }
 
 /**
@@ -137,6 +141,10 @@ export function ForeignBrowser() {
     null,
   );
   const [job, setJob] = useState<JobView>({ state: "idle" });
+  // The last job was an extraction (its result can show the folder).
+  const [extracted, setExtracted] = useState(false);
+  // Set while the running job extracts into a new Desktop folder.
+  const desktopRun = useDesktopRun();
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const handle = open?.handle ?? null;
@@ -331,16 +339,53 @@ export function ForeignBrowser() {
       }
     });
     if (event.event === "finished" && event.outcome.status === "completed") setPlan(null);
-  }, []);
+    if (event.event === "finished" && desktopRun.take()) {
+      // Nothing was extracted: do not leave an empty folder on the Desktop.
+      if (event.outcome.status !== "completed") void discardExtractFolder().catch(() => undefined);
+    }
+  }, [desktopRun]);
 
   const begin = (request: Parameters<typeof startJob>[0]) => {
     rememberFocus();
     setError(null);
     setJob({ state: "starting" });
+    setExtracted(request.kind === "extract_foreign");
     startJob(request, onEvent).catch((e: unknown) => {
       setJob({ state: "idle" });
       setError(errorText(t("foreign.startFailed"), e));
+      if (desktopRun.take()) void discardExtractFolder().catch(() => undefined);
     });
+  };
+
+  /**
+   * Extract to Desktop: Rust makes a new folder named after the archive on the
+   * Desktop; the extraction starts at once, with no folder question and no plan
+   * panel. Entries that cannot be written are skipped and listed in the result.
+   */
+  const extractToDesktop = () => {
+    if (handle === null) return;
+    const keys = selectedRows.flatMap((r) => (r.key === null ? [] : [r.key]));
+    setError(null);
+    setJob({ state: "idle" });
+    planExtractForeignDesktop(handle, keys).then(
+      (p) => {
+        desktopRun.set();
+        begin({
+          kind: "extract_foreign",
+          handle,
+          keys,
+          on_conflict: p.plan.conflicts_total > 0 ? "skip_conflicts" : "stop",
+        });
+      },
+      (e: unknown) => setError(errorText(t("extract.desktopFailed"), e)),
+    );
+  };
+
+  const showFolder = () => {
+    showInFolder({ kind: "extract_destination" }).then(
+      () => undefined,
+      (e: unknown) => setError(errorText(t("start.showInFolderFailed"), e)),
+    );
   };
 
   const planFor = (keys: string[], what: NameText | null, n: number, pick: boolean) => {
@@ -381,11 +426,14 @@ export function ForeignBrowser() {
   const folderDrag = useDragOut(dragFrom(folderSel));
   const hitDrag = useDragOut(dragFrom(hitSel));
 
-  // The list's right-click menu; a foreign archive is read-only, so Delete is off.
+  // What is on: a foreign archive is read-only, so Add and Delete are off.
+  const avail = availableActions(
+    { kind: "foreign", busy: jobBusy },
+    { selected: selectedRows.length, total: searching ? hits.length : (count ?? 0) },
+  );
   const listMenu = useListMenu(
     listMenuItems({
-      selected: selectedRows.length,
-      total: searching ? hits.length : (count ?? 0),
+      available: avail,
       selectAll: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
       copyNames: () => {
         const names = searching
@@ -394,7 +442,9 @@ export function ForeignBrowser() {
         copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
       },
       extract: extractNow,
-      remove: null,
+      extractDesktop: extractToDesktop,
+      add: () => undefined,
+      remove: () => undefined,
     }),
   );
 
@@ -479,8 +529,8 @@ export function ForeignBrowser() {
             </span>
           )}
           {open.weak_encryption && (
-            <span role="note" className="path-warn" data-testid="foreign-weak" title={WEAK_NOTE}>
-              !<span className="sr-only">{WEAK_NOTE}</span>
+            <span role="note" className="path-warn" data-testid="foreign-weak" title={weakNote()}>
+              !<span className="sr-only">{weakNote()}</span>
             </span>
           )}
         </div>
@@ -523,7 +573,7 @@ export function ForeignBrowser() {
               )}{" "}
               (
               {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
-                n: plan.plan.plan.entries.toLocaleString("en-US"),
+                n: formatNumber(plan.plan.plan.entries),
               })}
               )
             </dd>
@@ -531,7 +581,7 @@ export function ForeignBrowser() {
           {plan.plan.skipped_kinds > 0 && (
             <p role="note" className="warning" data-testid="foreign-skipped-kinds">
               {t(plan.plan.skipped_kinds === 1 ? "foreign.skippedKindsOne" : "foreign.skippedKindsMany", {
-                n: plan.plan.skipped_kinds.toLocaleString("en-US"),
+                n: formatNumber(plan.plan.skipped_kinds),
               })}
             </p>
           )}
@@ -539,7 +589,7 @@ export function ForeignBrowser() {
             <div data-testid="foreign-conflicts">
               <p role="note" className="warning">
                 {t(plan.plan.plan.conflicts_total === 1 ? "foreign.cannotOne" : "foreign.cannotMany", {
-                  n: plan.plan.plan.conflicts_total.toLocaleString("en-US"),
+                  n: formatNumber(plan.plan.plan.conflicts_total),
                 })}
               </p>
               <ul className="staged" aria-label={t("foreign.cannotList")}>
@@ -553,7 +603,7 @@ export function ForeignBrowser() {
           )}
           {progressLine}
           <div className="actions dialog-actions">
-            <Hint text={EXTRACT_NOTE} />
+            <Hint text={extractNote()} />
             <button
               type="button"
               className="primary"
@@ -614,6 +664,7 @@ export function ForeignBrowser() {
               rowHeight={ROW_HEIGHT}
               hintId="foreign-entry-hint"
               testId="foreign-search-hits"
+              onMarquee={hitSel.marquee}
               renderRow={(h: ForeignHitRow, index, tabIndex) => {
                 return (
                   <button
@@ -641,6 +692,7 @@ export function ForeignBrowser() {
                 head={<ListHead />}
                 hintId="foreign-entry-hint"
                 testId="foreign-entries"
+                onMarquee={folderSel.marquee}
                 onError={listError}
                 renderRow={(row: ForeignRow, index: number, tabIndex: 0 | -1) => (
                   <button
@@ -746,13 +798,31 @@ export function ForeignBrowser() {
             icon={<ExtractIcon />}
             label={t("extract.toolbar")}
             testId="foreign-extract-all"
-            disabled={jobBusy}
+            disabled={!avail.extract.enabled}
             onClick={extractNow}
-            title={
+            title={tipFor(
+              avail.extract,
               selectedCount > 0
-                ? t("extract.selectedTip", { n: selectedCount.toLocaleString("en-US") })
-                : t("foreign.extractAllTip")
-            }
+                ? t("extract.selectedTip", { n: formatNumber(selectedCount) })
+                : t("foreign.extractAllTip"),
+            )}
+          />
+        </ToolSlot>
+      )}
+      {open && (
+        <ToolSlot name="desktop" owner="foreign">
+          <ToolButton
+            icon={<ExtractDesktopIcon />}
+            label={t("extract.desktop")}
+            testId="foreign-extract-desktop"
+            disabled={!avail.extractDesktop.enabled}
+            onClick={extractToDesktop}
+            title={tipFor(
+              avail.extractDesktop,
+              selectedCount > 0
+                ? t("extract.desktopSelectedTip", { n: formatNumber(selectedCount) })
+                : t("extract.desktopTip"),
+            )}
           />
         </ToolSlot>
       )}
@@ -762,9 +832,9 @@ export function ForeignBrowser() {
             icon={<CheckIcon />}
             label={t("foreign.testToolbar")}
             testId="foreign-test"
-            disabled={jobBusy}
+            disabled={!avail.test.enabled}
             onClick={() => begin({ kind: "test_foreign", handle: open.handle })}
-            title={TEST_NOTE}
+            title={tipFor(avail.test, testNote())}
           />
         </ToolSlot>
       )}
@@ -783,6 +853,9 @@ export function ForeignBrowser() {
           headlineTestId="foreign-headline"
           warn={described?.warn ?? false}
           details={described?.details ?? null}
+          onShowFolder={
+            job.state === "done" && job.outcome.status === "completed" && extracted ? showFolder : undefined
+          }
           onDismiss={() => setJob({ state: "idle" })}
           fallbackId="foreign-heading"
         />

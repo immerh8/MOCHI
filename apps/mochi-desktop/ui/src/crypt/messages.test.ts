@@ -37,21 +37,21 @@ function everyText(): string[] {
     new_archive_id: null,
     durability_note: "dir not synced",
     archive: null,
-    reopen_error: { code: "KEY_UNAVAILABLE", message: m.WRONG_PASSPHRASE },
+    reopen_error: { code: "KEY_UNAVAILABLE", message: m.wrongPassphrase() },
   });
   return [
-    m.LOST_PASSPHRASE,
-    m.DEDUP_LEAK,
-    m.HIDDEN_WITH_KEY,
-    ...m.VISIBLE_WITHOUT_KEY,
-    m.NOT_SIGNED,
-    m.NO_GENERIC_TOOLS,
-    m.WRONG_PASSPHRASE,
-    m.WRONG_PASSPHRASE_NOTE,
-    m.REMOVE_NOT_REVOCATION,
-    m.REENCRYPT_NOTE,
-    m.REKEY_NEEDS_UNLOCK,
-    ...m.RECOVERY_NOTES,
+    m.lostPassphrase(),
+    m.dedupLeak(),
+    m.hiddenWithKey(),
+    ...m.visibleWithoutKey(),
+    m.notSigned(),
+    m.noGenericTools(),
+    m.wrongPassphrase(),
+    m.wrongPassphraseNote(),
+    m.removeNotRevocation(),
+    m.reencryptNote(),
+    m.rekeyNeedsUnlock(),
+    ...m.recoveryNotes(),
     ...m.RECOVERY_CHOICES.map(m.recoveryLabel),
     ...m.rekeyLines(report("added")),
     ...m.rekeyLines(report("removed")),
@@ -70,33 +70,33 @@ test("no message calls anything safe, secure, backed up, preserved, or revoked",
 });
 
 test("a lost passphrase means lost data, with no recovery", () => {
-  expect(m.LOST_PASSPHRASE).toMatch(/contents are lost/);
-  expect(m.LOST_PASSPHRASE).toMatch(/no recovery/);
+  expect(m.lostPassphrase()).toMatch(/contents are lost/);
+  expect(m.lostPassphrase()).toMatch(/no recovery/);
 });
 
 test("the deduplication equality leak is disclosed", () => {
-  expect(m.DEDUP_LEAK).toMatch(/stored once/);
-  expect(m.DEDUP_LEAK).toMatch(/already in it/);
+  expect(m.dedupLeak()).toMatch(/stored once/);
+  expect(m.dedupLeak()).toMatch(/already in it/);
 });
 
 test("what stays visible without the key is listed, and the history is said to be unsigned", () => {
-  const visible = m.VISIBLE_WITHOUT_KEY.join(" ");
+  const visible = m.visibleWithoutKey().join(" ");
   for (const part of ["archive ID", "number of commits", "sizes of stored objects", "key envelopes", "Compressed sizes"]) {
     expect(visible).toContain(part);
   }
-  expect(m.HIDDEN_WITH_KEY).toMatch(/file names/);
-  expect(m.NOT_SIGNED).toMatch(/not signed/);
+  expect(m.hiddenWithKey()).toMatch(/file names/);
+  expect(m.notSigned()).toMatch(/not signed/);
 });
 
 test("a wrong passphrase is not described as damage", () => {
-  expect(m.WRONG_PASSPHRASE).toBe("The passphrase did not open this archive.");
-  const text = `${m.WRONG_PASSPHRASE} ${m.WRONG_PASSPHRASE_NOTE}`.toLowerCase();
+  expect(m.wrongPassphrase()).toBe("The passphrase did not open this archive.");
+  const text = `${m.wrongPassphrase()} ${m.wrongPassphraseNote()}`.toLowerCase();
   for (const word of ["damage", "corrupt", "tamper", "invalid"]) expect(text).not.toContain(word);
 });
 
 test("removing a passphrase is said not to be revocation, and every removal result repeats it", () => {
-  expect(m.REMOVE_NOT_REVOCATION).toMatch(/not revocation/);
-  expect(m.REMOVE_NOT_REVOCATION).toMatch(/kept a copy of the file can still open that copy/);
+  expect(m.removeNotRevocation()).toMatch(/not revocation/);
+  expect(m.removeNotRevocation()).toMatch(/kept a copy of the file can still open that copy/);
   const lines = m.rekeyLines({
     action: "removed",
     seq: 4,
@@ -108,12 +108,12 @@ test("removing a passphrase is said not to be revocation, and every removal resu
     archive: null,
     reopen_error: null,
   });
-  expect(lines).toContain(m.REMOVE_NOT_REVOCATION);
+  expect(lines).toContain(m.removeNotRevocation());
   expect(lines[0]).toMatch(/LOCAL_COMMITTED/);
 });
 
 test("the recovery record is a repair aid with a stated capacity, never a second copy", () => {
-  const all = m.RECOVERY_NOTES.join(" ");
+  const all = m.recoveryNotes().join(" ");
   expect(all).toMatch(/not a second copy/);
   expect(all).toMatch(/up to about the chosen percentage/);
   expect(all).toMatch(/Damage beyond that is reported and left as it is/);

@@ -75,7 +75,7 @@ export function Updates() {
     } catch (e) {
       setView({
         state: "failed",
-        text: failureText("other", isIpcError(e) ? `${e.code}: ${e.message}` : "unknown error"),
+        text: failureText("other", isIpcError(e) ? `${e.code}: ${e.message}` : t("update.unknownError")),
       });
     }
   }, []);

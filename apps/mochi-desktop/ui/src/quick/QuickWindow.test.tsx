@@ -359,7 +359,7 @@ test("Browse asks Rust for a place and shows only the folder text and the file n
   await user.click(screen.getByTestId("quick-browse"));
   expect(await screen.findByDisplayValue("Chosen.zip")).toBeInTheDocument();
   expect(screen.getByTestId("quick-folder")).toHaveTextContent("In folder: /home/me/Elsewhere");
-  expect(b.calls.filter((c) => c.cmd === "quick_choose_location").map((c) => c.args)).toEqual([
+  expect(b.calls.filter((c) => c.cmd === "quick_choose_location").map((c) => c.args)).toMatchObject([
     { name: "notes.zip", format: "zip" },
   ]);
 });

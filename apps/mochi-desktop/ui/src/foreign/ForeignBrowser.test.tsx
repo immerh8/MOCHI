@@ -214,7 +214,7 @@ test("names that are encrypted ask for the password, which is sent once and clea
   await screen.findByTestId("foreign-meta");
   expect(screen.getByTestId("foreign-meta")).toHaveTextContent("opened with a password");
   const opens = b.calls.filter((c) => c.cmd === "open_foreign_archive").map((c) => c.args);
-  expect(opens).toEqual([
+  expect(opens).toMatchObject([
     { retry: false, password: null },
     { retry: true, password: "first" },
     { retry: true, password: "second" },

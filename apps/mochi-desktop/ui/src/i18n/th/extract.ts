@@ -1,0 +1,72 @@
+import type { Catalogue } from "../types";
+import type { extract as enExtract } from "../en/extract";
+// Extraction (plan D3; spec §23.3): extracting is not a verification, so
+// nothing here gets success styling.
+export const extract = {
+  "extract.heading": "แตกไฟล์",
+  "extract.selectedTip": "แตกไฟล์ {n} รายการที่เลือก",
+  "extract.toolbar": "แตกไฟล์",
+  "extract.allTip": "แตกไฟล์ทั้งหมดในเวอร์ชันนี้",
+  "extract.desktop": "แตกไฟล์ไปที่เดสก์ท็อป",
+  "extract.desktopTip": "แตกไฟล์ทั้งหมดไปยังโฟลเดอร์ใหม่บนเดสก์ท็อป",
+  "extract.desktopSelectedTip": "แตกไฟล์ {n} รายการที่เลือกไปยังโฟลเดอร์ใหม่บนเดสก์ท็อป",
+  "extract.desktopFailed": "แตกไฟล์ไปที่เดสก์ท็อปไม่สำเร็จ",
+  "extract.folderFailed": "ตรวจโฟลเดอร์ไม่สำเร็จ",
+  "extract.startFailed": "เริ่มไม่สำเร็จ",
+  "extract.group": "แตกไฟล์ไปที่",
+  "extract.panelHeading": "แตกไฟล์ไปยังโฟลเดอร์นี้หรือไม่",
+  "extract.folder": "โฟลเดอร์",
+  "extract.what": "สิ่งที่จะแตก",
+  "extract.wholeCommit": "ทั้งหมดในเวอร์ชัน {seq}",
+  "extract.entriesCount": " ({count})",
+  "extract.parentsNote": "โฟลเดอร์ที่อยู่เหนือรายการที่เลือกจะถูกสร้างด้วย",
+  "extract.folderNote": "แตกไฟล์ลงในโฟลเดอร์ที่มีเพียงคุณที่แก้ไขได้",
+  "extract.caseInsensitive": "โฟลเดอร์นี้ถือว่าชื่อที่ต่างกันแค่ตัวพิมพ์เล็กใหญ่เป็นชื่อเดียวกัน",
+  "extract.cannotOne": "แตก {n} รายการลงในโฟลเดอร์นี้ไม่ได้:",
+  "extract.cannotMany": "แตก {n} รายการลงในโฟลเดอร์นี้ไม่ได้:",
+  "extract.cannotList": "รายการที่แตกไฟล์ไม่ได้",
+  "extract.conflictNote":
+    "จะไม่เขียนทับและไม่เปลี่ยนชื่อใด หากข้ามโฟลเดอร์ใด ทุกอย่างในโฟลเดอร์นั้นจะถูกข้ามด้วย",
+  "extract.notOffered":
+    "ยังไม่มีตัวเลือกแทนที่รายการที่มีอยู่ หรือเก็บไว้ทั้งสองโดยใช้ชื่อใหม่ หากต้องการเก็บทั้งสอง ให้แตกไฟล์ไปยังโฟลเดอร์อื่นหรือโฟลเดอร์ใหม่",
+  "extract.noConflicts":
+    "ไม่มีสิ่งใดในโฟลเดอร์นี้ซ้ำกับรายการที่จะแตก และไม่ว่ากรณีใดจะไม่มีการเขียนทับ",
+  "extract.confirmSkip": "แตกส่วนที่เหลือ โดยข้ามรายการเหล่านี้",
+  "extract.confirm": "แตกไฟล์",
+  "extract.changeFolder": "เปลี่ยนโฟลเดอร์…",
+  "extract.newFolderNote":
+    "สร้างโฟลเดอร์ใหม่ไว้ข้างไฟล์บีบอัดสำหรับการนี้ จึงไม่มีสิ่งที่มีอยู่แล้วในคอมพิวเตอร์ถูกแทนที่",
+  "extract.recheck": "ตรวจอีกครั้ง",
+  "extract.checkNote":
+    "ไฟล์ที่แตกแต่ละไฟล์ถูกตรวจกับแฮชที่บันทึกไว้ในไฟล์บีบอัดก่อนจะเก็บไว้ การแตกไฟล์ไม่ใช่การตรวจสอบไฟล์บีบอัด: ไม่ได้ตรวจสิ่งอื่นในนั้น",
+  "extract.cancelled": "ยกเลิกแล้ว การแตกไฟล์หยุดก่อนเสร็จ",
+  "extract.cancelledNote1":
+    "ไฟล์ที่แตกก่อนที่คุณยกเลิกยังอยู่ในโฟลเดอร์ และแต่ละไฟล์สมบูรณ์ ไฟล์ที่กำลังเขียนถูกทิ้ง",
+  "extract.cancelledNote2":
+    "โฟลเดอร์ที่สร้างไว้แล้วอาจยังไม่มีเวลาและสิทธิ์ที่บันทึกไว้ เพราะจะตั้งค่าตอนท้าย",
+  "extract.nothingWritten": "ไม่ได้เขียนอะไร",
+  "extract.mayHaveExtracted": "ไฟล์บางส่วนอาจถูกแตกลงในโฟลเดอร์แล้ว",
+  "extract.line": "แตกไฟล์แล้ว {parts}",
+  "extract.lineNotExtractedOne": "{n} รายการยังไม่ได้แตก",
+  "extract.lineNotExtractedMany": "{n} รายการยังไม่ได้แตก",
+  "extract.rowFolder": "โฟลเดอร์",
+  "extract.rowVersion": "จากเวอร์ชัน",
+  "extract.rowFiles": "ไฟล์",
+  "extract.rowFolders": "โฟลเดอร์",
+  "extract.rowSize": "ขนาด",
+  "extract.rowFolderEntries": "รายการโฟลเดอร์บนดิสก์",
+  "extract.notConfirmed": "ยังไม่ยืนยัน",
+  "extract.degradedMark": "DEGRADED",
+  "extract.rowNotExtracted": "ยังไม่ได้แตก",
+  "extract.rowAttributes": "เวลาและสิทธิ์",
+  "extract.attributesNotApplied": "ยังไม่ได้ตั้งค่า",
+  "extract.rowAttributeNotes": "แอตทริบิวต์ที่ยังไม่ได้ตั้งค่า",
+  "extract.attributesUnavailable":
+    "ไม่ได้ตั้งค่าเวลา สิทธิ์ หรือแอตทริบิวต์อื่น เพราะอ่านจากไฟล์บีบอัดไม่ได้ ({reason})",
+  "extract.attributeLine":
+    "ยังไม่ได้ตั้งค่า: {attribute} กับ {count} รายการ รายการแรก: {path}{escaped} {reason}",
+  "extract.progressRestoreOf": "กำลังแตกไฟล์: {completed} จาก {total} รายการ",
+  "extract.progressRestore": "กำลังแตกไฟล์: {completed} รายการ",
+  "extract.progressPhaseOf": "{phase}: {completed} จาก {total}",
+  "extract.progressPhase": "{phase}: {completed}",
+} satisfies Catalogue<typeof enExtract>;
