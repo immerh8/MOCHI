@@ -173,7 +173,7 @@ test("the tools are in a closed tool window, one at a time, and the page never s
   expect(screen.queryByTestId("advanced")).toBeNull();
   const sheet = screen.getByTestId("tool-sheet");
   expect(sheet).not.toBeVisible();
-  for (const id of ["rekey-heading", "check-heading", "self-test-heading", "settings-heading", "help-heading"]) {
+  for (const id of ["rekey-heading", "check-heading", "settings-heading", "help-heading"]) {
     expect(sheet.querySelector(`#${id}`), id).not.toBeNull();
   }
   // Create and Extract are not hidden in there.

@@ -56,7 +56,7 @@ export const closeVersions = () => collapse("toggle-versions");
 export const openMore = () => expand("toolbar-more");
 
 /**
- * The tool window (Help, Passphrases, Test and repair, Settings, Self-test): one tool at a time
+ * The tool window (Help, Passphrases, Test and repair, Settings): one tool at a time
  * over the list. It covers the window while it is open, so close it before clicking elsewhere.
  */
 export async function openTool(menuTestId) {

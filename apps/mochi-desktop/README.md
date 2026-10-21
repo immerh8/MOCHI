@@ -33,7 +33,7 @@ apps/mochi-desktop/
 │       ├── ipc.rs      # IPC types (ts-rs exports them to ui/src/ipc/generated)
 │       ├── jobs.rs     # job runner: mochi_core::job → events, cancellation
 │       ├── picker.rs   # D1/D2: the native open, choose, and save dialogs, shown from Rust
-│       ├── self_test.rs# the D0 sample job (no archive I/O)
+│       ├── self_test.rs# sample job for the job-runner tests (no UI; no archive I/O)
 │       └── write.rs    # D2: staged sources, drop handling, create/add/remove jobs
 ├── ui/                 # React + TypeScript + Vite
 │   ├── src/browser/    # D1: Browser, Tree, VirtualList, Name (text-only names)
@@ -428,7 +428,7 @@ dialog's own body do, with thin scroll bars):
   tooltip: Open (Ctrl+O), New archive, then Add, Extract, Test, Remove; at the right the
   **search field** (Ctrl+F), Info, More and Help. A button is disabled when it does not apply;
   its tooltip says why. **More** holds Open and extract, Other formats, Passphrases, Repair,
-  Settings, Self-test.
+  Settings.
 - **Tools open in a window over the list** (`shell/ToolSheet.tsx`, `data-testid="tool-sheet"`),
   one at a time, with a close button and Escape. Every tool stays mounted, so a running test or
   an open report is still there when the user comes back. There is no Advanced drawer any more.

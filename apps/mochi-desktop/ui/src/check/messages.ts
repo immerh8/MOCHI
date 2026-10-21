@@ -238,6 +238,91 @@ export function progressText(phase: string, completed: number, total: number | n
 }
 
 /**
+ * A check that says nothing about this archive: not required by the policy
+ * and either UNSUPPORTED or UNKNOWN. These are folded into one line under
+ * Details. A required check, or any other status, is never folded away, so
+ * a failing (or degraded, overdue) dimension is always in the default view.
+ */
+export function isQuiet(d: { status: StatusView; required: boolean }): boolean {
+  return !d.required && (d.status === "UNSUPPORTED" || d.status === "UNKNOWN");
+}
+
+export type VerdictKind = "ok" | "ranOk" | "problems" | "degraded" | "incomplete" | "keyless" | "failed";
+
+export interface Verdict {
+  kind: VerdictKind;
+  /** Only "ok" (overall PASS) looks like success; "problems" looks like a failure. */
+  tone: "pass" | "fail" | "attention";
+  title: string;
+  line: string;
+}
+
+/** One line on what was checked, from the level the report carries. */
+export function scopeLine(r: ReportView): string {
+  const byLevel: Record<string, string> = {
+    restoration: t("verdict.scope.restoration"),
+    content_integrity: t("verdict.scope.content_integrity"),
+    stored_integrity: t("verdict.scope.stored_integrity"),
+    referential: t("verdict.scope.referential"),
+    structural: t("verdict.scope.structural"),
+  };
+  const what = r.kind === "health" ? t("verdict.health") : (byLevel[r.level] ?? t("verdict.scope.other"));
+  return t("verdict.checked", { file: r.file_name, what: what + (r.deep && r.kind !== "health" ? t("verdict.deep") : "") });
+}
+
+/**
+ * The plain-language verdict. It never reads better than the report: the
+ * success tone needs an overall PASS; a failing dimension always gives
+ * "problems"; keyless checks of an encrypted archive are never "ok"; and
+ * a report with UNKNOWN overall says what ran, not that all is well.
+ */
+export function verdict(r: ReportView): Verdict {
+  const sep = t("verdict.whereJoin");
+  const names = (pred: (d: ReportView["dimensions"][number]) => boolean) =>
+    r.dimensions
+      .filter(pred)
+      .map((d) => dimensionLabel(d.dimension))
+      .join(sep);
+  const failing = names((d) => d.status === "FAIL");
+  if (failing !== "" || r.overall_status === "FAIL") {
+    return {
+      kind: "problems",
+      tone: "fail",
+      title: t("verdict.problems"),
+      line: t("verdict.problemsLine", { where: failing || r.overall_status }),
+    };
+  }
+  if (r.operational_error) {
+    return { kind: "failed", tone: "attention", title: t("verdict.failed"), line: t("verdict.failedLine") };
+  }
+  if (r.keyless) {
+    return { kind: "keyless", tone: "attention", title: t("verdict.keyless"), line: t("verdict.keylessLine") };
+  }
+  const reduced = names((d) => d.status === "DEGRADED" || d.status === "OVERDUE");
+  if (reduced !== "") {
+    return {
+      kind: "degraded",
+      tone: "attention",
+      title: t("verdict.degraded"),
+      line: t("verdict.degradedLine", { where: reduced }),
+    };
+  }
+  const open = names((d) => d.required && d.status !== "PASS");
+  if (open !== "") {
+    return {
+      kind: "incomplete",
+      tone: "attention",
+      title: t("verdict.incomplete"),
+      line: t("verdict.incompleteLine", { where: open }),
+    };
+  }
+  if (r.overall_status === "PASS") {
+    return { kind: "ok", tone: "pass", title: t("verdict.ok"), line: t("verdict.okLine") };
+  }
+  return { kind: "ranOk", tone: "attention", title: t("verdict.ranOk"), line: t("verdict.ranOkLine") };
+}
+
+/**
  * Each item with a stable React key made from `text` (repeats get "#2", "#3",
  * … in order) and its position, for lists whose items need not be unique.
  */

@@ -1553,3 +1553,28 @@ button.recent-item {
 .context-menu hr {
   margin: 0.2rem 0;
 }
+
+/* ---- Test result verdict --------------------------------------------------- */
+.verdict {
+  border-left: 0.35rem solid var(--border);
+  padding: 0.25rem 0.75rem;
+  margin: 0 0 0.5rem;
+}
+.verdict p {
+  margin: 0.2rem 0;
+}
+.verdict-title {
+  font-size: 1.15em;
+}
+.verdict-pass {
+  border-left-color: var(--fg);
+}
+.verdict-fail {
+  border-left-color: var(--error);
+}
+.verdict-title::before {
+  content: attr(data-mark) " ";
+}
+.verdict-attention {
+  border-left-style: dashed;
+}

@@ -302,6 +302,13 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
   };
 
   const retentionUnresolved = plan?.retention?.state === "unresolved";
+  const repairRef = useRef<HTMLFieldSetElement>(null);
+  const goRepair = () => {
+    const el = repairRef.current;
+    el?.scrollIntoView?.({ block: "start" });
+    el?.querySelector<HTMLElement>("button, input")?.focus();
+  };
+
   const canApply =
     plan !== null &&
     plan.outcome !== "nothing_recoverable" &&
@@ -423,7 +430,12 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
 
       <div ref={resultRef}>
         {report && (
-          <Report report={report} onExport={() => void doExport(report)} exporting={exporting} />
+          <Report
+            report={report}
+            onExport={() => void doExport(report)}
+            exporting={exporting}
+            onRepair={goRepair}
+          />
         )}
         {health && (
           <div data-testid="health">
@@ -432,12 +444,17 @@ export function Checker({ archive, testRequest = 0 }: CheckerProps) {
               {HEALTH_NOTE}
               {t("check.recordsUsed", { n: health.records })}
             </p>
-            <Report report={health.report} onExport={() => void doExport(health.report)} exporting={exporting} />
+            <Report
+              report={health.report}
+              onExport={() => void doExport(health.report)}
+              exporting={exporting}
+              onRepair={goRepair}
+            />
           </div>
         )}
       </div>
 
-      <fieldset disabled={busy || subject === null} data-testid="repair">
+      <fieldset ref={repairRef} disabled={busy || subject === null} data-testid="repair">
         <legend>{t("check.repairLegend")}</legend>
         <Hint text={[t("check.repairIntro"), t("check.copiesIntro")]} />
         {setup.copies.length > 0 && (

@@ -290,36 +290,14 @@ test("results and progress have live regions that exist before they are used", a
   }
 });
 
-test("the self-test progress bar has a name and a spoken value", async () => {
-  backend();
-  mockIPC((cmd, args) => {
-    const a = (args ?? {}) as Record<string, unknown>;
-    if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
-    if (cmd === "watch_drops" || cmd === "watch_launches") return null;
-    if (cmd === "recent_archives") return [];
-    if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
-    if (cmd === "start_job") {
-      const ch = a.onEvent as { id: number };
-      // Deliver a progress event through Tauri's callback table.
-      const internals = (window as unknown as { __TAURI_INTERNALS__: { runCallback: (id: number, data: unknown) => void } })
-        .__TAURI_INTERNALS__;
-      queueMicrotask(() =>
-        internals.runCallback(ch.id, { index: 0, message: { event: "progress", job_id: 1, phase: "self_test", completed: 3, total: 50 } }),
-      );
-      return 1;
-    }
-    throw new Error(`unexpected command ${cmd}`);
-  });
-  const user = userEvent.setup();
-  render(<App />);
-  await openSelfTest(user);
-  await user.click(screen.getByTestId("start"));
-  const bar = await screen.findByTestId("progress");
-  expect(bar).toHaveAccessibleName("Progress");
-  expect(bar).toHaveAttribute("aria-valuetext", "Step 3 of 50");
-});
 
-/** A backend whose `start_job` hands the test the channel, to finish the job by hand. */
+type Internals = { runCallback: (id: number, data: unknown) => void };
+const tauri = () => (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+
+/**
+ * A backend whose `start_job` hands the test the channel, to drive the job by
+ * hand. The jobs here are the repair plan of the Test and repair tool.
+ */
 function jobBackend() {
   let channel: { id: number } | undefined;
   let index = 0;
@@ -329,6 +307,7 @@ function jobBackend() {
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
     if (cmd === "get_crash_settings") return { enabled: false, include_details: false, entries: 0, bytes: 0 };
+    if (cmd === "choose_check_subject") return { id: 5, file_name: "chosen.mochi", encrypted: false, unlocked: false };
     if (cmd === "start_job") {
       channel = a.onEvent as { id: number };
       return 1;
@@ -336,15 +315,34 @@ function jobBackend() {
     throw new Error(`unexpected command ${cmd}`);
   });
   return (message: unknown) => {
-    const internals = (window as unknown as { __TAURI_INTERNALS__: { runCallback: (id: number, data: unknown) => void } })
-      .__TAURI_INTERNALS__;
-    act(() => internals.runCallback(channel?.id ?? 0, { index: index++, message }));
+    act(() => tauri().runCallback(channel?.id ?? 0, { index: index++, message }));
   };
 }
 
+/** Open Test and repair from the More menu and choose an archive, as a person would. */
+async function openCheck(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId("toolbar-more"));
+  await user.click(screen.getByTestId("menu-repair"));
+  await user.click(screen.getByTestId("check-choose"));
+  await screen.findByText("chosen.mochi");
+}
+
+test("a job's progress bar has a name and a spoken value", async () => {
+  const send = jobBackend();
+  const user = userEvent.setup();
+  render(<App />);
+  await openCheck(user);
+  await user.click(screen.getByTestId("repair-plan"));
+  send({ event: "started", job_id: 1 });
+  send({ event: "progress", job_id: 1, phase: "repair-check", completed: 3, total: 50 });
+  const bar = await screen.findByRole("progressbar");
+  expect(bar).toHaveAccessibleName("Progress");
+  expect(bar).toHaveAttribute("aria-valuetext", "Reading file versions: 3 of 50");
+});
+
 /** Put focus on the page body, as a browser does when the focused control becomes disabled. */
 function loseFocus() {
-  const heading = document.getElementById("self-test-heading");
+  const heading = document.getElementById("check-heading");
   heading?.focus(); // moves focus off the (disabled) button, which jsdom will not blur directly
   heading?.blur();
   expect(document.activeElement).toBe(document.body);
@@ -361,18 +359,12 @@ function spyOnFocus() {
   return { given, stop: () => (HTMLElement.prototype.focus = original) };
 }
 
-/** Open the self-test from the More menu, as a person would. */
-async function openSelfTest(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByTestId("toolbar-more"));
-  await user.click(screen.getByTestId("menu-self-test"));
-}
-
 test("when a job ends, focus goes back to the button that started it", async () => {
   const finish = jobBackend();
   const user = userEvent.setup();
   render(<App />);
-  await openSelfTest(user);
-  const start = screen.getByTestId("start");
+  await openCheck(user);
+  const start = screen.getByTestId("repair-plan");
   start.focus();
   const spy = spyOnFocus();
   try {
@@ -380,8 +372,8 @@ test("when a job ends, focus goes back to the button that started it", async () 
     finish({ event: "started", job_id: 1 });
     expect(start).toBeDisabled();
     loseFocus(); // a browser drops focus from a control that becomes disabled; jsdom does not
-    finish({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "done" } });
-    await waitFor(() => expect(screen.getByTestId("start")).toBeEnabled());
+    finish({ event: "finished", job_id: 1, outcome: { status: "cancelled" } });
+    await waitFor(() => expect(screen.getByTestId("repair-plan")).toBeEnabled());
     await waitFor(() => expect(spy.given).toContain(start));
     expect(focused()).toBe(start);
   } finally {
@@ -393,8 +385,8 @@ test("…but focus the user moved elsewhere in the meantime is left alone", asyn
   const finish = jobBackend();
   const user = userEvent.setup();
   render(<App />);
-  await openSelfTest(user);
-  const start = screen.getByTestId("start");
+  await openCheck(user);
+  const start = screen.getByTestId("repair-plan");
   start.focus();
   await user.keyboard("{Enter}");
   finish({ event: "started", job_id: 1 });
@@ -403,8 +395,8 @@ test("…but focus the user moved elsewhere in the meantime is left alone", asyn
   link.focus();
   const spy = spyOnFocus();
   try {
-    finish({ event: "finished", job_id: 1, outcome: { status: "completed", summary: "done" } });
-    await waitFor(() => expect(screen.getByTestId("start")).toBeEnabled());
+    finish({ event: "finished", job_id: 1, outcome: { status: "cancelled" } });
+    await waitFor(() => expect(screen.getByTestId("repair-plan")).toBeEnabled());
     expect(spy.given).not.toContain(start);
     expect(focused()).toBe(link);
   } finally {
