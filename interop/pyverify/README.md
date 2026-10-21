@@ -161,7 +161,7 @@ No general-purpose CBOR library is used: the codec is `cbor.py`. SQLite is the s
 `sqlite3`; the images are opened only from a temporary file, read-only. The verifier needs SQLite 3.37
 or later (`STRICT` tables). `tarfile` is the standard library's.
 
-The verifier itself is offered under the repository's licence (MIT OR Apache-2.0).
+The verifier itself is offered under the repository's licence (MIT).
 
 ## What it does not do
 
