@@ -380,14 +380,14 @@ function Assert-Registrations([bool]$foreign) {
   if ($dlls.Count -ne 1) { Fail "expected one mochi-shellext-<version>.dll in $InstallDir, found $($dlls.Count)" }
   $inproc = Get-ClassDefault $userClasses "Software\Classes\CLSID\$shellExtClsid\InprocServer32"
   if ($inproc -ne $dlls[0].FullName) { Fail "InprocServer32 is '$inproc', expected '$($dlls[0].FullName)'" }
-  foreach ($class in '*', 'Directory') {
+  foreach ($class in '*', 'Directory', 'Directory\Background') {
     $h = Get-ClassDefault $userClasses "Software\Classes\$class\shellex\ContextMenuHandlers\MOCHI"
     if ($h -ne $shellExtClsid) { Fail "$class has context-menu handler '$h', expected $shellExtClsid" }
   }
   foreach ($old in $legacyMenuKeys) {
     if ($userClasses.OpenSubKey("Software\Classes\$old")) { Fail "old menu key still registered: $old" }
   }
-  $notes += "3 flat .mochi verbs with expected text and commands; shell extension $($dlls[0].Name) registered for * and Directory; no MochiMenu cascade"
+  $notes += "3 flat .mochi verbs with expected text and commands; shell extension $($dlls[0].Name) registered for *, Directory and Directory\Background; no MochiMenu cascade"
   $notes -join '; '
 }
 

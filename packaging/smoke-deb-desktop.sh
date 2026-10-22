@@ -50,13 +50,23 @@ else
   finish
 fi
 exe=$(dpkg -L mochi | grep -E '^/usr/bin/' | grep -v mochi-foreign-helper | head -1)
-desktop=$(dpkg -L mochi | grep -E '^/usr/share/applications/.*\.desktop$' | head -1)
+desktop=$(dpkg -L mochi | grep -E '^/usr/share/applications/.*\.desktop$' | grep -v '/mochi-find\.desktop$' | head -1)
 desktop_id=$(basename "$desktop")
+find_desktop=/usr/share/applications/mochi-find.desktop
+find_kde=/usr/share/kio/servicemenus/mochi-find.desktop
+find_nemo=/usr/share/nemo/actions/mochi-find.nemo_action
 if [ -x "$exe" ] && [ -x /usr/bin/mochi-foreign-helper ] && [ -f "$desktop" ] && [ -f /usr/share/mime/packages/mochi.xml ] \
    && [ -f /usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt ]; then
   rec U-FILES PASS "$exe, /usr/bin/mochi-foreign-helper, $desktop, the mime package and the license list are installed"
 else
   rec U-FILES FAIL "an expected file is missing: exe=$exe desktop=$desktop"
+fi
+
+# MOCHI Find: the launcher for folders, the Dolphin service menu and the Nemo action are installed.
+if [ -f "$find_desktop" ] && [ -f "$find_kde" ] && [ -f "$find_nemo" ]; then
+  rec U-FIND-FILES PASS "$find_desktop, $find_kde and $find_nemo are installed"
+else
+  rec U-FIND-FILES FAIL "missing: $(for f in "$find_desktop" "$find_kde" "$find_nemo"; do [ -e "$f" ] || echo "$f"; done | tr '\n' ' ')"
 fi
 
 # ---- the desktop's view of the type and "Open with" ----------------------------------------------
@@ -110,6 +120,29 @@ if [ -n "$byorder" ]; then
 fi
 [ -n "$only" ] && rec U-DEFAULT-ONLY INFO "MOCHI is the only registered handler here for:$only"
 
+# Find registers inode/directory so that it is listed under "Open With" for a folder. It must
+# never become the program that opens folders: if a defaults list names another program,
+# that one wins (the package ships no defaults list); if none does, report the fallback.
+if grep -q "^inode/directory=.*mochi-find.desktop" /usr/share/applications/mimeinfo.cache 2>/dev/null; then
+  rec U-FIND-MIME PASS "mimeinfo.cache offers mochi-find.desktop for inode/directory"
+else
+  rec U-FIND-MIME FAIL "mochi-find.desktop is not registered for inode/directory in mimeinfo.cache"
+fi
+fdef=$(xdg-mime query default inode/directory 2>/dev/null)
+fexpl=$(explicit_default inode/directory)
+fothers=$(grep "^inode/directory=" /usr/share/applications/mimeinfo.cache 2>/dev/null | cut -d= -f2 | tr ';' '\n' | grep -v '^$' | grep -vx mochi-find.desktop | head -1)
+if [ "$fdef" = mochi-find.desktop ]; then
+  if [ -n "$fexpl" ]; then
+    rec U-FIND-NO-DEFAULT FAIL "mochi-find.desktop is the default for folders although a defaults list names $fexpl"
+  elif [ -n "$fothers" ]; then
+    rec U-FIND-NO-DEFAULT INFO "no defaults list names a folder handler here, so the first handler in mimeinfo.cache (mochi-find.desktop, before $fothers) is the default. On a real desktop its own defaults list decides: check that double-clicking a folder still opens the file manager (runbook U-04)."
+  else
+    rec U-FIND-NO-DEFAULT INFO "mochi-find.desktop is the only registered folder handler on this machine"
+  fi
+else
+  rec U-FIND-NO-DEFAULT PASS "folders open with '${fdef:-nothing registered}', not with mochi-find.desktop"
+fi
+
 # ---- start through the launcher, under Xvfb and a session bus --------------------------------------
 cat > "$work/session.sh" <<'EOS'
 #!/usr/bin/env bash
@@ -145,11 +178,21 @@ if [ "${n2:-0}" = 1 ] && [ "$nw" = 1 ]; then
 else
   s U-SINGLE-INSTANCE FAIL "after a second open: $n2 mochi-desktop process(es), $nw window(s)"
 fi
+# MOCHI Find: the folder launcher goes to the running window (single instance) and starts nothing new.
+find_desktop=$4; folder=$5
+gio launch "$find_desktop" "$folder" >> /tmp/mochi-launch.log 2>&1
+sleep 6
+n3=$(count); nw3=$(xdotool search --onlyvisible --name 'MOCHI' 2>/dev/null | wc -l)
+if [ "${n3:-0}" = 1 ] && [ "$nw3" = 1 ]; then
+  s U-FIND-LAUNCH PASS "the Find launcher with a folder went to the running window: 1 process, 1 window"
+else
+  s U-FIND-LAUNCH FAIL "after the Find launcher: $n3 mochi-desktop process(es), $nw3 window(s)"
+fi
 pkill -x mochi-desktop 2>/dev/null; sleep 3
 EOS
 chmod +x "$work/session.sh"
 # shellcheck disable=SC2016
-sess=$(dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' "$work/session.sh" "$desktop" "$archive" "$archive2" 2>&1)
+sess=$(dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' "$work/session.sh" "$desktop" "$archive" "$archive2" "$find_desktop" "$tricky" 2>&1)
 echo "$sess"
 saw=0
 while IFS= read -r l; do
@@ -165,7 +208,7 @@ rec U-USERDATA INFO "user data created by running the app: ${ud:-none}"
 
 # ---- remove ------------------------------------------------------------------------------------------
 sudo apt-get remove -y mochi 2>&1 | tee "$logs/remove.log" > /dev/null || { tail -5 "$logs/remove.log"; rec U-REMOVE FAIL "apt remove failed"; }
-left=$(for f in "$exe" /usr/bin/mochi-foreign-helper "$desktop" /usr/share/mime/packages/mochi.xml /usr/share/doc/mochi; do [ -e "$f" ] && echo "$f"; done)
+left=$(for f in "$exe" /usr/bin/mochi-foreign-helper "$desktop" "$find_desktop" "$find_kde" "$find_nemo" /usr/share/mime/packages/mochi.xml /usr/share/doc/mochi; do [ -e "$f" ] && echo "$f"; done)
 if [ -z "$left" ]; then rec U-REMOVE PASS "after apt remove the app, helper, .desktop file, mime package and documentation are gone"
 else rec U-REMOVE FAIL "still present after apt remove: $left"; fi
 mt2=$(ctype "$archive")

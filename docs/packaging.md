@@ -122,6 +122,21 @@ needs GDI code for little gain). Selections whose command line could not fit in 
 in a signed sparse package) stays 1.x because there is no code-signing certificate: on
 Windows 11 both entries sit under "Show more options" (Shift+F10).
 
+**The Find entry (MOCHI Find).** When the selection contains a folder, the DLL adds a third
+entry, "Find in MOCHI archives" (`mochi-desktop --find -- FOLDER...`; only the folders of
+the selection are passed, files are left out), and it is the only entry on the empty space
+of an open folder (`Directory\Background\shellex\ContextMenuHandlers\MOCHI`, which resolves the
+folder with `SHGetPathFromIDListW`; a virtual folder or a path past 260 characters shows
+nothing). The app validates the paths like every launch (`launch.rs`), holds the folders in
+Rust, opens the main window's Find tool and scans them for `.mochi` archives, opening each
+read-only and searching the names in its head snapshot. The Linux counterpart is
+`packaging/linux/mochi-find.desktop` (an "Open With" / launcher entry for folders running
+`mochi-desktop --find -- %F`), plus a Dolphin service menu and a Nemo action; GNOME Files has
+no scriptable right-click entry without a Python extension, so there it is under "Open With
+Other Application". `smoke-deb.sh` checks all three files. There is no `mochi find` command:
+spec §23 fixes the 1.0 command surface, so a multi-archive search on the command line needs a
+spec and plan change.
+
 **A loaded DLL cannot be replaced.** Explorer keeps a shell extension loaded, so the
 installer never overwrites it: the file name carries the app version, the registration
 points at it, an older DLL is deleted if it can be, and a locked one is renamed aside (a

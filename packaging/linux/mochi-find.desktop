@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=Find in MOCHI archives
+Name[th]=ค้นหาในไฟล์เก็บถาวร MOCHI
+Name[zh_CN]=在 MOCHI 压缩文件中查找
+Comment=Search the file names inside every MOCHI archive in the chosen folders
+Comment[th]=ค้นหาชื่อไฟล์ภายในไฟล์เก็บถาวร MOCHI ทุกไฟล์ในโฟลเดอร์ที่เลือก
+Comment[zh_CN]=在所选文件夹中的每个 MOCHI 压缩文件里查找文件名
+Keywords=MOCHI;archive;search;find;
+Categories=Utility;
+# MOCHI Find (the "Find in MOCHI archives" window): `--find` takes the folders to scan
+# (none: the window opens and asks). A file manager passes the selected folders as %F.
+# Registering inode/directory is what lists this under "Open With" for a folder; it never
+# sets a default (the package ships no defaults list: smoke-deb.sh), and the system's own
+# folder handler (the file manager) stays in charge. KDE's Dolphin and Cinnamon's Nemo get
+# a real right-click entry from mochi-find-servicemenu.desktop and mochi-find.nemo_action.
+Exec=mochi-desktop --find -- %F
+Icon=mochi-desktop
+StartupWMClass=mochi-desktop
+Terminal=false
+MimeType=inode/directory;

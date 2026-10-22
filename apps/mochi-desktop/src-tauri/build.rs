@@ -71,6 +71,14 @@ fn main() {
         "show_in_folder",
         "drag_out",
         "drag_out_foreign",
+        "find_scopes",
+        "find_choose_folders",
+        "find_remove_scope",
+        "find_start",
+        "find_cancel",
+        "find_query",
+        "find_open_hit",
+        "find_show_folder",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

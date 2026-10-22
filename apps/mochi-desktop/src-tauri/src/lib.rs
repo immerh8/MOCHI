@@ -15,6 +15,7 @@ pub mod crashlog;
 mod d5_tests;
 pub mod dragout;
 pub mod extract;
+pub mod find;
 pub mod foreign;
 pub mod formats;
 pub mod help;
@@ -53,6 +54,7 @@ pub fn run() -> Result<(), tauri::Error> {
         checks: Arc::clone(&checks),
         updates: Arc::clone(&updates),
     }));
+    let finder = Arc::new(find::Finder::default());
     let quick = quick::Quick::new();
     let launches = Arc::new(launch::Launches::new(
         Arc::clone(&archives),
@@ -60,6 +62,7 @@ pub fn run() -> Result<(), tauri::Error> {
         Arc::clone(&foreign),
         Arc::clone(&quick),
     ));
+    launches.set_finder(Arc::clone(&finder));
     let window_staging = Arc::clone(&staging);
     let window_drops = Arc::clone(&drops);
     let second_launches = Arc::clone(&launches);
@@ -96,6 +99,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(updates)
         .manage(recents)
         .manage(quick)
+        .manage(finder)
         .on_window_event(move |window, event| {
             // Items dragged from the file manager arrive here, in Rust. Only
             // the main window takes them: the compact window is not an add
@@ -166,6 +170,14 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::export_crash_log,
             commands::clear_crash_log,
             commands::open_user_guide,
+            find::find_scopes,
+            find::find_choose_folders,
+            find::find_remove_scope,
+            find::find_start,
+            find::find_cancel,
+            find::find_query,
+            find::find_open_hit,
+            find::find_show_folder,
             dragout::drag_out,
             dragout::drag_out_foreign
         ])

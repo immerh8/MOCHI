@@ -21,9 +21,12 @@
 ;                        COM DLL, in-process, registered per user): on every file and
 ;                        folder, "Add to archive..." (--add) and a label that changes with
 ;                        the selection, Add to "<Name>.mochi" (--add-now; <Name> is what
-;                        the app will name the archive, WinRAR style). Registered as
-;                        HKCU\Software\Classes\CLSID\{...}\InprocServer32 (ThreadingModel
-;                        Apartment) and ContextMenuHandlers\MOCHI under "*" and "Directory".
+;                        the app will name the archive, WinRAR style); and, when the
+;                        selection holds a folder, "Find in MOCHI archives" (--find, given
+;                        the folders only; also alone on a folder's background). Registered
+;                        as HKCU\Software\Classes\CLSID\{...}\InprocServer32 (ThreadingModel
+;                        Apartment) and ContextMenuHandlers\MOCHI under "*", "Directory"
+;                        and "Directory\Background".
 ;                        The DLL starts the app with the paths of the whole selection in
 ;                        ONE process; it parses nothing and writes nothing itself.
 ;                     2. Three static verbs on .mochi files only (flat, next to the above):
@@ -94,6 +97,8 @@
   WriteRegStr HKCU "${MOCHI_CLASSES}\CLSID\${MOCHI_SHELLEXT_CLSID}\InprocServer32" "ThreadingModel" "Apartment"
   WriteRegStr HKCU "${MOCHI_CLASSES}\*\shellex\ContextMenuHandlers\MOCHI" "" "${MOCHI_SHELLEXT_CLSID}"
   WriteRegStr HKCU "${MOCHI_CLASSES}\Directory\shellex\ContextMenuHandlers\MOCHI" "" "${MOCHI_SHELLEXT_CLSID}"
+  ; The empty space of an open folder: only "Find in MOCHI archives" is offered there.
+  WriteRegStr HKCU "${MOCHI_CLASSES}\Directory\Background\shellex\ContextMenuHandlers\MOCHI" "" "${MOCHI_SHELLEXT_CLSID}"
 !macroend
 
 !macro MochiUnregisterShellExt
@@ -103,6 +108,10 @@
   DeleteRegKey HKCU "${MOCHI_CLASSES}\Directory\shellex\ContextMenuHandlers\MOCHI"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\shellex\ContextMenuHandlers"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\shellex"
+  DeleteRegKey HKCU "${MOCHI_CLASSES}\Directory\Background\shellex\ContextMenuHandlers\MOCHI"
+  DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\Background\shellex\ContextMenuHandlers"
+  DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\Background\shellex"
+  DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\Background"
   DeleteRegKey HKCU "${MOCHI_CLASSES}\CLSID\${MOCHI_SHELLEXT_CLSID}"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\CLSID"
 !macroend
@@ -232,6 +241,7 @@
   ; Parent keys this created (never removed if anything else lives in them).
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\SystemFileAssociations"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\*"
+  DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory\Background"
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\Directory"
 
   ; Tauri's APP_UNASSOCIATE restores the previous default (empty if none) and

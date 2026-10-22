@@ -54,6 +54,8 @@
 //!   --extract-to-folder     quick: extract PATH into a new folder named for it
 //!   --add                   quick: the Add form for PATH... (name, format, OK)
 //!   --add-now               quick: add PATH... to a new archive next to it
+//!   --find                  MOCHI Find: search the names inside every .mochi under
+//!                           the folders PATH... (none: open Find as it was left)
 //! ```
 //!
 //! `--` ends the options, so a path that starts with `-` is still a path.
@@ -62,7 +64,7 @@ use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -70,6 +72,7 @@ use ts_rs::TS;
 
 use crate::browse::Archives;
 use crate::extract::Destination;
+use crate::find::Finder;
 use crate::foreign::Foreign;
 use crate::ipc::{ArchiveSummary, ForeignArchiveSummary, IpcError};
 use crate::quick::{MainPort, Quick, QuickAction, QuickJob};
@@ -96,6 +99,9 @@ pub enum Verb {
     ExtractToFolder,
     Add,
     AddNow,
+    /// MOCHI Find: search the file names inside every `.mochi` archive under
+    /// the given folders. Opens the main window's Find tool; not a quick verb.
+    Find,
 }
 
 impl Verb {
@@ -116,6 +122,7 @@ impl Verb {
             "--extract-to-folder" => Verb::ExtractToFolder,
             "--add" => Verb::Add,
             "--add-now" => Verb::AddNow,
+            "--find" => Verb::Find,
             _ => return None,
         })
     }
@@ -209,7 +216,7 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
                 };
                 if verb.is_some() {
                     return refuse(
-                        "only one of --open, --extract-here, --extract-to-folder, --add, --add-now",
+                        "only one of --open, --extract-here, --extract-to-folder, --add, --add-now, --find",
                     );
                 }
                 verb = Some(v);
@@ -224,6 +231,8 @@ pub fn parse<S: AsRef<OsStr>>(args: &[S], cwd: &Path) -> Result<Option<Launch>, 
     let verb = verb.unwrap_or(Verb::Open);
     match (verb, paths.len()) {
         (_, 0) if args.is_empty() => Ok(None),
+        // Find without a folder (the app-menu launcher) opens the Find tool.
+        (Verb::Find, _) => Ok(Some(Launch { verb, paths })),
         (_, 0) => refuse("the command needs a path"),
         (Verb::Add | Verb::AddNow, _) | (_, 1) => Ok(Some(Launch { verb, paths })),
         _ => refuse("one archive at a time: give a single path"),
@@ -268,6 +277,10 @@ pub enum LaunchEvent {
     /// remembers the file; the window asks and retries with the password, which
     /// crosses IPC once, in that call.
     ForeignPassword { wrong: bool },
+    /// MOCHI Find was asked for (`--find`). Rust holds the folders (`folders`
+    /// of them, possibly none); the window opens the Find tool and, when there
+    /// are folders, starts the scan. No path crosses.
+    Find { folders: u32 },
     /// The launch could not be carried out, in one sentence.
     Problem { message: String },
 }
@@ -291,6 +304,8 @@ struct Inner {
     foreign: Arc<Foreign>,
     quick: Arc<Quick>,
     delivery: Mutex<Delivery>,
+    /// MOCHI Find's folders and scan; set once at start-up (`set_finder`).
+    finder: OnceLock<Arc<Finder>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -339,6 +354,7 @@ impl Launches {
             foreign,
             quick,
             delivery: Mutex::default(),
+            finder: OnceLock::new(),
         });
         let (quick_tx, quick_rx) = channel::<QuickJob>();
         let quick_worker = Arc::clone(&inner);
@@ -395,6 +411,12 @@ impl Launches {
             inner,
             queue: Mutex::new(tx),
         }
+    }
+
+    /// Give `--find` the Find state it sets the folders of. Once; later calls
+    /// change nothing.
+    pub fn set_finder(&self, finder: Arc<Finder>) {
+        let _ = self.inner.finder.set(finder);
     }
 
     /// Queue a launch (or its refusal) to be handled. No arguments: nothing
@@ -517,6 +539,7 @@ impl Inner {
                     paths: launch.paths,
                 });
             }
+            Verb::Find => self.find(&launch.paths),
             Verb::Open => {
                 // `parse` guarantees exactly one path for these verbs.
                 if let Some(path) = launch.paths.first() {
@@ -541,6 +564,26 @@ impl Inner {
                 });
             }
         }
+    }
+
+    /// `--find`: take the folders (when any were given) and tell the window to
+    /// open Find. A path that is not an existing folder is left out; if none is
+    /// left the current folders are kept and the problem is said.
+    fn find(&self, paths: &[PathBuf]) {
+        let Some(finder) = self.finder.get() else {
+            return self.problem("MOCHI Find is not available.");
+        };
+        if !paths.is_empty() {
+            if let Err(e) = finder.set_scopes(paths.to_vec()) {
+                return self.problem(format!(
+                    "MOCHI Find needs a folder to search: {}.",
+                    e.message
+                ));
+            }
+        }
+        self.emit(LaunchEvent::Find {
+            folders: u32::try_from(finder.scopes().len()).unwrap_or(u32::MAX),
+        });
     }
 
     fn open(&self, path: &Path) {
@@ -788,6 +831,46 @@ mod tests {
         );
         assert!(Verb::ExtractHere.is_quick() && Verb::ExtractToFolder.is_quick());
         assert!(Verb::AddNow.is_quick());
+    }
+
+    #[test]
+    fn find_takes_any_number_of_folders_and_none_opens_the_tool() {
+        let a = abs("music").to_string_lossy().into_owned();
+        let b = abs("photos").to_string_lossy().into_owned();
+        let l = parsed(&["--find", "--", &a, &b]).unwrap().unwrap();
+        assert_eq!(l.verb, Verb::Find);
+        assert_eq!(l.paths, vec![abs("music"), abs("photos")]);
+        // The Linux launcher's `%F` can expand to nothing, with or without `--`.
+        for args in [&["--find"][..], &["--find", "--"][..]] {
+            let l = parsed(args).unwrap().unwrap();
+            assert_eq!((l.verb, l.paths.len()), (Verb::Find, 0));
+        }
+        // A relative folder is resolved against the launcher's directory.
+        let l = parsed(&["--find", "--", "docs"]).unwrap().unwrap();
+        assert_eq!(l.paths, vec![cwd().join("docs")]);
+        // A folder named like an option stays a path after `--`.
+        let l = parsed(&["--find", "--", "-rf"]).unwrap().unwrap();
+        assert_eq!(l.paths, vec![cwd().join("-rf")]);
+        assert!(!Verb::Find.is_quick(), "Find uses the main window");
+        // It does not combine with another verb, and the strict checks still apply.
+        assert!(parsed(&["--find", "--add", &a]).is_err());
+        assert!(parsed(&["--open", "--find", &a]).is_err());
+        assert!(parsed(&["--find", "--passphrase=hunter2"]).is_err());
+        assert!(parsed(&["--find=1", &a]).is_err());
+        assert!(parsed(&["--FIND", &a]).is_err());
+        assert!(parsed(&["--find", ""]).is_err(), "an empty path");
+        assert!(parsed(&["--find", "a\0b"]).is_err(), "a NUL");
+        let device = r"\\.\pipe\x";
+        assert!(parsed(&["--find", "--", device]).is_err(), "a device path");
+        let long = "a".repeat(MAX_PATH_BYTES + 1);
+        assert!(parsed(&["--find", "--", &long]).is_err());
+        assert!(parse(&["--find", "--", "rel"], Path::new("")).is_err());
+        let many: Vec<String> = (0..=MAX_STAGED)
+            .map(|i| abs(&format!("d{i}")).to_string_lossy().into_owned())
+            .collect();
+        let mut args = vec!["--find", "--"];
+        args.extend(many.iter().map(String::as_str));
+        assert!(parse(&args, &cwd()).is_err(), "too many folders");
     }
 
     #[test]
@@ -1159,6 +1242,70 @@ mod tests {
         assert!(l.inner.destination.get().is_none());
         // Opening is read-only: nothing was extracted.
         assert!(!dir.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn find_sets_the_folders_in_rust_and_tells_the_window_only_how_many() {
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one");
+        let two = dir.path().join("two");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let l = launches();
+        let finder = Arc::new(Finder::default());
+        l.set_finder(Arc::clone(&finder));
+        let sink = Sink::live();
+        l.watch(sink.clone());
+
+        l.handle_now(Ok(Launch {
+            verb: Verb::Find,
+            paths: vec![one.clone(), two.clone(), file.clone()],
+        }));
+        assert_eq!(sink.events(), vec![LaunchEvent::Find { folders: 2 }]);
+        let shown: Vec<String> = finder.scopes().into_iter().map(|s| s.path).collect();
+        assert_eq!(
+            shown,
+            vec![one.display().to_string(), two.display().to_string()],
+            "a file among the paths is left out"
+        );
+
+        // No folder: the folders stay as they were and the tool opens.
+        l.handle_now(Ok(Launch {
+            verb: Verb::Find,
+            paths: Vec::new(),
+        }));
+        assert_eq!(
+            sink.events().last(),
+            Some(&LaunchEvent::Find { folders: 2 })
+        );
+
+        // Nothing usable: said as a problem, the folders are kept.
+        l.handle_now(Ok(Launch {
+            verb: Verb::Find,
+            paths: vec![file, dir.path().join("missing")],
+        }));
+        assert!(matches!(
+            sink.events().last(),
+            Some(LaunchEvent::Problem { message }) if message.contains("needs a folder")
+        ));
+        assert_eq!(finder.scopes().len(), 2);
+    }
+
+    #[test]
+    fn find_without_a_finder_is_a_problem_not_a_crash() {
+        let l = launches();
+        let sink = Sink::live();
+        l.watch(sink.clone());
+        l.handle_now(Ok(Launch {
+            verb: Verb::Find,
+            paths: Vec::new(),
+        }));
+        assert!(matches!(
+            sink.events().as_slice(),
+            [LaunchEvent::Problem { .. }]
+        ));
     }
 
     #[test]

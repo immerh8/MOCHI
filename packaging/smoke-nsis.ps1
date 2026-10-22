@@ -44,6 +44,7 @@ $verbKeys = @(
   "CLSID\$clsid",
   "*\shellex\ContextMenuHandlers\MOCHI",
   "Directory\shellex\ContextMenuHandlers\MOCHI",
+  "Directory\Background\shellex\ContextMenuHandlers\MOCHI",
   "SystemFileAssociations\.mochi\shell\MochiOpen",
   "SystemFileAssociations\.mochi\shell\MochiExtractHere",
   "SystemFileAssociations\.mochi\shell\MochiExtractToFolder"
@@ -161,7 +162,8 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   if ($inproc -ne $dll) { Fail "InprocServer32 is '$inproc', expected '$dll'" }
   $ik = $classes.OpenSubKey("Software\Classes\CLSID\$clsid\InprocServer32")
   try { if ($ik.GetValue("ThreadingModel") -ne "Apartment") { Fail "ThreadingModel is not Apartment" } } finally { $ik.Close() }
-  foreach ($class in "*", "Directory") {
+  # "Directory\Background" is the empty space of an open folder (the Find entry only).
+  foreach ($class in "*", "Directory", "Directory\Background") {
     $h = Get-ClassDefault "$class\shellex\ContextMenuHandlers\MOCHI"
     if ($h -ne $clsid) { Fail "$class has context-menu handler '$h', expected $clsid" }
   }

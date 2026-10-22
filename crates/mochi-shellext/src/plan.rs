@@ -1,5 +1,12 @@
-//! What the two menu entries say and run. Pure: no Windows types, so the rules
+//! What the menu entries say and run. Pure: no Windows types, so the rules
 //! are tested on every platform.
+//!
+//! Three entries exist. "Add to archive..." and Add to "<Name>.mochi" appear for
+//! any selection. "Find in MOCHI archives" (`--find`) appears only when the
+//! selection contains a folder (it searches the names inside every `.mochi` under
+//! the folders, and is given only the folders), and on a folder's background
+//! (right-click on the empty space of an open folder: that folder alone, with no
+//! "Add" entries).
 //!
 //! The label of "Add to <Name>.mochi" must match the archive that
 //! `mochi-desktop --add-now` makes (`quick::add_target` in the desktop app):
@@ -17,6 +24,9 @@ pub const MAX_LABEL_NAME: usize = 40;
 
 /// English text of the panel entry.
 pub const PANEL_LABEL: &str = "Add to archive...";
+
+/// English text of the Find entry.
+pub const FIND_LABEL: &str = "Find in MOCHI archives";
 
 /// The language of the menu text. Chosen from the Windows display language
 /// (`shell.rs`), the same three languages the app ships; anything else is English.
@@ -48,6 +58,15 @@ impl Lang {
         }
     }
 
+    /// Text of the Find entry (searches the file names inside `.mochi` archives).
+    pub fn find_label(self) -> &'static str {
+        match self {
+            Lang::En => FIND_LABEL,
+            Lang::Th => "ค้นหาในไฟล์เก็บถาวร MOCHI",
+            Lang::ZhCn => "在 MOCHI 压缩文件中查找",
+        }
+    }
+
     /// Text before and after the archive name of the second entry.
     fn add_now_frame(self) -> (&'static str, &'static str) {
         match self {
@@ -61,23 +80,27 @@ impl Lang {
 /// Verbs of the entry, as the app's command line spells them (`launch.rs`).
 pub const VERB_PANEL: &str = "--add";
 pub const VERB_NOW: &str = "--add-now";
+pub const VERB_FIND: &str = "--find";
 
 /// Command-string verbs for `IContextMenu::GetCommandString` (not shown to users).
 pub const CANONICAL_PANEL: &str = "MochiAdd";
 pub const CANONICAL_NOW: &str = "MochiAddNow";
+pub const CANONICAL_FIND: &str = "MochiFind";
 
-/// One selected item.
+/// One selected item. `is_dir` is whether it is a folder (the shell extension
+/// asks the file system for each item, up to a limit; beyond it, `false`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub path: PathBuf,
     pub is_dir: bool,
 }
 
-/// Command offsets of the two entries (added to the first id the shell grants).
+/// Command offsets of the entries (added to the first id the shell grants).
 pub const CMD_PANEL: u32 = 0;
 pub const CMD_NOW: u32 = 1;
-/// Number of ids the handler uses.
-pub const CMD_COUNT: u32 = 2;
+pub const CMD_FIND: u32 = 2;
+/// Number of ids the handler asks the shell for (the most it can use).
+pub const CMD_COUNT: u32 = 3;
 
 /// One menu row: its command offset and its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +127,42 @@ pub fn menu_entries(items: &[Item], lang: Lang) -> Vec<Entry> {
             label: add_now_label(items, lang),
         },
     ]
+}
+
+/// The Find row, if the items hold a folder.
+pub fn find_entry(items: &[Item], lang: Lang) -> Option<Entry> {
+    items.iter().any(|i| i.is_dir).then(|| Entry {
+        offset: CMD_FIND,
+        label: lang.find_label().to_owned(),
+    })
+}
+
+/// Every row for a menu, in the order inserted: the two Add rows then Find for a
+/// selection; Find alone on a folder's background (where "Add" would act on
+/// nothing the user selected). `items` is the selection, or the one folder.
+pub fn menu_rows(items: &[Item], lang: Lang, background: bool) -> Vec<Entry> {
+    let mut rows = if background {
+        Vec::new()
+    } else {
+        menu_entries(items, lang)
+    };
+    rows.extend(find_entry(items, lang));
+    rows
+}
+
+/// The ids a set of rows uses: one more than the highest offset (what
+/// `QueryContextMenu` returns), 0 for none.
+pub fn ids_used(rows: &[Entry]) -> u32 {
+    rows.iter().map(|r| r.offset + 1).max().unwrap_or(0)
+}
+
+/// What Find is given: the folders among `items`, in order. Files are not passed.
+pub fn find_paths(items: &[Item]) -> Vec<PathBuf> {
+    items
+        .iter()
+        .filter(|i| i.is_dir)
+        .map(|i| i.path.clone())
+        .collect()
 }
 
 /// The archive's name, without `.mochi`, exactly as the app chooses it.
@@ -172,7 +231,7 @@ mod tests {
     #[test]
     fn two_top_level_entries_adjacent_and_in_order() {
         let rows = menu_entries(&[file("/x/notes.txt")], Lang::En);
-        assert_eq!(rows.len() as u32, CMD_COUNT);
+        assert_eq!(rows.len(), 2, "Find is separate: no folder is selected");
         assert_eq!(rows[0].offset, CMD_PANEL);
         assert_eq!(rows[0].label, "Add to archive...");
         assert_eq!(rows[1].offset, CMD_NOW);
@@ -244,6 +303,91 @@ mod tests {
             "Add to \"\".mochi".len() + MAX_LABEL_NAME
         );
         assert!(label.contains('\u{2026}'));
+    }
+
+    #[test]
+    fn find_appears_only_when_the_selection_holds_a_folder() {
+        let rows = |items: &[Item]| menu_rows(items, Lang::En, false);
+        let labels =
+            |items: &[Item]| -> Vec<String> { rows(items).into_iter().map(|r| r.label).collect() };
+        // Files only: the two Add rows, no Find.
+        assert_eq!(
+            labels(&[file("/x/a.txt"), file("/x/b.txt")]),
+            ["Add to archive...", "Add to \"x.mochi\""]
+        );
+        // One folder: both Add rows and Find, Find last, at offset 2.
+        let one = rows(&[dir("/x/photos")]);
+        assert_eq!(
+            one.iter().map(|r| r.offset).collect::<Vec<_>>(),
+            [CMD_PANEL, CMD_NOW, CMD_FIND]
+        );
+        assert_eq!(one[2].label, "Find in MOCHI archives");
+        // Several folders, or folders among files, show Find once.
+        assert_eq!(rows(&[dir("/x/a"), dir("/x/b")]).len(), 3);
+        assert_eq!(rows(&[file("/x/a.txt"), dir("/x/b")]).len(), 3);
+        // No items, no rows.
+        assert!(rows(&[]).is_empty());
+        assert!(find_entry(&[file("/x/a.txt")], Lang::En).is_none());
+    }
+
+    #[test]
+    fn on_a_folders_background_only_find_is_offered() {
+        let rows = menu_rows(&[dir("/x/open-folder")], Lang::En, true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].offset, CMD_FIND);
+        assert_eq!(rows[0].label, "Find in MOCHI archives");
+        // A background with no folder resolved shows nothing.
+        assert!(menu_rows(&[], Lang::En, true).is_empty());
+        assert!(menu_rows(&[file("/x/a.txt")], Lang::En, true).is_empty());
+    }
+
+    #[test]
+    fn ids_used_covers_the_highest_row() {
+        assert_eq!(ids_used(&[]), 0);
+        assert_eq!(ids_used(&menu_rows(&[file("/x/a")], Lang::En, false)), 2);
+        assert_eq!(ids_used(&menu_rows(&[dir("/x/a")], Lang::En, false)), 3);
+        assert_eq!(ids_used(&menu_rows(&[dir("/x/a")], Lang::En, true)), 3);
+        assert!(ids_used(&menu_rows(&[dir("/x/a")], Lang::En, false)) <= CMD_COUNT);
+    }
+
+    #[test]
+    fn find_is_given_the_folders_only() {
+        let items = [
+            file("/x/a.txt"),
+            dir("/x/d1"),
+            file("/x/b.txt"),
+            dir("/x/d2"),
+        ];
+        assert_eq!(
+            find_paths(&items),
+            [PathBuf::from("/x/d1"), PathBuf::from("/x/d2")]
+        );
+        let args = launch_args(VERB_FIND, &find_paths(&items));
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("--find"),
+                OsString::from("--"),
+                OsString::from("/x/d1"),
+                OsString::from("/x/d2")
+            ]
+        );
+        assert!(find_paths(&[file("/x/a.txt")]).is_empty());
+    }
+
+    #[test]
+    fn the_find_label_is_localized_and_keeps_the_product_name() {
+        assert_eq!(Lang::En.find_label(), "Find in MOCHI archives");
+        for lang in [Lang::Th, Lang::ZhCn] {
+            let label = lang.find_label();
+            assert_ne!(label, FIND_LABEL);
+            assert!(label.contains("MOCHI"), "{label}");
+            assert!(!label.contains('&'), "no accelerator marker");
+        }
+        let rows = menu_rows(&[dir("/x/d")], Lang::Th, false);
+        assert_eq!(rows[2].label, Lang::Th.find_label());
+        let rows = menu_rows(&[dir("/x/d")], Lang::ZhCn, false);
+        assert_eq!(rows[2].label, Lang::ZhCn.find_label());
     }
 
     #[test]
