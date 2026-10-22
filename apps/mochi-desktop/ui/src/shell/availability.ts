@@ -39,7 +39,6 @@ export type ActionId =
   | "remove"
   | "extract"
   | "extractTo"
-  | "extractDesktop"
   | "test"
   | "copyNames"
   | "selectAll"
@@ -100,8 +99,7 @@ export function availableActions(archive: ArchiveContext, selection: SelectionCo
     add: first(closed, readOnly, busy),
     remove: first(closed, readOnly, none, busy),
     extract: first(closed, busy),
-    extractTo: first(closed, none, busy),
-    extractDesktop: first(closed, busy),
+    extractTo: first(closed, busy),
     test: first(closed, busy),
     copyNames: first(closed, none),
     selectAll: first(closed, selection.total > 0 ? null : "emptyList"),

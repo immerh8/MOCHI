@@ -448,6 +448,23 @@ function windowBackend() {
           ? { hits: [], total_hits: 0, coverage: coverage() }
           : { hits: [hit(0, "music/albums/song.mp3")], total_hits: 1, coverage: coverage() };
       case "find_open_hit":
+        // Rust opens the archive and tells the window which entry to show (a launch event).
+        setTimeout(() => {
+          if (!launch) return;
+          const id = launch.id;
+          act(() =>
+            internals().runCallback(id, {
+              index: n++,
+              message: {
+                event: "reveal",
+                handle: SUMMARY.handle,
+                key: String(a.key),
+                path: { text: "music/albums/song.mp3", verbatim: true },
+                kind: "file",
+              } satisfies LaunchEvent,
+            }),
+          );
+        }, 0);
         return { status: "opened", archive: SUMMARY };
       case "open_snapshot":
         return { seq: 0, commit_id: "0".repeat(64), entries: 5, root_dirs: 1, root_files: 0, catalog_source: { source: "image" } };
@@ -507,7 +524,11 @@ test("the More menu opens Find; a hit opens its archive at the entry's folder wi
   await screen.findAllByTestId("find-scope");
   await user.type(screen.getByTestId("find-query"), "song");
   await user.dblClick(await screen.findByTestId("find-hit"));
-  expect(b.calls.find((c) => c.cmd === "find_open_hit")?.args).toEqual({ run: 1, archive: 0 });
+  expect(b.calls.find((c) => c.cmd === "find_open_hit")?.args).toEqual({
+    run: 1,
+    archive: 0,
+    key: hex("music/albums/song.mp3"),
+  });
   // The sheet closes, the archive is shown at music / albums, and song.mp3 is selected.
   await screen.findByTestId("archive-meta");
   const entries = await screen.findAllByTestId("entry");

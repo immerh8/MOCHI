@@ -9,13 +9,15 @@ Comment[zh_CN]=在所选文件夹中的每个 MOCHI 压缩文件里查找文件�
 Keywords=MOCHI;archive;search;find;
 Categories=Utility;
 # MOCHI Find (the "Find in MOCHI archives" window): `--find` takes the folders to scan
-# (none: the window opens and asks). A file manager passes the selected folders as %F.
-# Registering inode/directory is what lists this under "Open With" for a folder; it never
-# sets a default (the package ships no defaults list: smoke-deb.sh), and the system's own
-# folder handler (the file manager) stays in charge. KDE's Dolphin and Cinnamon's Nemo get
-# a real right-click entry from mochi-find-servicemenu.desktop and mochi-find.nemo_action.
+# (none: the window opens and asks), so this is also a plain launcher in the app menu.
+# There is deliberately NO MimeType: registering inode/directory would list MOCHI as a
+# handler for folders in mimeinfo.cache, where "mochi-find.desktop" sorts before
+# "org.gnome.Nautilus.desktop", and MOCHI must never become what opens a folder. The
+# right-click entries on folders are separate, per file manager: Dolphin
+# (mochi-find-servicemenu.desktop), Nemo (mochi-find.nemo_action) and GNOME Files
+# (mochi-find-nautilus.py, which needs the python3-nautilus package). Elsewhere, use
+# "Find in archives..." in MOCHI (More menu, Ctrl+Shift+F).
 Exec=mochi-desktop --find -- %F
 Icon=mochi-desktop
 StartupWMClass=mochi-desktop
 Terminal=false
-MimeType=inode/directory;

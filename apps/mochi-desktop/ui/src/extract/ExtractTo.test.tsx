@@ -1,6 +1,7 @@
-// Extract to Desktop (the toolbar button and the list menu's entry), for MOCHI and for foreign
-// archives; and the menu items and buttons that must be off in read-only archives. The webview
-// names no path: Rust makes the folder, and the job request carries only handle, snapshot, keys.
+// Extract to... (the toolbar button and the list menu's entry): the window with its folder field,
+// Browse..., recent folders and the new-folder choice, for MOCHI and for foreign archives; and the
+// menu items and buttons that must be off in read-only archives. The window sends the folder text
+// (Rust validates it); the job request still carries only handle, snapshot, keys.
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Channel } from "@tauri-apps/api/core";
@@ -85,13 +86,19 @@ const REPORT: ExtractReport = {
 
 interface Opts {
   commits?: number;
-  desktopPlan?: ExtractPlan | { error: { code: string; message: string } };
+  /** What the window opens with. */
+  setup?: { destination: string; recent: string[] };
+  /** The folder dialog's answers, one per Browse click. */
+  browse?: (string | null)[];
+  toPlan?: ExtractPlan | { error: { code: string; message: string } };
+  foreignPlan?: { plan: ExtractPlan; skipped_kinds: number };
 }
 
 function backend(opts: Opts = {}) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let channel: Channel<JobEvent> | undefined;
   let sent = 0;
+  let browsed = 0;
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
@@ -134,13 +141,17 @@ function backend(opts: Opts = {}) {
           file_version_id: "e".repeat(64),
           attributes: { state: "recorded", posix: null, windows: null, mtime: null },
         };
-      case "plan_extract_desktop": {
-        const p = opts.desktopPlan ?? PLAN;
+      case "extract_wizard_setup":
+        return opts.setup ?? { destination: "/home/me/Desktop", recent: ["/home/me/Desktop"] };
+      case "browse_extract_folder":
+        return (opts.browse ?? [null])[browsed++] ?? null;
+      case "plan_extract_to": {
+        const p = opts.toPlan ?? PLAN;
         if ("error" in p) throw p.error;
         return p;
       }
-      case "plan_extract_foreign_desktop":
-        return { plan: { ...PLAN, destination: "/home/me/Desktop/photos" }, skipped_kinds: 0 };
+      case "plan_extract_foreign_to":
+        return opts.foreignPlan ?? { plan: { ...PLAN, destination: "/home/me/Desktop/photos" }, skipped_kinds: 0 };
       case "start_job":
         channel = a.onEvent as Channel<JobEvent>;
         return 7;
@@ -181,9 +192,9 @@ async function openMochi(opts: Opts = {}) {
   return { user, b };
 }
 
-async function openForeign() {
+async function openForeign(opts: Opts = {}) {
   const user = userEvent.setup();
-  const b = backend();
+  const b = backend(opts);
   render(<App />);
   await screen.findByTestId("start-screen");
   await user.click(screen.getByTestId("toolbar-more"));
@@ -195,52 +206,170 @@ async function openForeign() {
 
 // ---- The toolbar button, MOCHI --------------------------------------------------------------
 
+async function openWizard(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId("extract-to"));
+  return screen.findByTestId("extract-to-dialog");
+}
+
+const field = () => screen.getByTestId("extract-to-folder") as HTMLInputElement;
+
 test("the button is off with nothing open, and says to open an archive", async () => {
   backend();
   render(<App />);
   await screen.findByTestId("start-screen");
-  const button = screen.getByTestId("extract-desktop");
+  const button = screen.getByTestId("extract-to");
   expect(button).toBeDisabled();
   expect(button).toHaveAttribute("title", "Open an archive first");
-  expect(button).toHaveTextContent("Extract to Desktop");
+  expect(button).toHaveTextContent("Extract to…");
 });
 
-test("Extract to Desktop extracts everything at once: no folder dialog, no plan panel, no path in the job", async () => {
+test("the window opens prefilled: the last folder, the recent folders newest first, a new folder ticked", async () => {
+  const { user, b } = await openMochi({
+    setup: { destination: "/data/out", recent: ["/data/out", "/home/me/Desktop", "/mnt/usb"] },
+  });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/data/out"));
+  expect(screen.getByTestId("extract-to-new-folder")).toBeChecked();
+  expect(screen.getAllByTestId("extract-to-recent-item").map((e) => e.textContent)).toEqual([
+    "/data/out",
+    "/home/me/Desktop",
+    "/mnt/usb",
+  ]);
+  expect(screen.getByTestId("extract-to-what")).toHaveTextContent("Everything in this version");
+  // Opening it extracts nothing and plans nothing.
+  expect(b.cmds()).not.toContain("plan_extract_to");
+  expect(b.cmds()).not.toContain("start_job");
+});
+
+test("with no history the window starts on the Desktop Rust resolved, with no recent list", async () => {
+  const { user } = await openMochi({ setup: { destination: "/home/me/Desktop", recent: [] } });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  expect(screen.queryByTestId("extract-to-recent")).toBeNull();
+});
+
+test("Enter confirms: everything is extracted into a new folder at once, with no plan panel", async () => {
   const { user, b } = await openMochi();
-  await user.click(screen.getByTestId("extract-desktop"));
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  expect(field()).toHaveFocus();
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_desktop")).toEqual({ handle: 3, seq: 1, keys: [] });
+  expect(b.args("plan_extract_to")).toEqual({
+    handle: 3,
+    seq: 1,
+    keys: [],
+    folder: "/home/me/Desktop",
+    newFolder: true,
+  });
   expect(b.request()).toEqual({ kind: "extract_archive", handle: 3, seq: 1, keys: [], on_conflict: "stop" });
   for (const other of ["plan_extract", "plan_extract_default"]) expect(b.cmds()).not.toContain(other);
   expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(screen.queryByTestId("extract-to-dialog")).toBeNull();
+});
+
+test("a typed folder, and the new-folder choice, are what Rust is asked to plan", async () => {
+  const { user, b } = await openMochi();
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.clear(field());
+  await user.type(field(), "/srv/exports");
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.click(screen.getByTestId("extract-to-ok"));
+  await waitFor(() => expect(b.cmds()).toContain("start_job"));
+  expect(b.args("plan_extract_to")).toMatchObject({ folder: "/srv/exports", newFolder: false });
+});
+
+test("a recent folder fills the field", async () => {
+  const { user, b } = await openMochi({
+    setup: { destination: "/data/out", recent: ["/data/out", "/mnt/usb"] },
+  });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/data/out"));
+  await user.click(screen.getAllByTestId("extract-to-recent-item")[1] as HTMLElement);
+  expect(field()).toHaveValue("/mnt/usb");
+  await user.click(screen.getByTestId("extract-to-ok"));
+  await waitFor(() => expect(b.args("plan_extract_to")).toMatchObject({ folder: "/mnt/usb" }));
+});
+
+test("Browse... fills the field from the folder dialog, starting where the field points; cancelling keeps it", async () => {
+  const { user, b } = await openMochi({ browse: ["/picked/folder", null] });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.click(screen.getByTestId("extract-to-browse"));
+  await waitFor(() => expect(field()).toHaveValue("/picked/folder"));
+  expect(b.args("browse_extract_folder")).toMatchObject({ start: "/home/me/Desktop" });
+  await user.click(screen.getByTestId("extract-to-browse"));
+  await waitFor(() => expect(b.calls.filter((c) => c.cmd === "browse_extract_folder")).toHaveLength(2));
+  expect(field()).toHaveValue("/picked/folder");
+  expect(b.cmds()).not.toContain("plan_extract_to");
 });
 
 test("with a selection it extracts the selection", async () => {
   const { user, b } = await openMochi();
   await user.click((await screen.findAllByTestId("entry"))[1] as HTMLElement);
-  await waitFor(() => expect(screen.getByTestId("extract-desktop")).toHaveAttribute("title", expect.stringContaining("1 selected")));
-  await user.click(screen.getByTestId("extract-desktop"));
+  await waitFor(() => expect(screen.getByTestId("extract-to")).toHaveAttribute("title", expect.stringContaining("1 selected")));
+  await openWizard(user);
+  expect(screen.getByTestId("extract-to-what")).toHaveTextContent("The selected entry will be extracted.");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_desktop")).toEqual({ handle: 3, seq: 1, keys: [hex("a.txt")] });
+  expect(b.args("plan_extract_to")).toMatchObject({ keys: [hex("a.txt")] });
   expect(b.request()).toMatchObject({ kind: "extract_archive", keys: [hex("a.txt")] });
 });
 
-test("entries the folder cannot take are skipped and reported, not silently dropped", async () => {
+test("Cancel and Escape close the window and plan nothing", async () => {
+  const { user, b } = await openMochi();
+  await openWizard(user);
+  await user.click(screen.getByTestId("extract-to-cancel"));
+  expect(screen.queryByTestId("extract-to-dialog")).toBeNull();
+  await openWizard(user);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByTestId("extract-to-dialog")).toBeNull();
+  expect(b.cmds()).not.toContain("plan_extract_to");
+});
+
+test("a folder Rust refuses is explained in the window, which stays open; nothing starts", async () => {
   const { user, b } = await openMochi({
-    desktopPlan: {
+    toPlan: { error: { code: "INVALID_ARGUMENT", message: "that folder does not exist; choose one that does" } },
+  });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
+  const error = await screen.findByTestId("extract-to-error");
+  expect(error).toHaveTextContent("Could not use that folder");
+  expect(error).toHaveTextContent("does not exist");
+  expect(screen.getByTestId("extract-to-dialog")).toBeInTheDocument();
+  expect(b.cmds()).not.toContain("start_job");
+  expect(screen.getByTestId("extract-to-ok")).toBeEnabled();
+});
+
+test("entries that collide are listed in the plan panel first, and the rest is extracted only on confirm", async () => {
+  const { user, b } = await openMochi({
+    toPlan: {
       ...PLAN,
       conflicts_total: 1,
-      conflicts: [{ path: { text: "CON", verbatim: true }, code: "NAME_UNSUPPORTED", reason: "reserved name" }],
+      conflicts: [{ path: { text: "a.txt", verbatim: true }, code: "PATH_COLLISION", reason: "already in the folder" }],
     },
   });
-  await user.click(screen.getByTestId("extract-desktop"));
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.keyboard("{Enter}");
+  await screen.findByTestId("extract-panel");
+  expect(screen.getByTestId("extract-conflicts")).toHaveTextContent("a.txt");
+  expect(screen.getByTestId("extract-conflict-note")).toBeInTheDocument();
+  expect(b.cmds()).not.toContain("start_job");
+  await user.click(screen.getByTestId("extract-confirm"));
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
   expect(b.request()).toMatchObject({ on_conflict: "skip_conflicts" });
 });
 
 test("the normal result follows, with a way to open the folder (which names no path)", async () => {
   const { user, b } = await openMochi();
-  await user.click(screen.getByTestId("extract-desktop"));
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
   b.job({ event: "started", job_id: 7 });
   b.job({ event: "finished", job_id: 7, outcome: { status: "completed", summary: "s", extract: REPORT } });
@@ -250,9 +379,11 @@ test("the normal result follows, with a way to open the folder (which names no p
   expect(b.cmds()).not.toContain("discard_extract_folder");
 });
 
-test("a cancelled run removes the empty Desktop folder it made", async () => {
+test("a cancelled run removes the empty new folder it made, but never an existing folder", async () => {
   const { user, b } = await openMochi();
-  await user.click(screen.getByTestId("extract-desktop"));
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
   b.job({ event: "started", job_id: 7 });
   b.job({ event: "finished", job_id: 7, outcome: { status: "cancelled" } });
@@ -260,55 +391,74 @@ test("a cancelled run removes the empty Desktop folder it made", async () => {
   expect(screen.getByTestId("extract-status")).toHaveAttribute("data-state", "cancelled");
 });
 
-test("a Desktop that cannot be used is an error in the status line and nothing starts", async () => {
-  const { user, b } = await openMochi({
-    desktopPlan: { error: { code: "INVALID_ARGUMENT", message: "this computer has no Desktop folder" } },
-  });
-  await user.click(screen.getByTestId("extract-desktop"));
-  const error = await screen.findByTestId("extract-error");
-  expect(error).toHaveTextContent("Could not extract to the Desktop");
-  expect(error).toHaveTextContent("no Desktop folder");
-  expect(b.cmds()).not.toContain("start_job");
+test("with the new folder unticked a cancelled run discards nothing", async () => {
+  const { user, b } = await openMochi();
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(b.cmds()).toContain("start_job"));
+  b.job({ event: "started", job_id: 7 });
+  b.job({ event: "finished", job_id: 7, outcome: { status: "cancelled" } });
+  await screen.findByTestId("extract-status");
+  expect(b.cmds()).not.toContain("discard_extract_folder");
 });
 
 test("the Extractor draws the button in place when it is used alone", async () => {
   const b = backend();
   const user = userEvent.setup();
   render(<Extractor archive={mochi()} seq={1} selected={[]} />);
-  await user.click(screen.getByTestId("extract-desktop"));
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_desktop")).toEqual({ handle: 3, seq: 1, keys: [] });
+  expect(b.args("plan_extract_to")).toMatchObject({ handle: 3, seq: 1, keys: [] });
 });
 
 // ---- The list menu --------------------------------------------------------------------------
 
-test("the list menu has Extract to Desktop, on with nothing selected (it takes the whole archive)", async () => {
+test("the list menu has Extract to..., on with nothing selected (it takes the whole archive)", async () => {
   const { user, b } = await openMochi();
   fireEvent.contextMenu(screen.getByTestId("entries"));
-  const item = await screen.findByTestId("menu-extract-desktop");
+  const item = await screen.findByTestId("menu-extract-to");
   expect(item).not.toHaveAttribute("aria-disabled");
+  expect(screen.queryByTestId("menu-extract-desktop")).toBeNull();
   await user.click(item);
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_desktop")).toEqual({ handle: 3, seq: 1, keys: [] });
+  expect(b.args("plan_extract_to")).toMatchObject({ handle: 3, seq: 1, keys: [] });
 });
 
-test("the list menu's Extract to Desktop takes the right-clicked selection", async () => {
+test("the list menu's Extract to... takes the right-clicked selection", async () => {
   const { user, b } = await openMochi();
   fireEvent.contextMenu((await screen.findAllByTestId("entry"))[2] as HTMLElement);
-  await user.click(await screen.findByTestId("menu-extract-desktop"));
+  await user.click(await screen.findByTestId("menu-extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_desktop")).toEqual({ handle: 3, seq: 1, keys: [hex("b.txt")] });
+  expect(b.args("plan_extract_to")).toMatchObject({ keys: [hex("b.txt")] });
 });
 
 // ---- Foreign archives -----------------------------------------------------------------------
 
-test("a foreign archive extracts to the Desktop too, through its own plan, and shows the folder afterwards", async () => {
+test("a foreign archive extracts through the same window and its own plan, and shows the folder afterwards", async () => {
   const { user, b } = await openForeign();
-  const button = screen.getByTestId("foreign-extract-desktop");
+  const button = screen.getByTestId("foreign-extract-to");
   expect(button).toBeEnabled();
   await user.click(button);
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.args("plan_extract_foreign_desktop")).toEqual({ handle: 9, keys: [] });
+  expect(b.args("plan_extract_foreign_to")).toEqual({
+    handle: 9,
+    keys: [],
+    folder: "/home/me/Desktop",
+    newFolder: true,
+  });
   expect(b.request()).toEqual({ kind: "extract_foreign", handle: 9, keys: [], on_conflict: "stop" });
   expect(b.cmds()).not.toContain("plan_extract_foreign");
   expect(screen.queryByTestId("foreign-plan")).toBeNull();
@@ -318,12 +468,35 @@ test("a foreign archive extracts to the Desktop too, through its own plan, and s
   expect(b.args("show_in_folder")).toEqual({ what: { kind: "extract_destination" } });
 });
 
-test("a foreign archive's list menu: Extract to Desktop is on, Add files and Delete are off and say why", async () => {
+test("a foreign archive's collisions are listed before anything is written", async () => {
+  const { user, b } = await openForeign({
+    foreignPlan: {
+      plan: {
+        ...PLAN,
+        conflicts_total: 1,
+        conflicts: [{ path: { text: "x.txt", verbatim: true }, code: "PATH_COLLISION", reason: "already in the folder" }],
+      },
+      skipped_kinds: 0,
+    },
+  });
+  await user.click(screen.getByTestId("foreign-extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.keyboard("{Enter}");
+  await screen.findByTestId("foreign-plan");
+  expect(b.cmds()).not.toContain("start_job");
+  await user.click(screen.getByTestId("foreign-extract-confirm"));
+  await waitFor(() => expect(b.cmds()).toContain("start_job"));
+  expect(b.request()).toMatchObject({ kind: "extract_foreign", on_conflict: "skip_conflicts" });
+});
+
+test("a foreign archive's list menu: Extract to... is on, Add files and Delete are off and say why", async () => {
   const { user, b } = await openForeign();
   await user.click((await screen.findAllByTestId("foreign-entry"))[0] as HTMLElement);
   fireEvent.contextMenu(screen.getByTestId("foreign-entries"));
   await screen.findByRole("menu");
-  expect(screen.getByTestId("menu-extract-desktop")).not.toHaveAttribute("aria-disabled");
+  expect(screen.getByTestId("menu-extract-to")).not.toHaveAttribute("aria-disabled");
   for (const id of ["add", "delete"]) {
     const item = screen.getByTestId(`menu-${id}`);
     expect(item, id).toHaveAttribute("aria-disabled", "true");
@@ -333,8 +506,11 @@ test("a foreign archive's list menu: Extract to Desktop is on, Add files and Del
   await user.click(screen.getByTestId("menu-add"));
   expect(b.cmds()).not.toContain("stage_sources");
   expect(screen.getByRole("menu")).toBeInTheDocument();
-  await user.click(screen.getByTestId("menu-extract-desktop"));
-  await waitFor(() => expect(b.args("plan_extract_foreign_desktop")).toEqual({ handle: 9, keys: [hex("x.txt")] }));
+  await user.click(screen.getByTestId("menu-extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(b.args("plan_extract_foreign_to")).toMatchObject({ handle: 9, keys: [hex("x.txt")] }));
 });
 
 // ---- The rubber band, in the real browsers (the mechanics are in list/marquee.test.tsx) -------
@@ -417,7 +593,7 @@ test("an older version is read-only: Add and Remove are off in the toolbar and t
   for (const id of ["add", "delete"]) {
     expect(screen.getByTestId(`menu-${id}`), id).toHaveAttribute("aria-disabled", "true");
   }
-  for (const id of ["extract-to", "extract-desktop", "copy-names", "select-all"]) {
+  for (const id of ["extract-to", "copy-names", "select-all"]) {
     expect(screen.getByTestId(`menu-${id}`), id).not.toHaveAttribute("aria-disabled");
   }
 });

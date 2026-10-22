@@ -3,11 +3,10 @@ import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
 import {
-  BackIcon,
   CaretDownIcon,
   CheckIcon,
   CloseIcon,
-  ExtractDesktopIcon,
+  ExtractToIcon,
   ExtractIcon,
   FoldersIcon,
   GearIcon,
@@ -41,9 +40,10 @@ import { Start } from "../start/Start";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { ListHead, EntryCells } from "./ListHead";
 import { Name } from "./Name";
+import { Crumbs, NavButtons, UpRow } from "./FolderNav";
 import { Tree } from "./Tree";
-import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
+import { folderKeys, useFolderPath } from "./useFolderPath";
 import { Checker } from "../check/Checker";
 import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
 import { Rekey } from "../crypt/Rekey";
@@ -207,6 +207,8 @@ type Open = { archive: ArchiveSummary; snapshot: SnapshotView };
 /** An entry the list can select: a folder row or a search hit. */
 export type Picked = { key: string; name: NameText };
 
+const rowKey = (r: EntryRow) => r.key;
+
 /** Plan D1: open an archive and browse its snapshots. Read-only. */
 export function Browser({
   foreign,
@@ -222,13 +224,11 @@ export function Browser({
   const [open, setOpen] = useState<Open | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [path, setPath] = useState<Crumb[]>([]);
+  const folder = useFolderPath();
+  const { path, focusList, reveal } = folder;
   const [counted, setCounted] = useState<{ id: string; total: number } | null>(null);
   const [shownDetails, setShownDetails] = useState<{ id: string; details: EntryDetails } | null>(null);
   const [waiting, setWaiting] = useState<{ pending: number; fileName: string } | null>(null);
-  // Set when a folder was opened from the list by key or double click, so the
-  // new listing takes keyboard focus instead of dropping it on the page.
-  const [focusList, setFocusList] = useState(false);
   // Set when the shell asked to extract (D6): the Extractor then shows its plan.
   const [autoExtract, setAutoExtract] = useState<{
     token: number;
@@ -254,6 +254,13 @@ export function Browser({
   const [testRequest, setTestRequest] = useState(0);
   // Changes when the shell asked for MOCHI Find (`--find`); the Find tool then scans the folders Rust holds.
   const [findLaunch, setFindLaunch] = useState(0);
+  // The entry a Find hit asked this window to show: its folder, with the entry selected.
+  const [revealRequest, setRevealRequest] = useState<{
+    handle: number;
+    key: string;
+    path: NameText;
+    kind: "file" | "directory";
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [foreignHandoff, setForeignHandoff] = useState<ForeignHandoff | null>(null);
   const [clearSearch, setClearSearch] = useState(0);
@@ -328,14 +335,13 @@ export function Browser({
   // A hit opened from MOCHI Find: select its row and scroll to it once its folder is listed.
   const revealer = useReveal({ handle, dir, listingId, total, loadPage, select: folderSel.ensure });
 
-  const navigate = useCallback(
-    (to: Crumb[], fromList = false) => {
-      setFocusList(fromList);
-      setPath(to);
-      clearFolderSel();
-    },
-    [clearFolderSel],
-  );
+  // Moving to another folder drops the selection; `navigate` is the one way
+  // to move (path bar, tree, double click, Backspace, history).
+  useEffect(() => {
+    folder.onMove(clearFolderSel);
+  });
+  const navigate = folder.go;
+  const resetPath = folder.reset;
 
   // A new search, or none, starts with nothing selected among the hits.
   useEffect(() => {
@@ -369,7 +375,7 @@ export function Browser({
     const snapshot = await openSnapshot(archive.handle, head);
     setOpen({ archive, snapshot });
     clearQuery();
-    navigate([]);
+    resetPath();
   };
 
   /** Wait for the user's choice of archive, then show it (and plan an extract if asked). */
@@ -383,6 +389,9 @@ export function Browser({
       }
       const outcome = await get();
       if (outcome === null) return;
+      // This window keeps what it shows: Rust opened the archive in a new window (or brought
+      // forward the window that already has it).
+      if (outcome.status === "elsewhere") return;
       if (outcome.status === "needs_passphrase") {
         setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
         setExtractAfterUnlock(extract);
@@ -454,12 +463,12 @@ export function Browser({
           await closeArchive(open.archive.handle).catch(() => false);
         }
         setOpen({ archive, snapshot });
-        navigate([]);
+        resetPath();
       } catch (e) {
         setError(errorText(t("browser.adoptFailed"), e));
       }
     },
-    [open, navigate],
+    [open, resetPath],
   );
 
   // The shell opened an archive, or could not (D6). Rust has done the opening
@@ -481,7 +490,7 @@ export function Browser({
         await closeArchive(previous).catch(() => false);
       }
       setOpen({ archive, snapshot });
-      navigate([]);
+      resetPath();
       if (extract) setAutoExtract((a) => ({ token: (a?.token ?? 0) + 1, handle: archive.handle }));
     } catch (e) {
       setError(errorText(t("browser.openFailed"), e));
@@ -500,6 +509,14 @@ export function Browser({
           setMoreOpen(false);
           setTool("find");
           setFindLaunch((n) => n + 1);
+        } else if (event.event === "reveal") {
+          // A hit of MOCHI Find: go to the entry once this window shows that archive.
+          setRevealRequest({ handle: event.handle, key: event.key, path: event.path, kind: event.kind });
+        }
+        // An Encrypted archive handed to this (new) window: ask for its passphrase here.
+        else if (event.event === "needs_passphrase") {
+          setWaiting({ pending: event.pending, fileName: event.file_name });
+          setExtractAfterUnlock(false);
         }
         // Foreign archives are the foreign browser's to show.
       }),
@@ -512,7 +529,7 @@ export function Browser({
     setOpen(null);
     setError(null);
     clearQuery();
-    navigate([]);
+    resetPath();
   };
 
   const pickSnapshot = async (to: number) => {
@@ -523,7 +540,7 @@ export function Browser({
       const snapshot = await openSnapshot(open.archive.handle, to);
       setOpen({ ...open, snapshot });
       clearQuery();
-      navigate([]);
+      resetPath();
     } catch (e) {
       setError(errorText(t("browser.openCommitFailed", { seq: to }), e));
     } finally {
@@ -532,33 +549,42 @@ export function Browser({
   };
 
   /**
-   * A hit of MOCHI Find: open its archive (Rust re-checks that the file is the one that was
-   * scanned), show the folder the entry is in, and select the entry.
+   * A hit of MOCHI Find. Rust opens its archive where archives open: here if this window is
+   * empty, the window that already has it (brought forward), else a new window (it checks that
+   * the file is the one that was scanned). Whichever window shows it is told to go to the
+   * entry (the `reveal` event, applied below).
    */
   const openFound = async (hit: FindHit) => {
     setTool(null);
     setError(null);
     setBusy(true);
     try {
-      const outcome = await findOpenHit(hit.run, hit.archive);
-      if (outcome.status !== "opened") {
-        setError(t("find.openFailed"));
-        return;
-      }
-      await show(outcome.archive);
-      const above = ancestorsOf(hit.key, hit.path);
-      if (hit.kind === "directory") {
-        navigate([...above, { key: hit.key, name: splitPath(hit.path).name }], true);
-      } else {
-        navigate(above, true);
-        revealer.reveal({ handle: outcome.archive.handle, dir: above.at(-1)?.key ?? null, key: hit.key });
-      }
+      const outcome = await findOpenHit(hit.run, hit.archive, hit.key);
+      if (outcome.status === "opened") await show(outcome.archive);
+      else if (outcome.status !== "elsewhere") setError(t("find.openFailed"));
     } catch (e) {
       setError(errorText(t("find.openFailed"), e));
     } finally {
       setBusy(false);
     }
   };
+
+  // Applied once, when this window shows the request's archive.
+  const startReveal = revealer.reveal;
+  const revealedRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (revealRequest === null || revealRequest === revealedRef.current) return;
+    if (open === null || open.archive.handle !== revealRequest.handle) return;
+    const r = revealRequest;
+    revealedRef.current = r;
+    const above = ancestorsOf(r.key, r.path);
+    if (r.kind === "directory") {
+      navigate([...above, { key: r.key, name: splitPath(r.path).name }], true);
+    } else {
+      navigate(above, true);
+      startReveal({ handle: r.handle, dir: above.at(-1)?.key ?? null, key: r.key });
+    }
+  }, [revealRequest, open, navigate, startReveal]);
 
   // The More menu's tools open in a window over the list, one at a time.
   const moreButtonRef = useRef<HTMLButtonElement>(null);
@@ -713,7 +739,7 @@ export function Browser({
       return true;
     },
     up: () => {
-      if (!searching && path.length > 0) navigate(path.slice(0, -1), true);
+      if (!searching && path.length > 0) folder.up();
     },
     remove: () => {
       if (avail.remove.enabled) setRemoveRequest((n) => n + 1);
@@ -721,8 +747,7 @@ export function Browser({
   };
 
   // The list's right-click menu. Names are the full in-archive paths, as text.
-  const [extractSelectedRequest, setExtractSelectedRequest] = useState(0);
-  const [desktopRequest, setDesktopRequest] = useState(0);
+  const [extractToRequest, setExtractToRequest] = useState(0);
   const listMenu = useListMenu(
     listMenuItems({
       available: avail,
@@ -733,8 +758,7 @@ export function Browser({
           : folderSel.rows.map((r) => [...path.map((c) => c.name.text), r.name.text].join("/"));
         copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
       },
-      extract: () => setExtractSelectedRequest((n) => n + 1),
-      extractDesktop: () => setDesktopRequest((n) => n + 1),
+      extractTo: () => setExtractToRequest((n) => n + 1),
       add: () => setAddRequest((n) => n + 1),
       remove: () => setRemoveRequest((n) => n + 1),
     }),
@@ -776,7 +800,7 @@ export function Browser({
           <span className="toolbar-sep" aria-hidden="true" />
           <SlotHost name="add" />
           <SlotHost name="extract" />
-          <SlotHost name="desktop" />
+          <SlotHost name="extractTo" />
           <SlotHost name="test" />
           <SlotHost name="remove" />
           <span className="toolbar-spacer" />
@@ -888,13 +912,13 @@ export function Browser({
             />
           )}
         </ToolSlot>
-        <ToolSlot name="desktop" owner="mochi">
+        <ToolSlot name="extractTo" owner="mochi">
           {open === null && (
             <ToolButton
-              icon={<ExtractDesktopIcon />}
-              label={t("extract.desktop")}
-              testId="extract-desktop"
-              title={tipFor(avail.extractDesktop, t("extract.desktopTip"))}
+              icon={<ExtractToIcon />}
+              label={t("extract.to")}
+              testId="extract-to"
+              title={tipFor(avail.extractTo, t("extract.toTip"))}
               disabled
               onClick={doTest}
             />
@@ -912,7 +936,7 @@ export function Browser({
               onClick={doClose}
               disabled={busy}
             >
-              <BackIcon />
+              <CloseIcon />
             </button>
             <button
               type="button"
@@ -928,6 +952,7 @@ export function Browser({
             >
               <FoldersIcon />
             </button>
+            <NavButtons nav={folder} testIdPrefix="nav" />
             <div className="path-meta" data-testid="archive-meta">
               <strong className="path-title" title={open.archive.file_name}>
                 {open.archive.file_name}
@@ -971,20 +996,13 @@ export function Browser({
                 />
               </div>
             </div>
-            <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
-              <button type="button" className="crumb" onClick={() => navigate([])} title={t("browser.archiveRoot")}>
-                <span aria-hidden="true">/</span>
-                <span className="sr-only">{t("browser.archiveRoot")}</span>
-              </button>
-              {path.map((c, i) => (
-                <span key={c.key} className="crumb-part">
-                  {i > 0 && <span aria-hidden="true">/</span>}
-                  <button type="button" className="crumb" onClick={() => navigate(path.slice(0, i + 1))}>
-                    <Name name={c.name} />
-                  </button>
-                </span>
-              ))}
-            </nav>
+            <Crumbs
+              rootName={open.archive.file_name}
+              path={path}
+              onGo={navigate}
+              label={t("browser.currentFolder")}
+              testId="crumbs"
+            />
             {open.archive.retention_error && (
               <span role="note" className="path-warn" title={t("browser.retentionError", {
                 code: open.archive.retention_error.code,
@@ -1065,8 +1083,7 @@ export function Browser({
                   seq={open.snapshot.seq}
                   selected={selected}
                   autoPlan={autoExtract}
-                  selectedRequest={extractSelectedRequest}
-                  desktopRequest={desktopRequest}
+                  toRequest={extractToRequest}
                 />
                 <div className="workspace">
                   {foldersShown && (
@@ -1081,7 +1098,20 @@ export function Browser({
                       />
                     </nav>
                   )}
-                  <div className="listing" onKeyDown={(e) => listKeys(e, listKeyHandlers)} {...listMenu.listProps}>
+                  <div
+                    className="listing"
+                    onKeyDown={(e) => {
+                      if (!searching && folderKeys(e, folder)) return;
+                      listKeys(e, listKeyHandlers);
+                    }}
+                    onMouseUp={(e) => {
+                      // The mouse's back and forward buttons walk the folder history.
+                      if (searching) return;
+                      if (e.button === 3) folder.back();
+                      else if (e.button === 4) folder.forward();
+                    }}
+                    {...listMenu.listProps}
+                  >
                     <p id="entry-hint" className="sr-only">
                       {t("help.keys")}
                     </p>
@@ -1121,10 +1151,18 @@ export function Browser({
                           rowHeight={ROW_HEIGHT}
                           loadPage={loadPage}
                           label={t("browser.folderContents")}
-                          head={<ListHead />}
+                          head={
+                            <>
+                              <ListHead />
+                              {path.length > 0 && <UpRow testId="up-row" onUp={() => folder.up()} />}
+                            </>
+                          }
                           hintId="entry-hint"
                           focusFirst={focusList}
                           scrollToIndex={revealer.index}
+                          revealKey={reveal}
+                          keyOf={rowKey}
+                          onReveal={folderSel.ensure}
                           testId="entries"
                           onMarquee={folderSel.marquee}
                           onError={listError}

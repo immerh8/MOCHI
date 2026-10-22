@@ -570,11 +570,21 @@ button.version-button:disabled {
 }
 .crumb-part {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
+  min-width: 1.6rem;
+}
+/* The root and the folder on screen keep their width; the ones between give way first. */
+.crumb-part.keep {
+  flex-shrink: 0;
   min-width: 0;
+}
+.crumb-sep {
+  flex: none;
 }
 button.crumb {
   min-height: 1.5rem;
+  min-width: 0;
   max-width: 14rem;
   overflow: clip;
   text-overflow: ellipsis;
@@ -582,6 +592,28 @@ button.crumb {
   color: var(--fg);
   background: none;
   border-color: transparent;
+}
+.crumb-part.keep button.crumb {
+  max-width: 16rem;
+}
+button.crumb[aria-current="location"] {
+  font-weight: 600;
+}
+.nav-buttons {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.1rem;
+}
+/* The ".." row: pinned under the column header, drawn like a folder row. */
+.up-row {
+  height: 26px;
+  flex: none;
+  padding-right: calc(0.6rem + var(--sbw, 0px));
+  border-bottom: 1px solid var(--border);
+}
+.up-row .kind {
+  display: inline-flex;
 }
 /* The middle of the window. Dialogs open over it; it never scrolls itself. */
 .stage {
@@ -1029,6 +1061,42 @@ button.crumb {
 .dialog dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+/* "Extract to...": a folder field with Browse..., recent folders, a check box. */
+.extract-to {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.extract-to .note {
+  margin: 0;
+}
+.extract-to-row {
+  display: flex;
+  gap: 0.4rem;
+}
+.extract-to-row input {
+  flex: 1;
+  min-width: 0;
+}
+.extract-to-recent ul {
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 9rem;
+  overflow: auto;
+}
+.extract-to-recent li button {
+  max-width: 100%;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.extract-to-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 /* The tools of the More menu: one at a time, in a larger window with a close
    button and its own scrolling. */

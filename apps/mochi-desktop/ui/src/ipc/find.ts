@@ -46,9 +46,9 @@ export function findQuery(text: string): Promise<FindResultView> {
   return invoke<FindResultView>("find_query", { text });
 }
 
-/** Open the archive of a hit (read-only), as the browser's own Open does. */
-export function findOpenHit(run: number, archive: number): Promise<OpenOutcome> {
-  return invoke<OpenOutcome>("find_open_hit", { run, archive });
+/** Open the archive of a hit read-only where archives open (here, the window that has it, or a new one) and show the entry `key` in it. */
+export function findOpenHit(run: number, archive: number, key: string): Promise<OpenOutcome> {
+  return invoke<OpenOutcome>("find_open_hit", { run, archive, key });
 }
 
 /** Show the folder that holds the archive of a hit. */

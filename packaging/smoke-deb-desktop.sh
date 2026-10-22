@@ -55,6 +55,7 @@ desktop_id=$(basename "$desktop")
 find_desktop=/usr/share/applications/mochi-find.desktop
 find_kde=/usr/share/kio/servicemenus/mochi-find.desktop
 find_nemo=/usr/share/nemo/actions/mochi-find.nemo_action
+find_nautilus=/usr/share/nautilus-python/extensions/mochi_find.py
 if [ -x "$exe" ] && [ -x /usr/bin/mochi-foreign-helper ] && [ -f "$desktop" ] && [ -f /usr/share/mime/packages/mochi.xml ] \
    && [ -f /usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt ]; then
   rec U-FILES PASS "$exe, /usr/bin/mochi-foreign-helper, $desktop, the mime package and the license list are installed"
@@ -120,27 +121,22 @@ if [ -n "$byorder" ]; then
 fi
 [ -n "$only" ] && rec U-DEFAULT-ONLY INFO "MOCHI is the only registered handler here for:$only"
 
-# Find registers inode/directory so that it is listed under "Open With" for a folder. It must
-# never become the program that opens folders: if a defaults list names another program,
-# that one wins (the package ships no defaults list); if none does, report the fallback.
-if grep -q "^inode/directory=.*mochi-find.desktop" /usr/share/applications/mimeinfo.cache 2>/dev/null; then
-  rec U-FIND-MIME PASS "mimeinfo.cache offers mochi-find.desktop for inode/directory"
+# MOCHI Find must never be a registered handler of anything: no MimeType in its launcher, so
+# mimeinfo.cache never names it, and it is nobody's default (folders keep opening in the file manager).
+if grep -q "mochi-find.desktop" /usr/share/applications/mimeinfo.cache 2>/dev/null; then
+  rec U-FIND-NO-HANDLER FAIL "mimeinfo.cache names mochi-find.desktop: $(grep 'mochi-find.desktop' /usr/share/applications/mimeinfo.cache | cut -c1-200)"
 else
-  rec U-FIND-MIME FAIL "mochi-find.desktop is not registered for inode/directory in mimeinfo.cache"
-fi
-fdef=$(xdg-mime query default inode/directory 2>/dev/null)
-fexpl=$(explicit_default inode/directory)
-fothers=$(grep "^inode/directory=" /usr/share/applications/mimeinfo.cache 2>/dev/null | cut -d= -f2 | tr ';' '\n' | grep -v '^$' | grep -vx mochi-find.desktop | head -1)
-if [ "$fdef" = mochi-find.desktop ]; then
-  if [ -n "$fexpl" ]; then
-    rec U-FIND-NO-DEFAULT FAIL "mochi-find.desktop is the default for folders although a defaults list names $fexpl"
-  elif [ -n "$fothers" ]; then
-    rec U-FIND-NO-DEFAULT INFO "no defaults list names a folder handler here, so the first handler in mimeinfo.cache (mochi-find.desktop, before $fothers) is the default. On a real desktop its own defaults list decides: check that double-clicking a folder still opens the file manager (runbook U-04)."
+  fdef=$(xdg-mime query default inode/directory 2>/dev/null)
+  if [ "$fdef" = mochi-find.desktop ]; then
+    rec U-FIND-NO-HANDLER FAIL "mochi-find.desktop is the default for folders"
   else
-    rec U-FIND-NO-DEFAULT INFO "mochi-find.desktop is the only registered folder handler on this machine"
+    rec U-FIND-NO-HANDLER PASS "mochi-find.desktop is not registered for any type (folders open with '${fdef:-nothing registered}')"
   fi
+fi
+if [ -e /usr/share/nautilus-python/extensions/mochi_find.py ] && python3 -I -m py_compile /usr/share/nautilus-python/extensions/mochi_find.py; then
+  rec U-FIND-NAUTILUS PASS "the GNOME Files extension is installed and compiles (it loads only if python3-nautilus is installed)"
 else
-  rec U-FIND-NO-DEFAULT PASS "folders open with '${fdef:-nothing registered}', not with mochi-find.desktop"
+  rec U-FIND-NAUTILUS FAIL "/usr/share/nautilus-python/extensions/mochi_find.py is missing or does not compile"
 fi
 
 # ---- start through the launcher, under Xvfb and a session bus --------------------------------------
@@ -208,7 +204,7 @@ rec U-USERDATA INFO "user data created by running the app: ${ud:-none}"
 
 # ---- remove ------------------------------------------------------------------------------------------
 sudo apt-get remove -y mochi 2>&1 | tee "$logs/remove.log" > /dev/null || { tail -5 "$logs/remove.log"; rec U-REMOVE FAIL "apt remove failed"; }
-left=$(for f in "$exe" /usr/bin/mochi-foreign-helper "$desktop" "$find_desktop" "$find_kde" "$find_nemo" /usr/share/mime/packages/mochi.xml /usr/share/doc/mochi; do [ -e "$f" ] && echo "$f"; done)
+left=$(for f in "$exe" /usr/bin/mochi-foreign-helper "$desktop" "$find_desktop" "$find_kde" "$find_nemo" "$find_nautilus" /usr/share/mime/packages/mochi.xml /usr/share/doc/mochi; do [ -e "$f" ] && echo "$f"; done)
 if [ -z "$left" ]; then rec U-REMOVE PASS "after apt remove the app, helper, .desktop file, mime package and documentation are gone"
 else rec U-REMOVE FAIL "still present after apt remove: $left"; fi
 mt2=$(ctype "$archive")

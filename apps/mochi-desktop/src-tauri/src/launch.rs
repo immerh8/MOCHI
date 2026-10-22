@@ -9,7 +9,7 @@
 //!   problem was. It never receives, and never sends, a path.
 //! * **Two kinds of verb (owner decision 2026-10-16, replacing "nothing runs
 //!   silently"; amended 2026-10-20).** The *panel verb* "Open with MOCHI"
-//!   opens an archive read-only in the main window's browser. *Quick verbs*
+//!   opens an archive read-only in an archive window (the empty one, else a new one, `crate::windows`). *Quick verbs*
 //!   run in a small compact window ([`crate::quick`]; progress, then a
 //!   one-line result with "Show in folder" and Close) and never open the main
 //!   window: "Extract here" and "Extract to new folder" (`--extract-here`,
@@ -60,22 +60,23 @@
 //!
 //! `--` ends the options, so a path that starts with `-` is still a path.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::browse::Archives;
-use crate::extract::Destination;
-use crate::find::Finder;
-use crate::foreign::Foreign;
-use crate::ipc::{ArchiveSummary, ForeignArchiveSummary, IpcError};
+use crate::find::FoundEntry;
+use crate::ipc::{
+    ArchiveSummary, EntryKindView, ForeignArchiveSummary, IpcError, NameText, OpenOutcome,
+};
 use crate::quick::{MainPort, Quick, QuickAction, QuickJob};
+use crate::windows::{Placement, WindowStates, MAIN_LABEL};
 use crate::write::MAX_STAGED;
 
 /// Longest path accepted from the command line, in bytes (Windows allows
@@ -100,7 +101,8 @@ pub enum Verb {
     Add,
     AddNow,
     /// MOCHI Find: search the file names inside every `.mochi` archive under
-    /// the given folders. Opens the main window's Find tool; not a quick verb.
+    /// the given folders. Opens the Find tool in an empty window (else a new
+    /// one); not a quick verb.
     Find,
 }
 
@@ -273,12 +275,28 @@ pub enum LaunchEvent {
     /// A ZIP, 7z, RAR, tar, or tar.gz was opened read-only (plan D8); show
     /// the foreign browser on it. Nothing here says it was verified.
     ForeignOpened { archive: ForeignArchiveSummary },
+    /// An Encrypted archive was handed to this (new) window and waits in Rust
+    /// for its passphrase: ask for it and answer with `unlock_archive`.
+    NeedsPassphrase {
+        pending: crate::ipc::PendingId,
+        /// The file's name on this computer.
+        file_name: String,
+    },
     /// The foreign archive needs a password (or the one given was wrong). Rust
     /// remembers the file; the window asks and retries with the password, which
     /// crosses IPC once, in that call.
     ForeignPassword { wrong: bool },
+    /// Show the entry `key` (a folder or a file, `path` is its escaped full
+    /// path) of the open archive `handle`: a hit of MOCHI Find. The window
+    /// goes to the entry's folder and selects it once it shows that archive.
+    Reveal {
+        handle: u32,
+        key: String,
+        path: NameText,
+        kind: EntryKindView,
+    },
     /// MOCHI Find was asked for (`--find`). Rust holds the folders (`folders`
-    /// of them, possibly none); the window opens the Find tool and, when there
+    /// of them, possibly none) of this window; the window opens the Find tool and, when there
     /// are folders, starts the scan. No path crosses.
     Find { folders: u32 },
     /// The launch could not be carried out, in one sentence.
@@ -299,13 +317,36 @@ struct Delivery {
 
 /// What a launch needs besides its arguments.
 struct Inner {
-    archives: Arc<Archives>,
-    destination: Arc<Destination>,
-    foreign: Arc<Foreign>,
+    /// The windows, and through them the archives each one owns.
+    windows: Arc<WindowStates>,
     quick: Arc<Quick>,
-    delivery: Mutex<Delivery>,
-    /// MOCHI Find's folders and scan; set once at start-up (`set_finder`).
-    finder: OnceLock<Arc<Finder>>,
+    /// Where each archive window's launch events go, by label.
+    delivery: Mutex<HashMap<String, Delivery>>,
+}
+
+/// Where an archive was opened (see [`Inner::open_routed`]).
+struct Landing {
+    /// The window that now has it (or had it).
+    window: String,
+    /// What opening produced; `None` when the archive was already open in
+    /// `window` and that window was only brought forward.
+    outcome: Option<OpenOutcome>,
+    /// `window` is the window the user asked in: it shows the outcome itself.
+    in_place: bool,
+}
+
+/// The launch event that shows `outcome` in a window that did not ask for it
+/// itself (`None`: there is nothing to show).
+fn launch_event(outcome: OpenOutcome, extract: bool) -> Option<LaunchEvent> {
+    Some(match outcome {
+        OpenOutcome::Opened { archive } => LaunchEvent::Opened { archive, extract },
+        OpenOutcome::NeedsPassphrase { pending, file_name } => {
+            LaunchEvent::NeedsPassphrase { pending, file_name }
+        }
+        OpenOutcome::Foreign { archive } => LaunchEvent::ForeignOpened { archive },
+        OpenOutcome::ForeignPassword { wrong, .. } => LaunchEvent::ForeignPassword { wrong },
+        OpenOutcome::Elsewhere => return None,
+    })
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -331,30 +372,20 @@ pub struct Launches {
 }
 
 impl Launches {
-    pub fn new(
-        archives: Arc<Archives>,
-        destination: Arc<Destination>,
-        foreign: Arc<Foreign>,
-        quick: Arc<Quick>,
-    ) -> Launches {
-        Self::with_batch_window(archives, destination, foreign, quick, ADD_BATCH_WINDOW)
+    pub fn new(windows: Arc<WindowStates>, quick: Arc<Quick>) -> Launches {
+        Self::with_batch_window(windows, quick, ADD_BATCH_WINDOW)
     }
 
     /// [`Launches::new`] with another collection window for `--add-now` and `--add`.
     pub fn with_batch_window(
-        archives: Arc<Archives>,
-        destination: Arc<Destination>,
-        foreign: Arc<Foreign>,
+        windows: Arc<WindowStates>,
         quick: Arc<Quick>,
         batch_window: Duration,
     ) -> Launches {
         let inner = Arc::new(Inner {
-            archives,
-            destination,
-            foreign,
+            windows,
             quick,
             delivery: Mutex::default(),
-            finder: OnceLock::new(),
         });
         let (quick_tx, quick_rx) = channel::<QuickJob>();
         let quick_worker = Arc::clone(&inner);
@@ -413,12 +444,6 @@ impl Launches {
         }
     }
 
-    /// Give `--find` the Find state it sets the folders of. Once; later calls
-    /// change nothing.
-    pub fn set_finder(&self, finder: Arc<Finder>) {
-        let _ = self.inner.finder.set(finder);
-    }
-
     /// Queue a launch (or its refusal) to be handled. No arguments: nothing
     /// to do.
     pub fn submit(&self, item: Result<Option<Launch>, LaunchError>) {
@@ -431,15 +456,17 @@ impl Launches {
         let _ = lock(&self.queue).send(Item::Launch(item));
     }
 
-    /// A second start with no arguments: bring the main window forward
-    /// (creating it if only a compact window is open).
+    /// A second start with no arguments: bring the window used last forward
+    /// (creating the first archive window if only a compact window is open).
     pub fn focus(&self) {
         let _ = lock(&self.queue).send(Item::ShowMain);
     }
 
-    /// Listen with `sink` and hand it what arrived before there was one.
-    pub fn watch(&self, sink: Arc<dyn LaunchSink>) {
-        let mut d = lock(&self.inner.delivery);
+    /// Listen for the window `label` with `sink` and hand it what arrived
+    /// before there was one.
+    pub fn watch(&self, label: &str, sink: Arc<dyn LaunchSink>) {
+        let mut all = lock(&self.inner.delivery);
+        let d = all.entry(label.to_owned()).or_default();
         while let Some(event) = d.pending.pop_front() {
             if !sink.send(event.clone()) {
                 d.pending.push_front(event);
@@ -447,6 +474,68 @@ impl Launches {
             }
         }
         d.sink = Some(sink);
+    }
+
+    /// The user in the window `requester` asked to open `path`. Opens it
+    /// there when that window is empty; otherwise in a new window (the answer
+    /// is then [`OpenOutcome::Elsewhere`]); or, when the archive is already
+    /// open in some window, brings that window forward (also `Elsewhere`).
+    /// A dialog and a window are made on the calling thread, which is never
+    /// the event loop.
+    pub fn open_in_window(&self, requester: &str, path: &Path) -> Result<OpenOutcome, IpcError> {
+        let landing = self.inner.open_routed(Some(requester), path)?;
+        self.inner.windows_titled(&landing.window);
+        if landing.in_place {
+            if let Some(outcome) = landing.outcome.clone() {
+                return Ok(outcome);
+            }
+        }
+        self.inner.deliver(landing, false);
+        Ok(OpenOutcome::Elsewhere)
+    }
+
+    /// A hit of MOCHI Find: open its archive as `open_in_window` does (here if
+    /// this window is empty, the window that has it, else a new window), then
+    /// tell the window that shows it to go to `entry`. `Opened` is for the
+    /// asking window to show; `Elsewhere` means another window has it.
+    pub fn open_hit_in_window(
+        &self,
+        requester: &str,
+        path: &Path,
+        entry: FoundEntry,
+    ) -> Result<OpenOutcome, IpcError> {
+        let landing = self.inner.open_routed(Some(requester), path)?;
+        self.inner.windows_titled(&landing.window);
+        let handle = match &landing.outcome {
+            Some(OpenOutcome::Opened { archive }) => Some(archive.handle),
+            _ => self.inner.windows.archives().handle_of_file(path),
+        };
+        let window = landing.window.clone();
+        let in_place = landing.in_place;
+        let shown = match (&landing.outcome, in_place) {
+            (Some(outcome), true) => outcome.clone(),
+            _ => {
+                self.inner.deliver(landing, false);
+                OpenOutcome::Elsewhere
+            }
+        };
+        if let Some(handle) = handle {
+            self.inner.emit(
+                &window,
+                LaunchEvent::Reveal {
+                    handle,
+                    key: entry.key,
+                    path: entry.path,
+                    kind: entry.kind,
+                },
+            );
+        }
+        Ok(shown)
+    }
+
+    /// Set the title of one window to the archive it shows.
+    pub fn refresh_title(&self, label: &str) {
+        self.inner.windows_titled(label);
     }
 
     /// Handle one launch now, on the calling thread (tests). Quick verbs run
@@ -464,30 +553,172 @@ impl Launches {
 
 impl MainPort for Inner {
     fn archives(&self) -> &Archives {
-        &self.archives
+        self.windows.archives()
     }
 
     fn hand_over_extract(&self, archive: ArchiveSummary, folder: PathBuf) {
-        self.destination.set(folder);
-        self.emit(LaunchEvent::Opened {
-            archive,
-            extract: true,
-        });
+        // The plan goes to the window that has this archive, else an empty
+        // one, else a new one, like any other open.
+        let handle = archive.handle;
+        let window = self.window_for_handover(handle);
+        self.windows.archives().assign(handle, &window);
+        self.windows.state(&window).destination.set(folder);
+        self.windows_titled(&window);
+        self.emit(
+            &window,
+            LaunchEvent::Opened {
+                archive,
+                extract: true,
+            },
+        );
     }
 }
 
 impl Inner {
+    /// Bring the window used last forward, making the first archive window if
+    /// none is open.
     fn show_main(&self) {
-        if let Some(host) = self.quick.host() {
-            host.show_main();
+        let Some(host) = self.quick.host() else {
+            return;
+        };
+        match self.windows.labels().into_iter().next() {
+            Some(label) if host.focus_window(&label) => {}
+            _ => host.show_main(),
         }
     }
 
-    /// Queue an event for the main window and bring it forward: whatever
+    /// Bring one window forward.
+    fn show(&self, label: &str) {
+        if let Some(host) = self.quick.host() {
+            host.focus_window(label);
+        }
+    }
+
+    /// The window a notice (a launch that failed) is shown in: the one used
+    /// last, or the first archive window, made if none is open.
+    fn notice_window(&self) -> String {
+        match self.windows.labels().into_iter().next() {
+            Some(label) => label,
+            None => {
+                if let Some(host) = self.quick.host() {
+                    host.show_main();
+                }
+                MAIN_LABEL.to_owned()
+            }
+        }
+    }
+
+    /// Put the archive a window shows in its title.
+    fn windows_titled(&self, label: &str) {
+        if let Some(host) = self.quick.host() {
+            host.set_title(label, &self.windows.title(label));
+        }
+    }
+
+    /// Where the extract plan of an already open archive goes.
+    fn window_for_handover(&self, handle: crate::ipc::ArchiveHandle) -> String {
+        let path = self.windows.archives().path(handle).ok();
+        let placement = path
+            .as_deref()
+            .map_or(Placement::New, |p| self.windows.decide(p, None));
+        match placement {
+            Placement::Focus(w) | Placement::Reuse(w) => w,
+            Placement::New => self.fresh_window(),
+        }
+    }
+
+    /// A new archive window, registered; if none can be made, the window used
+    /// last.
+    fn fresh_window(&self) -> String {
+        let opener = self.windows.labels().into_iter().next();
+        let label = self.windows.next_label();
+        let made = self.windows.has_room()
+            && self
+                .quick
+                .host()
+                .is_some_and(|h| h.create_window(&label, opener.as_deref()));
+        if made {
+            self.windows.register(&label);
+            label
+        } else {
+            self.notice_window()
+        }
+    }
+
+    /// Open `path` where it belongs ([`WindowStates::decide`]), making a new
+    /// window when needed. `requester` is the window the user acted in, or
+    /// `None` for the shell. Delivery of the outcome is the caller's.
+    fn open_routed(&self, requester: Option<&str>, path: &Path) -> Result<Landing, IpcError> {
+        let archives = self.windows.archives();
+        let foreign = self.windows.foreign();
+        match self.windows.decide(path, requester) {
+            // Nothing to open: `deliver` brings the window forward.
+            Placement::Focus(window) => Ok(Landing {
+                window,
+                outcome: None,
+                in_place: false,
+            }),
+            Placement::Reuse(window) => {
+                let outcome = crate::route::open_path_as(archives, foreign, &window, path)?;
+                let in_place = requester == Some(window.as_str());
+                Ok(Landing {
+                    window,
+                    outcome: Some(outcome),
+                    in_place,
+                })
+            }
+            Placement::New => {
+                if !self.windows.has_room() {
+                    return Err(IpcError {
+                        code: mochi_core::ErrorCode::LimitExceeded.as_str().to_owned(),
+                        message: format!(
+                            "at most {} windows can be open; close one first",
+                            crate::windows::MAX_WINDOWS
+                        ),
+                    });
+                }
+                let opener = requester
+                    .map(str::to_owned)
+                    .or_else(|| self.windows.labels().into_iter().next());
+                let window = self.windows.next_label();
+                // Open first: a file that cannot be opened makes no window.
+                let outcome = crate::route::open_path_as(archives, foreign, &window, path)?;
+                self.windows.register(&window);
+                let made = self
+                    .quick
+                    .host()
+                    .is_some_and(|h| h.create_window(&window, opener.as_deref()));
+                if !made {
+                    self.windows.release(&window);
+                    return Err(IpcError {
+                        code: mochi_core::ErrorCode::IoError.as_str().to_owned(),
+                        message: "a new window could not be opened".to_owned(),
+                    });
+                }
+                Ok(Landing {
+                    window,
+                    outcome: Some(outcome),
+                    in_place: false,
+                })
+            }
+        }
+    }
+
+    /// Tell the landing window what it now shows, and bring it forward.
+    fn deliver(&self, landing: Landing, extract: bool) {
+        self.windows_titled(&landing.window);
+        match landing.outcome.and_then(|o| launch_event(o, extract)) {
+            Some(event) => self.emit(&landing.window, event),
+            None => self.show(&landing.window),
+        }
+    }
+
+    /// Queue an event for the window `label` and bring it forward: whatever
     /// reached here needs the full window.
-    fn emit(&self, event: LaunchEvent) {
+    fn emit(&self, label: &str, event: LaunchEvent) {
         {
-            let mut d = lock(&self.delivery);
+            let mut all = lock(&self.delivery);
+            let d = all.entry(label.to_owned()).or_default();
             let sent = match d.sink.clone() {
                 Some(sink) if sink.send(event.clone()) => true,
                 Some(_) => {
@@ -503,13 +734,17 @@ impl Inner {
                 d.pending.push_back(event);
             }
         }
-        self.show_main();
+        self.show(label);
     }
 
     fn problem(&self, message: impl Into<String>) {
-        self.emit(LaunchEvent::Problem {
-            message: message.into(),
-        });
+        let window = self.notice_window();
+        self.emit(
+            &window,
+            LaunchEvent::Problem {
+                message: message.into(),
+            },
+        );
     }
 
     fn handle(&self, item: Result<Launch, LaunchError>, quick: &Sender<QuickJob>) {
@@ -566,13 +801,16 @@ impl Inner {
         }
     }
 
-    /// `--find`: take the folders (when any were given) and tell the window to
-    /// open Find. A path that is not an existing folder is left out; if none is
-    /// left the current folders are kept and the problem is said.
+    /// `--find`: Find opens in an empty window, else in a new one, and never
+    /// in a window that shows an archive. The folders (when any were given)
+    /// become that window's own. A path that is not an existing folder is left
+    /// out; if none is left the window's folders are kept and the problem is said.
     fn find(&self, paths: &[PathBuf]) {
-        let Some(finder) = self.finder.get() else {
-            return self.problem("MOCHI Find is not available.");
-        };
+        let window = self
+            .windows
+            .empty_window()
+            .unwrap_or_else(|| self.fresh_window());
+        let finder = Arc::clone(&self.windows.state(&window).finder);
         if !paths.is_empty() {
             if let Err(e) = finder.set_scopes(paths.to_vec()) {
                 return self.problem(format!(
@@ -581,9 +819,12 @@ impl Inner {
                 ));
             }
         }
-        self.emit(LaunchEvent::Find {
-            folders: u32::try_from(finder.scopes().len()).unwrap_or(u32::MAX),
-        });
+        self.emit(
+            &window,
+            LaunchEvent::Find {
+                folders: u32::try_from(finder.scopes().len()).unwrap_or(u32::MAX),
+            },
+        );
     }
 
     fn open(&self, path: &Path) {
@@ -604,21 +845,12 @@ impl Inner {
                  the shell's open verb cannot ask for one."
             ));
         }
-        match self
-            .archives
-            .open(path, mochi_core::publish::ReadOptions::default())
-        {
-            Ok(archive) => self.emit(LaunchEvent::Opened {
-                archive,
-                extract: false,
-            }),
-            Err(e) => {
-                let e = IpcError::from(e);
-                self.problem(format!(
-                    "{shown} could not be opened ({}): {}",
-                    e.code, e.message
-                ));
-            }
+        match self.open_routed(None, path) {
+            Ok(landing) => self.deliver(landing, false),
+            Err(e) => self.problem(format!(
+                "{shown} could not be opened ({}): {}",
+                e.code, e.message
+            )),
         }
     }
 }
@@ -634,18 +866,20 @@ impl Inner {
             Ok(_) => return self.problem(format!("{shown} is not a file.")),
             Err(e) => return self.problem(format!("{shown} cannot be read: {e}.")),
         }
-        match self.foreign.open(path, None) {
-            Ok(archive) => {
-                if extract_verb {
-                    self.problem(format!(
-                        "{shown}: extracting from the shell is for .mochi archives. \
-                         It is open for browsing; use Extract in the foreign archive section."
-                    ));
+        match self.open_routed(None, path) {
+            Ok(landing) => {
+                if extract_verb && matches!(landing.outcome, Some(OpenOutcome::Foreign { .. })) {
+                    self.emit(
+                        &landing.window,
+                        LaunchEvent::Problem {
+                            message: format!(
+                                "{shown}: extracting from the shell is for .mochi archives. \
+                                 It is open for browsing; use Extract in the foreign archive section."
+                            ),
+                        },
+                    );
                 }
-                self.emit(LaunchEvent::ForeignOpened { archive });
-            }
-            Err(e) if e.code == mochi_foreign::ErrorCode::PasswordRequired.as_str() => {
-                self.emit(LaunchEvent::ForeignPassword { wrong: false });
+                self.deliver(landing, false);
             }
             Err(e) => self.problem(format!(
                 "{shown} could not be opened ({}): {}",
@@ -680,6 +914,9 @@ pub fn foreign_kind(path: &Path) -> Option<&'static str> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::extract::Destination;
+    use crate::foreign::Foreign;
+    use crate::jobs::JobRegistry;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn cwd() -> PathBuf {
@@ -998,14 +1235,73 @@ mod tests {
     fn launches_full() -> (Launches, Arc<Foreign>, Arc<Destination>) {
         let foreign = Arc::new(Foreign::default());
         foreign.set_helper(helper());
-        let destination = Arc::new(Destination::default());
-        let l = Launches::new(
-            Arc::new(Archives::default()),
-            Arc::clone(&destination),
-            Arc::clone(&foreign),
-            Quick::new(),
-        );
+        let windows = windows_for(Arc::new(Archives::default()), Arc::clone(&foreign));
+        let destination = Arc::clone(&windows.state(MAIN_LABEL).destination);
+        let l = Launches::new(windows, Quick::new());
         (l, foreign, destination)
+    }
+
+    /// Windows the app would have made, recorded.
+    #[derive(Default)]
+    struct FakeHost {
+        created: Mutex<Vec<(String, Option<String>)>>,
+        focused: Mutex<Vec<String>>,
+        titles: Mutex<Vec<(String, String)>>,
+        /// Make `create_window` fail.
+        refuse: AtomicBool,
+    }
+
+    impl crate::quick::WindowHost for FakeHost {
+        fn show_quick(&self, _: crate::quick::QuickSize) {}
+        fn close_quick(&self) {}
+        fn show_main(&self) {}
+        fn open_folder(&self, _: &Path) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn create_window(&self, label: &str, opener: Option<&str>) -> bool {
+            if self.refuse.load(Ordering::SeqCst) {
+                return false;
+            }
+            self.created
+                .lock()
+                .unwrap()
+                .push((label.to_owned(), opener.map(str::to_owned)));
+            true
+        }
+        fn focus_window(&self, label: &str) -> bool {
+            self.focused.lock().unwrap().push(label.to_owned());
+            true
+        }
+        fn set_title(&self, label: &str, title: &str) {
+            self.titles
+                .lock()
+                .unwrap()
+                .push((label.to_owned(), title.to_owned()));
+        }
+    }
+
+    fn with_host(l: &Launches) -> Arc<FakeHost> {
+        let host = Arc::new(FakeHost::default());
+        l.inner.quick.set_host(host.clone());
+        host
+    }
+
+    /// What one window has been told so far.
+    fn heard(l: &Launches, label: &str) -> Vec<LaunchEvent> {
+        let sink = Sink::live();
+        l.watch(label, sink.clone());
+        sink.events()
+    }
+
+    /// The windows of a test: one empty archive window, `main`.
+    fn windows_for(archives: Arc<Archives>, foreign: Arc<Foreign>) -> Arc<WindowStates> {
+        let windows = Arc::new(WindowStates::new(
+            archives,
+            foreign,
+            Arc::new(JobRegistry::default()),
+        ));
+        windows.register(MAIN_LABEL);
+        windows
     }
 
     fn write_archive(dir: &Path, name: &str) -> PathBuf {
@@ -1039,7 +1335,7 @@ mod tests {
         l.handle_now(Err(LaunchError("first".into())));
         l.handle_now(Err(LaunchError("second".into())));
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         let events = sink.events();
         assert_eq!(events.len(), 2);
         assert!(
@@ -1057,19 +1353,18 @@ mod tests {
     fn a_gone_listener_is_forgotten_and_the_event_kept() {
         let l = launches();
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         sink.1.store(false, Ordering::SeqCst);
         l.handle_now(Err(LaunchError("kept".into())));
         let next = Sink::live();
-        l.watch(next.clone());
+        l.watch(MAIN_LABEL, next.clone());
         assert_eq!(next.events().len(), 1);
     }
 
     #[test]
     fn a_foreign_archive_opens_in_the_foreign_browser_not_the_mochi_one() {
         let (l, foreign) = launches_with();
-        let sink = Sink::live();
-        l.watch(sink.clone());
+        let host = with_host(&l);
         for name in [
             "basic_infozip.zip",
             "basic.tar",
@@ -1081,7 +1376,24 @@ mod tests {
                 paths: vec![fx(name)],
             }));
         }
-        let events = sink.events();
+        // The first is shown in the empty window; each next one gets a window
+        // of its own, opened from the one used last.
+        assert_eq!(
+            *host.created.lock().unwrap(),
+            [
+                ("win-1".to_owned(), Some("main".to_owned())),
+                ("win-2".to_owned(), Some("win-1".to_owned())),
+                ("win-3".to_owned(), Some("win-2".to_owned())),
+            ]
+        );
+        let events: Vec<LaunchEvent> = ["main", "win-1", "win-2", "win-3"]
+            .iter()
+            .flat_map(|w| {
+                let heard = heard(&l, w);
+                assert_eq!(heard.len(), 1, "{w}: {heard:?}");
+                heard
+            })
+            .collect();
         let formats: Vec<&str> = events
             .iter()
             .map(|e| match e {
@@ -1102,18 +1414,21 @@ mod tests {
     #[test]
     fn extract_verbs_on_a_foreign_archive_extract_nothing_and_open_it_for_browsing() {
         let (l, foreign, dest) = launches_full();
-        let sink = Sink::live();
-        l.watch(sink.clone());
+        with_host(&l);
         let dir = tempfile::tempdir().unwrap();
-        let zip = dir.path().join("photos.zip");
-        std::fs::copy(fx("basic_infozip.zip"), &zip).unwrap();
-        for verb in [Verb::ExtractHere, Verb::ExtractToFolder] {
+        for (verb, name) in [
+            (Verb::ExtractHere, "photos.zip"),
+            (Verb::ExtractToFolder, "pictures.zip"),
+        ] {
+            let zip = dir.path().join(name);
+            std::fs::copy(fx("basic_infozip.zip"), &zip).unwrap();
             l.handle_now(Ok(Launch {
                 verb,
-                paths: vec![zip.clone()],
+                paths: vec![zip],
             }));
         }
-        let events = sink.events();
+        let mut events = heard(&l, "main");
+        events.extend(heard(&l, "win-1"));
         assert_eq!(events.len(), 4, "{events:?}");
         for pair in events.chunks(2) {
             assert!(
@@ -1136,7 +1451,7 @@ mod tests {
     fn an_encrypted_foreign_archive_asks_for_its_password_in_the_window() {
         let (l, foreign) = launches_with();
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         let p = fx("7z/enc_names.7z");
         l.handle_now(Ok(Launch {
             verb: Verb::Open,
@@ -1148,7 +1463,10 @@ mod tests {
         );
         assert_eq!(foreign.open_count(), 0);
         // The retry is the in-app one: the file is remembered in Rust.
-        assert_eq!(foreign.pending().as_deref(), Some(p.as_path()));
+        assert_eq!(
+            foreign.pending_for(MAIN_LABEL).as_deref(),
+            Some(p.as_path())
+        );
         let s = foreign.open(&p, Some(b"SECRET".to_vec())).unwrap();
         assert!(s.opened_with_password);
     }
@@ -1157,7 +1475,7 @@ mod tests {
     fn foreign_variants_d8_does_not_support_keep_their_typed_refusal() {
         let (l, foreign) = launches_with();
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         let dir = tempfile::tempdir().unwrap();
         // A `.zip` that is not one, and a missing file.
         let fake = dir.path().join("fake.zip");
@@ -1193,7 +1511,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let l = launches();
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         l.handle_now(Ok(Launch {
             verb: Verb::Open,
             paths: vec![dir.path().join("missing.mochi")],
@@ -1225,7 +1543,7 @@ mod tests {
         let archive = write_archive(dir.path(), "photos.mochi");
         let l = launches();
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
         l.handle_now(Ok(Launch {
             verb: Verb::Open,
             paths: vec![archive.clone()],
@@ -1239,35 +1557,57 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(l.inner.destination.get().is_none());
+        assert!(l
+            .inner
+            .windows
+            .state(MAIN_LABEL)
+            .destination
+            .get()
+            .is_none());
         // Opening is read-only: nothing was extracted.
         assert!(!dir.path().join("a.txt").exists());
     }
 
+    fn dirs(root: &Path, names: &[&str]) -> Vec<PathBuf> {
+        names
+            .iter()
+            .map(|n| {
+                let d = root.join(n);
+                std::fs::create_dir_all(&d).unwrap();
+                d
+            })
+            .collect()
+    }
+
     #[test]
-    fn find_sets_the_folders_in_rust_and_tells_the_window_only_how_many() {
+    fn find_sets_the_folders_in_an_empty_window_and_tells_it_only_how_many() {
         let dir = tempfile::tempdir().unwrap();
-        let one = dir.path().join("one");
-        let two = dir.path().join("two");
-        std::fs::create_dir_all(&one).unwrap();
-        std::fs::create_dir_all(&two).unwrap();
+        let two = dirs(dir.path(), &["one", "two"]);
         let file = dir.path().join("a.txt");
         std::fs::write(&file, b"x").unwrap();
         let l = launches();
-        let finder = Arc::new(Finder::default());
-        l.set_finder(Arc::clone(&finder));
+        let host = with_host(&l);
         let sink = Sink::live();
-        l.watch(sink.clone());
+        l.watch(MAIN_LABEL, sink.clone());
+        let finder = Arc::clone(&l.inner.windows.state(MAIN_LABEL).finder);
 
+        let mut paths = two.clone();
+        paths.push(file.clone());
         l.handle_now(Ok(Launch {
             verb: Verb::Find,
-            paths: vec![one.clone(), two.clone(), file.clone()],
+            paths,
         }));
         assert_eq!(sink.events(), vec![LaunchEvent::Find { folders: 2 }]);
+        assert!(
+            host.created.lock().unwrap().is_empty(),
+            "main was empty: reused"
+        );
         let shown: Vec<String> = finder.scopes().into_iter().map(|s| s.path).collect();
         assert_eq!(
             shown,
-            vec![one.display().to_string(), two.display().to_string()],
+            two.iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>(),
             "a file among the paths is left out"
         );
 
@@ -1294,18 +1634,139 @@ mod tests {
     }
 
     #[test]
-    fn find_without_a_finder_is_a_problem_not_a_crash() {
+    fn find_never_takes_over_a_window_that_shows_an_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "busy.mochi");
+        let folders = dirs(dir.path(), &["f"]);
         let l = launches();
-        let sink = Sink::live();
-        l.watch(sink.clone());
+        let host = with_host(&l);
+        l.inner
+            .windows
+            .archives()
+            .open_as(
+                MAIN_LABEL,
+                &archive,
+                mochi_core::publish::ReadOptions::default(),
+            )
+            .unwrap();
         l.handle_now(Ok(Launch {
             verb: Verb::Find,
-            paths: Vec::new(),
+            paths: folders,
         }));
+        let created = host.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1, "a new window");
+        let new = created[0].0.clone();
+        assert_ne!(new, MAIN_LABEL);
+        assert_eq!(heard(&l, &new), vec![LaunchEvent::Find { folders: 1 }]);
+        assert!(
+            heard(&l, MAIN_LABEL).is_empty(),
+            "the busy window is not told"
+        );
+        assert!(l.inner.windows.state(MAIN_LABEL).finder.scopes().is_empty());
+        assert_eq!(l.inner.windows.state(&new).finder.scopes().len(), 1);
+    }
+
+    fn entry(path: &str) -> FoundEntry {
+        FoundEntry {
+            key: crate::browse::hex(path.as_bytes()),
+            path: NameText::of(path.as_bytes()),
+            kind: EntryKindView::File,
+        }
+    }
+
+    #[test]
+    fn a_hit_opens_in_the_empty_window_that_asked_and_that_window_is_told_to_reveal_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "hit.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        let sink = Sink::live();
+        l.watch(MAIN_LABEL, sink.clone());
+        let outcome = l
+            .open_hit_in_window(MAIN_LABEL, &archive, entry("a.txt"))
+            .unwrap();
+        let OpenOutcome::Opened { archive: summary } = outcome else {
+            panic!("expected the archive to open in place: {outcome:?}");
+        };
+        assert!(host.created.lock().unwrap().is_empty());
+        let events = sink.events();
+        assert_eq!(events.len(), 1, "{events:?}");
         assert!(matches!(
-            sink.events().as_slice(),
-            [LaunchEvent::Problem { .. }]
+            &events[0],
+            LaunchEvent::Reveal { handle, key, kind: EntryKindView::File, .. }
+                if *handle == summary.handle && *key == crate::browse::hex(b"a.txt")
         ));
+    }
+
+    #[test]
+    fn a_hit_focuses_the_window_that_already_has_the_archive_and_reveals_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "has.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        l.inner.windows.register("win-1");
+        let opened = l
+            .inner
+            .windows
+            .archives()
+            .open_as(
+                "win-1",
+                &archive,
+                mochi_core::publish::ReadOptions::default(),
+            )
+            .unwrap();
+        let outcome = l
+            .open_hit_in_window(MAIN_LABEL, &archive, entry("a.txt"))
+            .unwrap();
+        assert_eq!(outcome, OpenOutcome::Elsewhere);
+        assert!(host.created.lock().unwrap().is_empty(), "no second copy");
+        assert!(host.focused.lock().unwrap().contains(&"win-1".to_owned()));
+        let told = heard(&l, "win-1");
+        assert!(
+            matches!(
+                told.as_slice(),
+                [LaunchEvent::Reveal { handle, .. }] if *handle == opened.handle
+            ),
+            "{told:?}"
+        );
+        assert!(heard(&l, MAIN_LABEL).is_empty());
+    }
+
+    #[test]
+    fn a_hit_asked_in_a_busy_window_opens_in_a_new_window_and_reveals_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let busy = write_archive(dir.path(), "busy.mochi");
+        let hit = write_archive(dir.path(), "hit.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        l.inner
+            .windows
+            .archives()
+            .open_as(
+                MAIN_LABEL,
+                &busy,
+                mochi_core::publish::ReadOptions::default(),
+            )
+            .unwrap();
+        let outcome = l
+            .open_hit_in_window(MAIN_LABEL, &hit, entry("a.txt"))
+            .unwrap();
+        assert_eq!(outcome, OpenOutcome::Elsewhere);
+        let created = host.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        let new = created[0].0.clone();
+        let told = heard(&l, &new);
+        assert!(
+            matches!(
+                told.as_slice(),
+                [LaunchEvent::Opened { .. }, LaunchEvent::Reveal { .. }]
+            ),
+            "{told:?}"
+        );
+        assert!(
+            heard(&l, MAIN_LABEL).is_empty(),
+            "the busy window keeps its archive"
+        );
     }
 
     #[test]
@@ -1314,7 +1775,7 @@ mod tests {
         let archive = write_archive(dir.path(), "photos.mochi");
         let l = launches();
         let main = Sink::live();
-        l.watch(main.clone());
+        l.watch(MAIN_LABEL, main.clone());
         let compact = QSink::live();
         l.inner.quick.watch(compact.clone());
         for verb in [Verb::ExtractHere, Verb::ExtractToFolder] {
@@ -1336,7 +1797,13 @@ mod tests {
             std::fs::read(dir.path().join("photos").join("a.txt")).unwrap(),
             b"alpha"
         );
-        assert!(l.inner.destination.get().is_none());
+        assert!(l
+            .inner
+            .windows
+            .state(MAIN_LABEL)
+            .destination
+            .get()
+            .is_none());
     }
 
     #[test]
@@ -1346,7 +1813,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), b"mine").unwrap();
         let l = launches();
         let main = Sink::live();
-        l.watch(main.clone());
+        l.watch(MAIN_LABEL, main.clone());
         let compact = QSink::live();
         l.inner.quick.watch(compact.clone());
         l.handle_now(Ok(Launch {
@@ -1363,7 +1830,10 @@ mod tests {
             &events[0],
             LaunchEvent::Opened { extract: true, archive } if archive.file_name == "photos.mochi"
         ));
-        assert_eq!(l.inner.destination.get(), Some(dir.path().to_path_buf()));
+        assert_eq!(
+            l.inner.windows.state(MAIN_LABEL).destination.get(),
+            Some(dir.path().to_path_buf())
+        );
         assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"mine");
     }
 
@@ -1381,9 +1851,7 @@ mod tests {
             })
             .collect();
         let l = Launches::with_batch_window(
-            Arc::new(Archives::default()),
-            Arc::new(Destination::default()),
-            Arc::new(Foreign::default()),
+            windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
             Quick::new(),
             Duration::from_millis(300),
         );
@@ -1434,14 +1902,12 @@ mod tests {
         let file = dir.path().join("note.txt");
         std::fs::write(&file, b"x").unwrap();
         let l = Launches::with_batch_window(
-            Arc::new(Archives::default()),
-            Arc::new(Destination::default()),
-            Arc::new(Foreign::default()),
+            windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
             Quick::new(),
             Duration::from_millis(200),
         );
         let main = Sink::live();
-        l.watch(main.clone());
+        l.watch(MAIN_LABEL, main.clone());
         let compact = QSink::live();
         l.inner.quick.watch(compact.clone());
         l.submit(parse(&[OsStr::new("--add-now"), file.as_os_str()], &cwd()));
@@ -1466,19 +1932,26 @@ mod tests {
         let a = write_archive(dir.path(), "a.mochi");
         let b = write_archive(dir.path(), "b.mochi");
         let l = launches();
-        let sink = Sink::live();
-        l.watch(sink.clone());
+        with_host(&l);
+        let first = Sink::live();
+        l.watch(MAIN_LABEL, first.clone());
+        let second = Sink::live();
+        l.watch("win-1", second.clone());
         for p in [&a, &b] {
             l.submit(parse(&[p.as_os_str()], &cwd()));
         }
         l.submit(Ok(None));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while sink.events().len() < 2 && std::time::Instant::now() < deadline {
+        while (first.events().is_empty() || second.events().is_empty())
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let names: Vec<String> = sink
+        // In order: the first archive takes the empty window, the second a new one.
+        let names: Vec<String> = first
             .events()
             .into_iter()
+            .chain(second.events())
             .map(|e| match e {
                 LaunchEvent::Opened { archive, .. } => archive.file_name,
                 other => panic!("{other:?}"),
@@ -1504,9 +1977,7 @@ mod tests {
 
     fn add_form_launches(batch: Duration) -> (Launches, Arc<QSink>) {
         let l = Launches::with_batch_window(
-            Arc::new(Archives::default()),
-            Arc::new(Destination::default()),
-            Arc::new(Foreign::default()),
+            windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
             Quick::new(),
             batch,
         );
@@ -1696,5 +2167,278 @@ mod tests {
         let failed = wait_quick(&compact, |e| matches!(e, QuickEvent::Failed { .. }));
         assert!(matches!(failed, QuickEvent::Failed { .. }));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    // ---- one window per archive -------------------------------------------
+
+    fn opened_name(e: &LaunchEvent) -> &str {
+        match e {
+            LaunchEvent::Opened { archive, .. } => &archive.file_name,
+            other => panic!("expected Opened, got {other:?}"),
+        }
+    }
+
+    fn open_verb(l: &Launches, path: &Path) {
+        l.handle_now(Ok(Launch {
+            verb: Verb::Open,
+            paths: vec![path.to_path_buf()],
+        }));
+    }
+
+    #[test]
+    fn the_shell_opens_the_empty_window_first_and_a_new_window_for_each_next_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            write_archive(dir.path(), "a.mochi"),
+            write_archive(dir.path(), "b.mochi"),
+        );
+        let l = launches();
+        let host = with_host(&l);
+        open_verb(&l, &a);
+        assert!(host.created.lock().unwrap().is_empty(), "main was empty");
+        open_verb(&l, &b);
+        assert_eq!(
+            *host.created.lock().unwrap(),
+            [("win-1".to_owned(), Some("main".to_owned()))]
+        );
+        let main = heard(&l, "main");
+        let second = heard(&l, "win-1");
+        assert_eq!((main.len(), second.len()), (1, 1));
+        assert_eq!(opened_name(&main[0]), "a.mochi");
+        assert_eq!(opened_name(&second[0]), "b.mochi");
+        // Each window is titled with its archive.
+        let titles = host.titles.lock().unwrap().clone();
+        assert!(titles.contains(&("main".into(), "a.mochi - MOCHI".into())));
+        assert!(titles.contains(&("win-1".into(), "b.mochi - MOCHI".into())));
+        // The archives are the windows': closing one window leaves the other.
+        let w = &l.inner.windows;
+        assert_eq!(w.archives().open_count(), 2);
+        w.release("main");
+        assert_eq!(w.archives().open_count(), 1);
+        assert_eq!(w.archives().file_names_of("win-1"), ["b.mochi"]);
+    }
+
+    #[test]
+    fn opening_an_archive_that_is_already_open_brings_its_window_forward() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            write_archive(dir.path(), "a.mochi"),
+            write_archive(dir.path(), "b.mochi"),
+        );
+        let l = launches();
+        let host = with_host(&l);
+        open_verb(&l, &a);
+        open_verb(&l, &b);
+        host.focused.lock().unwrap().clear();
+        // Through the shell, by another spelling of the path.
+        open_verb(&l, &dir.path().join(".").join("a.mochi"));
+        assert_eq!(host.created.lock().unwrap().len(), 1, "no third window");
+        assert_eq!(*host.focused.lock().unwrap(), ["main"]);
+        assert_eq!(
+            l.inner.windows.archives().open_count(),
+            2,
+            "not opened twice"
+        );
+        // Through the user's Open in the other window.
+        let outcome = l.open_in_window("win-1", &a).unwrap();
+        assert_eq!(outcome, OpenOutcome::Elsewhere);
+        assert_eq!(host.focused.lock().unwrap().last().unwrap(), "main");
+        assert_eq!(l.inner.windows.archives().open_count(), 2);
+        // Even in the window that has it.
+        assert_eq!(
+            l.open_in_window("main", &a).unwrap(),
+            OpenOutcome::Elsewhere
+        );
+        // Only the two first events were ever sent.
+        assert_eq!(heard(&l, "main").len(), 1);
+        assert_eq!(heard(&l, "win-1").len(), 1);
+    }
+
+    #[test]
+    fn the_user_s_open_fills_an_empty_window_and_leaves_a_busy_one_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            write_archive(dir.path(), "a.mochi"),
+            write_archive(dir.path(), "b.mochi"),
+        );
+        let l = launches();
+        let host = with_host(&l);
+        // The empty window shows what it opened itself.
+        let first = l.open_in_window("main", &a).unwrap();
+        let OpenOutcome::Opened { archive } = first else {
+            panic!("{first:?}");
+        };
+        assert_eq!(archive.file_name, "a.mochi");
+        assert!(host.created.lock().unwrap().is_empty());
+        assert!(heard(&l, "main").is_empty(), "no launch event for itself");
+        // Now it is busy: the next archive opens beside it, in a new window.
+        let second = l.open_in_window("main", &b).unwrap();
+        assert_eq!(second, OpenOutcome::Elsewhere);
+        assert_eq!(
+            *host.created.lock().unwrap(),
+            [("win-1".to_owned(), Some("main".to_owned()))]
+        );
+        let events = heard(&l, "win-1");
+        assert_eq!(events.len(), 1);
+        assert_eq!(opened_name(&events[0]), "b.mochi");
+        // The first window still has its archive.
+        assert_eq!(
+            l.inner.windows.archives().file_names_of("main"),
+            ["a.mochi"]
+        );
+        // Closing it (the start screen again) makes the window usable again.
+        let handle = archive.handle;
+        assert!(l.inner.windows.archives().close(handle));
+        let third = l.open_in_window("main", &b);
+        assert_eq!(third.unwrap(), OpenOutcome::Elsewhere, "b is open in win-1");
+        assert!(matches!(
+            l.open_in_window("main", &a).unwrap(),
+            OpenOutcome::Opened { .. }
+        ));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_opened_makes_no_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_archive(dir.path(), "a.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        l.open_in_window("main", &a).unwrap();
+        let bad = dir.path().join("not-an-archive.mochi");
+        std::fs::write(&bad, b"this is not an archive").unwrap();
+        assert!(l.open_in_window("main", &bad).is_err());
+        assert!(l
+            .open_in_window("main", &dir.path().join("missing.mochi"))
+            .is_err());
+        assert!(host.created.lock().unwrap().is_empty());
+        assert_eq!(l.inner.windows.labels(), ["main"]);
+        assert_eq!(l.inner.windows.archives().open_count(), 1);
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_made_leaves_nothing_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            write_archive(dir.path(), "a.mochi"),
+            write_archive(dir.path(), "b.mochi"),
+        );
+        let l = launches();
+        let host = with_host(&l);
+        l.open_in_window("main", &a).unwrap();
+        host.refuse.store(true, Ordering::SeqCst);
+        let e = l.open_in_window("main", &b).unwrap_err();
+        assert!(e.message.contains("window"), "{e:?}");
+        assert_eq!(l.inner.windows.archives().open_count(), 1);
+        assert_eq!(l.inner.windows.labels(), ["main"]);
+    }
+
+    #[test]
+    fn the_number_of_windows_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = launches();
+        with_host(&l);
+        for n in 0..crate::windows::MAX_WINDOWS {
+            let p = write_archive(dir.path(), &format!("{n}.mochi"));
+            l.open_in_window("main", &p).unwrap();
+        }
+        let extra = write_archive(dir.path(), "extra.mochi");
+        let e = l.open_in_window("main", &extra).unwrap_err();
+        assert_eq!(e.code, "LIMIT_EXCEEDED");
+    }
+
+    #[test]
+    fn an_encrypted_archive_waits_for_its_passphrase_in_the_window_that_shows_it() {
+        use mochi_core::manifest::Attributes;
+        use mochi_core::publish::{ArchiveWriter, Transaction};
+        use mochi_core::storage::os::OsStorage;
+        use mochi_testkit::archive::{encrypted_options, Job};
+        use mochi_testkit::SeqIds;
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_archive(dir.path(), "a.mochi");
+        let enc = dir.path().join("enc.mochi");
+        let mut w = ArchiveWriter::create(
+            OsStorage::create_new(&enc).unwrap(),
+            Box::new(SeqIds::new(3)),
+            encrypted_options(&["correct horse"]),
+        )
+        .unwrap();
+        let mut tx = Transaction::new();
+        tx.put_file(
+            mochi_testkit::archive::path("s.txt"),
+            b"x".to_vec(),
+            Attributes::default(),
+        );
+        w.commit(tx, &Job::new().ctx()).unwrap();
+        w.close().unwrap();
+        let l = launches();
+        with_host(&l);
+        l.open_in_window("main", &a).unwrap();
+        assert_eq!(
+            l.open_in_window("main", &enc).unwrap(),
+            OpenOutcome::Elsewhere
+        );
+        let events = heard(&l, "win-1");
+        let [LaunchEvent::NeedsPassphrase { pending, file_name }] = events.as_slice() else {
+            panic!("{events:?}");
+        };
+        assert_eq!(file_name, "enc.mochi");
+        // The new window, not main, can unlock it; it then belongs to win-1.
+        let archive = l
+            .inner
+            .windows
+            .archives()
+            .unlock(*pending, &crate::ipc::Secret::new("correct horse"))
+            .unwrap();
+        assert_eq!(
+            l.inner
+                .windows
+                .archives()
+                .owner_of(archive.handle)
+                .as_deref(),
+            Some("win-1")
+        );
+    }
+
+    #[test]
+    fn an_extract_plan_handed_over_goes_to_a_window_of_its_own_when_main_is_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            write_archive(dir.path(), "a.mochi"),
+            write_archive(dir.path(), "b.mochi"),
+        );
+        let l = launches();
+        let host = with_host(&l);
+        l.open_in_window("main", &a).unwrap();
+        // The quick worker opened b itself, unowned, and hands the plan over.
+        let summary = l
+            .inner
+            .windows
+            .archives()
+            .open(&b, mochi_core::publish::ReadOptions::default())
+            .unwrap();
+        let folder = dir.path().join("out");
+        crate::quick::MainPort::hand_over_extract(&*l.inner, summary.clone(), folder.clone());
+        assert_eq!(host.created.lock().unwrap().len(), 1);
+        let events = heard(&l, "win-1");
+        assert!(
+            matches!(
+                events.as_slice(),
+                [LaunchEvent::Opened { extract: true, .. }]
+            ),
+            "{events:?}"
+        );
+        assert_eq!(
+            l.inner.windows.state("win-1").destination.get(),
+            Some(folder)
+        );
+        assert!(l.inner.windows.state("main").destination.get().is_none());
+        assert_eq!(
+            l.inner
+                .windows
+                .archives()
+                .owner_of(summary.handle)
+                .as_deref(),
+            Some("win-1")
+        );
     }
 }

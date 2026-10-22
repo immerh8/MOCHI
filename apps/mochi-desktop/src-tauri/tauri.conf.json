@@ -59,7 +59,8 @@
           "/usr/share/mime/packages/mochi.xml": "../../../packaging/linux/mochi-mime.xml",
           "/usr/share/applications/mochi-find.desktop": "../../../packaging/linux/mochi-find.desktop",
           "/usr/share/kio/servicemenus/mochi-find.desktop": "../../../packaging/linux/mochi-find-servicemenu.desktop",
-          "/usr/share/nemo/actions/mochi-find.nemo_action": "../../../packaging/linux/mochi-find.nemo_action"
+          "/usr/share/nemo/actions/mochi-find.nemo_action": "../../../packaging/linux/mochi-find.nemo_action",
+          "/usr/share/nautilus-python/extensions/mochi_find.py": "../../../packaging/linux/mochi-find-nautilus.py"
         }
       }
     }

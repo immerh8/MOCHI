@@ -56,9 +56,11 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use ts_rs::TS;
 
-use crate::browse::{hex, kind, Archives};
+use crate::browse::{hex, kind};
+use crate::commands::Win;
 use crate::ipc::{DialogText, EntryKindView, IpcError, NameText, OpenOutcome};
 use crate::jobs::Spawner;
+use crate::launch::Launches;
 
 /// Progress phase of the scan: `completed` is archives finished, `total` the
 /// archives found once the walk is over.
@@ -944,7 +946,7 @@ struct FinderInner {
 #[derive(Default)]
 pub struct Finder {
     inner: Mutex<FinderInner>,
-    cache: Cache,
+    cache: Arc<Cache>,
     limits: Mutex<Option<Limits>>,
 }
 
@@ -989,7 +991,24 @@ fn scope_views(scopes: &[PathBuf]) -> Vec<FindScopeView> {
         .collect()
 }
 
+/// An entry of a scanned archive, as the window asks to be shown it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundEntry {
+    /// The exact stored path, hex.
+    pub key: String,
+    pub path: NameText,
+    pub kind: EntryKindView,
+}
+
 impl Finder {
+    /// A finder that shares `cache` with others (one per window).
+    pub fn new(cache: Arc<Cache>) -> Finder {
+        Finder {
+            cache,
+            ..Finder::default()
+        }
+    }
+
     /// A finder with other bounds (tests).
     pub fn with_limits(limits: Limits) -> Finder {
         Finder {
@@ -1004,6 +1023,40 @@ impl Finder {
 
     pub fn cache(&self) -> &Cache {
         &self.cache
+    }
+
+    /// The entry `key` (a hit's `key`) of archive `archive` of scan `run`,
+    /// checked against the names the scan read.
+    pub fn entry_of(&self, run: u32, archive: u32, key: &str) -> Result<FoundEntry, IpcError> {
+        let stored = crate::browse::parse_key(key)
+            .map_err(IpcError::from)?
+            .as_stored()
+            .to_vec();
+        let current = self
+            .current()
+            .filter(|r| r.id == run)
+            .ok_or_else(|| invalid("that result belongs to an earlier scan; search again"))?;
+        let index = {
+            let inner = lock(&current.inner);
+            match inner.records.get(archive as usize).map(|r| &r.outcome) {
+                Some(Some(Outcome::Indexed(ix))) => Arc::clone(ix),
+                _ => return Err(invalid("that archive is not in the scan")),
+            }
+        };
+        let slot = index
+            .slots
+            .iter()
+            .find(|s| index.path(s) == stored.as_slice())
+            .ok_or_else(|| invalid("that entry is not in the archive"))?;
+        Ok(FoundEntry {
+            key: hex(&stored),
+            path: NameText::of(&stored),
+            kind: kind(if slot.dir {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            }),
+        })
     }
 
     pub fn scopes(&self) -> Vec<FindScopeView> {
@@ -1421,10 +1474,10 @@ async fn blocking<T: Send + 'static>(
         })?
 }
 
-/// The folders to search.
+/// The folders to search (this window's own).
 #[tauri::command]
-pub fn find_scopes(finder: State<'_, Arc<Finder>>) -> Vec<FindScopeView> {
-    finder.scopes()
+pub fn find_scopes(win: Win) -> Vec<FindScopeView> {
+    win.state.finder.scopes()
 }
 
 /// Ask for folders in the native dialog (in Rust) and add them. `null` if the
@@ -1433,9 +1486,9 @@ pub fn find_scopes(finder: State<'_, Arc<Finder>>) -> Vec<FindScopeView> {
 pub async fn find_choose_folders(
     app: AppHandle,
     text: Option<DialogText>,
-    finder: State<'_, Arc<Finder>>,
+    win: Win,
 ) -> Result<Option<Vec<FindScopeView>>, IpcError> {
-    let finder = Arc::clone(&finder);
+    let finder = Arc::clone(&win.state.finder);
     let text = text.unwrap_or_default();
     blocking(move || match crate::picker::pick_folders(&app, &text) {
         None => Ok(None),
@@ -1446,8 +1499,8 @@ pub async fn find_choose_folders(
 
 /// Take a folder off the list.
 #[tauri::command]
-pub fn find_remove_scope(index: u32, finder: State<'_, Arc<Finder>>) -> Vec<FindScopeView> {
-    finder.remove_scope(index as usize)
+pub fn find_remove_scope(index: u32, win: Win) -> Vec<FindScopeView> {
+    win.state.finder.remove_scope(index as usize)
 }
 
 /// Scan the folders. Returns the scan's number at once; events stream over
@@ -1456,9 +1509,9 @@ pub fn find_remove_scope(index: u32, finder: State<'_, Arc<Finder>>) -> Vec<Find
 pub async fn find_start(
     fresh: bool,
     on_event: Channel<FindEvent>,
-    finder: State<'_, Arc<Finder>>,
+    win: Win,
 ) -> Result<u32, IpcError> {
-    finder.start(
+    win.state.finder.start(
         fresh,
         Arc::new(on_event),
         Box::new(|work| {
@@ -1469,45 +1522,45 @@ pub async fn find_start(
 
 /// Stop the scan. `false` if none is running.
 #[tauri::command]
-pub fn find_cancel(finder: State<'_, Arc<Finder>>) -> bool {
-    finder.cancel()
+pub fn find_cancel(win: Win) -> bool {
+    win.state.finder.cancel()
 }
 
 /// Names matching `text` in the latest scan, with its coverage.
 #[tauri::command]
-pub async fn find_query(
-    text: String,
-    finder: State<'_, Arc<Finder>>,
-) -> Result<FindResultView, IpcError> {
-    let finder = Arc::clone(&finder);
+pub async fn find_query(text: String, win: Win) -> Result<FindResultView, IpcError> {
+    let finder = Arc::clone(&win.state.finder);
     blocking(move || finder.query(&text)).await
 }
 
-/// Open the archive of a hit (read-only, in the browser). The window names no path.
+/// Open the archive of a hit (read-only) and show the entry `key` in it. The
+/// archive opens where archives open (`Launches::open_hit_in_window`): in this
+/// window if it is empty, in the window that already has it, else in a new
+/// one. The answer is `Opened` for this window to show, or `Elsewhere`. The
+/// window names no path.
 #[tauri::command]
 pub async fn find_open_hit(
     run: u32,
     archive: u32,
-    finder: State<'_, Arc<Finder>>,
-    archives: State<'_, Arc<Archives>>,
+    key: String,
+    win: Win,
+    launches: State<'_, Arc<Launches>>,
 ) -> Result<OpenOutcome, IpcError> {
-    let finder = Arc::clone(&finder);
-    let archives = Arc::clone(&archives);
+    let finder = Arc::clone(&win.state.finder);
+    let launches = Arc::clone(&launches);
+    let label = win.label.clone();
     blocking(move || {
         let path = finder.archive_for_open(run, archive)?;
-        archives.open_or_pend(&path).map_err(IpcError::from)
+        let entry = finder.entry_of(run, archive, &key)?;
+        launches.open_hit_in_window(&label, &path, entry)
     })
     .await
 }
 
 /// Show the folder that holds the archive of a hit.
 #[tauri::command]
-pub async fn find_show_folder(
-    run: u32,
-    archive: u32,
-    finder: State<'_, Arc<Finder>>,
-) -> Result<(), IpcError> {
-    let finder = Arc::clone(&finder);
+pub async fn find_show_folder(run: u32, archive: u32, win: Win) -> Result<(), IpcError> {
+    let finder = Arc::clone(&win.state.finder);
     blocking(move || crate::help::open_folder(&finder.archive_folder(run, archive)?)).await
 }
 
@@ -1516,6 +1569,7 @@ pub async fn find_show_folder(
 mod tests {
     use std::sync::atomic::AtomicU32;
 
+    use crate::browse::Archives;
     use mochi_core::manifest::Attributes;
     use mochi_core::publish::{ArchiveWriter, Transaction};
     use mochi_core::storage::os::OsStorage;
