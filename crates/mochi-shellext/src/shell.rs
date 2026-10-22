@@ -8,7 +8,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use windows::core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, PCWSTR, PSTR, PWSTR};
@@ -31,8 +31,8 @@ use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DET
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     DragQueryFileW, ExtractIconExW, IContextMenu, IContextMenu_Impl, IShellExtInit,
-    IShellExtInit_Impl, CMF_DEFAULTONLY, CMINVOKECOMMANDINFO, GCS_HELPTEXTA, GCS_HELPTEXTW,
-    GCS_VALIDATEA, GCS_VALIDATEW, GCS_VERBA, GCS_VERBW, HDROP,
+    IShellExtInit_Impl, SHGetPathFromIDListW, CMF_DEFAULTONLY, CMINVOKECOMMANDINFO, GCS_HELPTEXTA,
+    GCS_HELPTEXTW, GCS_VALIDATEA, GCS_VALIDATEW, GCS_VERBA, GCS_VERBW, HDROP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, DrawIconEx, GetSystemMetrics, InsertMenuItemW, DI_NORMAL, HICON, HMENU,
@@ -168,6 +168,8 @@ impl IClassFactory_Impl for Factory_Impl {
 #[implement(IShellExtInit, IContextMenu)]
 struct MochiMenu {
     items: Mutex<Vec<Item>>,
+    /// The menu is a folder's background (no selection): the one item is that folder.
+    background: AtomicBool,
 }
 
 impl MochiMenu {
@@ -175,6 +177,7 @@ impl MochiMenu {
         LIVE_OBJECTS.fetch_add(1, Ordering::AcqRel);
         Self {
             items: Mutex::new(Vec::new()),
+            background: AtomicBool::new(false),
         }
     }
 }
@@ -247,29 +250,61 @@ fn command_units(paths: &[PathBuf]) -> usize {
         + 32
 }
 
+/// Most items asked of the file system whether they are folders (each is one
+/// `metadata` call, made while Explorer waits to draw its menu). Items past
+/// this are treated as files, so a huge selection may lack the Find entry.
+const MAX_STAT: usize = 256;
+
+/// The folder behind a background menu's item-ID list, or `None` (a virtual
+/// folder such as "This PC", a path past MAX_PATH, or no list at all).
+fn background_folder(pidl: *const ITEMIDLIST) -> Option<PathBuf> {
+    if pidl.is_null() {
+        return None;
+    }
+    let mut buf = [0u16; 260];
+    // SAFETY: `pidl` is the item-ID list the shell passed to `Initialize` for
+    // this call (checked non-null); `buf` is the MAX_PATH-unit buffer the call
+    // requires, and it writes a terminated string into it on success.
+    let found = unsafe { SHGetPathFromIDListW(pidl, &mut buf) }.as_bool();
+    if !found {
+        return None;
+    }
+    let len = buf.iter().position(|&u| u == 0)?;
+    (len > 0).then(|| PathBuf::from(OsString::from_wide(&buf[..len])))
+}
+
 impl IShellExtInit_Impl for MochiMenu_Impl {
     fn Initialize(
         &self,
-        _folder: *const ITEMIDLIST,
+        folder: *const ITEMIDLIST,
         data: Ref<'_, IDataObject>,
         _prog_id: HKEY,
     ) -> Result<()> {
         guard(|| {
             let Some(data) = data.as_ref() else {
-                return Err(E_INVALIDARG.into());
+                // A folder's background has no selection: the shell names the
+                // open folder instead. Only the Find entry is offered there.
+                let Some(path) = background_folder(folder) else {
+                    return Err(E_INVALIDARG.into());
+                };
+                *lock(&self.items) = vec![Item { path, is_dir: true }];
+                self.background.store(true, Ordering::Release);
+                return Ok(());
             };
+            self.background.store(false, Ordering::Release);
             let paths = read_selection(data)?;
             let too_long = command_units(&paths) > MAX_COMMAND_UNITS;
             let items = if too_long {
                 Vec::new()
             } else {
-                // Whether a lone item is a folder decides its label; several
-                // items are named for their folder, so they need no lookup.
-                let single = paths.len() == 1;
+                // Whether an item is a folder decides its label (a lone item)
+                // and whether Find is offered, so each is asked, up to a limit.
                 paths
                     .into_iter()
-                    .map(|path| {
-                        let is_dir = single && std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
+                    .enumerate()
+                    .map(|(n, path)| {
+                        let is_dir =
+                            n < MAX_STAT && std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
                         Item { path, is_dir }
                     })
                     .collect()
@@ -416,22 +451,22 @@ fn app_path() -> Option<PathBuf> {
 
 /// Starts the app with `verb -- PATH...` in one process. No shell, no string
 /// built from the paths.
-fn launch(verb: &str, items: &[Item]) -> Result<()> {
+fn launch(verb: &str, paths: &[PathBuf]) -> Result<()> {
     let exe = app_path().ok_or(E_FAIL)?;
-    let paths: Vec<PathBuf> = items.iter().map(|i| i.path.clone()).collect();
     Command::new(exe)
-        .args(plan::launch_args(verb, &paths))
+        .args(plan::launch_args(verb, paths))
         .spawn()
         .map(drop)
         .map_err(|_| E_FAIL.into())
 }
 
-use plan::{CMD_COUNT, CMD_NOW, CMD_PANEL};
+use plan::{CMD_COUNT, CMD_FIND, CMD_NOW, CMD_PANEL};
 
 fn verb_for(offset: u32) -> Option<&'static str> {
     match offset {
         CMD_PANEL => Some(plan::VERB_PANEL),
         CMD_NOW => Some(plan::VERB_NOW),
+        CMD_FIND => Some(plan::VERB_FIND),
         _ => None,
     }
 }
@@ -440,6 +475,7 @@ fn canonical(offset: usize) -> Option<&'static str> {
     match offset as u32 {
         CMD_PANEL => Some(plan::CANONICAL_PANEL),
         CMD_NOW => Some(plan::CANONICAL_NOW),
+        CMD_FIND => Some(plan::CANONICAL_FIND),
         _ => None,
     }
 }
@@ -462,11 +498,16 @@ impl IContextMenu_Impl for MochiMenu_Impl {
             if items.is_empty() || last_id < first_id || last_id - first_id + 1 < CMD_COUNT {
                 return none;
             }
+            let rows = plan::menu_rows(
+                &items,
+                display_language(),
+                self.background.load(Ordering::Acquire),
+            );
+            if rows.is_empty() {
+                return none;
+            }
             let icon = menu_icon();
-            for (n, entry) in plan::menu_entries(&items, display_language())
-                .iter()
-                .enumerate()
-            {
+            for (n, entry) in rows.iter().enumerate() {
                 let mut text = wide(&entry.label);
                 let mut mii = MENUITEMINFOW {
                     cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
@@ -490,7 +531,7 @@ impl IContextMenu_Impl for MochiMenu_Impl {
                 }
             }
             // MAKE_HRESULT(SEVERITY_SUCCESS, FACILITY_NULL, number of ids used).
-            HRESULT(CMD_COUNT as i32)
+            HRESULT(plan::ids_used(&rows) as i32)
         }))
         .unwrap_or(E_FAIL)
     }
@@ -512,6 +553,7 @@ impl IContextMenu_Impl for MochiMenu_Impl {
                 match name.to_bytes() {
                     b if b == plan::CANONICAL_PANEL.as_bytes() => CMD_PANEL,
                     b if b == plan::CANONICAL_NOW.as_bytes() => CMD_NOW,
+                    b if b == plan::CANONICAL_FIND.as_bytes() => CMD_FIND,
                     _ => return Err(E_INVALIDARG.into()),
                 }
             };
@@ -520,7 +562,16 @@ impl IContextMenu_Impl for MochiMenu_Impl {
             if items.is_empty() {
                 return Err(E_FAIL.into());
             }
-            launch(verb, &items)
+            // Find is given the folders only; Add gets the whole selection.
+            let paths = if offset == CMD_FIND {
+                plan::find_paths(&items)
+            } else {
+                items.iter().map(|i| i.path.clone()).collect()
+            };
+            if paths.is_empty() {
+                return Err(E_FAIL.into());
+            }
+            launch(verb, &paths)
         })
     }
 
@@ -536,10 +587,10 @@ impl IContextMenu_Impl for MochiMenu_Impl {
             let Some(verb) = canonical(id) else {
                 return Err(E_INVALIDARG.into());
             };
-            let help = if id as u32 == CMD_PANEL {
-                "Choose options and add to an archive"
-            } else {
-                "Add to a new archive next to the selection"
+            let help = match id as u32 {
+                CMD_PANEL => "Choose options and add to an archive",
+                CMD_FIND => "Search the file names inside every MOCHI archive in the folders",
+                _ => "Add to a new archive next to the selection",
             };
             let (text, unicode) = match kind {
                 k if k == GCS_VERBA => (verb, false),

@@ -91,6 +91,14 @@ mochi dump-index photos.mochi            # read-only: row counts per catalog tab
 `search` states how many snapshots it searched; file content is not searched, and
 `--content` exits 4.
 
+The desktop app can also search the names inside **many** archives at once: **More > Find in
+archives…** (Ctrl+Shift+F), or **Find in MOCHI archives** on folders in Explorer, Dolphin, Nemo or (with the
+`python3-nautilus` package) GNOME Files. Choose folders; MOCHI looks for `.mochi` files under them, opens each read-only and
+searches the file names of its newest version. A name like `*.pdf` works as a pattern. Archives it
+cannot search (encrypted ones, since their names need the passphrase; damaged or unreadable ones;
+files that are not MOCHI archives) and folders it cannot read are listed, and the result then says
+**Search incomplete** instead of "No matches". There is no `mochi` command for this.
+
 ## Options for protection
 
 ```bash

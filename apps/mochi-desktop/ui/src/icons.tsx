@@ -76,6 +76,22 @@ export function BackIcon() {
   );
 }
 
+export function ForwardIcon() {
+  return (
+    <Icon>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
+export function UpIcon() {
+  return (
+    <Icon>
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </Icon>
+  );
+}
+
 export function SearchIcon() {
   return (
     <Icon>
@@ -251,13 +267,12 @@ export function HelpIcon() {
   );
 }
 
-/** A monitor with an arrow: Extract to Desktop. */
-export function ExtractDesktopIcon() {
+/** A folder with an arrow into it: Extract to... */
+export function ExtractToIcon() {
   return (
     <Icon>
-      <rect x="3" y="4" width="18" height="12" rx="2" />
-      <path d="M9 20h6M12 16v4" />
-      <path d="M12 6.5v6M9.6 10.4 12 12.8l2.4-2.4" />
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <path d="M12 9.5v6M9.6 13.1 12 15.5l2.4-2.4" />
     </Icon>
   );
 }

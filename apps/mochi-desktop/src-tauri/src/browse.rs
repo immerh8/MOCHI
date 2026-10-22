@@ -38,6 +38,15 @@ use mochi_core::publish::{locate_head, read_commit};
 /// before opening the next; the margin covers a reload that lost a handle.
 pub const MAX_OPEN: usize = 4;
 
+/// Archives all windows together keep open (each window is held to
+/// [`MAX_OPEN`]); several archive windows are the point of the multi-window
+/// design, so the process-wide cap is larger than one window's.
+pub const MAX_OPEN_TOTAL: usize = 16;
+
+/// The owner of an archive that no window claimed (a test, or a handle the
+/// quick worker holds). Closing a window never touches it.
+pub const UNOWNED: &str = "";
+
 /// Snapshots kept open per archive (the head and the one being looked at).
 const SNAPSHOTS_KEPT: usize = 2;
 
@@ -121,10 +130,13 @@ struct Registry {
     last: ArchiveHandle,
     open: HashMap<ArchiveHandle, Arc<Mutex<Session>>>,
     last_pending: PendingId,
-    /// Encrypted archives waiting for a passphrase (D5), oldest first. Only
-    /// the path is kept: the webview never names it, and nothing secret is
-    /// held before the passphrase arrives.
-    pending: VecDeque<(PendingId, PathBuf)>,
+    /// The window (its label) each open archive belongs to. Closing a window
+    /// closes exactly its archives.
+    owners: HashMap<ArchiveHandle, String>,
+    /// Encrypted archives waiting for a passphrase (D5), oldest first, with
+    /// the window that asked. Only the path is kept: the webview never names
+    /// it, and nothing secret is held before the passphrase arrives.
+    pending: VecDeque<(PendingId, PathBuf, String)>,
 }
 
 /// Archives that may wait for a passphrase at once (the oldest is dropped).
@@ -258,11 +270,29 @@ impl Archives {
     /// record, chained back to commit 0), its head fully verified as every
     /// open is, and retention at the head.
     pub fn open(&self, path: &Path, opts: ReadOptions) -> Result<ArchiveSummary> {
-        if self.open_count() >= MAX_OPEN {
-            return Err(MochiError::new(
-                ErrorCode::LimitExceeded,
-                format!("at most {MAX_OPEN} archives can be open at once; close one first"),
-            ));
+        self.open_as(UNOWNED, path, opts)
+    }
+
+    /// [`Archives::open`] for the window `owner`: the archive is released when
+    /// that window closes, and counts against that window's [`MAX_OPEN`].
+    pub fn open_as(&self, owner: &str, path: &Path, opts: ReadOptions) -> Result<ArchiveSummary> {
+        {
+            let reg = lock(&self.inner);
+            let mine = reg.owners.values().filter(|o| o.as_str() == owner).count();
+            if mine >= MAX_OPEN {
+                return Err(MochiError::new(
+                    ErrorCode::LimitExceeded,
+                    format!("at most {MAX_OPEN} archives can be open at once; close one first"),
+                ));
+            }
+            if reg.open.len() >= MAX_OPEN_TOTAL {
+                return Err(MochiError::new(
+                    ErrorCode::LimitExceeded,
+                    format!(
+                        "at most {MAX_OPEN_TOTAL} archives can be open in all windows; close one first"
+                    ),
+                ));
+            }
         }
         let (summary, session) = Self::load(path, opts)?;
         let mut reg = lock(&self.inner);
@@ -274,6 +304,7 @@ impl Archives {
         })?;
         reg.last = handle;
         reg.open.insert(handle, Arc::new(Mutex::new(session)));
+        reg.owners.insert(handle, owner.to_owned());
         drop(reg);
         if let Some(recents) = self.recents.get() {
             recents.record(path);
@@ -290,6 +321,12 @@ impl Archives {
     /// (its head commit record says so without a key) waits in Rust for
     /// `unlock` and the webview is told only its file name (D5).
     pub fn open_or_pend(&self, path: &Path) -> Result<OpenOutcome> {
+        self.open_or_pend_as(UNOWNED, path)
+    }
+
+    /// [`Archives::open_or_pend`] for the window `owner`; a waiting passphrase
+    /// belongs to that window too.
+    pub fn open_or_pend_as(&self, owner: &str, path: &Path) -> Result<OpenOutcome> {
         if head_encrypted(path) {
             let file_name = path
                 .file_name()
@@ -306,10 +343,11 @@ impl Archives {
             if reg.pending.len() >= MAX_PENDING {
                 reg.pending.pop_front();
             }
-            reg.pending.push_back((pending, path.to_path_buf()));
+            reg.pending
+                .push_back((pending, path.to_path_buf(), owner.to_owned()));
             return Ok(OpenOutcome::NeedsPassphrase { pending, file_name });
         }
-        self.open(path, ReadOptions::default())
+        self.open_as(owner, path, ReadOptions::default())
             .map(|archive| OpenOutcome::Opened { archive })
     }
 
@@ -318,14 +356,15 @@ impl Archives {
     /// A wrong one is `KEY_UNAVAILABLE` and the archive keeps waiting; any
     /// other outcome ends the wait.
     pub fn unlock(&self, pending: PendingId, passphrase: &Secret) -> Result<ArchiveSummary> {
-        let path = lock(&self.inner)
+        let (path, owner) = lock(&self.inner)
             .pending
             .iter()
-            .find(|(id, _)| *id == pending)
-            .map(|(_, p)| p.clone())
+            .find(|(id, _, _)| *id == pending)
+            .map(|(_, p, o)| (p.clone(), o.clone()))
             .ok_or_else(|| invalid("that archive is no longer waiting for a passphrase"))?;
         let keys = KeySession::single(passphrase.passphrase()?);
-        let opened = self.open(
+        let opened = self.open_as(
+            &owner,
             &path,
             ReadOptions {
                 keys: Some(keys),
@@ -334,7 +373,9 @@ impl Archives {
         );
         match &opened {
             Err(e) if e.code == ErrorCode::KeyUnavailable => {}
-            _ => lock(&self.inner).pending.retain(|(id, _)| *id != pending),
+            _ => lock(&self.inner)
+                .pending
+                .retain(|(id, _, _)| *id != pending),
         }
         opened
     }
@@ -343,8 +384,113 @@ impl Archives {
     pub fn cancel_pending(&self, pending: PendingId) -> bool {
         let mut reg = lock(&self.inner);
         let before = reg.pending.len();
-        reg.pending.retain(|(id, _)| *id != pending);
+        reg.pending.retain(|(id, _, _)| *id != pending);
         reg.pending.len() != before
+    }
+
+    /// The window an open archive belongs to (`""` if none claimed it).
+    pub fn owner_of(&self, handle: ArchiveHandle) -> Option<String> {
+        lock(&self.inner).owners.get(&handle).cloned()
+    }
+
+    /// Give an open archive to the window `owner`. `false` if it is not open.
+    pub fn assign(&self, handle: ArchiveHandle, owner: &str) -> bool {
+        let mut reg = lock(&self.inner);
+        if !reg.open.contains_key(&handle) {
+            return false;
+        }
+        reg.owners.insert(handle, owner.to_owned());
+        true
+    }
+
+    /// The open archives of one window, oldest first.
+    pub fn handles_of(&self, owner: &str) -> Vec<ArchiveHandle> {
+        let reg = lock(&self.inner);
+        let mut v: Vec<_> = reg
+            .owners
+            .iter()
+            .filter(|(_, o)| o.as_str() == owner)
+            .map(|(h, _)| *h)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Whether the window has an archive open or one waiting for its
+    /// passphrase.
+    pub fn holds_any(&self, owner: &str) -> bool {
+        let reg = lock(&self.inner);
+        reg.owners.values().any(|o| o.as_str() == owner)
+            || reg.pending.iter().any(|(_, _, o)| o.as_str() == owner)
+    }
+
+    /// The file names of a window's open archives, oldest first (for its
+    /// title).
+    pub fn file_names_of(&self, owner: &str) -> Vec<String> {
+        self.handles_of(owner)
+            .into_iter()
+            .filter_map(|h| self.path(h).ok())
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect()
+    }
+
+    /// The window that has `path` open, or is waiting for its passphrase (the
+    /// same file, whatever name or link it was reached by).
+    pub fn owner_of_file(&self, path: &Path) -> Option<String> {
+        let (sessions, waiting): (Vec<_>, Vec<_>) = {
+            let reg = lock(&self.inner);
+            (
+                reg.open
+                    .iter()
+                    .map(|(h, s)| (Arc::clone(s), reg.owners.get(h).cloned()))
+                    .collect(),
+                reg.pending
+                    .iter()
+                    .map(|(_, p, o)| (p.clone(), o.clone()))
+                    .collect(),
+            )
+        };
+        for (session, owner) in sessions {
+            let open_path = lock(&session).path.clone();
+            if crate::windows::same_file(&open_path, path) {
+                return owner;
+            }
+        }
+        waiting
+            .into_iter()
+            .find(|(p, _)| crate::windows::same_file(p, path))
+            .map(|(_, o)| o)
+    }
+
+    /// The handle of the open archive that is the file `path` (not one that
+    /// is only waiting for a passphrase), if any.
+    pub fn handle_of_file(&self, path: &Path) -> Option<ArchiveHandle> {
+        let sessions: Vec<_> = {
+            let reg = lock(&self.inner);
+            reg.open.iter().map(|(h, s)| (*h, Arc::clone(s))).collect()
+        };
+        sessions
+            .into_iter()
+            .find(|(_, s)| crate::windows::same_file(&lock(s).path, path))
+            .map(|(h, _)| h)
+    }
+
+    /// Close every archive of one window and forget its waiting passphrases.
+    /// Returns how many archives were open. Other windows are untouched.
+    pub fn close_owned_by(&self, owner: &str) -> usize {
+        let mut reg = lock(&self.inner);
+        let handles: Vec<_> = reg
+            .owners
+            .iter()
+            .filter(|(_, o)| o.as_str() == owner)
+            .map(|(h, _)| *h)
+            .collect();
+        for h in &handles {
+            reg.open.remove(h);
+            reg.owners.remove(h);
+        }
+        reg.pending.retain(|(_, _, o)| o.as_str() != owner);
+        handles.len()
     }
 
     /// Encrypted archives waiting for a passphrase.
@@ -478,7 +624,9 @@ impl Archives {
 
     /// Close an archive. `false` if it was not open.
     pub fn close(&self, handle: ArchiveHandle) -> bool {
-        lock(&self.inner).open.remove(&handle).is_some()
+        let mut reg = lock(&self.inner);
+        reg.owners.remove(&handle);
+        reg.open.remove(&handle).is_some()
     }
 
     /// Open (or reuse) snapshot `seq` of an open archive.

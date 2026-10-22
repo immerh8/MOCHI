@@ -8,6 +8,7 @@ import { check } from "./zh-CN/check";
 import { common } from "./zh-CN/common";
 import { crypt } from "./zh-CN/crypt";
 import { extract } from "./zh-CN/extract";
+import { find } from "./zh-CN/find";
 import { foreign } from "./zh-CN/foreign";
 import { help } from "./zh-CN/help";
 import { quick } from "./zh-CN/quick";
@@ -25,6 +26,7 @@ export const zhCN = {
   ...common,
   ...crypt,
   ...extract,
+  ...find,
   ...foreign,
   ...help,
   ...quick,

@@ -8,6 +8,7 @@ import { check } from "./th/check";
 import { common } from "./th/common";
 import { crypt } from "./th/crypt";
 import { extract } from "./th/extract";
+import { find } from "./th/find";
 import { foreign } from "./th/foreign";
 import { help } from "./th/help";
 import { quick } from "./th/quick";
@@ -25,6 +26,7 @@ export const th = {
   ...common,
   ...crypt,
   ...extract,
+  ...find,
   ...foreign,
   ...help,
   ...quick,

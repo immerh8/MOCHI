@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use mochi_core::job::{CancellationToken, JobContext, ProgressEvent, ProgressSink};
 use mochi_core::{ErrorCode, MochiError};
@@ -37,7 +38,8 @@ pub struct JobRegistry {
 #[derive(Debug, Default)]
 struct Registry {
     last_id: JobId,
-    running: HashMap<JobId, CancellationToken>,
+    /// Each running job's token and the window (its label) that started it.
+    running: HashMap<JobId, (CancellationToken, String)>,
 }
 
 impl JobRegistry {
@@ -64,7 +66,38 @@ impl JobRegistry {
         sink: Arc<dyn EventSink>,
         spawn: Box<Spawner>,
     ) -> Result<JobId, IpcError> {
-        validate(&request, &self.services)?;
+        self.start_for(
+            crate::browse::UNOWNED,
+            self.services.clone(),
+            request,
+            sink,
+            spawn,
+        )
+    }
+
+    /// The services a window's jobs work on: the shared ones (archives,
+    /// foreign archives, updater) and that window's own staging, destination
+    /// and Test and Repair state.
+    pub fn services_for(&self, window: &crate::windows::WindowState) -> Services {
+        Services {
+            staging: Arc::clone(&window.staging),
+            destination: Arc::clone(&window.destination),
+            checks: Arc::clone(&window.checks),
+            ..self.services.clone()
+        }
+    }
+
+    /// [`JobRegistry::start`] for the window `owner`, working on `services`
+    /// (`services_for`). Closing the window cancels the job.
+    pub fn start_for(
+        self: &Arc<Self>,
+        owner: &str,
+        services: Services,
+        request: JobRequest,
+        sink: Arc<dyn EventSink>,
+        spawn: Box<Spawner>,
+    ) -> Result<JobId, IpcError> {
+        validate(&request, &services)?;
         let token = CancellationToken::new();
         let id = {
             let mut reg = self.lock();
@@ -75,12 +108,12 @@ impl JobRegistry {
                 ))
             })?;
             reg.last_id = id;
-            reg.running.insert(id, token.clone());
+            reg.running.insert(id, (token.clone(), owner.to_owned()));
             id
         };
         let registry = Arc::clone(self);
         spawn(Box::new(move || {
-            run_job(&registry, id, &request, sink, &token);
+            run_job(&registry, &services, id, &request, sink, &token);
         }));
         Ok(id)
     }
@@ -90,12 +123,35 @@ impl JobRegistry {
     /// point and then reports `cancelled`.
     pub fn cancel(&self, id: JobId) -> bool {
         match self.lock().running.get(&id) {
-            Some(token) => {
+            Some((token, _)) => {
                 token.cancel();
                 true
             }
             None => false,
         }
+    }
+
+    /// Request cancellation of every job a window started (it was closed).
+    /// Returns how many were running. Other windows' jobs are untouched.
+    pub fn cancel_owned(&self, owner: &str) -> usize {
+        let reg = self.lock();
+        let mut n = 0;
+        for (token, o) in reg.running.values() {
+            if o == owner {
+                token.cancel();
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Number of jobs a window has running.
+    pub fn running_for(&self, owner: &str) -> usize {
+        self.lock()
+            .running
+            .values()
+            .filter(|(_, o)| o == owner)
+            .count()
     }
 
     /// Number of jobs still running.
@@ -150,10 +206,35 @@ struct ForwardProgress<'a> {
     id: JobId,
     sink: &'a dyn EventSink,
     token: &'a CancellationToken,
+    /// The phase and time of the last event sent (see [`MIN_PROGRESS_GAP`]).
+    last: Mutex<Option<(&'static str, Instant)>>,
 }
+
+/// Progress is a display, not a log: core reports once per object, file or
+/// path (tens of thousands for a big archive), and each event crosses the IPC
+/// bridge and re-renders the page. Within one phase at most one event goes
+/// out per this interval. A phase's first event and its last (`completed`
+/// reaching `total`) always go out, so a phase change or completion is never
+/// delayed or lost, and the job's `finished` event follows the last one.
+const MIN_PROGRESS_GAP: Duration = Duration::from_millis(50);
 
 impl ProgressSink for ForwardProgress<'_> {
     fn report(&self, event: &ProgressEvent) {
+        let now = Instant::now();
+        {
+            let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
+            let finishes = event.total.is_some_and(|t| event.completed >= t);
+            let due = match *last {
+                Some((phase, at)) if phase == event.phase => {
+                    now.duration_since(at) >= MIN_PROGRESS_GAP
+                }
+                _ => true,
+            };
+            if !(due || finishes) {
+                return;
+            }
+            *last = Some((event.phase, now));
+        }
         let sent = self.sink.send(JobEvent::Progress {
             job_id: self.id,
             phase: event.phase.to_owned(),
@@ -191,6 +272,7 @@ impl Drop for Finisher<'_> {
 
 fn run_job(
     registry: &JobRegistry,
+    services: &Services,
     id: JobId,
     request: &JobRequest,
     sink: Arc<dyn EventSink>,
@@ -209,6 +291,7 @@ fn run_job(
         id,
         sink: sink.as_ref(),
         token,
+        last: Mutex::new(None),
     };
     let ctx = JobContext {
         progress: &progress,
@@ -226,7 +309,7 @@ fn run_job(
                 rekey: None,
                 export: None,
             }),
-        write => registry.services.run(write, &ctx).unwrap_or_else(|| {
+        write => services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
                 ErrorCode::NotImplemented,
                 "this job kind is not routed",
@@ -337,10 +420,13 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            progress,
-            (0..=4).map(|i| (i, Some(4))).collect::<Vec<_>>(),
-            "every step, from 0 of 4 to 4 of 4"
+        // Progress is throttled (`MIN_PROGRESS_GAP`): intermediate steps may
+        // be dropped, but the first and the last of the phase never are.
+        assert_eq!(progress.first(), Some(&(0, Some(4))), "{progress:?}");
+        assert_eq!(progress.last(), Some(&(4, Some(4))), "{progress:?}");
+        assert!(
+            progress.windows(2).all(|w| w[0].0 <= w[1].0),
+            "{progress:?}"
         );
         assert!(matches!(
             events.last(),
@@ -392,6 +478,50 @@ mod tests {
             .unwrap_or(2);
         assert!(last_step < 1000, "stopped early, at step {last_step}");
         assert_eq!(reg.running(), 0);
+    }
+
+    #[test]
+    fn a_flood_of_progress_is_thinned_but_phase_edges_survive() {
+        let (sink, rx) = recorder();
+        let token = CancellationToken::new();
+        let progress = ForwardProgress {
+            id: JobId::default(),
+            sink: sink.as_ref(),
+            token: &token,
+            last: Mutex::new(None),
+        };
+        let ctx = JobContext {
+            progress: &progress,
+            cancel: &token,
+        };
+        // 10 000 objects in a tight loop, then a second phase.
+        for i in 0..=10_000u64 {
+            ctx.report("verify-objects", i, Some(10_000));
+        }
+        ctx.report("verify-files", 0, Some(2));
+        ctx.report("verify-files", 1, Some(2));
+        ctx.report("verify-files", 2, Some(2));
+        let sent: Vec<(String, u64)> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                JobEvent::Progress {
+                    phase, completed, ..
+                } => Some((phase, completed)),
+                _ => None,
+            })
+            .collect();
+        assert!(sent.len() < 100, "{} events for 10 000 reports", sent.len());
+        assert_eq!(sent[0], ("verify-objects".to_owned(), 0), "phase start");
+        assert!(
+            sent.contains(&("verify-objects".to_owned(), 10_000)),
+            "phase end"
+        );
+        assert!(
+            sent.contains(&("verify-files".to_owned(), 0)),
+            "next phase start"
+        );
+        assert_eq!(sent.last(), Some(&("verify-files".to_owned(), 2)));
+        assert!(!token.is_cancelled());
     }
 
     #[test]
@@ -457,7 +587,8 @@ mod tests {
             let mut r = reg.lock();
             r.last_id += 1;
             let id = r.last_id;
-            r.running.insert(id, CancellationToken::new());
+            r.running
+                .insert(id, (CancellationToken::new(), String::new()));
             id
         };
         let sink2: Arc<dyn EventSink> = sink;

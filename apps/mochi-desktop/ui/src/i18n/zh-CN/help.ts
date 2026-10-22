@@ -8,7 +8,7 @@ export const help = {
   "help.keys":
     "在列表中，方向键在各项之间移动，Page Up、Page Down、Home 和 End 可快速跳转，空格键选中，Enter 打开文件夹。",
   "help.shortcuts":
-    "Ctrl+O 打开压缩文件，Ctrl+F 搜索其中的名称，Ctrl+A 选中当前文件夹中的全部项目，Esc 取消选择，Backspace 返回上一级，Delete 删除所选项目。按住 Ctrl 或 Shift 单击可选择多项。把项目从列表拖到文件夹中即可解压；把文件拖到窗口上即可添加。",
+    "Ctrl+O 打开压缩文件，Ctrl+F 搜索其中的名称，Ctrl+A 选中当前文件夹中的全部项目，Esc 取消选择，Backspace 返回上一级，Alt+向左键和 Alt+向右键在已打开的文件夹之间后退和前进，Delete 删除所选项目。按住 Ctrl 或 Shift 单击可选择多项。把项目从列表拖到文件夹中即可解压；把文件拖到窗口上即可添加。Ctrl+Shift+F 可在你选择的文件夹下的多个压缩文件中查找名称。",
   "help.userGuide": "用户指南（命令行）",
   "help.userGuideNote":
     "此指南针对 mochi 命令行编写，不是针对本应用；开头会指出对应的界面。将用默认浏览器打开随 MOCHI 一起安装的副本，无需联网。",

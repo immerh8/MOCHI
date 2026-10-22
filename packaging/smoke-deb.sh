@@ -55,8 +55,10 @@ done
 # D6 (O10): .mochi association and "Open with". The .desktop passes the file
 # (%f) and lists application/x-mochi; the foreign formats are only listed; the
 # package sets no default for any type.
-desktop=$(echo "$contents" | awk '$6 ~ /^usr\/share\/applications\/.*\.desktop$/ {print $6}')
-[ "$(echo "$desktop" | grep -c .)" = 1 ] || fail "expected exactly one .desktop file, got: $desktop"
+# MOCHI's own launcher is the one .desktop that is not Find's (mochi-find.desktop, checked below).
+desktops=$(echo "$contents" | awk '$6 ~ /^usr\/share\/applications\/.*\.desktop$/ {print $6}')
+desktop=$(echo "$desktops" | grep -vx 'usr/share/applications/mochi-find.desktop' || true)
+[ "$(echo "$desktop" | grep -c .)" = 1 ] || fail "expected the app's .desktop file and mochi-find.desktop, got: $desktops"
 grep -q '^Exec=.* %f$' "$dir/$desktop" || fail "$desktop: Exec must end in ' %f' so the file manager passes the file"
 mimetype=$(grep '^MimeType=' "$dir/$desktop" || true)
 [ -n "$mimetype" ] || fail "$desktop has no MimeType"
@@ -68,6 +70,34 @@ case "${mimetype#MimeType=}" in application/x-mochi\;*) ;; *) fail "$desktop: ap
 if echo "$contents" | grep -Eq ' usr/(share|local/share)/(applications/)?(mimeapps|defaults)\.list$'; then
   fail "the package must not set default applications (it would take over ZIP/RAR/...)"
 fi
+# MOCHI Find: a launcher (app menu), a Dolphin service menu, a Nemo action and a GNOME Files
+# (nautilus-python) extension. They run `mochi-desktop --find -- FOLDER...`; none may touch the
+# .mochi association or any defaults list, and the launcher registers NO mime type at all
+# (inode/directory would let MOCHI be offered, and by file-name order chosen, to open folders).
+find=usr/share/applications/mochi-find.desktop
+fsm=usr/share/kio/servicemenus/mochi-find.desktop
+fnemo=usr/share/nemo/actions/mochi-find.nemo_action
+fnaut=usr/share/nautilus-python/extensions/mochi_find.py
+for f in "$find" "$fsm" "$fnemo" "$fnaut"; do
+  echo "$contents" | grep -q " $f\$" || fail "MOCHI Find: $f missing from the package"
+done
+exe_name=$(basename "$exe")
+grep -qx "Exec=$exe_name --find -- %F" "$dir/$find" || fail "$find: Exec must be '$exe_name --find -- %F' (folders arrive as %F)"
+if grep -Eqi '^(MimeType|X-Ubuntu-.*)=' "$dir/$find"; then fail "$find must not have a MimeType: MOCHI must never be a registered folder handler"; fi
+grep -qx 'Terminal=false' "$dir/$find" || fail "$find: Terminal=false missing"
+grep -q '^Name=Find in MOCHI archives$' "$dir/$find" || fail "$find: Name missing"
+grep -q '^Name\[th\]=' "$dir/$find" && grep -q '^Name\[zh_CN\]=' "$dir/$find" || fail "$find: Thai and Chinese names missing"
+grep -qx "Exec=$exe_name --find -- %F" "$dir/$fsm" || fail "$fsm: Exec must be '$exe_name --find -- %F'"
+grep -q '^MimeType=inode/directory;$' "$dir/$fsm" || fail "$fsm: MimeType must be inode/directory;"
+grep -qx 'Actions=mochiFind;' "$dir/$fsm" || fail "$fsm: Actions missing"
+grep -qx "Exec=$exe_name --find -- %F" "$dir/$fnemo" || fail "$fnemo: Exec must be '$exe_name --find -- %F'"
+grep -qx 'Extensions=dir;' "$dir/$fnemo" || fail "$fnemo: Extensions=dir; missing (folders only)"
+grep -qx 'Quote=double' "$dir/$fnemo" || fail "$fnemo: Quote=double missing (paths with spaces)"
+python3 -I -m py_compile "$dir/$fnaut" || fail "$fnaut does not compile"
+grep -q 'PROGRAM = "mochi-desktop"' "$dir/$fnaut" && grep -q '"--find", "--"' "$dir/$fnaut" || fail "$fnaut must run '$exe_name --find -- FOLDER...'"
+# Optional: no package depends on python3-nautilus (the file is unused without it).
+if dpkg-deb --field "$deb" Depends | grep -q nautilus; then fail "Depends must not name python3-nautilus"; fi
+
 mime=usr/share/mime/packages/mochi.xml
 echo "$contents" | grep -q " $mime\$" || fail "shared-mime-info type ($mime) missing"
 python3 - "$dir/$mime" <<'PY' || fail "$mime is not the expected shared-mime-info type"
@@ -82,6 +112,7 @@ assert globs == ["*.mochi"], globs
 PY
 if command -v desktop-file-validate > /dev/null; then
   desktop-file-validate "$dir/$desktop" || fail "$desktop does not validate"
+  desktop-file-validate "$dir/$find" || fail "$find does not validate"
 fi
 
 if [ "$install" = 1 ]; then
@@ -112,6 +143,7 @@ if [ "$install" = 1 ]; then
   [ ! -e "$hbin" ] || fail "$hbin still present after removal"
   [ ! -e "/$guide" ] || fail "/$guide still present after removal"
   [ ! -e "/$mime" ] || fail "/$mime still present after removal"
+  for f in "$find" "$fsm" "$fnemo" "$fnaut"; do [ ! -e "/$f" ] || fail "/$f still present after removal"; done
   if [ -f /usr/share/mime/globs2 ]; then
     ! grep -q 'application/x-mochi' /usr/share/mime/globs2 || fail "*.mochi still registered after removal"
   fi

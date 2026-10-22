@@ -15,6 +15,8 @@ pub mod crashlog;
 mod d5_tests;
 pub mod dragout;
 pub mod extract;
+pub mod find;
+pub mod folders;
 pub mod foreign;
 pub mod formats;
 pub mod help;
@@ -29,6 +31,9 @@ pub mod route;
 pub mod search;
 pub mod self_test;
 pub mod update;
+pub mod windows;
+#[cfg(test)]
+mod windows_tests;
 pub mod write;
 
 use std::sync::Arc;
@@ -38,30 +43,30 @@ pub fn run() -> Result<(), tauri::Error> {
     let archives = Arc::new(browse::Archives::default());
     let recents = Arc::new(recent::Recents::default());
     archives.set_recents(Arc::clone(&recents));
-    let staging = Arc::new(write::Staging::default());
-    let drops = Arc::new(write::DropWatch::default());
-    let destination = Arc::new(extract::Destination::default());
     let foreign = Arc::new(foreign::Foreign::default());
     foreign.set_recents(Arc::clone(&recents));
-    let checks = Arc::new(check::Checks::default());
     let updates = Arc::new(update::Updates::default());
+    // The shared services. What belongs to one window (its staged sources,
+    // extract folder, Test and Repair tool) is made per window and handed to
+    // each job when it starts (`windows::WindowState`, `JobRegistry::services_for`).
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
         archives: Arc::clone(&archives),
-        staging: Arc::clone(&staging),
-        destination: Arc::clone(&destination),
         foreign: Arc::clone(&foreign),
-        checks: Arc::clone(&checks),
         updates: Arc::clone(&updates),
+        ..write::Services::default()
     }));
+    let windows = Arc::new(windows::WindowStates::new(
+        Arc::clone(&archives),
+        Arc::clone(&foreign),
+        Arc::clone(&jobs),
+    ));
     let quick = quick::Quick::new();
     let launches = Arc::new(launch::Launches::new(
-        Arc::clone(&archives),
-        Arc::clone(&destination),
-        Arc::clone(&foreign),
+        Arc::clone(&windows),
         Arc::clone(&quick),
     ));
-    let window_staging = Arc::clone(&staging);
-    let window_drops = Arc::clone(&drops);
+    let window_states = Arc::clone(&windows);
+    let setup_windows = Arc::clone(&windows);
     let second_launches = Arc::clone(&launches);
     let first_launches = Arc::clone(&launches);
     let setup_updates = Arc::clone(&updates);
@@ -88,26 +93,37 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(launches)
         .manage(jobs)
         .manage(archives)
-        .manage(staging)
-        .manage(drops)
-        .manage(destination)
+        .manage(windows)
         .manage(foreign)
-        .manage(checks)
         .manage(updates)
         .manage(recents)
         .manage(quick)
         .on_window_event(move |window, event| {
-            // Items dragged from the file manager arrive here, in Rust. Only
-            // the main window takes them: the compact window is not an add
-            // panel.
-            if let tauri::WindowEvent::DragDrop(drag) = event {
-                if window.label() == MAIN_LABEL {
-                    write::on_drag_drop(drag, &window_staging, &window_drops);
+            let label = window.label();
+            match event {
+                // Items dragged from the file manager arrive here, in Rust.
+                // Only an archive window takes them (into its own staging):
+                // the compact window is not an add panel.
+                tauri::WindowEvent::DragDrop(drag) if windows::is_archive_label(label) => {
+                    let state = window_states.state(label);
+                    write::on_drag_drop(drag, &state.staging, &state.drops);
                 }
-            }
-            // Closing the compact window stops its job.
-            if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == QUICK_LABEL {
-                event_quick.closed();
+                tauri::WindowEvent::Focused(true) if windows::is_archive_label(label) => {
+                    window_states.touch(label);
+                }
+                tauri::WindowEvent::Destroyed => {
+                    if label == QUICK_LABEL {
+                        // Closing the compact window stops its job.
+                        event_quick.closed();
+                    } else if windows::is_archive_label(label) {
+                        // Closing an archive window closes its archives
+                        // (releasing their readers), cancels its jobs and
+                        // forgets its passphrases, and nothing of any other
+                        // window.
+                        window_states.release(label);
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -130,8 +146,10 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::choose_destination,
             commands::plan_extract,
             commands::plan_extract_default,
-            commands::plan_extract_desktop,
-            commands::plan_extract_foreign_desktop,
+            commands::extract_wizard_setup,
+            commands::browse_extract_folder,
+            commands::plan_extract_to,
+            commands::plan_extract_foreign_to,
             commands::discard_extract_folder,
             commands::recent_archives,
             commands::forget_recent_archives,
@@ -166,6 +184,14 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::export_crash_log,
             commands::clear_crash_log,
             commands::open_user_guide,
+            find::find_scopes,
+            find::find_choose_folders,
+            find::find_remove_scope,
+            find::find_start,
+            find::find_cancel,
+            find::find_query,
+            find::find_open_hit,
+            find::find_show_folder,
             dragout::drag_out,
             dragout::drag_out_foreign
         ])
@@ -177,17 +203,20 @@ pub fn run() -> Result<(), tauri::Error> {
             app.manage(crash_log);
             setup_quick.set_host(Arc::new(Windows {
                 app: app.handle().clone(),
+                states: Arc::clone(&setup_windows),
             }));
             // The shell's arguments for this first launch. A quick verb opens
             // only the compact window; the main one is made if it is needed.
             let first = launch::from_environment();
             if !matches!(&first, Ok(Some(l)) if l.verb.is_quick()) {
-                build_main(app)?;
+                setup_windows.register(MAIN_LABEL);
+                build_archive_window(app, MAIN_LABEL, None)?;
             }
             {
                 use tauri::Manager;
                 let dir = app.path().app_config_dir()?;
                 setup_recents.configure(&dir);
+                setup_windows.history().configure(&dir);
                 setup_updates.configure(
                     dir,
                     Arc::new(update::PluginBackend::new(app.handle().clone())),
@@ -208,22 +237,57 @@ pub fn run() -> Result<(), tauri::Error> {
     Ok(())
 }
 
-/// The main window's label, which `capabilities/main.json` grants.
-const MAIN_LABEL: &str = "main";
+use windows::{MAIN_LABEL, QUICK_LABEL};
 
-/// The compact window's label, which `capabilities/quick.json` grants.
-const QUICK_LABEL: &str = "quick";
+/// How far a new archive window sits from the one it was opened from, in
+/// logical pixels.
+const CASCADE_STEP: f64 = 32.0;
 
-/// Build the main window. Built here rather than in `tauri.conf.json` so
-/// that test builds can configure WebView2 for WebDriver (`automation`).
-fn build_main<M: tauri::Manager<tauri::Wry>>(manager: &M) -> tauri::Result<()> {
-    let builder =
-        tauri::WebviewWindowBuilder::new(manager, MAIN_LABEL, tauri::WebviewUrl::default())
+/// The size of an archive window with no opener to copy, in logical pixels.
+const DEFAULT_SIZE: (f64, f64) = (1000.0, 680.0);
+
+/// Build an archive window: the first one (`main`) or one opened beside
+/// another (`win-N`; same page, same capability, `capabilities/main.json`).
+/// Built here rather than in `tauri.conf.json` so that test builds can
+/// configure WebView2 for WebDriver (`automation`). A new window is the size
+/// of `opener` and cascaded down and to the right of it.
+fn build_archive_window<M: tauri::Manager<tauri::Wry>>(
+    manager: &M,
+    label: &str,
+    opener: Option<&str>,
+) -> tauri::Result<()> {
+    let mut size = DEFAULT_SIZE;
+    let mut position = None;
+    if let Some(opener) = opener.and_then(|o| manager.get_webview_window(o)) {
+        let scale = opener.scale_factor().unwrap_or(1.0).max(0.1);
+        if let Ok(inner) = opener.inner_size() {
+            size = (
+                f64::from(inner.width) / scale,
+                f64::from(inner.height) / scale,
+            );
+        }
+        if let (Ok(at), Ok(Some(monitor))) = (opener.outer_position(), opener.current_monitor()) {
+            let (mp, ms) = (monitor.position(), monitor.size());
+            let step = (CASCADE_STEP * scale).round() as i32;
+            let (x, y) = windows::cascade(
+                (at.x, at.y),
+                step,
+                ((mp.x, mp.y), (ms.width, ms.height)),
+                ((size.0 * scale) as u32, (size.1 * scale) as u32),
+            );
+            position = Some((f64::from(x) / scale, f64::from(y) / scale));
+        }
+    }
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(manager, label, tauri::WebviewUrl::default())
             .title("MOCHI")
-            .inner_size(1000.0, 680.0)
+            .inner_size(size.0, size.1)
             // The toolbar is one row of buttons and the list needs room: below
             // this the page would have to scroll sideways.
             .min_inner_size(720.0, 480.0);
+    if let Some((x, y)) = position {
+        builder = builder.position(x, y);
+    }
     automation::configure(builder).build()?;
     Ok(())
 }
@@ -232,6 +296,7 @@ fn build_main<M: tauri::Manager<tauri::Wry>>(manager: &M) -> tauri::Result<()> {
 /// event loop: creating a window there can deadlock on Windows).
 struct Windows {
     app: tauri::AppHandle,
+    states: Arc<windows::WindowStates>,
 }
 
 impl Windows {
@@ -288,8 +353,32 @@ impl quick::WindowHost for Windows {
     }
 
     fn show_main(&self) {
-        if !self.bring_forward(MAIN_LABEL) {
-            let _ = build_main(&self.app);
+        // The window used last, else the first archive window, made again if
+        // every archive window was closed (only the compact window is open).
+        if let Some(label) = self.states.labels().into_iter().next() {
+            if self.bring_forward(&label) {
+                return;
+            }
+        }
+        let label = self.states.next_label();
+        self.states.register(&label);
+        if build_archive_window(&self.app, &label, None).is_err() {
+            self.states.release(&label);
+        }
+    }
+
+    fn create_window(&self, label: &str, opener: Option<&str>) -> bool {
+        build_archive_window(&self.app, label, opener).is_ok()
+    }
+
+    fn focus_window(&self, label: &str) -> bool {
+        self.bring_forward(label)
+    }
+
+    fn set_title(&self, label: &str, title: &str) {
+        use tauri::Manager;
+        if let Some(window) = self.app.get_webview_window(label) {
+            let _ = window.set_title(title);
         }
     }
 

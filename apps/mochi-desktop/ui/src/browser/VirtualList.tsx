@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode, UIEvent } from "react";
 
 import { t } from "../i18n";
@@ -39,12 +39,23 @@ type Props<T> = {
   /** Put keyboard focus on the first row as soon as it is loaded (after a folder opened by key). */
   focusFirst?: boolean;
   /**
+   * The key of a row to scroll to and report through `onReveal` once it is
+   * loaded (the folder just left, after going up). Pages are fetched in order
+   * until it is found; if it is not in this listing, nothing happens.
+   */
+  revealKey?: string | null | undefined;
+  /** The row's key, for `revealKey`. */
+  keyOf?: ((row: T) => string | null) | undefined;
+  onReveal?: ((row: T, index: number) => void) | undefined;
+  /**
    * Turns on the rubber band: pressing on empty space and dragging draws a
    * rectangle, and the list reports the rows it touches here (the selection's
    * `marquee`). See `pressIntent` in `list/selection.ts` for where a press may start it.
    */
   onMarquee?: ((e: MarqueeEvent) => void) | undefined;
   onError: (e: unknown) => void;
+  /** Scroll so that this row is in the middle of the view (a hit opened from Find). */
+  scrollToIndex?: number | undefined;
 };
 
 /**
@@ -63,8 +74,12 @@ export function VirtualList<T>({
   testId,
   hintId,
   focusFirst = false,
+  revealKey = null,
+  keyOf,
+  onReveal,
   onMarquee,
   onError,
+  scrollToIndex,
 }: Props<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
   // Loaded pages by page number; copied per page, never per row.
@@ -100,28 +115,81 @@ export function VirtualList<T>({
     return () => ro.disconnect();
   }, []);
 
+  // A row asked for from outside (Find): put it in the middle of the view.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (scrollToIndex === undefined || !el) return;
+    const shown = el.clientHeight > 0 ? el.clientHeight : FALLBACK_VISIBLE * rowHeight;
+    const top = Math.max(0, scrollToIndex * rowHeight - Math.floor((shown - rowHeight) / 2));
+    el.scrollTop = top;
+    setScrollTop(top);
+  }, [scrollToIndex, rowHeight]);
+
   const { band, handlers: bandHandlers } = useMarquee({ viewportRef, rowHeight, total, onMarquee });
 
   const visible = height > 0 ? Math.ceil(height / rowHeight) : FALLBACK_VISIBLE;
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
   const last = Math.min(total, Math.floor(scrollTop / rowHeight) + visible + OVERSCAN);
 
-  useEffect(() => {
-    for (let page = Math.floor(first / PAGE); page * PAGE < last; page++) {
-      if (requestedRef.current.has(page)) continue;
+  // Pages loaded so far, for the reveal below (the state copy is for drawing).
+  const loadedRef = useRef(new Map<number, T[]>());
+  // Looks for the row to reveal after each page arrives (set below).
+  const revealStepRef = useRef<() => void>(() => undefined);
+  const fetchPage = useCallback(
+    (page: number) => {
+      if (requestedRef.current.has(page)) return;
       requestedRef.current.add(page);
       const offset = page * PAGE;
       loadPage(offset, Math.min(PAGE, total - offset)).then(
         (got) => {
-          if (mountedRef.current) setPages((prev) => new Map(prev).set(page, got));
+          if (!mountedRef.current) return;
+          loadedRef.current.set(page, got);
+          setPages((prev) => new Map(prev).set(page, got));
+          revealStepRef.current();
         },
         (e: unknown) => {
           requestedRef.current.delete(page);
           if (mountedRef.current) onError(e);
         },
       );
-    }
-  }, [first, last, total, loadPage, onError]);
+    },
+    [loadPage, total, onError],
+  );
+
+  useEffect(() => {
+    for (let page = Math.floor(first / PAGE); page * PAGE < last; page++) fetchPage(page);
+  }, [first, last, fetchPage]);
+
+  // Reveal: after each page arrives, look for the row among the pages loaded
+  // so far; if it is not there, fetch the next page in order. A key that is
+  // not in the listing ends the search at the last page.
+  const revealedRef = useRef(false);
+  useEffect(() => {
+    revealStepRef.current = () => {
+      if (revealKey === null || revealedRef.current || keyOf === undefined) return;
+      for (const [page, rows] of loadedRef.current) {
+        const at = rows.findIndex((r) => keyOf(r) === revealKey);
+        const row = rows[at];
+        if (row === undefined) continue;
+        revealedRef.current = true;
+        const index = page * PAGE + at;
+        const shownHeight = height > 0 ? height : FALLBACK_VISIBLE * rowHeight;
+        const top = Math.max(0, index * rowHeight - Math.floor(shownHeight / 2));
+        if (viewportRef.current) viewportRef.current.scrollTop = top;
+        setScrollTop(top);
+        setActive(index);
+        if (pendingFocusRef.current !== null) pendingFocusRef.current = index;
+        onReveal?.(row, index);
+        return;
+      }
+      for (let page = 0; page * PAGE < total; page++) {
+        if (!loadedRef.current.has(page)) {
+          fetchPage(page);
+          return;
+        }
+      }
+    };
+  }, [revealKey, keyOf, onReveal, fetchPage, total, rowHeight, height]);
 
   // Keyboard (plan D7): arrows, Page Up/Down, Home, End move between rows.
   // Rows outside the window are not in the DOM, so the viewport is scrolled
@@ -142,9 +210,17 @@ export function VirtualList<T>({
       case "ArrowDown":
         to = from + 1;
         break;
-      case "ArrowUp":
+      case "ArrowUp": {
+        // The ".." row above the list (when the folder has a parent) is outside the rows.
+        const up = from === 0 ? viewportRef.current?.closest(".vtable")?.querySelector<HTMLElement>(".up-row") : null;
+        if (up) {
+          e.preventDefault();
+          up.focus();
+          return;
+        }
         to = from - 1;
         break;
+      }
       case "PageDown":
         to = from + page;
         break;

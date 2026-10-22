@@ -3,7 +3,9 @@
 // the running instance; this spec starts the binary again, the way a file
 // manager or Explorer's "Open with MOCHI" / "Extract here" verbs do, and checks
 // that the second process hands its arguments over and exits, and that the
-// FIRST window shows the result. The path travels process to process and into
+// result appears where the one-window-per-archive rule puts it: in the empty main
+// window, else in a new window of its own (an archive already open is not opened
+// twice: its window is brought forward). The path travels process to process and into
 // Rust only; the window is told "an archive was opened" and never a path.
 //
 // On Linux the single-instance plugin uses the session D-Bus: CI runs this
@@ -50,12 +52,16 @@ function makeWritable(dir) {
 }
 
 /** Make the window that shows `testid` the one WebDriver talks to (the shell's quick verbs open a compact second window). */
-async function switchToWindowWith(testid, timeout = 60_000) {
+async function switchToWindowWith(testid, timeout = 60_000, text = "") {
+  // `text`: the element must also contain it. Several windows can show the
+  // same test id (an earlier test's window keeps its own note), and the order
+  // of window handles differs between WebKitWebDriver and WebView2.
   await browser.waitUntil(
     async () => {
       for (const handle of await browser.getWindowHandles()) {
         await browser.switchToWindow(handle);
-        if (await $(`[data-testid="${testid}"]`).isExisting()) return true;
+        const el = $(`[data-testid="${testid}"]`);
+        if ((await el.isExisting()) && (await el.getText()).includes(text)) return true;
       }
       return false;
     },
@@ -75,10 +81,48 @@ async function closeQuickWindow(mainWindow) {
   } catch (err) {
     if (!/no such window/i.test(String(err?.message ?? err))) throw err;
   }
-  await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+  await browser.waitUntil(async () => (await browser.getWindowHandles()).length === archiveWindows.size, {
     timeoutMsg: "the compact window did not close",
   });
   await browser.switchToWindow(mainWindow);
+}
+
+/**
+ * The windows this spec has opened for archives (the main window and every `win-N` it caused). They stay open
+ * for the rest of the spec: WebDriver's own "close window" closes the page but not the operating-system window,
+ * so Rust never hears the window closed (a person's click on the title bar's X does), and a test that closed
+ * one this way would leave Rust's state for that window behind.
+ */
+const archiveWindows = new Set();
+
+/**
+ * Start the app again with `args` and talk to the window that was made for it: the main window shows an
+ * archive, so an archive opened by the shell gets a window of its own (one window per archive).
+ */
+async function launchIntoNewWindow(args, mainWindow) {
+  const before = [...archiveWindows];
+  const ended = await secondLaunch(args);
+  expect(ended.code).toBe(0);
+  let made;
+  await browser.waitUntil(
+    async () => {
+      // A compact window may be open too: only the one that shows an archive counts.
+      for (const handle of await browser.getWindowHandles()) {
+        if (before.includes(handle)) continue;
+        await browser.switchToWindow(handle);
+        if (await $('[data-testid="archive-meta"], [data-testid="foreign-meta"], [data-testid="foreign-password"], [data-testid="unlock-panel"]').isExisting()) {
+          made = handle;
+          return true;
+        }
+      }
+      return false;
+    },
+    { timeoutMsg: `no new window opened for ${args.join(" ")}` },
+  );
+  expect(made).not.toBe(mainWindow);
+  archiveWindows.add(made);
+  await browser.switchToWindow(made);
+  return made;
 }
 
 describe("a second launch", () => {
@@ -87,6 +131,11 @@ describe("a second launch", () => {
   before(async () => {
     work = mkdtempSync(path.join(os.tmpdir(), "mochi-e2e-launch-"));
     mainWindow = await browser.getWindowHandle();
+    archiveWindows.add(mainWindow);
+  });
+  // Each test starts by talking to the main window.
+  afterEach(async () => {
+    await browser.switchToWindow(mainWindow);
   });
   after(() => {
     makeWritable(work);
@@ -105,15 +154,28 @@ describe("a second launch", () => {
     await closeVersions();
   });
 
-  it("takes a bare path, which is what a file manager passes", async () => {
+  it("takes a bare path, which is what a file manager passes, and opens it in a window of its own", async () => {
     const other = path.join(work, "again.mochi");
     copyFileSync(fixture, other);
-    const ended = await secondLaunch([other]);
-    expect(ended.code).toBe(0);
-    await browser.waitUntil(
-      async () => (await $('[data-testid="archive-meta"]').getText()).includes("again.mochi"),
-      { timeoutMsg: "the running window did not switch to the second archive" },
-    );
+    // The main window shows browse.mochi: one window per archive.
+    const second = await launchIntoNewWindow([other], mainWindow);
+    await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("again.mochi"));
+    // The first window still shows the first archive.
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    expect(await browser.getWindowHandles()).toHaveLength(archiveWindows.size);
+
+    // The same archive again, by the same path or another one (the fixture is open in the main window):
+    // nothing new opens, the window that has it is brought forward.
+    expect((await secondLaunch([other])).code).toBe(0);
+    expect((await secondLaunch(["--open", "--", fixture])).code).toBe(0);
+    await browser.pause(1500);
+    expect(await browser.getWindowHandles()).toHaveLength(archiveWindows.size);
+    await browser.switchToWindow(second);
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("again.mochi"));
+    await browser.switchToWindow(mainWindow);
+    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
   });
 
   // Owner decision 2026-10-16: the quick verbs work at once in a small second window.
@@ -147,7 +209,7 @@ describe("a second launch", () => {
     await closeQuickWindow(mainWindow);
   });
 
-  it("'Extract here' replaces nothing: a name in the way writes nothing and opens the plan in the main window", async () => {
+  it("'Extract here' replaces nothing: a name in the way writes nothing and opens the plan in a new window", async () => {
     const dir = path.join(work, "collide");
     mkdirSync(dir);
     const archive = path.join(dir, "again.mochi");
@@ -159,7 +221,10 @@ describe("a second launch", () => {
     await switchToWindowWith("quick-result");
     await expect($('[data-testid="quick-result"]')).toHaveText(expect.stringContaining("Nothing was written"));
     await expect($('[data-testid="quick-show-folder"]')).not.toExist();
+    // The plan needs a window that shows the archive: the main window has another one open, so a new one is made.
     await switchToWindowWith("extract-panel");
+    expect(await browser.getWindowHandle()).not.toBe(mainWindow);
+    archiveWindows.add(await browser.getWindowHandle());
     await expect($('[data-testid="extract-destination"]')).toHaveText(expect.stringContaining(dir));
     expect(readdirSync(dir).sort()).toEqual(["again.mochi", "docs"]);
     expect(readFileSync(path.join(dir, "docs"), "utf8")).toBe("mine");
@@ -356,7 +421,7 @@ describe("a second launch", () => {
     } catch (err) {
       if (!/no such window/i.test(String(err?.message ?? err))) throw err;
     }
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === archiveWindows.size, {
       timeoutMsg: "the compact window did not close",
     });
     await browser.switchToWindow(mainWindow);
@@ -366,7 +431,8 @@ describe("a second launch", () => {
   it("refuses a passphrase option without echoing its value", async () => {
     const ended = await secondLaunch(["--passphrase=hunter2", "--", fixture]);
     expect(ended.code).toBe(0);
-    await $('[data-testid="browse-error"]').waitForExist({ timeout: 30_000 });
+    // A notice goes to the window used last, which is not necessarily the main window.
+    await switchToWindowWith("browse-error", 30_000, "passphrase cannot be given on the command line");
     const text = await $('[data-testid="browse-error"]').getText();
     expect(text).toContain("passphrase cannot be given on the command line");
     expect(text).not.toContain("hunter2");
@@ -380,8 +446,7 @@ describe("a second launch", () => {
   it("opens a ZIP from the command line in the foreign browser (plan D8)", async () => {
     const zip = path.join(work, "photos.zip");
     copyFileSync(path.join(foreignFixtures, "basic_infozip.zip"), zip);
-    const ended = await secondLaunch(["--open", "--", zip]);
-    expect(ended.code).toBe(0);
+    await launchIntoNewWindow(["--open", "--", zip], mainWindow);
     await $('[data-testid="foreign-meta"]').waitForExist({ timeout: 30_000 });
     await expect($('[data-testid="foreign-meta"]')).toHaveText(expect.stringContaining("photos.zip"));
     await browser.waitUntil(async () => (await entryNames()).includes("a.txt"), {
@@ -397,23 +462,25 @@ describe("a second launch", () => {
 
   // Users reported "Add to archive..." did nothing while a ZIP, 7z or RAR file was open: the panel it
   // used sat in a part of the window that is hidden then. The form is its own window now.
-  it("'Add to archive...' shows its form while a ZIP is open in the main window", async () => {
+  it("'Add to archive...' shows its form while a ZIP is open in another window", async () => {
     const dir = path.join(work, "while-foreign");
     mkdirSync(dir);
     const file = path.join(dir, "n.txt");
     writeFileSync(file, "n");
-    await browser.switchToWindow(mainWindow);
+    const zip = path.join(work, "while-open.zip");
+    copyFileSync(path.join(foreignFixtures, "basic_infozip.zip"), zip);
+    const zipWindow = await launchIntoNewWindow(["--open", "--", zip], mainWindow);
     await expect($('[data-testid="foreign-meta"]')).toExist();
     expect((await secondLaunch(["--add", "--", file])).code).toBe(0);
     await switchToWindowWith("quick-form");
     await expect($('[data-testid="quick-name"]')).toHaveValue("n.mochi");
     await expect($('[data-testid="quick-form"]')).toBeDisplayed();
-    // The foreign browser is still what the main window shows.
-    await browser.switchToWindow(mainWindow);
+    // The foreign browser is still what its window shows.
+    await browser.switchToWindow(zipWindow);
     await expect($('[data-testid="foreign-meta"]')).toExist();
     await switchToWindowWith("quick-form");
     await $('[data-testid="quick-form-cancel"]').click().catch(() => undefined);
-    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 1, {
+    await browser.waitUntil(async () => (await browser.getWindowHandles()).length === archiveWindows.size, {
       timeoutMsg: "the compact window did not close",
     });
     await browser.switchToWindow(mainWindow);
@@ -423,8 +490,7 @@ describe("a second launch", () => {
   it("shows a hostile name in a ZIP as text and marks it not extractable", async () => {
     const zip = path.join(work, "hostile.zip");
     copyFileSync(path.join(foreignFixtures, "traversal.zip"), zip);
-    const ended = await secondLaunch(["--", zip]);
-    expect(ended.code).toBe(0);
+    await launchIntoNewWindow(["--", zip], mainWindow);
     await browser.waitUntil(
       async () => (await $('[data-testid="foreign-meta"]').getText()).includes("hostile.zip"),
       { timeoutMsg: "the hostile ZIP was not shown" },
@@ -439,8 +505,7 @@ describe("a second launch", () => {
   it("opens a 7z with encrypted names by asking for the password in the window", async () => {
     const archive = path.join(work, "secret.7z");
     copyFileSync(path.join(foreignFixtures, "7z", "enc_names.7z"), archive);
-    const ended = await secondLaunch(["--open", "--", archive]);
-    expect(ended.code).toBe(0);
+    await launchIntoNewWindow(["--open", "--", archive], mainWindow);
     await $('[data-testid="foreign-password"]').waitForExist({ timeout: 30_000 });
     await $('[data-testid="foreign-password-input"]').setValue("SECRET");
     await $('[data-testid="foreign-password-submit"]').click();
@@ -453,8 +518,7 @@ describe("a second launch", () => {
   it("an extract verb on a ZIP opens it for browsing and extracts nothing", async () => {
     const zip = path.join(work, "verb.zip");
     copyFileSync(path.join(foreignFixtures, "basic_infozip.zip"), zip);
-    const ended = await secondLaunch(["--extract-to-folder", "--", zip]);
-    expect(ended.code).toBe(0);
+    await launchIntoNewWindow(["--extract-to-folder", "--", zip], mainWindow);
     await browser.waitUntil(
       async () => (await $('[data-testid="foreign-meta"]').getText()).includes("verb.zip"),
       { timeoutMsg: "the ZIP was not opened for browsing" },
@@ -472,6 +536,7 @@ describe("a second launch", () => {
     copyFileSync(path.join(foreignFixtures, "split_last.zip"), zip);
     const ended = await secondLaunch(["--open", "--", zip]);
     expect(ended.code).toBe(0);
+    await switchToWindowWith("browse-error", 30_000, "could not be opened (UNSUPPORTED");
     await browser.waitUntil(
       async () => (await $('[data-testid="browse-error"]').getText()).includes("could not be opened (UNSUPPORTED"),
       { timeoutMsg: "no typed refusal for the split ZIP" },

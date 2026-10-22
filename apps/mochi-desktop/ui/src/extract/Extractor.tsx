@@ -5,16 +5,17 @@ import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { CloseIcon, ExtractDesktopIcon, ExtractIcon, RefreshIcon } from "../icons";
+import { CloseIcon, ExtractIcon, ExtractToIcon, RefreshIcon } from "../icons";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { formatNumber, t, tc } from "../i18n";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
-import { useDesktopRun } from "./useDesktopRun";
+import { ExtractToDialog } from "./ExtractToDialog";
+import { useNewFolderRun } from "./useNewFolderRun";
 import { planExtract } from "../ipc/extract";
-import { discardExtractFolder, planExtractDefault, planExtractDesktop, showInFolder } from "../ipc/start";
+import { discardExtractFolder, planExtractDefault, planExtractTo, showInFolder } from "../ipc/start";
 import type { ConflictChoice, ExtractPlan } from "../ipc/extract";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, startJob } from "../ipc/jobs";
@@ -44,17 +45,10 @@ export interface ExtractorProps {
    */
   autoPlan?: { token: number; handle: number; defaultFolder?: boolean } | null;
   /**
-   * The list's menu asked to extract the selection: when this changes, open
-   * the folder dialog and plan the selected entries (the toolbar button's
-   * "pick a folder" path).
+   * The list's menu asked for Extract to...: when this changes, open the
+   * window (the selection, or everything when nothing is selected).
    */
-  selectedRequest?: number;
-  /**
-   * The list's menu asked for Extract to Desktop: when this changes, extract
-   * the selection (everything when nothing is selected) into a new folder on
-   * the Desktop, without asking for a folder.
-   */
-  desktopRequest?: number;
+  toRequest?: number;
 }
 
 /** Where the folder comes from: made next to the archive, picked, or the one already chosen. */
@@ -86,8 +80,7 @@ export function Extractor({
   seq,
   selected,
   autoPlan = null,
-  selectedRequest = 0,
-  desktopRequest = 0,
+  toRequest = 0,
 }: ExtractorProps) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [plan, setPlan] = useState<ExtractPlan | null>(null);
@@ -99,8 +92,10 @@ export function Extractor({
   const [error, setError] = useState<string | null>(null);
 
   const busy = job.state === "starting" || job.state === "running";
-  // Set while the running job extracts into a new Desktop folder.
-  const desktopRun = useDesktopRun();
+  // The "Extract to..." window is open for this scope.
+  const [wizard, setWizard] = useState<Scope | null>(null);
+  // Set while the running job extracts into a folder Rust just made for it.
+  const newFolderRun = useNewFolderRun();
   const startForRef = useRef<((s: Scope, c: ConflictChoice) => void) | null>(null);
   const rememberFocus = useJobFocus(busy);
   const handle = archive?.handle ?? null;
@@ -124,6 +119,7 @@ export function Extractor({
     identityRef.current = identity;
     setScope(null);
     setPlan(null);
+    setWizard(null);
     setMadeFolder(false);
     setError(null);
     setJob((j) => (j.state === "done" ? { state: "idle" } : j));
@@ -184,23 +180,23 @@ export function Extractor({
     );
   }, [autoPlan, handle, seq]);
 
-  // The list's menu: Extract to... for the selection, into a folder the user picks.
-  const seenRequestRef = useRef(selectedRequest);
+  // The list's menu: Extract to... (the selection, or everything).
+  const seenRequestRef = useRef(toRequest);
   const selectedRef = useRef(selected);
   useEffect(() => {
     selectedRef.current = selected;
   });
   useEffect(() => {
-    if (selectedRequest === seenRequestRef.current) return;
-    seenRequestRef.current = selectedRequest;
-    if (selectedRef.current.length === 0 || busy) return;
+    if (toRequest === seenRequestRef.current) return;
+    seenRequestRef.current = toRequest;
+    if (busy) return;
     const entries = [...selectedRef.current];
-    queueMicrotask(() => planFor({ kind: "selected", entries }, "pick"));
-  }, [selectedRequest, busy, planFor]);
+    queueMicrotask(() => setWizard(entries.length > 0 ? { kind: "selected", entries } : { kind: "all" }));
+  }, [toRequest, busy]);
 
   const onEvent = useCallback((event: JobEvent) => {
-    if (event.event === "finished" && desktopRun.take()) {
-      // Nothing was extracted: do not leave an empty folder on the Desktop.
+    if (event.event === "finished" && newFolderRun.take()) {
+      // Nothing was extracted: do not leave an empty new folder behind.
       if (event.outcome.status !== "completed") void discardExtractFolder().catch(() => undefined);
     }
     setJob((prev) => {
@@ -233,7 +229,7 @@ export function Extractor({
       setPlan(null);
       setMadeFolder(false);
     }
-  }, [desktopRun]);
+  }, [newFolderRun]);
 
   const startFor = (s: Scope, on_conflict: ConflictChoice) => {
     if (handle === null || seq === null) return;
@@ -244,7 +240,7 @@ export function Extractor({
       (e: unknown) => {
         setJob({ state: "idle" });
         setError(errorText(t("extract.startFailed"), e));
-        if (desktopRun.take()) void discardExtractFolder().catch(() => undefined);
+        if (newFolderRun.take()) void discardExtractFolder().catch(() => undefined);
       },
     );
   };
@@ -252,43 +248,35 @@ export function Extractor({
     if (scope !== null) startFor(scope, on_conflict);
   };
 
-  /**
-   * Extract to Desktop: Rust makes a new folder named after the archive on the
-   * Desktop and remembers it; the extraction starts at once, with no folder
-   * question and no plan panel. Entries that cannot be written there are skipped
-   * and listed in the result, as in the panel's "Extract the rest". An unused
-   * folder (the job failed or was cancelled before writing anything) is removed
-   * again by Rust.
-   */
-  const extractToDesktop = useCallback(
-    (s: Scope) => {
-      if (handle === null || seq === null) return;
-      setError(null);
-      setJob({ state: "idle" });
-      planExtractDesktop(handle, seq, s.kind === "all" ? [] : s.entries.map((e) => e.key)).then(
-        (p) => {
-          desktopRun.set();
-          startForRef.current?.(s, p.conflicts_total > 0 ? "skip_conflicts" : "stop");
-        },
-        (e: unknown) => setError(errorText(t("extract.desktopFailed"), e)),
-      );
-    },
-    [handle, seq, desktopRun],
-  );
-
   useEffect(() => {
     startForRef.current = startFor;
   });
 
-  // The list's menu: Extract to Desktop.
-  const seenDesktopRef = useRef(desktopRequest);
-  useEffect(() => {
-    if (desktopRequest === seenDesktopRef.current) return;
-    seenDesktopRef.current = desktopRequest;
-    if (busy) return;
-    const entries = [...selectedRef.current];
-    queueMicrotask(() => extractToDesktop(entries.length > 0 ? { kind: "selected", entries } : { kind: "all" }));
-  }, [desktopRequest, busy, extractToDesktop]);
+  /**
+   * OK in the "Extract to..." window: Rust checks the folder and, with
+   * `newFolder`, makes a new one named after the archive inside it. With
+   * nothing in the way the extraction starts at once; if some entries collide
+   * the plan panel lists them first, and nothing is ever overwritten. A folder
+   * Rust cannot use rejects, and the window shows why.
+   */
+  const submitTo = useCallback(
+    async (s: Scope, folder: string, newFolder: boolean) => {
+      if (handle === null || seq === null) return;
+      const p = await planExtractTo(handle, seq, keysOf(s), folder, newFolder);
+      setError(null);
+      setJob({ state: "idle" });
+      setWizard(null);
+      if (p.conflicts_total > 0) {
+        setScope(s);
+        setPlan(p);
+        setMadeFolder(newFolder);
+        return;
+      }
+      if (newFolder) newFolderRun.set();
+      startForRef.current?.(s, "stop");
+    },
+    [handle, seq, newFolderRun],
+  );
 
   const cancel = () => {
     if (job.state !== "running") return;
@@ -373,23 +361,31 @@ export function Extractor({
           )}
         />
       </ToolSlot>
-      <ToolSlot name="desktop">
+      <ToolSlot name="extractTo">
         <ToolButton
-          icon={<ExtractDesktopIcon />}
-          label={t("extract.desktop")}
-          testId="extract-desktop"
+          icon={<ExtractToIcon />}
+          label={t("extract.to")}
+          testId="extract-to"
           onClick={() =>
-            extractToDesktop(selected.length > 0 ? { kind: "selected", entries: [...selected] } : { kind: "all" })
+            setWizard(selected.length > 0 ? { kind: "selected", entries: [...selected] } : { kind: "all" })
           }
-          disabled={!avail.extractDesktop.enabled || seq === null}
+          disabled={!avail.extractTo.enabled || seq === null}
           title={tipFor(
-            avail.extractDesktop,
+            avail.extractTo,
             selected.length > 0
-              ? t("extract.desktopSelectedTip", { n: formatNumber(selected.length) })
-              : t("extract.desktopTip"),
+              ? t("extract.toSelectedTip", { n: formatNumber(selected.length) })
+              : t("extract.toTip"),
           )}
         />
       </ToolSlot>
+
+      {wizard !== null && plan === null && (
+        <ExtractToDialog
+          count={wizard.kind === "all" ? 0 : wizard.entries.length}
+          onSubmit={(folder, newFolder) => submitTo(wizard, folder, newFolder)}
+          onClose={() => setWizard(null)}
+        />
+      )}
 
       {scope !== null && plan !== null && (
         <Panel

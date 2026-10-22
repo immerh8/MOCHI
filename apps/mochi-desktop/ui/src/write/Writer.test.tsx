@@ -655,7 +655,7 @@ test("the browser shows the archive as it stands after a commit: same handle for
   await user.click(await screen.findByTestId("create-confirm"));
   await screen.findByTestId("write-running");
   b.job({ event: "finished", job_id: 5, outcome: completed(commit("create", summary(9, 1, "made.mochi"))) });
-  await screen.findByText("made.mochi");
+  await screen.findAllByText("made.mochi");
   expect(b.calls.filter((c) => c.cmd === "close_archive").map((c) => c.args)).toEqual([{ handle: 3 }]);
   expect(b.calls.filter((c) => c.cmd === "open_snapshot").map((c) => c.args).at(-1)).toEqual({ handle: 9, seq: 0 });
 });

@@ -189,6 +189,17 @@ pub trait WindowHost: Send + Sync + 'static {
     fn show_main(&self);
     /// Open a folder in the file manager.
     fn open_folder(&self, folder: &Path) -> std::io::Result<()>;
+    /// Make the archive window `label` (a new window, placed down and to the
+    /// right of `opener`) and show it. `false` if it could not be made.
+    fn create_window(&self, _label: &str, _opener: Option<&str>) -> bool {
+        false
+    }
+    /// Bring the archive window `label` forward. `false` if there is none.
+    fn focus_window(&self, _label: &str) -> bool {
+        false
+    }
+    /// Set the title of the window `label` (plain text).
+    fn set_title(&self, _label: &str, _title: &str) {}
 }
 
 /// How big the compact window is: a job's progress and result, or the form.

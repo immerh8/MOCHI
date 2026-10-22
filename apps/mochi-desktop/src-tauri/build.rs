@@ -60,8 +60,10 @@ fn main() {
         "clear_crash_log",
         "open_user_guide",
         "plan_extract_default",
-        "plan_extract_desktop",
-        "plan_extract_foreign_desktop",
+        "extract_wizard_setup",
+        "browse_extract_folder",
+        "plan_extract_to",
+        "plan_extract_foreign_to",
         "discard_extract_folder",
         "recent_archives",
         "forget_recent_archives",
@@ -71,6 +73,14 @@ fn main() {
         "show_in_folder",
         "drag_out",
         "drag_out_foreign",
+        "find_scopes",
+        "find_choose_folders",
+        "find_remove_scope",
+        "find_start",
+        "find_cancel",
+        "find_query",
+        "find_open_hit",
+        "find_show_folder",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::ipc::{Channel, CommandArg, CommandItem, InvokeError};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::browse::Archives;
-use crate::check::{Checks, SubjectPick};
+use crate::check::SubjectPick;
 use crate::crashlog::{CrashLog, Settings, MAX_READ_BYTES};
-use crate::extract::Destination;
+use crate::folders::ExtractWizardSetup;
 use crate::foreign::Foreign;
 use crate::ipc::{
     ArchiveFormat, ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView,
@@ -25,7 +25,8 @@ use crate::launch::{LaunchEvent, LaunchSink, Launches};
 use crate::quick::{Quick, QuickAddRequest, QuickEvent, QuickLocation, QuickSink};
 use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
-use crate::write::{DropSink, DropWatch, Staging};
+use crate::windows::{WindowState, WindowStates};
+use crate::write::DropSink;
 
 impl DropSink for Channel<DropEvent> {
     fn send(&self, event: DropEvent) -> bool {
@@ -51,18 +52,69 @@ impl EventSink for Channel<JobEvent> {
     }
 }
 
+/// The window a command was called from, and that window's own state
+/// (`crate::windows`): its staged sources, drop listener, extract folder and
+/// Test and Repair tool. The label comes from Tauri, not from the page, so a
+/// window cannot name another window's state.
+pub struct Win {
+    pub label: String,
+    pub state: Arc<WindowState>,
+}
+
+impl<'de, R: Runtime> CommandArg<'de, R> for Win {
+    fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        let webview = command.message.webview();
+        let label = webview.label().to_owned();
+        let states = webview.state::<Arc<WindowStates>>();
+        Ok(Win {
+            state: states.state(&label),
+            label,
+        })
+    }
+}
+
+/// Forwards a job's events, and sets the window's title again when the job
+/// finishes (a job can create the archive the window now shows).
+struct TitleSink {
+    events: Channel<JobEvent>,
+    launches: Arc<Launches>,
+    label: String,
+}
+
+impl EventSink for TitleSink {
+    fn send(&self, event: JobEvent) -> bool {
+        let finished = matches!(event, JobEvent::Finished { .. });
+        let sent = self.events.send(event).is_ok();
+        if finished {
+            self.launches.refresh_title(&self.label);
+        }
+        sent
+    }
+}
+
 /// Start a job. Returns its ID at once; events stream over `on_event`.
 /// CPU-bound or blocking work runs on the blocking pool, never on the async
-/// runtime.
+/// runtime. The job belongs to the calling window: it works on that window's
+/// staged sources and destination, and closing the window cancels it.
 #[tauri::command]
 pub async fn start_job(
     request: JobRequest,
     on_event: Channel<JobEvent>,
     jobs: State<'_, Arc<JobRegistry>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<JobId, IpcError> {
-    jobs.start(
+    let services = jobs.services_for(&win.state);
+    let sink = TitleSink {
+        events: on_event,
+        launches: Arc::clone(&launches),
+        label: win.label.clone(),
+    };
+    jobs.start_for(
+        &win.label,
+        services,
         request,
-        Arc::new(on_event),
+        Arc::new(sink),
         Box::new(|work| {
             tauri::async_runtime::spawn_blocking(work);
         }),
@@ -107,20 +159,22 @@ async fn blocking_ipc<T: Send + 'static>(
 /// starts like a MOCHI archive is one whatever its name). An Encrypted MOCHI
 /// archive waits in Rust for `unlock_archive` (D5); a foreign archive that
 /// needs a password is `foreign_password` and is retried with
-/// `open_foreign_archive`. `null` if the user cancelled the dialog.
+/// `open_foreign_archive`. `null` if the user cancelled the dialog. A window that already shows an
+/// archive (or runs a job) does not give it up: the archive opens in a new
+/// window and the answer is `elsewhere` (one that already has it open is
+/// brought forward instead).
 #[tauri::command]
 pub async fn open_archive(
     app: AppHandle,
     text: Option<DialogText>,
-    archives: State<'_, Arc<Archives>>,
-    foreign: State<'_, Arc<Foreign>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<Option<OpenOutcome>, IpcError> {
-    let archives = Arc::clone(&archives);
-    let foreign = Arc::clone(&foreign);
+    let launches = Arc::clone(&launches);
     let text = text.unwrap_or_default();
     blocking_ipc(move || match crate::picker::pick_archive(&app, &text) {
         None => Ok(None),
-        Some(path) => crate::route::open_path(&archives, &foreign, &path).map(Some),
+        Some(path) => launches.open_in_window(&win.label, &path).map(Some),
     })
     .await
 }
@@ -143,12 +197,11 @@ pub fn forget_recent_archives(recents: State<'_, Arc<Recents>>) {
 pub async fn open_recent(
     index: u32,
     recents: State<'_, Arc<Recents>>,
-    archives: State<'_, Arc<Archives>>,
-    foreign: State<'_, Arc<Foreign>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<OpenOutcome, IpcError> {
     let recents = Arc::clone(&recents);
-    let archives = Arc::clone(&archives);
-    let foreign = Arc::clone(&foreign);
+    let launches = Arc::clone(&launches);
     blocking_ipc(move || {
         let path = usize::try_from(index)
             .ok()
@@ -157,7 +210,7 @@ pub async fn open_recent(
                 code: mochi_core::ErrorCode::InvalidArgument.as_str().to_owned(),
                 message: "that archive is no longer in the recent list".to_owned(),
             })?;
-        crate::route::open_path(&archives, &foreign, &path)
+        launches.open_in_window(&win.label, &path)
     })
     .await
 }
@@ -167,16 +220,13 @@ pub async fn open_recent(
 /// if there is none waiting.
 #[tauri::command]
 pub async fn open_dropped_archive(
-    staging: State<'_, Arc<Staging>>,
-    archives: State<'_, Arc<Archives>>,
-    foreign: State<'_, Arc<Foreign>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<Option<OpenOutcome>, IpcError> {
-    let staging = Arc::clone(&staging);
-    let archives = Arc::clone(&archives);
-    let foreign = Arc::clone(&foreign);
-    blocking_ipc(move || match staging.take_dropped_archive() {
+    let launches = Arc::clone(&launches);
+    blocking_ipc(move || match win.state.staging.take_dropped_archive() {
         None => Ok(None),
-        Some(path) => crate::route::open_path(&archives, &foreign, &path).map(Some),
+        Some(path) => launches.open_in_window(&win.label, &path).map(Some),
     })
     .await
 }
@@ -187,11 +237,8 @@ pub async fn open_dropped_archive(
 /// holds for `DropEvent::Archive`; the window names no path. An error if none
 /// is waiting or it cannot be staged.
 #[tauri::command]
-pub async fn stage_dropped_archive(
-    staging: State<'_, Arc<Staging>>,
-) -> Result<StagedView, IpcError> {
-    let staging = Arc::clone(&staging);
-    blocking_ipc(move || staging.stage_dropped_archive()).await
+pub async fn stage_dropped_archive(win: Win) -> Result<StagedView, IpcError> {
+    blocking_ipc(move || win.state.staging.stage_dropped_archive()).await
 }
 
 /// Show a folder in the operating system's file manager.
@@ -199,12 +246,11 @@ pub async fn stage_dropped_archive(
 pub async fn show_in_folder(
     what: ShowTarget,
     archives: State<'_, Arc<Archives>>,
-    destination: State<'_, Arc<Destination>>,
-    staging: State<'_, Arc<Staging>>,
+    win: Win,
 ) -> Result<(), IpcError> {
     let archives = Arc::clone(&archives);
-    let destination = Arc::clone(&destination);
-    let staging = Arc::clone(&staging);
+    let destination = Arc::clone(&win.state.destination);
+    let staging = Arc::clone(&win.state.staging);
     tauri::async_runtime::spawn_blocking(move || {
         let folder = match what {
             ShowTarget::ExtractDestination => destination.get().ok_or_else(|| {
@@ -248,9 +294,17 @@ pub async fn unlock_archive(
     pending: PendingId,
     passphrase: Secret,
     archives: State<'_, Arc<Archives>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<ArchiveSummary, IpcError> {
     let archives = Arc::clone(&archives);
-    blocking(move || archives.unlock(pending, &passphrase)).await
+    let launches = Arc::clone(&launches);
+    blocking(move || {
+        let opened = archives.unlock(pending, &passphrase);
+        launches.refresh_title(&win.label);
+        opened
+    })
+    .await
 }
 
 /// Stop waiting for a passphrase. `false` if it was not waiting.
@@ -277,16 +331,23 @@ pub async fn list_envelopes(
 pub async fn unlock_check_subject(
     subject: SubjectId,
     passphrase: Secret,
-    checks: State<'_, Arc<Checks>>,
+    win: Win,
 ) -> Result<SubjectView, IpcError> {
-    let checks = Arc::clone(&checks);
+    let checks = Arc::clone(&win.state.checks);
     blocking(move || checks.unlock_subject(subject, &passphrase)).await
 }
 
 /// Close an archive. `false` if it was not open.
 #[tauri::command]
-pub fn close_archive(handle: ArchiveHandle, archives: State<'_, Arc<Archives>>) -> bool {
-    archives.close(handle)
+pub fn close_archive(
+    handle: ArchiveHandle,
+    archives: State<'_, Arc<Archives>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
+) -> bool {
+    let closed = archives.close(handle);
+    launches.refresh_title(&win.label);
+    closed
 }
 
 /// Open (or reuse) one snapshot of an open archive.
@@ -341,8 +402,8 @@ pub async fn entry_details(
 /// Listen for items dropped on the window (D2). Rust receives the window's
 /// drop event and stages the paths itself; the webview hears only names.
 #[tauri::command]
-pub fn watch_drops(on_drop: Channel<DropEvent>, watch: State<'_, Arc<DropWatch>>) {
-    watch.set(Arc::new(on_drop));
+pub fn watch_drops(on_drop: Channel<DropEvent>, win: Win) {
+    win.state.drops.set(Arc::new(on_drop));
 }
 
 /// Listen for what the shell asked the app to do (D6): open an archive,
@@ -350,8 +411,12 @@ pub fn watch_drops(on_drop: Channel<DropEvent>, watch: State<'_, Arc<DropWatch>>
 /// itself, and the webview hears that an archive was opened or why a launch
 /// failed. Anything that arrived before this call is delivered now.
 #[tauri::command]
-pub fn watch_launches(on_launch: Channel<LaunchEvent>, launches: State<'_, Arc<Launches>>) {
-    launches.watch(Arc::new(on_launch));
+pub fn watch_launches(
+    on_launch: Channel<LaunchEvent>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
+) {
+    launches.watch(&win.label, Arc::new(on_launch));
 }
 
 /// Listen for the compact window's job (D6 quick verbs): progress, a request
@@ -428,8 +493,8 @@ pub fn quick_close(quick: State<'_, Arc<Quick>>) {
 
 /// What is staged to add.
 #[tauri::command]
-pub fn staged_sources(staging: State<'_, Arc<Staging>>) -> StagedView {
-    staging.view()
+pub fn staged_sources(win: Win) -> StagedView {
+    win.state.staging.view()
 }
 
 /// Show the native dialog for files or a folder (in Rust; the webview never
@@ -439,9 +504,9 @@ pub async fn stage_sources(
     app: AppHandle,
     pick: SourcePick,
     text: Option<DialogText>,
-    staging: State<'_, Arc<Staging>>,
+    win: Win,
 ) -> Result<StageOutcome, IpcError> {
-    let staging = Arc::clone(&staging);
+    let staging = Arc::clone(&win.state.staging);
     let text = text.unwrap_or_default();
     blocking(move || {
         Ok(match crate::picker::pick_sources(&app, pick, &text) {
@@ -457,18 +522,15 @@ pub async fn stage_sources(
 
 /// Take item `index` out of the staged set.
 #[tauri::command]
-pub fn unstage_source(
-    index: u32,
-    staging: State<'_, Arc<Staging>>,
-) -> Result<StagedView, IpcError> {
+pub fn unstage_source(index: u32, win: Win) -> Result<StagedView, IpcError> {
     let index = usize::try_from(index).unwrap_or(usize::MAX);
-    staging.remove(index).map_err(IpcError::from)
+    win.state.staging.remove(index).map_err(IpcError::from)
 }
 
 /// Empty the staged set and forget the chosen destination.
 #[tauri::command]
-pub fn clear_staged(staging: State<'_, Arc<Staging>>) -> StagedView {
-    staging.clear()
+pub fn clear_staged(win: Win) -> StagedView {
+    win.state.staging.clear()
 }
 
 /// Show the save dialog for a new archive (in Rust) and remember the choice.
@@ -477,9 +539,9 @@ pub fn clear_staged(staging: State<'_, Arc<Staging>>) -> StagedView {
 pub async fn choose_destination(
     app: AppHandle,
     text: Option<DialogText>,
-    staging: State<'_, Arc<Staging>>,
+    win: Win,
 ) -> Result<Option<StagedView>, IpcError> {
-    let staging = Arc::clone(&staging);
+    let staging = Arc::clone(&win.state.staging);
     let text = text.unwrap_or_default();
     blocking(move || {
         let suggested = staging.suggested_destination();
@@ -497,8 +559,8 @@ pub async fn choose_destination(
 /// MOCHI-only options are the window's to show or hide; the jobs refuse a
 /// combination that does not exist.
 #[tauri::command]
-pub fn set_archive_format(format: ArchiveFormat, staging: State<'_, Arc<Staging>>) -> StagedView {
-    staging.set_format(format)
+pub fn set_archive_format(format: ArchiveFormat, win: Win) -> StagedView {
+    win.state.staging.set_format(format)
 }
 
 /// Plan an extraction (D3): optionally show the native folder dialog (in
@@ -516,11 +578,11 @@ pub async fn plan_extract(
     pick: bool,
     text: Option<DialogText>,
     archives: State<'_, Arc<Archives>>,
-    destination: State<'_, Arc<Destination>>,
+    win: Win,
 ) -> Result<Option<ExtractPlan>, IpcError> {
     let text = text.unwrap_or_default();
     let archives = Arc::clone(&archives);
-    let destination = Arc::clone(&destination);
+    let destination = Arc::clone(&win.state.destination);
     blocking(move || {
         let picked = if pick {
             match crate::picker::pick_extract_folder(&app, &text) {
@@ -549,69 +611,106 @@ pub async fn plan_extract_default(
     seq: u32,
     keys: Vec<PathKey>,
     archives: State<'_, Arc<Archives>>,
-    destination: State<'_, Arc<Destination>>,
+    win: Win,
 ) -> Result<ExtractPlan, IpcError> {
     let archives = Arc::clone(&archives);
-    let destination = Arc::clone(&destination);
+    let destination = Arc::clone(&win.state.destination);
     blocking(move || crate::extract::plan_default(&archives, &destination, handle, seq, &keys))
         .await
 }
 
-/// The user's Desktop folder, from Tauri's path resolver (Rust only).
-fn desktop_folder(app: &AppHandle) -> mochi_core::Result<std::path::PathBuf> {
-    app.path().desktop_dir().map_err(|_| {
-        mochi_core::MochiError::new(
-            mochi_core::ErrorCode::InvalidArgument,
-            "this computer has no Desktop folder; use Extract to... instead",
-        )
-    })
+/// What the "Extract to..." window opens with: the folder used last (one that
+/// still exists), else the user's Desktop from Tauri's path resolver, and the
+/// recent folders that still exist.
+#[tauri::command]
+pub fn extract_wizard_setup(app: AppHandle, win: Win) -> ExtractWizardSetup {
+    let desktop = app.path().desktop_dir().ok().filter(|d| d.is_dir());
+    win.state.destination.history.setup(desktop.as_deref())
 }
 
-/// Quick extract (WinRAR's "Extract to Desktop"): make a new folder named
-/// after the archive on the Desktop (`name`, `name (2)`, ...; never an
-/// existing one) and plan extracting `keys` (empty: everything) into it. The
-/// webview names no path; it starts the extraction itself with `start_job`,
-/// which writes into the folder Rust remembers. Nothing is extracted here.
+/// Show the folder dialog for "Extract to..." (in Rust), starting in `start`
+/// when that is an existing folder, and return the folder's text. `null` if
+/// the user cancelled.
 #[tauri::command]
-pub async fn plan_extract_desktop(
+pub async fn browse_extract_folder(
     app: AppHandle,
-    handle: ArchiveHandle,
-    seq: u32,
-    keys: Vec<PathKey>,
-    archives: State<'_, Arc<Archives>>,
-    destination: State<'_, Arc<Destination>>,
-) -> Result<ExtractPlan, IpcError> {
-    let archives = Arc::clone(&archives);
-    let destination = Arc::clone(&destination);
+    start: Option<String>,
+    text: Option<DialogText>,
+) -> Result<Option<String>, IpcError> {
+    let text = text.unwrap_or_default();
     blocking(move || {
-        let desktop = desktop_folder(&app)?;
-        crate::extract::plan_in_new_folder(&archives, &destination, &desktop, handle, seq, &keys)
+        let start = start
+            .as_deref()
+            .and_then(|s| crate::folders::existing_folder(s).ok());
+        Ok(
+            crate::picker::pick_extract_folder_in(&app, start.as_deref(), &text)
+                .and_then(|p| p.to_str().map(str::to_owned)),
+        )
     })
     .await
 }
 
-/// `plan_extract_desktop` for an open ZIP, 7z, RAR, or tar archive.
+/// "Extract to..." (WinRAR's window): plan extracting `keys` (empty:
+/// everything) into `folder`, an existing folder the user typed or chose, or,
+/// with `new_folder`, into a new folder named after the archive inside it
+/// (`name`, `name (2)`, ...; never an existing one, made now). The folder text
+/// is validated in Rust (`folders::existing_folder`). The webview starts the
+/// extraction itself with `start_job`, which writes into the folder Rust
+/// remembers; entries that collide are listed in the plan and never
+/// overwritten. Nothing is extracted here.
 #[tauri::command]
-pub async fn plan_extract_foreign_desktop(
-    app: AppHandle,
+#[allow(clippy::too_many_arguments)]
+pub async fn plan_extract_to(
+    handle: ArchiveHandle,
+    seq: u32,
+    keys: Vec<PathKey>,
+    folder: String,
+    new_folder: bool,
+    archives: State<'_, Arc<Archives>>,
+    win: Win,
+) -> Result<ExtractPlan, IpcError> {
+    let archives = Arc::clone(&archives);
+    let destination = Arc::clone(&win.state.destination);
+    blocking(move || {
+        let folder = crate::folders::existing_folder(&folder)?;
+        if new_folder {
+            crate::extract::plan_in_new_folder(&archives, &destination, &folder, handle, seq, &keys)
+        } else {
+            destination.discard_made();
+            crate::extract::plan(&archives, &destination, Some(folder), handle, seq, &keys)
+        }
+    })
+    .await
+}
+
+/// `plan_extract_to` for an open ZIP, 7z, RAR, or tar archive.
+#[tauri::command]
+pub async fn plan_extract_foreign_to(
     handle: ArchiveHandle,
     keys: Vec<PathKey>,
+    folder: String,
+    new_folder: bool,
     foreign: State<'_, Arc<Foreign>>,
-    destination: State<'_, Arc<Destination>>,
+    win: Win,
 ) -> Result<ForeignExtractPlan, IpcError> {
     let foreign = Arc::clone(&foreign);
-    let destination = Arc::clone(&destination);
+    let destination = Arc::clone(&win.state.destination);
     blocking(move || {
-        let desktop = desktop_folder(&app)?;
-        foreign.plan_in_new_folder(&destination, &desktop, handle, &keys)
+        let folder = crate::folders::existing_folder(&folder)?;
+        if new_folder {
+            foreign.plan_in_new_folder(&destination, &folder, handle, &keys)
+        } else {
+            destination.discard_made();
+            foreign.plan(&destination, Some(folder), handle, &keys)
+        }
     })
     .await
 }
 
 /// Remove the new folder a default plan made, if nothing was extracted into it.
 #[tauri::command]
-pub fn discard_extract_folder(destination: State<'_, Arc<Destination>>) {
-    destination.discard_made();
+pub fn discard_extract_folder(win: Win) {
+    win.state.destination.discard_made();
 }
 
 /// Choose the archive to test, check, or repair (D4): the native open dialog
@@ -624,11 +723,11 @@ pub async fn choose_check_subject(
     from: SubjectSource,
     text: Option<DialogText>,
     archives: State<'_, Arc<Archives>>,
-    checks: State<'_, Arc<Checks>>,
+    win: Win,
 ) -> Result<Option<SubjectView>, IpcError> {
     let text = text.unwrap_or_default();
     let archives = Arc::clone(&archives);
-    let checks = Arc::clone(&checks);
+    let checks = Arc::clone(&win.state.checks);
     blocking(move || {
         let pick = match from {
             SubjectSource::Dialog => match crate::picker::pick_check_subject(&app, &text) {
@@ -646,11 +745,8 @@ pub async fn choose_check_subject(
 /// The health summary of the chosen archive (D4; `mochi health`): recorded
 /// evidence judged at the current head. Runs no check and writes nothing.
 #[tauri::command]
-pub async fn health_report(
-    subject: SubjectId,
-    checks: State<'_, Arc<Checks>>,
-) -> Result<HealthView, IpcError> {
-    let checks = Arc::clone(&checks);
+pub async fn health_report(subject: SubjectId, win: Win) -> Result<HealthView, IpcError> {
+    let checks = Arc::clone(&win.state.checks);
     blocking(move || checks.health(subject)).await
 }
 
@@ -662,9 +758,9 @@ pub async fn export_report(
     app: AppHandle,
     report: ReportId,
     text: Option<DialogText>,
-    checks: State<'_, Arc<Checks>>,
+    win: Win,
 ) -> Result<Option<String>, IpcError> {
-    let checks = Arc::clone(&checks);
+    let checks = Arc::clone(&win.state.checks);
     let text = text.unwrap_or_default();
     blocking(move || {
         let (suggested, json) = checks.report_json(report)?;
@@ -688,9 +784,9 @@ pub async fn repair_setup(
     app: AppHandle,
     action: RepairSetupAction,
     text: Option<DialogText>,
-    checks: State<'_, Arc<Checks>>,
+    win: Win,
 ) -> Result<RepairSetupView, IpcError> {
-    let checks = Arc::clone(&checks);
+    let checks = Arc::clone(&win.state.checks);
     let text = text.unwrap_or_default();
     blocking(move || {
         let picked = match action {
@@ -716,12 +812,15 @@ pub async fn open_foreign_archive(
     password: Option<String>,
     text: Option<DialogText>,
     foreign: State<'_, Arc<Foreign>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
 ) -> Result<Option<ForeignArchiveSummary>, IpcError> {
     let foreign = Arc::clone(&foreign);
+    let launches = Arc::clone(&launches);
     let text = text.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let path = if retry {
-            foreign.pending().ok_or_else(|| IpcError {
+            foreign.pending_for(&win.label).ok_or_else(|| IpcError {
                 code: mochi_core::ErrorCode::InvalidArgument.as_str().to_owned(),
                 message: "there is no archive waiting for a password".to_owned(),
             })?
@@ -731,9 +830,11 @@ pub async fn open_foreign_archive(
                 None => return Ok(None),
             }
         };
-        foreign
-            .open(&path, password.map(String::into_bytes))
-            .map(Some)
+        let opened = foreign
+            .open_as(&win.label, &path, password.map(String::into_bytes))
+            .map(Some);
+        launches.refresh_title(&win.label);
+        opened
     })
     .await
     .map_err(|_| IpcError {
@@ -744,8 +845,15 @@ pub async fn open_foreign_archive(
 
 /// Close a foreign archive (and forget its password). `false` if not open.
 #[tauri::command]
-pub fn close_foreign_archive(handle: ArchiveHandle, foreign: State<'_, Arc<Foreign>>) -> bool {
-    foreign.close(handle)
+pub fn close_foreign_archive(
+    handle: ArchiveHandle,
+    foreign: State<'_, Arc<Foreign>>,
+    launches: State<'_, Arc<Launches>>,
+    win: Win,
+) -> bool {
+    let closed = foreign.close(handle);
+    launches.refresh_title(&win.label);
+    closed
 }
 
 /// One page of a foreign archive's directory (`dir` null for the root).
@@ -787,11 +895,11 @@ pub async fn plan_extract_foreign(
     pick: bool,
     text: Option<DialogText>,
     foreign: State<'_, Arc<Foreign>>,
-    destination: State<'_, Arc<Destination>>,
+    win: Win,
 ) -> Result<Option<ForeignExtractPlan>, IpcError> {
     let text = text.unwrap_or_default();
     let foreign = Arc::clone(&foreign);
-    let destination = Arc::clone(&destination);
+    let destination = Arc::clone(&win.state.destination);
     blocking(move || {
         let picked = if pick {
             match crate::picker::pick_extract_folder(&app, &text) {
@@ -828,12 +936,17 @@ pub async fn set_update_settings(
 /// `automatic` marks the check made when the app starts: Rust makes no
 /// request for it unless the user turned the setting on. Nothing is
 /// downloaded; the install is the `install_update` job, after the user
-/// confirms the version shown.
+/// confirms the version shown. The start-up check is the first window's: a
+/// window opened later for another archive makes none (one request per start).
 #[tauri::command]
 pub async fn check_for_update(
     automatic: bool,
     updates: State<'_, Arc<Updates>>,
+    win: Win,
 ) -> Result<UpdateCheckView, IpcError> {
+    if automatic && win.label != crate::windows::MAIN_LABEL {
+        return Ok(UpdateCheckView::Skipped);
+    }
     let updates = Arc::clone(&updates);
     blocking(move || Ok(updates.check(automatic))).await
 }

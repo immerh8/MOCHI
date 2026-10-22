@@ -83,8 +83,8 @@ to a new folder" stays, because the plan checks an existing folder.
 
 **Single instance.** `tauri-plugin-single-instance` (official, MIT/Apache) is the first
 plugin registered. A second process forwards its arguments to the running one, which
-parses them with its own working directory, opens or stages in Rust, and brings the
-window forward; the second process exits. Permissions: **none added**. The plugin has no
+parses them with its own working directory, opens or stages in Rust, and shows it in the empty window or in a new one (one window per archive; an archive already open is not opened twice, its window comes forward), and brings the
+window forward; the second process exits. The new windows are covered by the `win-*` pattern of `capabilities/main.json` (no permission added). Permissions: **none added**. The plugin has no
 webview commands, so `capabilities/main.json` gains nothing for it; it needs the OS
 facility that makes one process the owner (a named mutex and a window message on Windows;
 the session D-Bus on Linux, where a session without a bus simply runs without single
@@ -121,6 +121,31 @@ needs GDI code for little gain). Selections whose command line could not fit in 
 32,767 characters show no MOCHI entries. The Windows 11 top-level menu (`IExplorerCommand`
 in a signed sparse package) stays 1.x because there is no code-signing certificate: on
 Windows 11 both entries sit under "Show more options" (Shift+F10).
+
+**The Find entry (MOCHI Find).** When the selection contains a folder, the DLL adds a third
+entry, "Find in MOCHI archives" (`mochi-desktop --find -- FOLDER...`; only the folders of
+the selection are passed, files are left out), and it is the only entry on the empty space
+of an open folder (`Directory\Background\shellex\ContextMenuHandlers\MOCHI`, which resolves the
+folder with `SHGetPathFromIDListW`; a virtual folder or a path past 260 characters shows
+nothing). The app validates the paths like every launch (`launch.rs`), holds the folders in
+Rust, opens the main window's Find tool and scans them for `.mochi` archives, opening each
+read-only and searching the names in its head snapshot. The Linux counterparts are per file
+manager, because a desktop file cannot add a right-click entry by itself: a Dolphin service menu
+(`/usr/share/kio/servicemenus/mochi-find.desktop`), a Nemo action
+(`/usr/share/nemo/actions/mochi-find.nemo_action`), and a small GNOME Files extension
+(`/usr/share/nautilus-python/extensions/mochi_find.py`) that is loaded only if the user has
+installed `python3-nautilus` (no package depends on it; without it the file is never read; the
+extension catches every error so that it cannot break the file manager). Plus
+`mochi-find.desktop`, a plain launcher in the app menu (`mochi-desktop --find -- %F`). **That
+launcher has no `MimeType`, on purpose** (owner decision): registering `inode/directory` would put
+`mochi-find.desktop` in `mimeinfo.cache` for folders, where it sorts before
+`org.gnome.Nautilus.desktop`, and MOCHI must never be able to become what opens a folder. Without
+`python3-nautilus`, GNOME Files users use Find in archives... inside MOCHI (More menu, Ctrl+Shift+F);
+`sudo apt install python3-nautilus` adds the right-click entry after Files restarts
+(`nautilus -q`). `smoke-deb.sh` checks all four files and that the launcher has no `MimeType`;
+`smoke-deb-desktop.sh` checks that `mimeinfo.cache` never names it. There is no `mochi find` command:
+spec §23 fixes the 1.0 command surface, so a multi-archive search on the command line needs a
+spec and plan change.
 
 **A loaded DLL cannot be replaced.** Explorer keeps a shell extension loaded, so the
 installer never overwrites it: the file name carries the app version, the registration

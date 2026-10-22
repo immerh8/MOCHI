@@ -252,8 +252,7 @@ export interface ListActions {
   available: AvailableActions;
   selectAll: () => void;
   copyNames: () => void;
-  extract: () => void;
-  extractDesktop: () => void;
+  extractTo: () => void;
   add: () => void;
   remove: () => void;
 }
@@ -278,8 +277,7 @@ export function listMenuItems(a: ListActions): MenuItem[] {
   return [
     item("select-all", t("menu.selectAll"), "selectAll", a.selectAll),
     item("copy-names", t("menu.copyNames"), "copyNames", a.copyNames),
-    item("extract-to", t("menu.extractTo"), "extractTo", a.extract),
-    item("extract-desktop", t("menu.extractDesktop"), "extractDesktop", a.extractDesktop),
+    item("extract-to", t("menu.extractTo"), "extractTo", a.extractTo),
     item("add", t("menu.add"), "add", a.add, true),
     item("delete", t("menu.delete"), "remove", a.remove),
   ];
