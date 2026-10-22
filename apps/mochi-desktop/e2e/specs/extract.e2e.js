@@ -15,7 +15,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
-import { closeResultDetails, openResultDetails } from "./_ui.js";
+import { closeResultDetails, inNewWindow, openResultDetails } from "./_ui.js";
 
 // Set by wdio.conf.js (the d1_browse_fixtures directory).
 const fixtures = process.env.MOCHI_E2E_FIXTURES;
@@ -321,8 +321,8 @@ describe("extract", () => {
 
   it("cancels an extraction midway: files already extracted stay, none is partial, none is temporary", async () => {
     queuePicks(largeCopy);
-    // An archive is open: the toolbar's Open opens another.
-    await $('[data-testid="toolbar-open"]').click();
+    // An archive is open: the toolbar's Open opens another, in a window of its own.
+    await inNewWindow(() => $('[data-testid="toolbar-open"]').click());
     await browser.waitUntil(
       async () => (await $('[data-testid="archive-meta"]').getText()).includes("large.mochi"),
       { timeout: 60_000 },

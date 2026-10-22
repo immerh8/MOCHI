@@ -605,14 +605,16 @@ button.crumb[aria-current="location"] {
   align-items: center;
   gap: 0.1rem;
 }
-/* The ".." row: pinned under the column header, drawn like a folder row. */
-.up-row {
+/* The ".." row: pinned under the column header, drawn like a folder row. `.entry` (later in
+   this file) says `height: 100%`, which in this flex column made the row as tall as the list and
+   left the rows none: the selector is raised to win over it. */
+.entry.up-row {
   height: 26px;
   flex: none;
   padding-right: calc(0.6rem + var(--sbw, 0px));
   border-bottom: 1px solid var(--border);
 }
-.up-row .kind {
+.entry.up-row .kind {
   display: inline-flex;
 }
 /* The middle of the window. Dialogs open over it; it never scrolls itself. */

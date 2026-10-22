@@ -86,3 +86,24 @@ export async function clickNewArchive() {
   }
   await $('[data-testid="new-archive"]').click();
 }
+
+/**
+ * Run `action` (a click that opens an archive while this window already shows one) and talk to the
+ * window it opens: one window per archive, so the archive appears in a new window, not in this one.
+ * Resolves with the new window's handle; the earlier window's handle is `await browser.getWindowHandle()`
+ * taken before the call.
+ */
+export async function inNewWindow(action) {
+  const before = await browser.getWindowHandles();
+  await action();
+  let made;
+  await browser.waitUntil(
+    async () => {
+      made = (await browser.getWindowHandles()).find((h) => !before.includes(h));
+      return made !== undefined;
+    },
+    { timeout: 60_000, timeoutMsg: "no new window opened for the archive" },
+  );
+  await browser.switchToWindow(made);
+  return made;
+}
