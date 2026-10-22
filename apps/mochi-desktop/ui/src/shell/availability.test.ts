@@ -18,7 +18,7 @@ const MOCHI_HEAD: ArchiveContext = { kind: "mochi", viewingHead: true };
 test("with nothing open, only New archive is on, and every other action says to open one", () => {
   expect(enabledOf({ kind: "none" })).toEqual(["newArchive"]);
   const a = availableActions({ kind: "none" }, NONE);
-  for (const id of ["add", "remove", "extract", "extractTo", "extractDesktop", "test", "info", "search"] as const) {
+  for (const id of ["add", "remove", "extract", "extractTo", "test", "info", "search"] as const) {
     expect(a[id]).toEqual({ enabled: false, reason: "noArchive" });
   }
 });
@@ -32,7 +32,7 @@ test("an archive waiting for its passphrase is not open: its actions say so", ()
 
 test("the latest version of a MOCHI archive: everything but the selection actions is on", () => {
   expect(enabledOf(MOCHI_HEAD).sort()).toEqual(
-    ["add", "extract", "extractDesktop", "info", "newArchive", "search", "test"].sort(),
+    ["add", "extract", "extractTo", "info", "newArchive", "search", "test"].sort(),
   );
   // Plus the selection actions once there is a selection and a list to select from.
   expect(enabledOf(MOCHI_HEAD, SOME).sort()).toEqual(
@@ -40,7 +40,6 @@ test("the latest version of a MOCHI archive: everything but the selection action
       "add",
       "copyNames",
       "extract",
-      "extractDesktop",
       "extractTo",
       "info",
       "newArchive",
@@ -52,12 +51,11 @@ test("the latest version of a MOCHI archive: everything but the selection action
   );
 });
 
-test("Extract to Desktop and Extract take the whole archive when nothing is selected", () => {
+test("Extract and Extract to... take the whole archive when nothing is selected", () => {
   const a = availableActions(MOCHI_HEAD, NONE);
   expect(a.extract.enabled).toBe(true);
-  expect(a.extractDesktop.enabled).toBe(true);
-  // Extract to... (a chosen folder, for the selection) and Remove need a selection.
-  expect(a.extractTo).toEqual({ enabled: false, reason: "noSelection" });
+  expect(a.extractTo.enabled).toBe(true);
+  // Remove needs a selection.
   expect(a.remove).toEqual({ enabled: false, reason: "noSelection" });
   expect(a.copyNames.reason).toBe("noSelection");
 });
@@ -67,14 +65,14 @@ test("an older version of a MOCHI archive is read-only: Add and Remove are off, 
   const a = availableActions(old, SOME);
   expect(a.add).toEqual({ enabled: false, reason: "oldVersion" });
   expect(a.remove).toEqual({ enabled: false, reason: "oldVersion" });
-  expect(a.extract.enabled && a.extractTo.enabled && a.extractDesktop.enabled && a.test.enabled).toBe(true);
+  expect(a.extract.enabled && a.extractTo.enabled && a.test.enabled).toBe(true);
 });
 
 test("a ZIP, 7z, RAR, or tar archive is read-only: Add and Remove are off, reading is on", () => {
   const a = availableActions({ kind: "foreign" }, SOME);
   expect(a.add).toEqual({ enabled: false, reason: "readOnly" });
   expect(a.remove).toEqual({ enabled: false, reason: "readOnly" });
-  for (const id of ["extract", "extractTo", "extractDesktop", "test", "copyNames", "selectAll", "info", "search"] as const) {
+  for (const id of ["extract", "extractTo", "test", "copyNames", "selectAll", "info", "search"] as const) {
     expect(a[id].enabled, id).toBe(true);
   }
   // The reason shown for read-only is the existing wording.
@@ -88,7 +86,7 @@ test("the read-only reason wins over a missing selection (it will not change by 
 
 test("while a job runs, every action that starts one waits; selecting and copying do not", () => {
   const a = availableActions({ ...MOCHI_HEAD, busy: true }, SOME);
-  for (const id of ["newArchive", "add", "remove", "extract", "extractTo", "extractDesktop", "test"] as const) {
+  for (const id of ["newArchive", "add", "remove", "extract", "extractTo", "test"] as const) {
     expect(a[id], id).toEqual({ enabled: false, reason: "busy" });
   }
   for (const id of ["copyNames", "selectAll", "info", "search"] as const) expect(a[id].enabled, id).toBe(true);

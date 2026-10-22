@@ -79,6 +79,12 @@ pub struct Destination {
     /// The new folder `plan_default` made, until something is extracted into
     /// it: closing the plan removes it again if it is still empty.
     made: Mutex<Option<PathBuf>>,
+    /// The folder to remember after a successful extraction when it is not
+    /// the chosen one itself: the parent a new folder was made in. `set`
+    /// clears it (an explicit choice is remembered as chosen).
+    record_under: Mutex<Option<PathBuf>>,
+    /// The folders extracted into lately ("Extract to..." offers them).
+    pub history: crate::folders::FolderHistory,
 }
 
 impl Destination {
@@ -88,6 +94,21 @@ impl Destination {
 
     pub fn set(&self, folder: PathBuf) {
         *lock(&self.chosen) = Some(folder);
+        *lock(&self.record_under) = None;
+    }
+
+    /// Remember `parent` rather than the chosen folder when this extraction
+    /// succeeds (the chosen folder is a new one made inside `parent`).
+    pub fn record_under(&self, parent: PathBuf) {
+        *lock(&self.record_under) = Some(parent);
+    }
+
+    /// An extraction into the chosen folder succeeded: remember where.
+    pub fn record_success(&self) {
+        let parent = lock(&self.record_under).take();
+        if let Some(folder) = parent.or_else(|| self.get()) {
+            self.history.record(&folder);
+        }
     }
 
     /// Remove the folder `plan_default` made, if it is still empty and still
@@ -177,7 +198,7 @@ pub fn create_unique_dir(parent: &Path, stem: &str) -> Result<PathBuf> {
 }
 
 impl Destination {
-    /// Make a new folder named after `archive` inside `parent` (the Desktop),
+    /// Make a new folder named after `archive` inside `parent`,
     /// remember it as the folder to tidy up if nothing is extracted into it
     /// (`discard_made`). An earlier unused one of this kind is removed first.
     pub fn make_new_in(&self, parent: &Path, archive: &Path) -> Result<PathBuf> {
@@ -194,7 +215,7 @@ impl Destination {
 }
 
 /// Plan an extraction of a MOCHI archive into a new folder named after it in
-/// `parent` (the Desktop), made now. The caller starts the extraction itself;
+/// `parent` (the folder the user chose), made now. The caller starts the extraction itself;
 /// the folder is removed again if the plan fails.
 pub fn plan_in_new_folder(
     archives: &Archives,
@@ -206,7 +227,10 @@ pub fn plan_in_new_folder(
 ) -> Result<ExtractPlan> {
     let folder = destination.make_new_in(parent, &archives.path(handle)?)?;
     match plan(archives, destination, Some(folder), handle, seq, keys) {
-        Ok(p) => Ok(p),
+        Ok(p) => {
+            destination.record_under(parent.to_path_buf());
+            Ok(p)
+        }
         Err(e) => {
             destination.discard_made();
             Err(e)
@@ -234,8 +258,14 @@ pub fn plan_default(
         )
     })?;
     *lock(&destination.made) = Some(folder.clone());
+    let parent = folder.parent().map(Path::to_path_buf);
     match plan(archives, destination, Some(folder), handle, seq, keys) {
-        Ok(p) => Ok(p),
+        Ok(p) => {
+            if let Some(parent) = parent {
+                destination.record_under(parent);
+            }
+            Ok(p)
+        }
         Err(e) => {
             destination.discard_made();
             Err(e)
@@ -392,8 +422,21 @@ impl mochi_core::job::ProgressSink for Paced<'_> {
     }
 }
 
-/// Run an extract job.
+/// Run an extract job. A job that ends without error (entries it skipped are
+/// in its report) is remembered in the recent folders; a failed or cancelled
+/// one is not.
 pub fn run(
+    archives: &Archives,
+    destination: &Destination,
+    request: &JobRequest,
+    ctx: &JobContext<'_>,
+) -> Result<JobDone> {
+    let done = run_job(archives, destination, request, ctx)?;
+    destination.record_success();
+    Ok(done)
+}
+
+fn run_job(
     archives: &Archives,
     destination: &Destination,
     request: &JobRequest,
@@ -1397,5 +1440,86 @@ mod tests {
         assert!(made.is_dir());
         assert_eq!(plan.destination, made.display().to_string());
         assert_eq!(f.destination.get(), Some(made));
+    }
+
+    // ---- "Extract to...": the recent folders ----
+
+    #[test]
+    fn a_successful_extract_into_a_new_folder_records_the_folder_it_was_made_in() {
+        let f = fx();
+        let parent = tempfile::tempdir().unwrap();
+        plan_in_new_folder(&f.archives, &f.destination, parent.path(), f.handle, 1, &[]).unwrap();
+        // Planning remembers nothing; an extraction does.
+        assert!(f.destination.history.existing().is_empty());
+        go(&f, &request(&f, 1, &[], whole())).unwrap();
+        assert_eq!(
+            f.destination.history.existing(),
+            [parent.path().to_str().unwrap()]
+        );
+    }
+
+    #[test]
+    fn extracting_into_the_folder_itself_records_that_folder() {
+        let f = fx();
+        plan(
+            &f.archives,
+            &f.destination,
+            Some(f.dest.clone()),
+            f.handle,
+            1,
+            &[],
+        )
+        .unwrap();
+        go(&f, &request(&f, 1, &[], whole())).unwrap();
+        assert_eq!(f.destination.history.existing(), [f.dest.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn a_failed_or_refused_extract_records_nothing() {
+        let f = fx();
+        plan(
+            &f.archives,
+            &f.destination,
+            Some(f.dest.clone()),
+            f.handle,
+            1,
+            &[],
+        )
+        .unwrap();
+        // An unknown snapshot fails when the job opens it.
+        assert!(go(&f, &request(&f, 99, &[], whole())).is_err());
+        assert!(f.destination.history.existing().is_empty());
+    }
+
+    #[test]
+    fn extracting_twice_into_one_folder_reports_the_collisions_and_overwrites_nothing() {
+        let f = fx();
+        plan(
+            &f.archives,
+            &f.destination,
+            Some(f.dest.clone()),
+            f.handle,
+            1,
+            &[],
+        )
+        .unwrap();
+        go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap();
+        let first = tree(&f.dest);
+        std::fs::write(f.dest.join("top.txt"), b"edited since").unwrap();
+        let again = plan(&f.archives, &f.destination, None, f.handle, 1, &[]).unwrap();
+        assert!(again.conflicts_total > 0);
+        assert!(again.conflicts.iter().any(|c| c.path.text == "top.txt"));
+        let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap());
+        assert!(r.not_extracted_total > 0);
+        assert_eq!(
+            std::fs::read(f.dest.join("top.txt")).unwrap(),
+            b"edited since"
+        );
+        assert_eq!(
+            first.keys().collect::<Vec<_>>(),
+            tree(&f.dest).keys().collect::<Vec<_>>()
+        );
+        // Stopping instead of skipping refuses before writing anything.
+        assert!(go(&f, &request(&f, 1, &[], ConflictChoice::Stop)).is_err());
     }
 }

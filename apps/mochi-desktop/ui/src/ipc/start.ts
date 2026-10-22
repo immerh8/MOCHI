@@ -4,13 +4,15 @@
 // Rust, and "Show in folder" asks Rust to show a folder it resolved itself.
 import { invoke } from "@tauri-apps/api/core";
 
+import type { DialogText } from "./generated/DialogText";
 import type { ExtractPlan } from "./generated/ExtractPlan";
+import type { ExtractWizardSetup } from "./generated/ExtractWizardSetup";
 import type { OpenOutcome } from "./generated/OpenOutcome";
 import type { RecentView } from "./generated/RecentView";
 import type { ShowTarget } from "./generated/ShowTarget";
 import type { StagedView } from "./generated/StagedView";
 
-export type { RecentView, ShowTarget };
+export type { ExtractWizardSetup, RecentView, ShowTarget };
 
 export function recentArchives(): Promise<RecentView[]> {
   return invoke<RecentView[]>("recent_archives");
@@ -51,13 +53,36 @@ export function planExtractDefault(handle: number, seq: number, keys: string[]):
 }
 
 /**
- * Quick extract: make a new folder named after the archive on the Desktop
- * (Rust resolves it; `name`, `name (2)`, ... never an existing one) and plan
- * extracting `keys` (empty: everything) into it. The extraction itself is
- * started with `start_job` and writes into that folder.
+ * What the "Extract to..." window opens with: the folder used last (else the
+ * Desktop) and the recent folders that still exist, newest first.
  */
-export function planExtractDesktop(handle: number, seq: number, keys: string[]): Promise<ExtractPlan> {
-  return invoke<ExtractPlan>("plan_extract_desktop", { handle, seq, keys });
+export function extractWizardSetup(): Promise<ExtractWizardSetup> {
+  return invoke<ExtractWizardSetup>("extract_wizard_setup");
+}
+
+/**
+ * The folder dialog for "Extract to...", starting in `start` when it is an
+ * existing folder. Resolves to the folder's text, or `null` if cancelled.
+ */
+export function browseExtractFolder(start: string, text?: DialogText): Promise<string | null> {
+  return invoke<string | null>("browse_extract_folder", { start: start === "" ? null : start, text });
+}
+
+/**
+ * Plan extracting `keys` (empty: everything) into `folder`, an existing folder
+ * (Rust checks the text), or with `newFolder` into a new folder named after
+ * the archive inside it (`name`, `name (2)`, ... never an existing one). The
+ * extraction itself is started with `start_job` and writes into the folder
+ * Rust remembers; nothing already there is overwritten.
+ */
+export function planExtractTo(
+  handle: number,
+  seq: number,
+  keys: string[],
+  folder: string,
+  newFolder: boolean,
+): Promise<ExtractPlan> {
+  return invoke<ExtractPlan>("plan_extract_to", { handle, seq, keys, folder, newFolder });
 }
 
 /** Remove the new folder a default plan made, if nothing was extracted into it. */

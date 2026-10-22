@@ -11,6 +11,7 @@ use crate::browse::Archives;
 use crate::check::{Checks, SubjectPick};
 use crate::crashlog::{CrashLog, Settings, MAX_READ_BYTES};
 use crate::extract::Destination;
+use crate::folders::ExtractWizardSetup;
 use crate::foreign::Foreign;
 use crate::ipc::{
     ArchiveFormat, ArchiveHandle, ArchiveSummary, ChildrenPage, CrashLogView, CrashSettingsView,
@@ -557,53 +558,93 @@ pub async fn plan_extract_default(
         .await
 }
 
-/// The user's Desktop folder, from Tauri's path resolver (Rust only).
-fn desktop_folder(app: &AppHandle) -> mochi_core::Result<std::path::PathBuf> {
-    app.path().desktop_dir().map_err(|_| {
-        mochi_core::MochiError::new(
-            mochi_core::ErrorCode::InvalidArgument,
-            "this computer has no Desktop folder; use Extract to... instead",
-        )
-    })
+/// What the "Extract to..." window opens with: the folder used last (one that
+/// still exists), else the user's Desktop from Tauri's path resolver, and the
+/// recent folders that still exist.
+#[tauri::command]
+pub fn extract_wizard_setup(
+    app: AppHandle,
+    destination: State<'_, Arc<Destination>>,
+) -> ExtractWizardSetup {
+    let desktop = app.path().desktop_dir().ok().filter(|d| d.is_dir());
+    destination.history.setup(desktop.as_deref())
 }
 
-/// Quick extract (WinRAR's "Extract to Desktop"): make a new folder named
-/// after the archive on the Desktop (`name`, `name (2)`, ...; never an
-/// existing one) and plan extracting `keys` (empty: everything) into it. The
-/// webview names no path; it starts the extraction itself with `start_job`,
-/// which writes into the folder Rust remembers. Nothing is extracted here.
+/// Show the folder dialog for "Extract to..." (in Rust), starting in `start`
+/// when that is an existing folder, and return the folder's text. `null` if
+/// the user cancelled.
 #[tauri::command]
-pub async fn plan_extract_desktop(
+pub async fn browse_extract_folder(
     app: AppHandle,
+    start: Option<String>,
+    text: Option<DialogText>,
+) -> Result<Option<String>, IpcError> {
+    let text = text.unwrap_or_default();
+    blocking(move || {
+        let start = start
+            .as_deref()
+            .and_then(|s| crate::folders::existing_folder(s).ok());
+        Ok(
+            crate::picker::pick_extract_folder_in(&app, start.as_deref(), &text)
+                .and_then(|p| p.to_str().map(str::to_owned)),
+        )
+    })
+    .await
+}
+
+/// "Extract to..." (WinRAR's window): plan extracting `keys` (empty:
+/// everything) into `folder`, an existing folder the user typed or chose, or,
+/// with `new_folder`, into a new folder named after the archive inside it
+/// (`name`, `name (2)`, ...; never an existing one, made now). The folder text
+/// is validated in Rust (`folders::existing_folder`). The webview starts the
+/// extraction itself with `start_job`, which writes into the folder Rust
+/// remembers; entries that collide are listed in the plan and never
+/// overwritten. Nothing is extracted here.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn plan_extract_to(
     handle: ArchiveHandle,
     seq: u32,
     keys: Vec<PathKey>,
+    folder: String,
+    new_folder: bool,
     archives: State<'_, Arc<Archives>>,
     destination: State<'_, Arc<Destination>>,
 ) -> Result<ExtractPlan, IpcError> {
     let archives = Arc::clone(&archives);
     let destination = Arc::clone(&destination);
     blocking(move || {
-        let desktop = desktop_folder(&app)?;
-        crate::extract::plan_in_new_folder(&archives, &destination, &desktop, handle, seq, &keys)
+        let folder = crate::folders::existing_folder(&folder)?;
+        if new_folder {
+            crate::extract::plan_in_new_folder(&archives, &destination, &folder, handle, seq, &keys)
+        } else {
+            destination.discard_made();
+            crate::extract::plan(&archives, &destination, Some(folder), handle, seq, &keys)
+        }
     })
     .await
 }
 
-/// `plan_extract_desktop` for an open ZIP, 7z, RAR, or tar archive.
+/// `plan_extract_to` for an open ZIP, 7z, RAR, or tar archive.
 #[tauri::command]
-pub async fn plan_extract_foreign_desktop(
-    app: AppHandle,
+pub async fn plan_extract_foreign_to(
     handle: ArchiveHandle,
     keys: Vec<PathKey>,
+    folder: String,
+    new_folder: bool,
     foreign: State<'_, Arc<Foreign>>,
     destination: State<'_, Arc<Destination>>,
 ) -> Result<ForeignExtractPlan, IpcError> {
     let foreign = Arc::clone(&foreign);
     let destination = Arc::clone(&destination);
     blocking(move || {
-        let desktop = desktop_folder(&app)?;
-        foreign.plan_in_new_folder(&destination, &desktop, handle, &keys)
+        let folder = crate::folders::existing_folder(&folder)?;
+        if new_folder {
+            foreign.plan_in_new_folder(&destination, &folder, handle, &keys)
+        } else {
+            destination.discard_made();
+            foreign.plan(&destination, Some(folder), handle, &keys)
+        }
     })
     .await
 }

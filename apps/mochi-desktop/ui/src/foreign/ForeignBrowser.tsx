@@ -6,13 +6,15 @@ import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
 import { EntryCells, ListHead } from "../browser/ListHead";
-import { BackIcon, CheckIcon, CloseIcon, ExtractDesktopIcon, ExtractIcon, KeyIcon } from "../icons";
-import { useDesktopRun } from "../extract/useDesktopRun";
+import { BackIcon, CheckIcon, CloseIcon, ExtractIcon, ExtractToIcon, KeyIcon } from "../icons";
+import { ExtractToDialog } from "../extract/ExtractToDialog";
+import { useNewFolderRun } from "../extract/useNewFolderRun";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot, useShell } from "../shell/Shell";
 import { formatNumber, t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
+import { folderKeys, useFolderPath } from "../browser/useFolderPath";
 import { dragOutForeign } from "../ipc/dragout";
 import {
   closeForeignArchive,
@@ -20,7 +22,7 @@ import {
   foreignSearch,
   openForeignArchive,
   planExtractForeign,
-  planExtractForeignDesktop,
+  planExtractForeignTo,
 } from "../ipc/foreign";
 import type { ForeignArchiveSummary, ForeignExtractPlan, ForeignHit, ForeignRow } from "../ipc/foreign";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
@@ -43,7 +45,7 @@ import { describeOutcome, extractNote, needsPassword, progressText, testNote, we
 /** Row height of the list, in pixels (the same as the MOCHI browser's). */
 const ROW_HEIGHT = 26;
 
-type Crumb = { key: string; name: NameText };
+const rowKey = (r: ForeignRow) => r.key;
 
 type Ask = { reason: "ask" | "wrong" };
 
@@ -135,7 +137,8 @@ export function ForeignBrowser() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
-  const [path, setPath] = useState<Crumb[]>([]);
+  const folder = useFolderPath();
+  const { path, reveal } = folder;
   const [total, setTotal] = useState<{ id: string; n: number } | null>(null);
   const [plan, setPlan] = useState<{ plan: ForeignExtractPlan; keys: string[]; what: NameText | null; n: number } | null>(
     null,
@@ -143,8 +146,12 @@ export function ForeignBrowser() {
   const [job, setJob] = useState<JobView>({ state: "idle" });
   // The last job was an extraction (its result can show the folder).
   const [extracted, setExtracted] = useState(false);
-  // Set while the running job extracts into a new Desktop folder.
-  const desktopRun = useDesktopRun();
+  // The "Extract to..." window is open.
+  const [wizard, setWizard] = useState(false);
+  // The plan's folder is a new one made inside the folder the user chose.
+  const [madeFolder, setMadeFolder] = useState(false);
+  // Set while the running job extracts into a folder Rust just made for it.
+  const newFolderRun = useNewFolderRun();
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const handle = open?.handle ?? null;
@@ -207,13 +214,11 @@ export function ForeignBrowser() {
   const selectedRows: ForeignRow[] = searching ? hitSel.rows.map((h) => h.row) : [...folderSel.rows];
   const focused: ForeignRow | null = searching ? (hitSel.focus?.row ?? null) : folderSel.focus;
 
-  const navigate = useCallback(
-    (to: Crumb[]) => {
-      setPath(to);
-      clearFolderSel();
-    },
-    [clearFolderSel],
-  );
+  useEffect(() => {
+    folder.onMove(clearFolderSel);
+  });
+  const navigate = folder.go;
+  const resetPath = folder.reset;
 
   /** Show a freshly opened archive, closing the one on screen. */
   const show = async (summary: ForeignArchiveSummary) => {
@@ -227,7 +232,7 @@ export function ForeignBrowser() {
     setPlan(null);
     setJob({ state: "idle" });
     clearQuery?.();
-    navigate([]);
+    resetPath();
   };
   const launchedRef = useRef<{ show: typeof show; ask: (wrong: boolean) => void } | null>(null);
   const shownRef = useRef<number | null>(null);
@@ -284,7 +289,7 @@ export function ForeignBrowser() {
     setError(null);
     setJob({ state: "idle" });
     clearQuery?.();
-    navigate([]);
+    resetPath();
   };
 
   // The window's own Open (or a drop) opened a foreign archive, or it needs its password.
@@ -339,11 +344,11 @@ export function ForeignBrowser() {
       }
     });
     if (event.event === "finished" && event.outcome.status === "completed") setPlan(null);
-    if (event.event === "finished" && desktopRun.take()) {
-      // Nothing was extracted: do not leave an empty folder on the Desktop.
+    if (event.event === "finished" && newFolderRun.take()) {
+      // Nothing was extracted: do not leave an empty new folder behind.
       if (event.outcome.status !== "completed") void discardExtractFolder().catch(() => undefined);
     }
-  }, [desktopRun]);
+  }, [newFolderRun]);
 
   const begin = (request: Parameters<typeof startJob>[0]) => {
     rememberFocus();
@@ -353,32 +358,39 @@ export function ForeignBrowser() {
     startJob(request, onEvent).catch((e: unknown) => {
       setJob({ state: "idle" });
       setError(errorText(t("foreign.startFailed"), e));
-      if (desktopRun.take()) void discardExtractFolder().catch(() => undefined);
+      if (newFolderRun.take()) void discardExtractFolder().catch(() => undefined);
     });
   };
 
   /**
-   * Extract to Desktop: Rust makes a new folder named after the archive on the
-   * Desktop; the extraction starts at once, with no folder question and no plan
-   * panel. Entries that cannot be written are skipped and listed in the result.
+   * OK in the "Extract to..." window: Rust checks the folder and, with
+   * `newFolder`, makes a new one named after the archive inside it. With
+   * nothing in the way the extraction starts at once; if some entries collide
+   * the plan panel lists them first, and nothing is ever overwritten. A folder
+   * Rust cannot use rejects, and the window shows why.
    */
-  const extractToDesktop = () => {
+  const submitTo = async (folder: string, newFolder: boolean) => {
     if (handle === null) return;
     const keys = selectedRows.flatMap((r) => (r.key === null ? [] : [r.key]));
+    const p = await planExtractForeignTo(handle, keys, folder, newFolder);
     setError(null);
     setJob({ state: "idle" });
-    planExtractForeignDesktop(handle, keys).then(
-      (p) => {
-        desktopRun.set();
-        begin({
-          kind: "extract_foreign",
-          handle,
-          keys,
-          on_conflict: p.plan.conflicts_total > 0 ? "skip_conflicts" : "stop",
-        });
-      },
-      (e: unknown) => setError(errorText(t("extract.desktopFailed"), e)),
-    );
+    setWizard(false);
+    if (p.plan.conflicts_total > 0) {
+      const only = selectedRows.length === 1 ? (selectedRows[0]?.name ?? null) : null;
+      setPlan({ plan: p, keys, what: only, n: keys.length });
+      setMadeFolder(newFolder);
+      return;
+    }
+    if (newFolder) newFolderRun.set();
+    begin({ kind: "extract_foreign", handle, keys, on_conflict: "stop" });
+  };
+
+  /** Close the plan panel; a new folder nobody extracted into is tidied up (Rust only removes an empty one). */
+  const closePlan = () => {
+    if (madeFolder) void discardExtractFolder().catch(() => undefined);
+    setMadeFolder(false);
+    setPlan(null);
   };
 
   const showFolder = () => {
@@ -394,7 +406,10 @@ export function ForeignBrowser() {
     setJob({ state: "idle" });
     planExtractForeign(handle, keys, pick).then(
       (p) => {
-        if (p !== null) setPlan({ plan: p, keys, what, n });
+        if (p !== null) {
+          setPlan({ plan: p, keys, what, n });
+          setMadeFolder(false);
+        }
       },
       (e: unknown) => setError(errorText(t("foreign.folderFailed"), e)),
     );
@@ -441,8 +456,7 @@ export function ForeignBrowser() {
           : folderSel.rows.map((r) => [...path.map((c) => c.name.text), r.name.text].join("/"));
         copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
       },
-      extract: extractNow,
-      extractDesktop: extractToDesktop,
+      extractTo: () => setWizard(true),
       add: () => undefined,
       remove: () => undefined,
     }),
@@ -452,7 +466,7 @@ export function ForeignBrowser() {
     if (hit.key === null) return;
     const above = ancestorsOf(hit.key, hit.path);
     clearQuery?.();
-    navigate(hit.kind === "directory" ? [...above, { key: hit.key, name: hit.name }] : above);
+    navigate(hit.kind === "directory" ? [...above, { key: hit.key, name: hit.name }] : above, true);
   };
 
   const described = job.state === "done" ? describeOutcome(job.outcome) : null;
@@ -549,13 +563,16 @@ export function ForeignBrowser() {
           ))}
         </nav>
       </div>
+      {open && wizard && plan === null && (
+        <ExtractToDialog count={selectedCount} onSubmit={submitTo} onClose={() => setWizard(false)} />
+      )}
       {plan && (
         <Panel
           label={t("foreign.planGroup")}
           heading={t("foreign.planHeading")}
           testId="foreign-plan"
           fallbackId="foreign-heading"
-          onClose={jobBusy ? undefined : () => setPlan(null)}
+          onClose={jobBusy ? undefined : closePlan}
         >
           <dl>
             <dt>{t("foreign.folder")}</dt>
@@ -628,7 +645,7 @@ export function ForeignBrowser() {
             >
               {t("foreign.changeFolder")}
             </button>
-            <button type="button" data-testid="foreign-plan-close" disabled={jobBusy} onClick={() => setPlan(null)}>
+            <button type="button" data-testid="foreign-plan-close" disabled={jobBusy} onClick={closePlan}>
               {t("common.close")}
             </button>
           </div>
@@ -639,7 +656,14 @@ export function ForeignBrowser() {
         <div
           className="listing"
           {...listMenu.listProps}
-          onKeyDown={(e) =>
+          onMouseUp={(e) => {
+            // The mouse's back and forward buttons walk the folder history.
+            if (searching) return;
+            if (e.button === 3) folder.back();
+            else if (e.button === 4) folder.forward();
+          }}
+          onKeyDown={(e) => {
+            if (!searching && folderKeys(e, folder)) return;
             listKeys(e, {
               all: () => (searching ? hitSel.all(hits.length) : count !== null && folderSel.all(count)),
               none: () => {
@@ -649,10 +673,10 @@ export function ForeignBrowser() {
                 return true;
               },
               up: () => {
-                if (!searching && path.length > 0) navigate(path.slice(0, -1));
+                if (!searching && path.length > 0) folder.up();
               },
-            })
-          }
+            });
+          }}
         >
           <p id="foreign-entry-hint" className="sr-only">
             {t("help.keys")}
@@ -691,6 +715,10 @@ export function ForeignBrowser() {
                 label={t("foreign.folderContents")}
                 head={<ListHead />}
                 hintId="foreign-entry-hint"
+                focusFirst={folder.focusList}
+                revealKey={reveal}
+                keyOf={rowKey}
+                onReveal={folderSel.ensure}
                 testId="foreign-entries"
                 onMarquee={folderSel.marquee}
                 onError={listError}
@@ -709,7 +737,7 @@ export function ForeignBrowser() {
                       index,
                       () => {
                         if (row.kind === "directory" && row.key !== null)
-                          navigate([...path, { key: row.key, name: row.name }]);
+                          navigate([...path, { key: row.key, name: row.name }], true);
                       },
                       folderDrag,
                       row.kind === "directory",
@@ -810,18 +838,18 @@ export function ForeignBrowser() {
         </ToolSlot>
       )}
       {open && (
-        <ToolSlot name="desktop" owner="foreign">
+        <ToolSlot name="extractTo" owner="foreign">
           <ToolButton
-            icon={<ExtractDesktopIcon />}
-            label={t("extract.desktop")}
-            testId="foreign-extract-desktop"
-            disabled={!avail.extractDesktop.enabled}
-            onClick={extractToDesktop}
+            icon={<ExtractToIcon />}
+            label={t("extract.to")}
+            testId="foreign-extract-to"
+            disabled={!avail.extractTo.enabled}
+            onClick={() => setWizard(true)}
             title={tipFor(
-              avail.extractDesktop,
+              avail.extractTo,
               selectedCount > 0
-                ? t("extract.desktopSelectedTip", { n: formatNumber(selectedCount) })
-                : t("extract.desktopTip"),
+                ? t("extract.toSelectedTip", { n: formatNumber(selectedCount) })
+                : t("extract.toTip"),
             )}
           />
         </ToolSlot>

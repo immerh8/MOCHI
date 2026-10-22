@@ -1030,6 +1030,42 @@ button.crumb {
   margin: 0;
   overflow-wrap: anywhere;
 }
+/* "Extract to...": a folder field with Browse..., recent folders, a check box. */
+.extract-to {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.extract-to .note {
+  margin: 0;
+}
+.extract-to-row {
+  display: flex;
+  gap: 0.4rem;
+}
+.extract-to-row input {
+  flex: 1;
+  min-width: 0;
+}
+.extract-to-recent ul {
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 9rem;
+  overflow: auto;
+}
+.extract-to-recent li button {
+  max-width: 100%;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.extract-to-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
 /* The tools of the More menu: one at a time, in a larger window with a close
    button and its own scrolling. */
 .tool-sheet {

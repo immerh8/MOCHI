@@ -7,7 +7,7 @@ import {
   CaretDownIcon,
   CheckIcon,
   CloseIcon,
-  ExtractDesktopIcon,
+  ExtractToIcon,
   ExtractIcon,
   FoldersIcon,
   GearIcon,
@@ -41,8 +41,8 @@ import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { ListHead, EntryCells } from "./ListHead";
 import { Name } from "./Name";
 import { Tree } from "./Tree";
-import type { Crumb } from "./Tree";
 import { VirtualList } from "./VirtualList";
+import { folderKeys, useFolderPath } from "./useFolderPath";
 import { Checker } from "../check/Checker";
 import { EncryptionNotes, PassphraseForm } from "../crypt/PassphraseForm";
 import { Rekey } from "../crypt/Rekey";
@@ -202,6 +202,8 @@ type Open = { archive: ArchiveSummary; snapshot: SnapshotView };
 /** An entry the list can select: a folder row or a search hit. */
 export type Picked = { key: string; name: NameText };
 
+const rowKey = (r: EntryRow) => r.key;
+
 /** Plan D1: open an archive and browse its snapshots. Read-only. */
 export function Browser({
   foreign,
@@ -217,13 +219,11 @@ export function Browser({
   const [open, setOpen] = useState<Open | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [path, setPath] = useState<Crumb[]>([]);
+  const folder = useFolderPath();
+  const { path, focusList, reveal } = folder;
   const [counted, setCounted] = useState<{ id: string; total: number } | null>(null);
   const [shownDetails, setShownDetails] = useState<{ id: string; details: EntryDetails } | null>(null);
   const [waiting, setWaiting] = useState<{ pending: number; fileName: string } | null>(null);
-  // Set when a folder was opened from the list by key or double click, so the
-  // new listing takes keyboard focus instead of dropping it on the page.
-  const [focusList, setFocusList] = useState(false);
   // Set when the shell asked to extract (D6): the Extractor then shows its plan.
   const [autoExtract, setAutoExtract] = useState<{
     token: number;
@@ -319,14 +319,13 @@ export function Browser({
   const clearFolderSel = folderSel.clear;
   const clearHitSel = hitSel.clear;
 
-  const navigate = useCallback(
-    (to: Crumb[], fromList = false) => {
-      setFocusList(fromList);
-      setPath(to);
-      clearFolderSel();
-    },
-    [clearFolderSel],
-  );
+  // Moving to another folder drops the selection; `navigate` is the one way
+  // to move (path bar, tree, double click, Backspace, history).
+  useEffect(() => {
+    folder.onMove(clearFolderSel);
+  });
+  const navigate = folder.go;
+  const resetPath = folder.reset;
 
   // A new search, or none, starts with nothing selected among the hits.
   useEffect(() => {
@@ -360,7 +359,7 @@ export function Browser({
     const snapshot = await openSnapshot(archive.handle, head);
     setOpen({ archive, snapshot });
     clearQuery();
-    navigate([]);
+    resetPath();
   };
 
   /** Wait for the user's choice of archive, then show it (and plan an extract if asked). */
@@ -445,12 +444,12 @@ export function Browser({
           await closeArchive(open.archive.handle).catch(() => false);
         }
         setOpen({ archive, snapshot });
-        navigate([]);
+        resetPath();
       } catch (e) {
         setError(errorText(t("browser.adoptFailed"), e));
       }
     },
-    [open, navigate],
+    [open, resetPath],
   );
 
   // The shell opened an archive, or could not (D6). Rust has done the opening
@@ -472,7 +471,7 @@ export function Browser({
         await closeArchive(previous).catch(() => false);
       }
       setOpen({ archive, snapshot });
-      navigate([]);
+      resetPath();
       if (extract) setAutoExtract((a) => ({ token: (a?.token ?? 0) + 1, handle: archive.handle }));
     } catch (e) {
       setError(errorText(t("browser.openFailed"), e));
@@ -498,7 +497,7 @@ export function Browser({
     setOpen(null);
     setError(null);
     clearQuery();
-    navigate([]);
+    resetPath();
   };
 
   const pickSnapshot = async (to: number) => {
@@ -509,7 +508,7 @@ export function Browser({
       const snapshot = await openSnapshot(open.archive.handle, to);
       setOpen({ ...open, snapshot });
       clearQuery();
-      navigate([]);
+      resetPath();
     } catch (e) {
       setError(errorText(t("browser.openCommitFailed", { seq: to }), e));
     } finally {
@@ -656,7 +655,7 @@ export function Browser({
       return true;
     },
     up: () => {
-      if (!searching && path.length > 0) navigate(path.slice(0, -1), true);
+      if (!searching && path.length > 0) folder.up();
     },
     remove: () => {
       if (avail.remove.enabled) setRemoveRequest((n) => n + 1);
@@ -664,8 +663,7 @@ export function Browser({
   };
 
   // The list's right-click menu. Names are the full in-archive paths, as text.
-  const [extractSelectedRequest, setExtractSelectedRequest] = useState(0);
-  const [desktopRequest, setDesktopRequest] = useState(0);
+  const [extractToRequest, setExtractToRequest] = useState(0);
   const listMenu = useListMenu(
     listMenuItems({
       available: avail,
@@ -676,8 +674,7 @@ export function Browser({
           : folderSel.rows.map((r) => [...path.map((c) => c.name.text), r.name.text].join("/"));
         copyNames(names).catch((e: unknown) => setError(errorText(t("browser.copyFailed"), e)));
       },
-      extract: () => setExtractSelectedRequest((n) => n + 1),
-      extractDesktop: () => setDesktopRequest((n) => n + 1),
+      extractTo: () => setExtractToRequest((n) => n + 1),
       add: () => setAddRequest((n) => n + 1),
       remove: () => setRemoveRequest((n) => n + 1),
     }),
@@ -719,7 +716,7 @@ export function Browser({
           <span className="toolbar-sep" aria-hidden="true" />
           <SlotHost name="add" />
           <SlotHost name="extract" />
-          <SlotHost name="desktop" />
+          <SlotHost name="extractTo" />
           <SlotHost name="test" />
           <SlotHost name="remove" />
           <span className="toolbar-spacer" />
@@ -827,13 +824,13 @@ export function Browser({
             />
           )}
         </ToolSlot>
-        <ToolSlot name="desktop" owner="mochi">
+        <ToolSlot name="extractTo" owner="mochi">
           {open === null && (
             <ToolButton
-              icon={<ExtractDesktopIcon />}
-              label={t("extract.desktop")}
-              testId="extract-desktop"
-              title={tipFor(avail.extractDesktop, t("extract.desktopTip"))}
+              icon={<ExtractToIcon />}
+              label={t("extract.to")}
+              testId="extract-to"
+              title={tipFor(avail.extractTo, t("extract.toTip"))}
               disabled
               onClick={doTest}
             />
@@ -1004,8 +1001,7 @@ export function Browser({
                   seq={open.snapshot.seq}
                   selected={selected}
                   autoPlan={autoExtract}
-                  selectedRequest={extractSelectedRequest}
-                  desktopRequest={desktopRequest}
+                  toRequest={extractToRequest}
                 />
                 <div className="workspace">
                   {foldersShown && (
@@ -1020,7 +1016,20 @@ export function Browser({
                       />
                     </nav>
                   )}
-                  <div className="listing" onKeyDown={(e) => listKeys(e, listKeyHandlers)} {...listMenu.listProps}>
+                  <div
+                    className="listing"
+                    onKeyDown={(e) => {
+                      if (!searching && folderKeys(e, folder)) return;
+                      listKeys(e, listKeyHandlers);
+                    }}
+                    onMouseUp={(e) => {
+                      // The mouse's back and forward buttons walk the folder history.
+                      if (searching) return;
+                      if (e.button === 3) folder.back();
+                      else if (e.button === 4) folder.forward();
+                    }}
+                    {...listMenu.listProps}
+                  >
                     <p id="entry-hint" className="sr-only">
                       {t("help.keys")}
                     </p>
@@ -1063,6 +1072,9 @@ export function Browser({
                           head={<ListHead />}
                           hintId="entry-hint"
                           focusFirst={focusList}
+                          revealKey={reveal}
+                          keyOf={rowKey}
+                          onReveal={folderSel.ensure}
                           testId="entries"
                           onMarquee={folderSel.marquee}
                           onError={listError}

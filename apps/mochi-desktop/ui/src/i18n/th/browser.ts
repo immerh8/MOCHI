@@ -71,7 +71,6 @@ export const browser = {
   "menu.selectAll": "เลือกทั้งหมด",
   "menu.copyNames": "คัดลอกชื่อเต็ม",
   "menu.extractTo": "แตกไฟล์ไปที่...",
-  "menu.extractDesktop": "แตกไฟล์ไปที่เดสก์ท็อป",
   "menu.add": "เพิ่มไฟล์...",
   "menu.delete": "ลบ",
   "browser.copyFailed": "คัดลอกชื่อไม่สำเร็จ",

@@ -1,8 +1,9 @@
 // Typed wrapper over the extract plan command (plan D3). Types come from Rust
-// through ts-rs (./generated, never edited by hand). The webview never names
-// a folder: Rust shows the native dialog and keeps the choice, and the job is
-// started with start_job (ExtractArchive), which carries only an archive
-// handle, a snapshot, and entry keys.
+// through ts-rs (./generated, never edited by hand). Here Rust shows the
+// native dialog and keeps the choice, and the job is started with start_job
+// (ExtractArchive), which carries only an archive handle, a snapshot, and
+// entry keys. The one place the webview sends folder text is "Extract to..."
+// (ipc/start.ts planExtractTo), which Rust validates.
 import { invoke } from "@tauri-apps/api/core";
 
 import { extractFolderDialog } from "./dialogs";

@@ -15,6 +15,7 @@ pub mod crashlog;
 mod d5_tests;
 pub mod dragout;
 pub mod extract;
+pub mod folders;
 pub mod foreign;
 pub mod formats;
 pub mod help;
@@ -66,6 +67,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let first_launches = Arc::clone(&launches);
     let setup_updates = Arc::clone(&updates);
     let setup_recents = Arc::clone(&recents);
+    let setup_folders = Arc::clone(&destination);
     let setup_quick = Arc::clone(&quick);
     let event_quick = Arc::clone(&quick);
     tauri::Builder::default()
@@ -130,8 +132,10 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::choose_destination,
             commands::plan_extract,
             commands::plan_extract_default,
-            commands::plan_extract_desktop,
-            commands::plan_extract_foreign_desktop,
+            commands::extract_wizard_setup,
+            commands::browse_extract_folder,
+            commands::plan_extract_to,
+            commands::plan_extract_foreign_to,
             commands::discard_extract_folder,
             commands::recent_archives,
             commands::forget_recent_archives,
@@ -188,6 +192,7 @@ pub fn run() -> Result<(), tauri::Error> {
                 use tauri::Manager;
                 let dir = app.path().app_config_dir()?;
                 setup_recents.configure(&dir);
+                setup_folders.history.configure(&dir);
                 setup_updates.configure(
                     dir,
                     Arc::new(update::PluginBackend::new(app.handle().clone())),

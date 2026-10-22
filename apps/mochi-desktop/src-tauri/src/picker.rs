@@ -141,6 +141,24 @@ pub fn pick_extract_folder<R: Runtime>(app: &AppHandle<R>, text: &DialogText) ->
         .ok()
 }
 
+/// [`pick_extract_folder`], starting in `start` when there is one (the
+/// "Extract to..." window's Browse button).
+pub fn pick_extract_folder_in<R: Runtime>(
+    app: &AppHandle<R>,
+    start: Option<&std::path::Path>,
+    text: &DialogText,
+) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    let mut dialog = app.dialog().file().set_title(text.title("Extract to…"));
+    if let Some(dir) = start {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.blocking_pick_folder()?.into_path().ok()
+}
+
 /// Show the open dialog for the archive to test or repair (plan D4). Any
 /// file can be chosen: a damaged archive may not end in `.mochi`. `None` if
 /// the user cancelled. Blocks: call it off the async runtime.

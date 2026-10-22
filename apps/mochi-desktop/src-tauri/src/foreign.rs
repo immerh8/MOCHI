@@ -480,7 +480,7 @@ impl Foreign {
     }
 
     /// Plan extracting `keys` into a new folder named after the archive in
-    /// `parent` (the Desktop), made now. The folder is removed again if the
+    /// `parent` (the folder the user chose), made now. The folder is removed again if the
     /// plan fails.
     pub fn plan_in_new_folder(
         &self,
@@ -492,7 +492,10 @@ impl Foreign {
         let s = self.session(handle)?;
         let folder = destination.make_new_in(parent, &s.path)?;
         match self.plan(destination, Some(folder), handle, keys) {
-            Ok(p) => Ok(p),
+            Ok(p) => {
+                destination.record_under(parent.to_path_buf());
+                Ok(p)
+            }
             Err(e) => {
                 destination.discard_made();
                 Err(e)
@@ -529,7 +532,11 @@ impl Foreign {
                 handle,
                 keys,
                 on_conflict,
-            } => self.extract(destination, *handle, keys, *on_conflict, ctx),
+            } => {
+                let done = self.extract(destination, *handle, keys, *on_conflict, ctx)?;
+                destination.record_success();
+                Ok(done)
+            }
             _ => Err(invalid("not a foreign-archive request")),
         }
     }

@@ -128,7 +128,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
 
 afterEach(() => clearMocks());
 
-const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "extract-desktop", "toolbar-test", "remove-entry", "search-query", "toolbar-info"];
+const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "extract-to", "toolbar-test", "remove-entry", "search-query", "toolbar-info"];
 
 async function openIt() {
   const user = userEvent.setup();
@@ -149,7 +149,7 @@ test("with nothing open, the archive's buttons are off and More and Help are on"
   expect(within(bar).getByTestId("toolbar-help")).toBeEnabled();
   // Icons only: one or two words each are the accessible name (hidden text); the
   // reason a button is off is its tooltip.
-  const names = ["Open", "New archive", "Add", "Extract", "Extract to Desktop", "Test", "Remove", "Info", "More", "Help"];
+  const names = ["Open", "New archive", "Add", "Extract", "Extract to…", "Test", "Remove", "Info", "More", "Help"];
   const buttons = within(bar).getAllByRole("button");
   expect(buttons.map((b) => b.textContent)).toEqual(names);
   for (const b of buttons) expect(b.querySelector(".sr-only")?.textContent, b.textContent ?? "").toBe(b.textContent);

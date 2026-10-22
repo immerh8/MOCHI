@@ -61,6 +61,8 @@ function backend() {
           file_version_id: "11",
           attributes: { state: "recorded", posix: null, windows: null, mtime: null },
         };
+      case "extract_wizard_setup":
+        return { destination: "/home/me/Desktop", recent: [] };
       case "plan_extract":
         return { destination: "/home/me/out", entries: 2, conflicts: [], conflicts_total: 0, case_insensitive: false };
       case "open_foreign_archive":
@@ -141,7 +143,7 @@ test("a right-click on a row selects it and opens the menu with its items", asyn
   const rows = screen.getAllByTestId("entry");
   fireEvent.contextMenu(rows[1] as HTMLElement);
   const menu = await screen.findByRole("menu");
-  expect(itemNames()).toEqual(["Select all", "Copy full names", "Extract to...", "Extract to Desktop", "Add files...", "Delete"]);
+  expect(itemNames()).toEqual(["Select all", "Copy full names", "Extract to...", "Add files...", "Delete"]);
   expect(menu).toContainElement(screen.getByTestId("menu-delete"));
   expect(rows[1]).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByTestId("menu-delete")).not.toHaveAttribute("aria-disabled");
@@ -157,7 +159,7 @@ test("on an empty selection the items that need one are disabled", async () => {
   fireEvent.contextMenu(screen.getByTestId("entries"));
   await screen.findByRole("menu");
   expect(screen.getByTestId("menu-select-all")).not.toHaveAttribute("aria-disabled");
-  for (const id of ["copy-names", "extract-to", "delete"]) {
+  for (const id of ["copy-names", "delete"]) {
     expect(screen.getByTestId(`menu-${id}`)).toHaveAttribute("aria-disabled", "true");
   }
 });
@@ -196,7 +198,7 @@ test("Copy full names with several selected joins them with newlines (hostile na
   expect(document.querySelector("img")).toBeNull();
 });
 
-test("Extract to... plans the selection with the folder dialog", async () => {
+test("Extract to... opens the window for the selection", async () => {
   const { user, calls } = await openIt();
   const rows = screen.getAllByTestId("entry");
   await user.click(rows[1] as HTMLElement);
@@ -205,13 +207,9 @@ test("Extract to... plans the selection with the folder dialog", async () => {
   await user.keyboard("{/Control}");
   fireEvent.contextMenu(rows[2] as HTMLElement);
   await user.click(await screen.findByTestId("menu-extract-to"));
-  await waitFor(() => expect(calls.some((c) => c.cmd === "plan_extract")).toBe(true));
-  expect(calls.find((c) => c.cmd === "plan_extract")?.args).toMatchObject({
-    handle: 3,
-    seq: 0,
-    keys: [hex("song.mp3"), hex("track.flac")],
-    pick: true,
-  });
+  expect(await screen.findByTestId("extract-to-dialog")).toBeInTheDocument();
+  expect(screen.getByTestId("extract-to-what")).toHaveTextContent("The 2 selected entries will be extracted.");
+  expect(calls.some((c) => c.cmd === "plan_extract_to")).toBe(false);
 });
 
 test("the keyboard opens the menu, arrows skip nothing enabled, Enter chooses", async () => {
