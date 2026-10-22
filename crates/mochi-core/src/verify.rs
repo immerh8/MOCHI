@@ -81,7 +81,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod keyless;
+mod scoped;
 mod tar_stream;
+
+pub use scoped::{verify_commits_since, ScopedVerification};
 
 use mochi_format::codec::Protection;
 use mochi_format::digest::CommitId;
@@ -124,6 +127,9 @@ pub mod phase {
     /// Each commit of an Encrypted archive checked without a key: `completed`
     /// of `total` commits.
     pub const KEYLESS: &str = "verify-keyless";
+    /// [`super::verify_commits_since`]: the data objects the new commits
+    /// introduce, `completed` of `total`.
+    pub const SCOPED: &str = "verify-scoped";
 }
 
 /// What freshness is judged against (spec Annex B.1 D8).

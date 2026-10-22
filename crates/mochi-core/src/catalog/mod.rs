@@ -350,11 +350,9 @@ impl Catalog {
     /// Read an `archive_meta` value (spec §10.1).
     pub fn meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
         self.conn
-            .query_row(
-                "SELECT value FROM archive_meta WHERE key = ?1",
-                params![key],
-                |r| r.get::<_, Vec<u8>>(0),
-            )
+            .prepare_cached("SELECT value FROM archive_meta WHERE key = ?1")
+            .map_err(sql)?
+            .query_row(params![key], |r| r.get::<_, Vec<u8>>(0))
             .optional()
             .map_err(sql)
     }
@@ -426,10 +424,10 @@ impl Catalog {
     pub fn object(&self, id: &ObjectId) -> Result<Option<ObjectRecord>> {
         let row = self
             .conn
-            .query_row(
-                "SELECT o.stored_len, o.stored_hash, c.encoding, c.protection, c.decoded_len, c.content_hash
-                 FROM objects o JOIN chunks c USING (object_id) WHERE o.object_id = ?1",
-                params![&id.as_bytes()[..]],
+            .prepare_cached("SELECT o.stored_len, o.stored_hash, c.encoding, c.protection, c.decoded_len, c.content_hash
+                 FROM objects o JOIN chunks c USING (object_id) WHERE o.object_id = ?1")
+            .map_err(sql)?
+            .query_row(params![&id.as_bytes()[..]],
                 |r| {
                     Ok((
                         r.get::<_, i64>(0)?,
@@ -458,7 +456,7 @@ impl Catalog {
         };
         let mut stmt = self
             .conn
-            .prepare(
+            .prepare_cached(
                 "SELECT dependency_kind, dependency_id FROM chunk_dependencies
                  WHERE object_id = ?1 ORDER BY dependency_kind, dependency_id",
             )
@@ -493,11 +491,9 @@ impl Catalog {
     /// Where an object is stored in a monolithic archive, if recorded.
     pub fn object_location(&self, id: &ObjectId) -> Result<Option<u64>> {
         self.conn
-            .query_row(
-                "SELECT stored_offset FROM object_locations WHERE object_id = ?1",
-                params![&id.as_bytes()[..]],
-                |r| r.get::<_, i64>(0),
-            )
+            .prepare_cached("SELECT stored_offset FROM object_locations WHERE object_id = ?1")
+            .map_err(sql)?
+            .query_row(params![&id.as_bytes()[..]], |r| r.get::<_, i64>(0))
             .optional()
             .map_err(sql)?
             .map(|v| to_u64(v, "stored offset"))
@@ -506,11 +502,9 @@ impl Catalog {
 
     fn chunk_decoded_len(&self, id: &ObjectId) -> Result<Option<u64>> {
         self.conn
-            .query_row(
-                "SELECT decoded_len FROM chunks WHERE object_id = ?1",
-                params![&id.as_bytes()[..]],
-                |r| r.get::<_, i64>(0),
-            )
+            .prepare_cached("SELECT decoded_len FROM chunks WHERE object_id = ?1")
+            .map_err(sql)?
+            .query_row(params![&id.as_bytes()[..]], |r| r.get::<_, i64>(0))
             .optional()
             .map_err(sql)?
             .map(|v| to_u64(v, "decoded length"))
@@ -520,6 +514,26 @@ impl Catalog {
     // ---- file versions -------------------------------------------------------------
 
     fn check_file_version(&self, v: &FileVersion, extents: &[Extent]) -> Result<()> {
+        // Chunk lengths are looked up once, so the validator stays pure.
+        let mut lens: HashMap<ObjectId, Option<u64>> = HashMap::new();
+        for e in extents {
+            if let ExtentSource::Chunk { chunk, .. } = e.source {
+                if let std::collections::hash_map::Entry::Vacant(slot) = lens.entry(chunk) {
+                    slot.insert(self.chunk_decoded_len(&chunk)?);
+                }
+            }
+        }
+        self.check_file_version_with(v, extents, |c| lens.get(c).copied().flatten())
+    }
+
+    /// The rules of [`Catalog::check_file_version`] with chunk lengths
+    /// supplied by `chunk_len` (`None`: the chunk is not in the catalog).
+    fn check_file_version_with(
+        &self,
+        v: &FileVersion,
+        extents: &[Extent],
+        chunk_len: impl Fn(&ObjectId) -> Option<u64>,
+    ) -> Result<()> {
         match v.kind {
             EntryKind::Directory => {
                 if v.logical_len != 0 || v.content_hash.is_some() || !extents.is_empty() {
@@ -538,17 +552,7 @@ impl Catalog {
                 }
             }
         }
-        // Chunk lengths are looked up once, so the validator stays pure.
-        let mut lens: HashMap<ObjectId, Option<u64>> = HashMap::new();
-        for e in extents {
-            if let ExtentSource::Chunk { chunk, .. } = e.source {
-                if let std::collections::hash_map::Entry::Vacant(slot) = lens.entry(chunk) {
-                    slot.insert(self.chunk_decoded_len(&chunk)?);
-                }
-            }
-        }
-        validate_extents(v.logical_len, extents, |c| lens.get(c).copied().flatten())
-            .map_err(MochiError::from)
+        validate_extents(v.logical_len, extents, chunk_len).map_err(MochiError::from)
     }
 
     /// Insert a file version and its extents, validated (§10.3). Identical
@@ -574,9 +578,9 @@ impl Catalog {
     pub fn file_version(&self, id: &FileVersionId) -> Result<Option<(FileVersion, Vec<Extent>)>> {
         let row = self
             .conn
-            .query_row(
-                "SELECT kind, logical_len, content_hash FROM file_versions WHERE file_version_id = ?1",
-                params![&id.as_bytes()[..]],
+            .prepare_cached("SELECT kind, logical_len, content_hash FROM file_versions WHERE file_version_id = ?1")
+            .map_err(sql)?
+            .query_row(params![&id.as_bytes()[..]],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<Vec<u8>>>(2)?)),
             )
             .optional()
@@ -594,7 +598,7 @@ impl Catalog {
         };
         let mut stmt = self
             .conn
-            .prepare(
+            .prepare_cached(
                 "SELECT ordinal, logical_offset, length, chunk_id, chunk_offset FROM file_extents
                  WHERE file_version_id = ?1 ORDER BY ordinal",
             )
@@ -641,11 +645,9 @@ impl Catalog {
             }
             let kind: Option<String> = self
                 .conn
-                .query_row(
-                    "SELECT kind FROM file_versions WHERE file_version_id = ?1",
-                    params![&id.as_bytes()[..]],
-                    |r| r.get(0),
-                )
+                .prepare_cached("SELECT kind FROM file_versions WHERE file_version_id = ?1")
+                .map_err(sql)?
+                .query_row(params![&id.as_bytes()[..]], |r| r.get(0))
                 .optional()
                 .map_err(sql)?;
             if let Some(k) = kind {
@@ -910,6 +912,112 @@ impl Catalog {
             .collect()
     }
 
+    /// Every chunk's decoded length, in one query.
+    fn all_chunk_lens(&self) -> Result<HashMap<ObjectId, u64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT object_id, decoded_len FROM chunks")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(sql)?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (id, len) = row.map_err(sql)?;
+            out.insert(
+                ObjectId::from_bytes(id32(id, "chunk id")?),
+                to_u64(len, "decoded length")?,
+            );
+        }
+        Ok(out)
+    }
+
+    /// Every file version with its extents in ordinal order, from two
+    /// queries, in file-version-ID order. The same columns and conversions
+    /// as [`Catalog::file_version`].
+    fn all_versions_with_extents(&self) -> Result<Vec<(FileVersion, Vec<Extent>)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT file_version_id, kind, logical_len, content_hash FROM file_versions
+                 ORDER BY file_version_id",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, Option<Vec<u8>>>(3)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut out: Vec<(FileVersion, Vec<Extent>)> = Vec::new();
+        for row in rows {
+            let (id, kind, len, hash) = row.map_err(sql)?;
+            let id = FileVersionId::from_bytes(id32(id, "file version id")?);
+            out.push((
+                FileVersion {
+                    id,
+                    kind: kind_from(&kind)?,
+                    logical_len: to_u64(len, "logical length")?,
+                    content_hash: hash
+                        .map(|h| id32(h, "content hash").map(FileContentHash::from_bytes))
+                        .transpose()?,
+                },
+                Vec::new(),
+            ));
+        }
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT file_version_id, ordinal, logical_offset, length, chunk_id, chunk_offset
+                 FROM file_extents ORDER BY file_version_id, ordinal",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, Option<Vec<u8>>>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(sql)?;
+        // Both lists are in file-version-ID order (bytewise), so one merge
+        // pass places every extent; an extent of an unknown version is
+        // refused (the foreign-key check refuses it first; this is the
+        // backstop).
+        let mut at = 0usize;
+        for row in rows {
+            let (vid, ordinal, off, len, chunk, chunk_off) = row.map_err(sql)?;
+            while at < out.len() && out[at].0.id.as_bytes()[..] < vid[..] {
+                at += 1;
+            }
+            if at >= out.len() || out[at].0.id.as_bytes()[..] != vid[..] {
+                return Err(invalid("a file extent names an unknown file version"));
+            }
+            out[at].1.push(Extent {
+                ordinal: u32::try_from(ordinal)
+                    .map_err(|_| invalid("extent ordinal out of range"))?,
+                logical_offset: to_u64(off, "logical offset")?,
+                length: to_u64(len, "extent length")?,
+                source: match chunk {
+                    Some(c) => ExtentSource::Chunk {
+                        chunk: ObjectId::from_bytes(id32(c, "chunk id")?),
+                        chunk_offset: to_u64(chunk_off, "chunk offset")?,
+                    },
+                    None => ExtentSource::Hole,
+                },
+            });
+        }
+        Ok(out)
+    }
+
     // ---- verification -----------------------------------------------------------------
 
     /// SQLite structural integrity, foreign keys, and every MOCHI rule
@@ -932,23 +1040,16 @@ impl Catalog {
         if stmt.query([]).map_err(sql)?.next().map_err(sql)?.is_some() {
             return Err(invalid("foreign-key check failed"));
         }
-        let mut stmt = self
-            .conn
-            .prepare("SELECT file_version_id FROM file_versions")
-            .map_err(sql)?;
-        let ids: Vec<Vec<u8>> = stmt
-            .query_map([], |r| r.get(0))
-            .map_err(sql)?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(sql)?;
-        for id in ids {
-            let id = FileVersionId::from_bytes(id32(id, "file version id")?);
-            let (v, extents) = self
-                .file_version(&id)?
-                .ok_or_else(|| invalid("file version vanished during verification"))?;
-            self.check_file_version(&v, &extents).map_err(|e| {
-                MochiError::new(e.code, format!("file version {id:?}: {}", e.message))
-            })?;
+        // Every version's rules, from bulk reads instead of a lookup per
+        // version and per chunk (the same checks, in the table's
+        // primary-key order of IDs).
+        let versions = self.all_versions_with_extents()?;
+        let lens = self.all_chunk_lens()?;
+        for (v, extents) in &versions {
+            self.check_file_version_with(v, extents, |c| lens.get(c).copied())
+                .map_err(|e| {
+                    MochiError::new(e.code, format!("file version {:?}: {}", v.id, e.message))
+                })?;
         }
         let snapshot = self.replay(None)?;
         snapshot.validate_all().map_err(MochiError::from)
