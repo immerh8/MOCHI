@@ -63,6 +63,12 @@ use crate::write::JobDone;
 /// Foreign archives one process keeps open at once.
 pub const MAX_OPEN: usize = 4;
 
+/// Foreign archives all windows together keep open (each window is held to
+/// [`MAX_OPEN`]).
+pub const MAX_OPEN_TOTAL: usize = 16;
+
+use crate::browse::UNOWNED;
+
 /// Most entries one extract may name.
 pub const MAX_KEYS: usize = 10_000;
 
@@ -113,9 +119,11 @@ struct Session {
 struct Registry {
     last: u32,
     open: HashMap<u32, Arc<Session>>,
-    /// A file the user picked that needs a password, kept so the retry (which
-    /// carries the password) does not have to name it.
-    pending: Option<PathBuf>,
+    /// The window (its label) each open archive belongs to.
+    owners: HashMap<u32, String>,
+    /// A file a window picked that needs a password, kept so the retry (which
+    /// carries the password) does not have to name it. One per window.
+    pending: HashMap<String, PathBuf>,
 }
 
 /// The foreign archives this process has open, by handle.
@@ -223,11 +231,88 @@ impl Foreign {
 
     /// The archive file a retry should use (set when a password was needed).
     pub fn pending(&self) -> Option<PathBuf> {
-        lock(&self.inner).pending.clone()
+        self.pending_for(UNOWNED)
+    }
+
+    /// [`Foreign::pending`] for one window.
+    pub fn pending_for(&self, owner: &str) -> Option<PathBuf> {
+        lock(&self.inner).pending.get(owner).cloned()
     }
 
     pub fn open_count(&self) -> usize {
         lock(&self.inner).open.len()
+    }
+
+    /// The window an open archive belongs to.
+    pub fn owner_of(&self, handle: u32) -> Option<String> {
+        lock(&self.inner).owners.get(&handle).cloned()
+    }
+
+    /// Give an open archive to the window `owner`. `false` if it is not open.
+    pub fn assign(&self, handle: u32, owner: &str) -> bool {
+        let mut g = lock(&self.inner);
+        if !g.open.contains_key(&handle) {
+            return false;
+        }
+        g.owners.insert(handle, owner.to_owned());
+        true
+    }
+
+    /// Whether the window has a foreign archive open or one waiting for a
+    /// password.
+    pub fn holds_any(&self, owner: &str) -> bool {
+        let g = lock(&self.inner);
+        g.owners.values().any(|o| o.as_str() == owner) || g.pending.contains_key(owner)
+    }
+
+    /// The file names of a window's open foreign archives, oldest first.
+    pub fn file_names_of(&self, owner: &str) -> Vec<String> {
+        let g = lock(&self.inner);
+        let mut handles: Vec<u32> = g
+            .owners
+            .iter()
+            .filter(|(_, o)| o.as_str() == owner)
+            .map(|(h, _)| *h)
+            .collect();
+        handles.sort_unstable();
+        handles
+            .into_iter()
+            .filter_map(|h| g.open.get(&h))
+            .filter_map(|s| s.path.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The window that has `path` open or is asking for its password.
+    pub fn owner_of_file(&self, path: &Path) -> Option<String> {
+        let g = lock(&self.inner);
+        for (h, s) in &g.open {
+            if crate::windows::same_file(&s.path, path) {
+                return g.owners.get(h).cloned();
+            }
+        }
+        g.pending
+            .iter()
+            .find(|(_, p)| crate::windows::same_file(p, path))
+            .map(|(o, _)| o.clone())
+    }
+
+    /// Close every foreign archive of one window (forgetting passwords) and
+    /// its waiting file. Other windows are untouched.
+    pub fn close_owned_by(&self, owner: &str) -> usize {
+        let mut g = lock(&self.inner);
+        let handles: Vec<u32> = g
+            .owners
+            .iter()
+            .filter(|(_, o)| o.as_str() == owner)
+            .map(|(h, _)| *h)
+            .collect();
+        for h in &handles {
+            g.open.remove(h);
+            g.owners.remove(h);
+        }
+        g.pending.remove(owner);
+        handles.len()
     }
 
     /// List `path` and keep it open. `password` is used for the listing (names
@@ -238,11 +323,25 @@ impl Foreign {
         path: &Path,
         password: Option<Vec<u8>>,
     ) -> std::result::Result<ForeignArchiveSummary, IpcError> {
-        if self.open_count() >= MAX_OPEN {
-            return Err(IpcError {
-                code: ErrorCode::LimitExceeded.as_str().to_owned(),
-                message: format!("at most {MAX_OPEN} archives can be open; close one first"),
-            });
+        self.open_as(UNOWNED, path, password)
+    }
+
+    /// [`Foreign::open`] for the window `owner`.
+    pub fn open_as(
+        &self,
+        owner: &str,
+        path: &Path,
+        password: Option<Vec<u8>>,
+    ) -> std::result::Result<ForeignArchiveSummary, IpcError> {
+        {
+            let g = lock(&self.inner);
+            let mine = g.owners.values().filter(|o| o.as_str() == owner).count();
+            if mine >= MAX_OPEN || g.open.len() >= MAX_OPEN_TOTAL {
+                return Err(IpcError {
+                    code: ErrorCode::LimitExceeded.as_str().to_owned(),
+                    message: format!("at most {MAX_OPEN} archives can be open; close one first"),
+                });
+            }
         }
         let password = password.map(Password::new);
         let listing = self.client().list(path, password.as_ref());
@@ -250,12 +349,15 @@ impl Foreign {
             Ok(l) => l,
             Err(e) => {
                 let mut g = lock(&self.inner);
-                g.pending = matches!(
+                if matches!(
                     e.code,
                     mochi_foreign::ErrorCode::PasswordRequired
                         | mochi_foreign::ErrorCode::WrongPassword
-                )
-                .then(|| path.to_path_buf());
+                ) {
+                    g.pending.insert(owner.to_owned(), path.to_path_buf());
+                } else {
+                    g.pending.remove(owner);
+                }
                 return Err(ipc_error(&e));
             }
         };
@@ -286,9 +388,10 @@ impl Foreign {
             recents.record(path);
         }
         let mut g = lock(&self.inner);
-        g.pending = None;
+        g.pending.remove(owner);
         g.last = g.last.wrapping_add(1);
         let handle = g.last;
+        g.owners.insert(handle, owner.to_owned());
         let summary = ForeignArchiveSummary {
             handle,
             file_name,
@@ -315,7 +418,9 @@ impl Foreign {
     }
 
     pub fn close(&self, handle: u32) -> bool {
-        lock(&self.inner).open.remove(&handle).is_some()
+        let mut g = lock(&self.inner);
+        g.owners.remove(&handle);
+        g.open.remove(&handle).is_some()
     }
 
     /// One page of a directory's children (`dir` `None` for the root).

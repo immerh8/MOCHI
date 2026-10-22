@@ -83,8 +83,8 @@ to a new folder" stays, because the plan checks an existing folder.
 
 **Single instance.** `tauri-plugin-single-instance` (official, MIT/Apache) is the first
 plugin registered. A second process forwards its arguments to the running one, which
-parses them with its own working directory, opens or stages in Rust, and brings the
-window forward; the second process exits. Permissions: **none added**. The plugin has no
+parses them with its own working directory, opens or stages in Rust, and shows it in the empty window or in a new one (one window per archive; an archive already open is not opened twice, its window comes forward), and brings the
+window forward; the second process exits. The new windows are covered by the `win-*` pattern of `capabilities/main.json` (no permission added). Permissions: **none added**. The plugin has no
 webview commands, so `capabilities/main.json` gains nothing for it; it needs the OS
 facility that makes one process the owner (a named mutex and a window message on Windows;
 the session D-Bus on Linux, where a session without a bus simply runs without single

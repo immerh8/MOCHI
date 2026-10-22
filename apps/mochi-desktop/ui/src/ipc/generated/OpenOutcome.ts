@@ -17,4 +17,4 @@ wrong: boolean,
 /**
  * The file's name on this computer.
  */
-file_name: string, };
+file_name: string, } | { "status": "elsewhere" };

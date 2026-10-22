@@ -5,4 +5,8 @@ import type { ForeignArchiveSummary } from "./ForeignArchiveSummary";
 /**
  * What the window is told about a launch. No path crosses.
  */
-export type LaunchEvent = { "event": "opened", archive: ArchiveSummary, extract: boolean, } | { "event": "foreign_opened", archive: ForeignArchiveSummary, } | { "event": "foreign_password", wrong: boolean, } | { "event": "problem", message: string, };
+export type LaunchEvent = { "event": "opened", archive: ArchiveSummary, extract: boolean, } | { "event": "foreign_opened", archive: ForeignArchiveSummary, } | { "event": "needs_passphrase", pending: number, 
+/**
+ * The file's name on this computer.
+ */
+file_name: string, } | { "event": "foreign_password", wrong: boolean, } | { "event": "problem", message: string, };

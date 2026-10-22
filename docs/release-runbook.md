@@ -206,6 +206,19 @@ WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, st
 6. Keyboard only (Tab, Enter): **Pass:** the toolbar (including **More** and its items), both start actions, the recent list, Advanced, and the create panel (including **Options**) are reachable and operable.
 7. Drag out (the archive list to Explorer; WebDriver cannot drive an operating-system drag). Open `Ärchive & ço.mochi`, select a file inside a sub-folder and a folder, drag them onto the desktop. **Pass:** the file appears on the desktop under its own name only (not inside its sub-folders), the folder appears with what is in it, and the archive is unchanged. Start a drag and press Esc: **Pass:** nothing appears, and the drag-out folder under `%LOCALAPPDATA%\<app id>\drag-out` for that drag is gone. Repeat with an open `.zip`. **Fail:** a path or an error naming a temporary folder in the window.
 
+### W-09b. One window per archive (two archives at once)
+
+WebDriver (`tauri-driver`) cannot start a second process that the first forwards to, cannot double-click in Explorer, and cannot rely on the window stacking order, so the multi-window behaviour is yours. Rust tests cover the routing and the per-window state (`windows_tests.rs`, `launch.rs`); this checks the real windows. Use `Ärchive & ço.mochi`, `Second é & copy.mochi` and, if you have one, an encrypted archive.
+
+1. Close MOCHI. Double-click `Ärchive & ço.mochi` in Explorer. **Pass:** MOCHI starts with that archive; the title bar reads `Ärchive & ço.mochi - MOCHI`.
+2. With that window still open, double-click `Second é & copy.mochi` in Explorer. **Pass:** a **second** MOCHI window opens, a little down and to the right of the first, showing the second archive, titled with its name; the first window still shows the first archive. Select a file in each: **Pass:** the selections do not affect each other.
+3. Double-click `Ärchive & ço.mochi` again. **Pass:** no third window; the first window comes to the front (it may flash in the task bar if Windows does not allow stealing focus). Do the same from the right-click menu entry **Open with MOCHI**: **Pass:** the same.
+4. In the first window press **Open** and choose the second archive. **Pass:** the second window comes to the front, no new window. Press **Open** and choose a third archive: **Pass:** a third window. Drag a `.mochi` file from Explorer onto a window that shows an archive: **Pass:** it opens in a new window and the window you dropped on is unchanged.
+5. Start an extraction of a large folder in window 1 (keep a progress bar running), then in window 2 press **Extract...** and choose a different folder. **Pass:** each window shows its own plan and progress; the two destinations are not mixed up. Close window 1 while its extraction runs. **Pass:** that extraction stops (its window is gone, so nothing reports it; you can delete its half-written folder, which proves no file is still held open), and window 2 is unaffected and still browses and extracts.
+6. In window 2 press **Close** on the archive (back to the start screen), then double-click the first archive in Explorer. **Pass:** the empty window 2 is reused (no new window).
+7. With an encrypted archive: open it from a window that shows another archive. **Pass:** the new window asks for the passphrase (the passphrase prompt is in the new window, not the old one); a wrong passphrase leaves the prompt up; cancelling leaves an empty window you can close.
+8. Close each window with the **X** button, the last one last. **Pass:** the application exits after the last window; closing one window never closes another. Repeat 1 and 2 on Ubuntu (GNOME Files: double-click the `.mochi`; the second double-click opens a second window).
+
 ---
 
 ## 4. The updater (T13) on this notebook, then final cleanup

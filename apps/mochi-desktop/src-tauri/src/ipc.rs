@@ -1296,6 +1296,10 @@ pub enum OpenOutcome {
         /// The file's name on this computer.
         file_name: String,
     },
+    /// The archive was opened in another window (this one already shows an
+    /// archive, or a job is running in it), or that window already had it
+    /// open and was brought forward. There is nothing to show here.
+    Elsewhere,
 }
 
 /// One key envelope valid at the head (`mochi rekey --list`; needs no key).
