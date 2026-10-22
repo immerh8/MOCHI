@@ -52,12 +52,16 @@ function makeWritable(dir) {
 }
 
 /** Make the window that shows `testid` the one WebDriver talks to (the shell's quick verbs open a compact second window). */
-async function switchToWindowWith(testid, timeout = 60_000) {
+async function switchToWindowWith(testid, timeout = 60_000, text = "") {
+  // `text`: the element must also contain it. Several windows can show the
+  // same test id (an earlier test's window keeps its own note), and the order
+  // of window handles differs between WebKitWebDriver and WebView2.
   await browser.waitUntil(
     async () => {
       for (const handle of await browser.getWindowHandles()) {
         await browser.switchToWindow(handle);
-        if (await $(`[data-testid="${testid}"]`).isExisting()) return true;
+        const el = $(`[data-testid="${testid}"]`);
+        if ((await el.isExisting()) && (await el.getText()).includes(text)) return true;
       }
       return false;
     },
@@ -428,7 +432,7 @@ describe("a second launch", () => {
     const ended = await secondLaunch(["--passphrase=hunter2", "--", fixture]);
     expect(ended.code).toBe(0);
     // A notice goes to the window used last, which is not necessarily the main window.
-    await switchToWindowWith("browse-error", 30_000);
+    await switchToWindowWith("browse-error", 30_000, "passphrase cannot be given on the command line");
     const text = await $('[data-testid="browse-error"]').getText();
     expect(text).toContain("passphrase cannot be given on the command line");
     expect(text).not.toContain("hunter2");
@@ -532,7 +536,7 @@ describe("a second launch", () => {
     copyFileSync(path.join(foreignFixtures, "split_last.zip"), zip);
     const ended = await secondLaunch(["--open", "--", zip]);
     expect(ended.code).toBe(0);
-    await switchToWindowWith("browse-error", 30_000);
+    await switchToWindowWith("browse-error", 30_000, "could not be opened (UNSUPPORTED");
     await browser.waitUntil(
       async () => (await $('[data-testid="browse-error"]').getText()).includes("could not be opened (UNSUPPORTED"),
       { timeoutMsg: "no typed refusal for the split ZIP" },
