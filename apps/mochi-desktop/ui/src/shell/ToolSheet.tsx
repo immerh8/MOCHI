@@ -5,13 +5,14 @@ import { CloseIcon } from "../icons";
 import { t } from "../i18n";
 
 /** The tools the More menu and the Help button open. */
-export type ToolId = "help" | "passphrases" | "check" | "settings";
+export type ToolId = "help" | "passphrases" | "check" | "settings" | "find";
 
 const TITLES: Record<ToolId, () => string> = {
   help: () => t("help.heading"),
   passphrases: () => t("app.sectionPassphrases"),
   check: () => t("app.sectionCheck"),
   settings: () => t("app.sectionSettings"),
+  find: () => t("find.heading"),
 };
 
 /**

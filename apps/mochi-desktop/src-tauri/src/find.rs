@@ -737,8 +737,11 @@ fn contains(hay: &[u8], needle: &[u8], fold: bool) -> bool {
     })
 }
 
+/// The matches in one archive: how many, and the first few as slot numbers.
+type Matched = (u64, Vec<u32>);
+
 /// (matches, the first `cap` of them as slot numbers) in one archive.
-fn matches_in(ix: &ArchiveIndex, m: &Matcher, cap: usize) -> (u64, Vec<u32>) {
+fn matches_in(ix: &ArchiveIndex, m: &Matcher, cap: usize) -> Matched {
     let mut count = 0u64;
     let mut first = Vec::new();
     for (i, slot) in ix.slots.iter().enumerate() {
@@ -1294,10 +1297,7 @@ impl Finder {
 }
 
 /// Match every set; large ones on several threads. One result per set, in order.
-fn search_all(
-    sets: &[(usize, PathBuf, Stamp, Arc<ArchiveIndex>)],
-    m: &Matcher,
-) -> Vec<(u64, Vec<u32>)> {
+fn search_all(sets: &[(usize, PathBuf, Stamp, Arc<ArchiveIndex>)], m: &Matcher) -> Vec<Matched> {
     let names: usize = sets.iter().map(|s| s.3.len()).sum();
     let workers = if names < 100_000 {
         1
@@ -1313,7 +1313,7 @@ fn search_all(
             .collect();
     }
     let next = AtomicUsize::new(0);
-    let out: Mutex<Vec<Option<(u64, Vec<u32>)>>> = Mutex::new(vec![None; sets.len()]);
+    let out: Mutex<Vec<Option<Matched>>> = Mutex::new(vec![None; sets.len()]);
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| loop {
@@ -2146,5 +2146,45 @@ mod tests {
             before,
             "scanning writes nothing"
         );
+    }
+
+    /// Not a cost claim in the spec; a measurement for the report. Archives are made once, then
+    /// the scan (cold: opens every archive), the same scan again (warm: the cache), and queries.
+    /// `cargo test -p mochi-desktop --release find_scale -- --ignored --nocapture`
+    #[test]
+    #[ignore = "benchmark: builds many archives"]
+    fn find_scale() {
+        let archives = 60usize;
+        let per = 2_000usize;
+        let dir = tempfile::tempdir().unwrap();
+        for a in 0..archives {
+            let sub = dir.path().join(format!("d{}", a % 6));
+            std::fs::create_dir_all(&sub).unwrap();
+            let files: Vec<String> = (0..per)
+                .map(|i| format!("dir{}/file-{a}-{i:05}.dat", i % 20))
+                .collect();
+            let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+            write_archive(&sub.join(format!("a{a}.mochi")), &refs, None);
+        }
+        let finder = Arc::new(Finder::default());
+        finder.set_scopes(vec![dir.path().to_path_buf()]).unwrap();
+        let t = Instant::now();
+        scan_now(&finder);
+        let cold = t.elapsed();
+        let t = Instant::now();
+        scan_now(&finder);
+        let warm = t.elapsed();
+        let c = finder.coverage();
+        let t = Instant::now();
+        let r = finder.query("file-7-0123").unwrap();
+        let q1 = t.elapsed();
+        let t = Instant::now();
+        let r2 = finder.query("*-00042.dat").unwrap();
+        let q2 = t.elapsed();
+        println!(
+            "find_scale: {} archives, {} names; cold scan {cold:?}, warm scan {warm:?} ({} from cache); query {q1:?} ({} hits), glob {q2:?} ({} hits)",
+            c.archives_searched, c.names_searched, c.archives_from_cache, r.total_hits, r2.total_hits
+        );
+        assert!(c.complete);
     }
 }

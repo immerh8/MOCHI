@@ -267,6 +267,39 @@ record with a plain format is refused (`UNSUPPORTED_FEATURE`), and the window do
   cannot be stranded; and the writer ignores the first "what is staged" answer if Rust announced something
   newer.)
 
+## MOCHI Find: search the names inside many archives
+
+"Find in archives" (More menu, Ctrl+Shift+F, Explorer's "Find in MOCHI archives" on folders and on a
+folder's background, a Linux folder launcher) searches the **file names** inside every `.mochi` under
+chosen folders. It reads names only, never file content. Code: `src-tauri/src/find.rs`, `ui/src/find/`.
+
+* **Entry points.** The launch verb `--find [--] FOLDER...` (`launch.rs`; any number of folders, none
+  opens the tool as it was left; files in the list are ignored, no folder at all is a problem). The
+  window hears only `LaunchEvent::Find { folders }`. In the .deb: `mochi-find.desktop`
+  (`MimeType=inode/directory;`, `Exec=mochi-desktop --find -- %F`), a Dolphin service menu and a Nemo action.
+* **Scan = a job.** `Finder::start` runs `scan` under a `mochi_core::job::JobContext` (progress sink,
+  cancellation token); progress and one `finished` stream over a `Channel<FindEvent>`. One thread walks
+  the folders (symbolic links and junctions are counted and **not followed**, so nothing can loop; depth,
+  folder, archive and name counts are bounded), a bounded pool (2 to 8 workers) opens each archive
+  **read-only**: `open_head` (the catalog image is hash-verified first) then `mochi_core::search` over the
+  head with an empty query. No file content is read or hashed. Names, kinds and sizes stay in Rust.
+* **Cache.** Per archive, in memory, for the session, keyed by (path, size, modified time). A new query
+  never rescans; a new scan re-reads only archives whose key changed. There is no on-disk cache.
+* **Query.** A substring (case-insensitive: Unicode lower-casing for valid UTF-8, ASCII for other bytes),
+  or a glob if it has `*` or `?` (the whole file name); text with `/` is matched against the whole path.
+  At most 1,000 hits cross IPC; the rest are counted.
+* **Coverage (§23.3 #8).** Every result carries the scan's coverage. `complete` is true only if the scan
+  finished, every archive found was searched, no folder was unreadable, no link was left unfollowed and no
+  limit was hit. Encrypted archives (Find never has a passphrase), damaged or unreadable ones, files that
+  are not MOCHI archives, unsupported formats and archives with too many names are listed with the reason.
+  The window says "Search incomplete: N archives could not be searched" and never "No matches" then.
+* **No path in, no path out of the webview's control.** Folders are chosen in Rust (native dialog or the
+  launch); the window shows them as text, removes one by position, and opens or shows a hit by
+  (scan number, archive position). Rust re-checks that the archive file is unchanged before opening it.
+  Entry names are escaped `NameText`, rendered as text.
+* **There is no `mochi find` command.** Spec §23 fixes the 1.0 command line; a multi-archive search on the
+  command line would need a spec and plan change.
+
 ## Jobs
 
 Long operations are `mochi-core` jobs (a progress sink and a cancellation token).

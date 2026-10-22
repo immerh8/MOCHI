@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Find in MOCHI archives
-Name[th]=ค้นหาในไฟล์เก็บถาวร MOCHI
+Name[th]=ค้นหาในไฟล์บีบอัด MOCHI
 Name[zh_CN]=在 MOCHI 压缩文件中查找
 Comment=Search the file names inside every MOCHI archive in the chosen folders
-Comment[th]=ค้นหาชื่อไฟล์ภายในไฟล์เก็บถาวร MOCHI ทุกไฟล์ในโฟลเดอร์ที่เลือก
+Comment[th]=ค้นหาชื่อไฟล์ภายในไฟล์บีบอัด MOCHI ทุกไฟล์ในโฟลเดอร์ที่เลือก
 Comment[zh_CN]=在所选文件夹中的每个 MOCHI 压缩文件里查找文件名
 Keywords=MOCHI;archive;search;find;
 Categories=Utility;

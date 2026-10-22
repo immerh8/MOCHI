@@ -242,6 +242,7 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
   expect(within(menu).getAllByRole("button").map((x) => x.textContent)).toEqual([
     "Open and extract…",
     "Other formats…",
+    "Find in archives…",
     "Passphrases",
     "Repair",
     "Settings",

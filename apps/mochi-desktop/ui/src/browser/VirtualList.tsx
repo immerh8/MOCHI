@@ -45,6 +45,8 @@ type Props<T> = {
    */
   onMarquee?: ((e: MarqueeEvent) => void) | undefined;
   onError: (e: unknown) => void;
+  /** Scroll so that this row is in the middle of the view (a hit opened from Find). */
+  scrollToIndex?: number | undefined;
 };
 
 /**
@@ -65,6 +67,7 @@ export function VirtualList<T>({
   focusFirst = false,
   onMarquee,
   onError,
+  scrollToIndex,
 }: Props<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
   // Loaded pages by page number; copied per page, never per row.
@@ -99,6 +102,16 @@ export function VirtualList<T>({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // A row asked for from outside (Find): put it in the middle of the view.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (scrollToIndex === undefined || !el) return;
+    const shown = el.clientHeight > 0 ? el.clientHeight : FALLBACK_VISIBLE * rowHeight;
+    const top = Math.max(0, scrollToIndex * rowHeight - Math.floor((shown - rowHeight) / 2));
+    el.scrollTop = top;
+    setScrollTop(top);
+  }, [scrollToIndex, rowHeight]);
 
   const { band, handlers: bandHandlers } = useMarquee({ viewportRef, rowHeight, total, onMarquee });
 

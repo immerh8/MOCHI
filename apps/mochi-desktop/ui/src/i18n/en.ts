@@ -7,6 +7,7 @@ import { check } from "./en/check";
 import { common } from "./en/common";
 import { crypt } from "./en/crypt";
 import { extract } from "./en/extract";
+import { find } from "./en/find";
 import { foreign } from "./en/foreign";
 import { help } from "./en/help";
 import { quick } from "./en/quick";
@@ -24,6 +25,7 @@ export const en = {
   ...browser,
   ...crypt,
   ...extract,
+  ...find,
   ...foreign,
   ...help,
   ...quick,

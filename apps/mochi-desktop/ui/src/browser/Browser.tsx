@@ -17,6 +17,7 @@ import {
   MoreIcon,
   OpenIcon,
   PlusIcon,
+  SearchIcon,
   TrashIcon,
   WrenchIcon,
 } from "../icons";
@@ -49,7 +50,7 @@ import { Rekey } from "../crypt/Rekey";
 import { hiddenWithKey, notSigned, visibleWithoutKey } from "../crypt/messages";
 import { useDragOut } from "../list/dragOut";
 import { copyNames, listMenuItems, useListMenu } from "../list/ContextMenu";
-import { ancestorsOf } from "../list/keys";
+import { ancestorsOf, splitPath } from "../list/keys";
 import { useSelection } from "../list/selection";
 import type { Selection } from "../list/selection";
 import { listKeys, rowHandlers } from "../list/rows";
@@ -59,6 +60,10 @@ import type { HitRow } from "../search/SearchResults";
 import { useArchiveSearch } from "../search/useArchiveSearch";
 import { cancelUnlock, unlockArchive } from "../ipc/crypt";
 import { Extractor } from "../extract/Extractor";
+import { Finder } from "../find/Finder";
+import { useReveal } from "../find/useReveal";
+import { findOpenHit } from "../ipc/find";
+import type { FindHit } from "../ipc/find";
 import { Writer } from "../write/Writer";
 import { availableActions, tipFor } from "../shell/availability";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
@@ -247,6 +252,8 @@ export function Browser({
   const [closeForeignToken, setCloseForeignToken] = useState(0);
   const [openForeignToken, setOpenForeignToken] = useState(0);
   const [testRequest, setTestRequest] = useState(0);
+  // Changes when the shell asked for MOCHI Find (`--find`); the Find tool then scans the folders Rust holds.
+  const [findLaunch, setFindLaunch] = useState(0);
   const [query, setQuery] = useState("");
   const [foreignHandoff, setForeignHandoff] = useState<ForeignHandoff | null>(null);
   const [clearSearch, setClearSearch] = useState(0);
@@ -318,6 +325,8 @@ export function Browser({
   const focusKey = (searching ? hitSel.focus : folderSel.focus)?.key ?? null;
   const clearFolderSel = folderSel.clear;
   const clearHitSel = hitSel.clear;
+  // A hit opened from MOCHI Find: select its row and scroll to it once its folder is listed.
+  const revealer = useReveal({ handle, dir, listingId, total, loadPage, select: folderSel.ensure });
 
   const navigate = useCallback(
     (to: Crumb[], fromList = false) => {
@@ -487,6 +496,11 @@ export function Browser({
       subscribeLaunches((event) => {
         if (event.event === "problem") setError(event.message);
         else if (event.event === "opened") void launchedRef.current?.(event.archive, event.extract);
+        else if (event.event === "find") {
+          setMoreOpen(false);
+          setTool("find");
+          setFindLaunch((n) => n + 1);
+        }
         // Foreign archives are the foreign browser's to show.
       }),
     [],
@@ -512,6 +526,35 @@ export function Browser({
       navigate([]);
     } catch (e) {
       setError(errorText(t("browser.openCommitFailed", { seq: to }), e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * A hit of MOCHI Find: open its archive (Rust re-checks that the file is the one that was
+   * scanned), show the folder the entry is in, and select the entry.
+   */
+  const openFound = async (hit: FindHit) => {
+    setTool(null);
+    setError(null);
+    setBusy(true);
+    try {
+      const outcome = await findOpenHit(hit.run, hit.archive);
+      if (outcome.status !== "opened") {
+        setError(t("find.openFailed"));
+        return;
+      }
+      await show(outcome.archive);
+      const above = ancestorsOf(hit.key, hit.path);
+      if (hit.kind === "directory") {
+        navigate([...above, { key: hit.key, name: splitPath(hit.path).name }], true);
+      } else {
+        navigate(above, true);
+        revealer.reveal({ handle: outcome.archive.handle, dir: above.at(-1)?.key ?? null, key: hit.key });
+      }
+    } catch (e) {
+      setError(errorText(t("find.openFailed"), e));
     } finally {
       setBusy(false);
     }
@@ -586,6 +629,20 @@ export function Browser({
       document.removeEventListener("keydown", onKey);
     };
   }, [moreOpen, versionsOpen]);
+
+  // Ctrl+Shift+F: Find in archives (names inside every .mochi under some folders).
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || !e.shiftKey) return;
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setMoreOpen(false);
+        setTool("find");
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   // Desktop keys: Ctrl+F finds, Ctrl+O opens.
   const openRef = useRef(doOpen);
@@ -757,6 +814,10 @@ export function Browser({
               <button type="button" className="menu-item" data-testid="menu-foreign" onClick={() => setOpenForeignToken((n) => n + 1)}>
                 <OpenIcon />
                 {t("toolbar.foreign")}
+              </button>
+              <button type="button" className="menu-item" data-testid="menu-find" onClick={() => showTool("find")}>
+                <SearchIcon />
+                {t("find.menuItem")}
               </button>
               <hr />
               <button
@@ -1063,6 +1124,7 @@ export function Browser({
                           head={<ListHead />}
                           hintId="entry-hint"
                           focusFirst={focusList}
+                          scrollToIndex={revealer.index}
                           testId="entries"
                           onMarquee={folderSel.marquee}
                           onError={listError}
@@ -1176,6 +1238,7 @@ export function Browser({
               />
             ),
             check: <Checker archive={open?.archive ?? null} testRequest={testRequest} />,
+            find: <Finder active={tool === "find"} launchToken={findLaunch} onOpen={(h) => void openFound(h)} />,
             ...tools,
           }}
         </ToolSheet>
