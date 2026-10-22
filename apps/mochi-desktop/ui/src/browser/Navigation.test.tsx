@@ -397,9 +397,10 @@ test(".. does not appear in search results", async () => {
   const user = await openDeep();
   expect(upRow()).not.toBeNull();
   await user.type(screen.getByTestId("search-query"), "deep");
-  await screen.findByTestId("search-running", undefined, { timeout: 3000 });
+  // The search may finish before a "running" state can be observed: wait
+  // for the folder listing (and its ".." row) to give way to the search.
+  await waitFor(() => expect(screen.queryByTestId("entries")).toBeNull(), { timeout: 3000 });
   expect(upRow()).toBeNull();
-  expect(screen.queryByTestId("entries")).toBeNull();
 });
 
 test("the root crumb shows the archive name; each crumb goes to exactly its folder with a full-name tooltip", async () => {
