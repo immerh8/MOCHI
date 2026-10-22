@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 
 import { Panel } from "../a11y/Panel";
 import {
-  BackIcon,
   CaretDownIcon,
   CheckIcon,
   CloseIcon,
@@ -40,6 +39,7 @@ import { Start } from "../start/Start";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { ListHead, EntryCells } from "./ListHead";
 import { Name } from "./Name";
+import { Crumbs, NavButtons, UpRow } from "./FolderNav";
 import { Tree } from "./Tree";
 import { VirtualList } from "./VirtualList";
 import { folderKeys, useFolderPath } from "./useFolderPath";
@@ -856,7 +856,7 @@ export function Browser({
               onClick={doClose}
               disabled={busy}
             >
-              <BackIcon />
+              <CloseIcon />
             </button>
             <button
               type="button"
@@ -872,6 +872,7 @@ export function Browser({
             >
               <FoldersIcon />
             </button>
+            <NavButtons nav={folder} testIdPrefix="nav" />
             <div className="path-meta" data-testid="archive-meta">
               <strong className="path-title" title={open.archive.file_name}>
                 {open.archive.file_name}
@@ -915,20 +916,13 @@ export function Browser({
                 />
               </div>
             </div>
-            <nav aria-label={t("browser.currentFolder")} className="crumbs" data-testid="crumbs">
-              <button type="button" className="crumb" onClick={() => navigate([])} title={t("browser.archiveRoot")}>
-                <span aria-hidden="true">/</span>
-                <span className="sr-only">{t("browser.archiveRoot")}</span>
-              </button>
-              {path.map((c, i) => (
-                <span key={c.key} className="crumb-part">
-                  {i > 0 && <span aria-hidden="true">/</span>}
-                  <button type="button" className="crumb" onClick={() => navigate(path.slice(0, i + 1))}>
-                    <Name name={c.name} />
-                  </button>
-                </span>
-              ))}
-            </nav>
+            <Crumbs
+              rootName={open.archive.file_name}
+              path={path}
+              onGo={navigate}
+              label={t("browser.currentFolder")}
+              testId="crumbs"
+            />
             {open.archive.retention_error && (
               <span role="note" className="path-warn" title={t("browser.retentionError", {
                 code: open.archive.retention_error.code,
@@ -1077,7 +1071,12 @@ export function Browser({
                           rowHeight={ROW_HEIGHT}
                           loadPage={loadPage}
                           label={t("browser.folderContents")}
-                          head={<ListHead />}
+                          head={
+                            <>
+                              <ListHead />
+                              {path.length > 0 && <UpRow testId="up-row" onUp={() => folder.up()} />}
+                            </>
+                          }
                           hintId="entry-hint"
                           focusFirst={focusList}
                           revealKey={reveal}
