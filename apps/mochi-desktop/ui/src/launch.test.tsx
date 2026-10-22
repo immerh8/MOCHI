@@ -86,6 +86,12 @@ function backend() {
         };
       case "open_foreign_archive":
         return foreignSummary(12, "retried.7z");
+      case "open_archive":
+        return { status: "elsewhere" };
+      case "unlock_archive":
+        return summary(21, "vault.mochi");
+      case "cancel_unlock":
+        return true;
       case "plan_extract":
         return { destination: "/home/me/photos", entries: 4, conflicts: [], conflicts_total: 0, case_insensitive: false };
     }
@@ -222,4 +228,34 @@ test("New archive opens a visible dialog while a foreign archive is open", async
   const panel = await screen.findByTestId("write-panel");
   expect(panel).toBeVisible();
   expect(screen.getByTestId("create-format")).toBeVisible();
+});
+
+// One window per archive: a window that already shows an archive does not give it up.
+test("Open in a window that Rust answers with 'elsewhere' leaves what is on screen alone", async () => {
+  const b = backend();
+  render(<Browser />);
+  await screen.findByTestId("start-screen");
+  b.launch({ event: "opened", archive: summary(7, "first.mochi"), extract: false });
+  expect(await screen.findByText("first.mochi")).toBeInTheDocument();
+  await userEvent.click(screen.getByTestId("toolbar-open"));
+  await waitFor(() => expect(b.calls.map((c) => c.cmd)).toContain("open_archive"));
+  // The archive on screen is neither closed nor replaced, and no error is shown.
+  expect(screen.getByText("first.mochi")).toBeInTheDocument();
+  expect(b.calls.map((c) => c.cmd)).not.toContain("close_archive");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("an encrypted archive handed to a new window asks for its passphrase there, once", async () => {
+  const b = backend();
+  render(<Browser />);
+  await screen.findByTestId("start-screen");
+  b.launch({ event: "needs_passphrase", pending: 5, file_name: "vault.mochi" });
+  const input = await screen.findByTestId("unlock-input");
+  expect(screen.getByTestId("unlock-panel")).toHaveTextContent("vault.mochi is encrypted");
+  await userEvent.type(input, "SECRET");
+  await userEvent.click(screen.getByTestId("unlock-submit"));
+  expect(await screen.findByText("vault.mochi")).toBeInTheDocument();
+  const unlocks = b.calls.filter((c) => c.cmd === "unlock_archive");
+  expect(unlocks.map((c) => c.args)).toEqual([{ pending: 5, passphrase: "SECRET" }]);
+  expect(JSON.stringify(b.calls.filter((c) => c.cmd !== "unlock_archive"))).not.toContain("SECRET");
 });

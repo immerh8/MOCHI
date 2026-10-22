@@ -35,7 +35,7 @@
 //!   only of what it extracted.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::job::JobContext;
@@ -84,10 +84,19 @@ pub struct Destination {
     /// clears it (an explicit choice is remembered as chosen).
     record_under: Mutex<Option<PathBuf>>,
     /// The folders extracted into lately ("Extract to..." offers them).
-    pub history: crate::folders::FolderHistory,
+    /// Shared by every window (`WindowStates::history`).
+    pub history: Arc<crate::folders::FolderHistory>,
 }
 
 impl Destination {
+    /// A destination that records into `history` (shared between windows).
+    pub fn with_history(history: Arc<crate::folders::FolderHistory>) -> Self {
+        Destination {
+            history,
+            ..Destination::default()
+        }
+    }
+
     pub fn get(&self) -> Option<PathBuf> {
         lock(&self.chosen).clone()
     }

@@ -37,7 +37,8 @@ pub struct JobRegistry {
 #[derive(Debug, Default)]
 struct Registry {
     last_id: JobId,
-    running: HashMap<JobId, CancellationToken>,
+    /// Each running job's token and the window (its label) that started it.
+    running: HashMap<JobId, (CancellationToken, String)>,
 }
 
 impl JobRegistry {
@@ -64,7 +65,38 @@ impl JobRegistry {
         sink: Arc<dyn EventSink>,
         spawn: Box<Spawner>,
     ) -> Result<JobId, IpcError> {
-        validate(&request, &self.services)?;
+        self.start_for(
+            crate::browse::UNOWNED,
+            self.services.clone(),
+            request,
+            sink,
+            spawn,
+        )
+    }
+
+    /// The services a window's jobs work on: the shared ones (archives,
+    /// foreign archives, updater) and that window's own staging, destination
+    /// and Test and Repair state.
+    pub fn services_for(&self, window: &crate::windows::WindowState) -> Services {
+        Services {
+            staging: Arc::clone(&window.staging),
+            destination: Arc::clone(&window.destination),
+            checks: Arc::clone(&window.checks),
+            ..self.services.clone()
+        }
+    }
+
+    /// [`JobRegistry::start`] for the window `owner`, working on `services`
+    /// (`services_for`). Closing the window cancels the job.
+    pub fn start_for(
+        self: &Arc<Self>,
+        owner: &str,
+        services: Services,
+        request: JobRequest,
+        sink: Arc<dyn EventSink>,
+        spawn: Box<Spawner>,
+    ) -> Result<JobId, IpcError> {
+        validate(&request, &services)?;
         let token = CancellationToken::new();
         let id = {
             let mut reg = self.lock();
@@ -75,12 +107,12 @@ impl JobRegistry {
                 ))
             })?;
             reg.last_id = id;
-            reg.running.insert(id, token.clone());
+            reg.running.insert(id, (token.clone(), owner.to_owned()));
             id
         };
         let registry = Arc::clone(self);
         spawn(Box::new(move || {
-            run_job(&registry, id, &request, sink, &token);
+            run_job(&registry, &services, id, &request, sink, &token);
         }));
         Ok(id)
     }
@@ -90,12 +122,35 @@ impl JobRegistry {
     /// point and then reports `cancelled`.
     pub fn cancel(&self, id: JobId) -> bool {
         match self.lock().running.get(&id) {
-            Some(token) => {
+            Some((token, _)) => {
                 token.cancel();
                 true
             }
             None => false,
         }
+    }
+
+    /// Request cancellation of every job a window started (it was closed).
+    /// Returns how many were running. Other windows' jobs are untouched.
+    pub fn cancel_owned(&self, owner: &str) -> usize {
+        let reg = self.lock();
+        let mut n = 0;
+        for (token, o) in reg.running.values() {
+            if o == owner {
+                token.cancel();
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Number of jobs a window has running.
+    pub fn running_for(&self, owner: &str) -> usize {
+        self.lock()
+            .running
+            .values()
+            .filter(|(_, o)| o == owner)
+            .count()
     }
 
     /// Number of jobs still running.
@@ -191,6 +246,7 @@ impl Drop for Finisher<'_> {
 
 fn run_job(
     registry: &JobRegistry,
+    services: &Services,
     id: JobId,
     request: &JobRequest,
     sink: Arc<dyn EventSink>,
@@ -226,7 +282,7 @@ fn run_job(
                 rekey: None,
                 export: None,
             }),
-        write => registry.services.run(write, &ctx).unwrap_or_else(|| {
+        write => services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
                 ErrorCode::NotImplemented,
                 "this job kind is not routed",
@@ -457,7 +513,8 @@ mod tests {
             let mut r = reg.lock();
             r.last_id += 1;
             let id = r.last_id;
-            r.running.insert(id, CancellationToken::new());
+            r.running
+                .insert(id, (CancellationToken::new(), String::new()));
             id
         };
         let sink2: Arc<dyn EventSink> = sink;

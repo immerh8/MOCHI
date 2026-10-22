@@ -373,6 +373,9 @@ export function Browser({
       }
       const outcome = await get();
       if (outcome === null) return;
+      // This window keeps what it shows: Rust opened the archive in a new window (or brought
+      // forward the window that already has it).
+      if (outcome.status === "elsewhere") return;
       if (outcome.status === "needs_passphrase") {
         setWaiting({ pending: outcome.pending, fileName: outcome.file_name });
         setExtractAfterUnlock(extract);
@@ -486,6 +489,11 @@ export function Browser({
       subscribeLaunches((event) => {
         if (event.event === "problem") setError(event.message);
         else if (event.event === "opened") void launchedRef.current?.(event.archive, event.extract);
+        // An Encrypted archive handed to this (new) window: ask for its passphrase here.
+        else if (event.event === "needs_passphrase") {
+          setWaiting({ pending: event.pending, fileName: event.file_name });
+          setExtractAfterUnlock(false);
+        }
         // Foreign archives are the foreign browser's to show.
       }),
     [],

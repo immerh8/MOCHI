@@ -107,16 +107,38 @@ pub fn open_path(
     foreign: &Foreign,
     path: &Path,
 ) -> Result<OpenOutcome, IpcError> {
+    open_path_as(archives, foreign, crate::browse::UNOWNED, path)
+}
+
+/// [`open_path`] for the window `owner`: the archive (or the wait for its
+/// passphrase or password) belongs to that window.
+pub fn open_path_as(
+    archives: &Archives,
+    foreign: &Foreign,
+    owner: &str,
+    path: &Path,
+) -> Result<OpenOutcome, IpcError> {
     match route(path) {
-        Route::Mochi => archives.open_or_pend(path).map_err(IpcError::from),
-        Route::Foreign => open_foreign(foreign, path),
+        Route::Mochi => archives
+            .open_or_pend_as(owner, path)
+            .map_err(IpcError::from),
+        Route::Foreign => open_foreign_as(foreign, owner, path),
     }
 }
 
 /// Open `path` as a foreign archive, answering a password request as an
 /// outcome rather than an error.
 pub fn open_foreign(foreign: &Foreign, path: &Path) -> Result<OpenOutcome, IpcError> {
-    match foreign.open(path, None) {
+    open_foreign_as(foreign, crate::browse::UNOWNED, path)
+}
+
+/// [`open_foreign`] for the window `owner`.
+pub fn open_foreign_as(
+    foreign: &Foreign,
+    owner: &str,
+    path: &Path,
+) -> Result<OpenOutcome, IpcError> {
+    match foreign.open_as(owner, path, None) {
         Ok(archive) => Ok(OpenOutcome::Foreign { archive }),
         Err(e) => {
             let wrong = e.code == mochi_foreign::ErrorCode::WrongPassword.as_str();
