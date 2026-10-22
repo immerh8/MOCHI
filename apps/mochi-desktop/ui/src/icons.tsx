@@ -76,6 +76,22 @@ export function BackIcon() {
   );
 }
 
+export function ForwardIcon() {
+  return (
+    <Icon>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
+export function UpIcon() {
+  return (
+    <Icon>
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </Icon>
+  );
+}
+
 export function SearchIcon() {
   return (
     <Icon>

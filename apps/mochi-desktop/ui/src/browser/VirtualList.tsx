@@ -197,9 +197,17 @@ export function VirtualList<T>({
       case "ArrowDown":
         to = from + 1;
         break;
-      case "ArrowUp":
+      case "ArrowUp": {
+        // The ".." row above the list (when the folder has a parent) is outside the rows.
+        const up = from === 0 ? viewportRef.current?.closest(".vtable")?.querySelector<HTMLElement>(".up-row") : null;
+        if (up) {
+          e.preventDefault();
+          up.focus();
+          return;
+        }
         to = from - 1;
         break;
+      }
       case "PageDown":
         to = from + page;
         break;

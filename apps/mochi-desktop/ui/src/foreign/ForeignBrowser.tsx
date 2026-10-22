@@ -6,7 +6,7 @@ import { Panel } from "../a11y/Panel";
 import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
 import { EntryCells, ListHead } from "../browser/ListHead";
-import { BackIcon, CheckIcon, CloseIcon, ExtractIcon, ExtractToIcon, KeyIcon } from "../icons";
+import { CheckIcon, CloseIcon, ExtractIcon, ExtractToIcon, KeyIcon } from "../icons";
 import { ExtractToDialog } from "../extract/ExtractToDialog";
 import { useNewFolderRun } from "../extract/useNewFolderRun";
 import { availableActions, tipFor } from "../shell/availability";
@@ -14,6 +14,7 @@ import { ToolButton, ToolSlot, useShell } from "../shell/Shell";
 import { formatNumber, t, tc } from "../i18n";
 import { Name } from "../browser/Name";
 import { VirtualList } from "../browser/VirtualList";
+import { Crumbs, NavButtons, UpRow } from "../browser/FolderNav";
 import { folderKeys, useFolderPath } from "../browser/useFolderPath";
 import { dragOutForeign } from "../ipc/dragout";
 import {
@@ -513,8 +514,9 @@ export function ForeignBrowser() {
           onClick={() => void doClose()}
           disabled={busy || jobBusy}
         >
-          <BackIcon />
+          <CloseIcon />
         </button>
+        <NavButtons nav={folder} testIdPrefix="foreign-nav" />
         <div className="path-meta" data-testid="foreign-meta">
           <strong className="path-title" title={open.file_name}>
             {open.file_name}
@@ -548,20 +550,13 @@ export function ForeignBrowser() {
             </span>
           )}
         </div>
-        <nav aria-label={t("foreign.currentFolder")} className="crumbs" data-testid="foreign-crumbs">
-          <button type="button" className="crumb" onClick={() => navigate([])} title={t("browser.archiveRoot")}>
-            <span aria-hidden="true">/</span>
-            <span className="sr-only">{t("browser.archiveRoot")}</span>
-          </button>
-          {path.map((c, i) => (
-            <span key={c.key} className="crumb-part">
-              {i > 0 && <span aria-hidden="true">/</span>}
-              <button type="button" className="crumb" onClick={() => navigate(path.slice(0, i + 1))}>
-                <Name name={c.name} />
-              </button>
-            </span>
-          ))}
-        </nav>
+        <Crumbs
+          rootName={open.file_name}
+          path={path}
+          onGo={navigate}
+          label={t("foreign.currentFolder")}
+          testId="foreign-crumbs"
+        />
       </div>
       {open && wizard && plan === null && (
         <ExtractToDialog count={selectedCount} onSubmit={submitTo} onClose={() => setWizard(false)} />
@@ -713,7 +708,12 @@ export function ForeignBrowser() {
                 rowHeight={ROW_HEIGHT}
                 loadPage={loadPage}
                 label={t("foreign.folderContents")}
-                head={<ListHead />}
+                head={
+                  <>
+                    <ListHead />
+                    {path.length > 0 && <UpRow testId="foreign-up-row" onUp={() => folder.up()} />}
+                  </>
+                }
                 hintId="foreign-entry-hint"
                 focusFirst={folder.focusList}
                 revealKey={reveal}
