@@ -308,8 +308,10 @@ chosen folders. It reads names only, never file content. Code: `src-tauri/src/fi
   launch); the window shows them as text, removes one by position, and opens or shows a hit by
   (scan number, archive position). Rust re-checks that the archive file is unchanged before opening it.
   Entry names are escaped `NameText`, rendered as text.
-* **There is no `mochi find` command.** Spec §23 fixes the 1.0 command line; a multi-archive search on the
-  command line would need a spec and plan change.
+* **`mochi find` is the same search on the command line** (owner decision 2026-10-24, spec Annex B.2.18,
+  D28). The walk, the per-archive listing, the classification of failures and the matcher live in
+  `mochi_core::find` (the folder tree in `storage::os::OsFindTree`); this module keeps the window's parts:
+  scopes, the session cache, the scan's state and events, and the IPC views.
 
 ## Jobs
 

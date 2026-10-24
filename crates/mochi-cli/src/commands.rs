@@ -14,6 +14,9 @@ use mochi_core::compact::{self, CompactOptions, Keep};
 use mochi_core::copies::CopySource;
 use mochi_core::descriptor::{DraftPolicy, Profile};
 use mochi_core::exit;
+use mochi_core::find::{
+    Limits as FindLimits, Matcher, NoCache, Scan, Skip, MAX_QUERY_BYTES, MAX_SCOPES,
+};
 use mochi_core::gc::{self, GcPlan, PlanHead};
 use mochi_core::health::{
     self, AnchorRef, CurrentHead, EvidenceCommand, EvidenceHead, EvidenceRecord, HealthPolicy,
@@ -36,7 +39,10 @@ use mochi_core::restore::{restore_selected, ExceptionKind, RestoreOptions, Resto
 use mochi_core::salvage::SalvageOptions;
 use mochi_core::search::{search, FullText, PathMatch, Query, SnapshotScope};
 use mochi_core::status::{Dimension, Status, VerificationLevel};
-use mochi_core::storage::os::{OsDir, OsReadStorage, OsRestoreDir, OsSourceTree, OsStorage};
+use mochi_core::storage::os::find::normalize_scopes;
+use mochi_core::storage::os::{
+    OsDir, OsFindTree, OsReadStorage, OsRestoreDir, OsSourceTree, OsStorage,
+};
 use mochi_core::timestamp::Timestamp;
 use mochi_core::verify::{
     judge_freshness_of, parse_commit_id, verify, FreshnessAnchor, FreshnessJudgement, VerifyOptions,
@@ -46,13 +52,13 @@ use mochi_format::digest::FileContentHash;
 use serde_json::{json, Value};
 
 use crate::cli::{
-    AppendArgs, CheckpointArgs, CompactArgs, CreateArgs, DumpIndexArgs, ExpireArgs, GcApplyArgs,
-    GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, MigrateArgs, RekeyArgs, ReleaseArgs,
-    RepairApplyArgs, RepairPlanArgs, RestoreTestArgs, RetainArgs, SearchArgs, SearchSnapshots,
-    SnapshotListArgs, VerifyArgs,
+    AppendArgs, CheckpointArgs, CompactArgs, CreateArgs, DumpIndexArgs, ExpireArgs, FindArgs,
+    GcApplyArgs, GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, MigrateArgs, RekeyArgs,
+    ReleaseArgs, RepairApplyArgs, RepairPlanArgs, RestoreTestArgs, RetainArgs, SearchArgs,
+    SearchSnapshots, SnapshotListArgs, VerifyArgs,
 };
 use crate::passphrase::{self, Sources};
-use crate::render::{archive_path_arg, hex, path_fields, text};
+use crate::render::{archive_path_arg, hex, os_path_text, path_fields, text};
 use crate::state::{HeadStore, SeenHead};
 
 /// What every command gets from the global options.
@@ -244,7 +250,7 @@ fn entry_kind(k: EntryKind) -> &'static str {
     }
 }
 
-// In-band schema tags of the eleven command-output documents (R7 O2, owner
+// In-band schema tags of the command-output documents (R7 O2, owner
 // decision 2026-10-14). Each names `docs/schemas/json/cli-<name>.schema.json`.
 // They freeze at the 1.0 flip (W20), not before.
 const SCHEMA_COMMIT: &str = "mochi-cli-commit-v1";
@@ -259,6 +265,7 @@ const SCHEMA_MIGRATE: &str = "mochi-cli-migrate-v1";
 const SCHEMA_REPAIR_APPLY: &str = "mochi-cli-repair-apply-v1";
 const SCHEMA_REKEY_LIST: &str = "mochi-cli-rekey-list-v1";
 const SCHEMA_PLAN_SAVED: &str = "mochi-cli-plan-saved-v1";
+const SCHEMA_FIND: &str = "mochi-cli-find-v1";
 
 fn findings_json(f: &[Finding]) -> Value {
     serde_json::to_value(f).unwrap_or(Value::Null)
@@ -933,6 +940,209 @@ pub fn search_cmd(env: &mut Env<'_>, a: &SearchArgs) -> Result<u8> {
             "the head's catalog image is damaged and was rebuilt from its snapshot manifest; \
              {} earlier snapshot(s) were read from their own commits",
             c.opened_separately.len()
+        ));
+    }
+    Ok(code)
+}
+
+/// Why an archive was not searched, as one line of text.
+fn skip_text(s: &Skip) -> String {
+    match s {
+        Skip::NotMochi => "not a MOCHI archive".to_owned(),
+        Skip::Encrypted => "Encrypted: its names need the passphrase, and `mochi find` takes none \
+                           (use `mochi search ARCHIVE` with --passphrase-file)"
+            .to_owned(),
+        Skip::Unsupported { code, message } => {
+            format!(
+                "in a format this build does not read: {code}: {}",
+                text(message.as_bytes())
+            )
+        }
+        Skip::Damaged { code, message } => format!(
+            "damaged, could not be opened: {code}: {} (`mochi verify` checks it)",
+            text(message.as_bytes())
+        ),
+        Skip::TooLarge => "too many names to hold in memory".to_owned(),
+        Skip::Unreadable { message } => format!("could not be read: {}", text(message.as_bytes())),
+    }
+}
+
+/// `mochi find` (spec Annex B.2.18, D28): names across the archives under
+/// some folders, read-only, through `mochi_core::find`, the engine the
+/// desktop app's Find uses. Exit 0 when nothing was left out, whatever
+/// matched; 2 when anything was (never "no matches" then).
+pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
+    if env.pass.explicit() {
+        return Err(invalid(
+            "`mochi find` never opens an Encrypted archive and takes no passphrase; it lists \
+             Encrypted archives as not searched (use `mochi search ARCHIVE` with a passphrase)",
+        ));
+    }
+    if a.pattern.trim().is_empty() {
+        return Err(invalid("give a name to find (`*` matches every name)"));
+    }
+    if a.pattern.len() > MAX_QUERY_BYTES {
+        return Err(invalid(format!(
+            "a name to find has at most {MAX_QUERY_BYTES} bytes"
+        )));
+    }
+    let mut given = Vec::with_capacity(a.folders.len());
+    for f in &a.folders {
+        let abs =
+            std::path::absolute(f).map_err(|e| invalid(format!("{}: {e}", os_path_text(f))))?;
+        if !abs.is_dir() {
+            return Err(invalid(format!(
+                "{}: not a folder (find searches the archives under folders; to search one \
+                 archive use `mochi search`)",
+                os_path_text(f)
+            )));
+        }
+        given.push(abs);
+    }
+    let scopes = normalize_scopes(&given, &[]);
+    if scopes.is_empty() {
+        return Err(invalid("none of the given paths is a folder"));
+    }
+    if scopes.len() > MAX_SCOPES {
+        return Err(invalid(format!(
+            "at most {MAX_SCOPES} folders can be searched at once"
+        )));
+    }
+    let scan = Scan::new(scopes);
+    let (progress, cancel) = job();
+    let ctx = JobContext {
+        progress: &progress,
+        cancel: &cancel,
+    };
+    scan.run(
+        &OsFindTree,
+        &env.read,
+        &FindLimits::default(),
+        &NoCache,
+        &ctx,
+    )?;
+    let c = scan.coverage();
+    let complete = c.nothing_left_out();
+    let matcher = Matcher::new(&a.pattern, true);
+    let found = scan.query(&matcher, usize::MAX);
+    let total: u64 = found.iter().map(|m| m.count).sum();
+    let code = if complete { exit::OK } else { exit::DEGRADED };
+    if env.json {
+        let mut hits = Vec::new();
+        for m in &found {
+            for e in m.entries.iter().filter_map(|i| m.names.get(*i)) {
+                let mut h = serde_json::Map::new();
+                h.insert("archive".into(), json!(m.path.display().to_string()));
+                h.extend(path_fields(e.path));
+                h.insert("kind".into(), json!(entry_kind(e.kind)));
+                h.insert("size".into(), json!(e.size));
+                hits.push(Value::Object(h));
+            }
+        }
+        let skipped: Vec<Value> = c
+            .skipped
+            .iter()
+            .map(|s| {
+                json!({
+                    "archive": s.path.display().to_string(),
+                    "reason": s.skip.reason(),
+                    "code": s.skip.code().map(|c| c.as_str()),
+                    "message": s.skip.message(),
+                })
+            })
+            .collect();
+        env.emit_tagged(
+            SCHEMA_FIND,
+            json!({
+                "query": {
+                    "text": a.pattern.trim(),
+                    "match": if matcher.is_glob() { "glob" } else { "substring" },
+                    "whole_path": matcher.is_whole_path(),
+                    "ignore_case": true,
+                },
+                "scopes": scan.scopes().iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "coverage": {
+                    "complete": complete,
+                    "folders_visited": c.folders_visited,
+                    "folders_unreadable": c.folders_unreadable,
+                    "links_not_followed": c.links_not_followed,
+                    "limit": c.limit.map(|l| l.as_str()),
+                    "archives_found": c.archives_found,
+                    "archives_searched": c.archives_searched,
+                    "archives_skipped": c.skipped.len(),
+                    "skipped": skipped,
+                    "names_searched": c.names_searched,
+                    "content_searched": false,
+                },
+                "total_hits": total,
+                "hits": hits,
+            }),
+        );
+        return Ok(code);
+    }
+    for m in &found {
+        let archive = os_path_text(&m.path);
+        for e in m.entries.iter().filter_map(|i| m.names.get(*i)) {
+            let slash = if e.kind == EntryKind::Directory {
+                "/"
+            } else {
+                ""
+            };
+            env.line(format!("{archive}: {}{slash}", text(e.path)));
+        }
+    }
+    let archives_with = found.len();
+    let matches = if total == 1 { "match" } else { "matches" };
+    let summary = format!(
+        "{total} {matches} in {archives_with} of {} archives searched ({} names); file content \
+         was not searched",
+        c.archives_searched, c.names_searched
+    );
+    if complete {
+        if total == 0 {
+            env.line(format!(
+                "no matches; coverage complete: every one of the {} archives found ({} folders \
+                 walked) was searched (names of each archive's newest version; file content \
+                 was not searched)",
+                c.archives_found, c.folders_visited
+            ));
+        } else {
+            env.line(format!(
+                "{summary}; coverage complete: every one of the {} archives found ({} folders \
+                 walked) was searched",
+                c.archives_found, c.folders_visited
+            ));
+        }
+        return Ok(code);
+    }
+    env.line(format!(
+        "{summary}; coverage INCOMPLETE: {} of {} archives found were searched, and names in \
+         what was left out are unknown, so this is not proof that no matching name exists",
+        c.archives_searched, c.archives_found
+    ));
+    for s in &c.skipped {
+        env.line(format!(
+            "  not searched: {}: {}",
+            os_path_text(&s.path),
+            skip_text(&s.skip)
+        ));
+    }
+    if c.folders_unreadable > 0 {
+        env.line(format!(
+            "  {} folders or entries could not be read",
+            c.folders_unreadable
+        ));
+    }
+    if c.links_not_followed > 0 {
+        env.line(format!(
+            "  {} links to folders or archives were not followed",
+            c.links_not_followed
+        ));
+    }
+    if let Some(l) = c.limit {
+        env.line(format!(
+            "  the walk stopped at its {} limit; folders after that were not searched",
+            l.as_str()
         ));
     }
     Ok(code)

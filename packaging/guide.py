@@ -43,6 +43,7 @@ EQUIVALENTS = [
     ("mochi repair plan, mochi repair apply", "“Test, health, and repair”, under “Advanced” (a reviewed plan, written to a new file)"),
     ("passphrases and key envelopes", "the “Passphrases” section, under “Advanced”"),
     ("mochi search", "the “Search names” section, under “Advanced”"),
+    ("mochi find", "“Find in archives…” under “More” (Ctrl+Shift+F), or “Find in MOCHI archives” on folders in the file manager"),
     ("ZIP, 7z, RAR and tar archives", "“Other archive formats”, under “Advanced” (read-only)"),
 ]
 NO_EQUIVALENT = (

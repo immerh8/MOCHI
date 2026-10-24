@@ -254,7 +254,7 @@ fn no_one_dot_zero_command_is_not_implemented() {
         .step_by(2)
         .map(str::to_owned)
         .collect();
-    assert_eq!(commands.len(), 19, "{commands:?}");
+    assert_eq!(commands.len(), 20, "{commands:?}");
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.mochi").display().to_string();
     let out_dir = dir.path().join("out").display().to_string();
@@ -268,6 +268,8 @@ fn no_one_dot_zero_command_is_not_implemented() {
             "list" => vec!["list", m],
             "snapshot" => vec!["snapshot", "list", m],
             "search" => vec!["search", m, "--path", "x"],
+            // A missing folder: find's scope is folders, not an archive.
+            "find" => vec!["find", "x", m],
             "verify" => vec!["verify", m],
             "fsck" => vec!["fsck", m],
             "health" => vec!["health", m],

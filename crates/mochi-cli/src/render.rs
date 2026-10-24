@@ -34,6 +34,23 @@ pub fn path_fields(bytes: &[u8]) -> serde_json::Map<String, Value> {
     m
 }
 
+/// One terminal-safe line for a path on this computer. A file name found on
+/// disk is not archive-supplied, but it is not the user's typing either (an
+/// archive may have been downloaded under any name), so it is escaped by the
+/// same rule. Unix: the exact bytes; Windows: the name as text, unpaired
+/// surrogates replaced.
+pub fn os_path_text(path: &std::path::Path) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        text(path.as_os_str().as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        text(path.to_string_lossy().as_bytes())
+    }
+}
+
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -67,6 +84,12 @@ mod tests {
             text(b"<img src=x onerror=alert(1)>"),
             "<img src=x onerror=alert(1)>"
         );
+    }
+
+    #[test]
+    fn local_paths_are_escaped_too() {
+        let p = std::path::Path::new("dir/evil\u{1b}[2J.mochi");
+        assert_eq!(os_path_text(p), "dir/evil\\u{1b}[2J.mochi");
     }
 
     #[test]
