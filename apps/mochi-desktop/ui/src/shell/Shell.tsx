@@ -29,8 +29,11 @@ export interface Shell {
   active: Owner;
   register: (name: SlotName, el: HTMLElement | null) => void;
   slots: Partial<Record<SlotName, HTMLElement>>;
-  /** The foreign browser tells the window when it has an archive open. */
-  setForeignOpen: (open: boolean) => void;
+  /**
+   * The foreign browser tells the window when it has an archive open, and its
+   * file name for the title bar (untrusted text, shown as text only).
+   */
+  setForeignOpen: (open: boolean, name?: string | null) => void;
   /** Changes when a MOCHI archive is shown, so an open foreign archive closes. */
   closeForeignToken: number;
   /** Changes when the toolbar asks the foreign browser to pick an archive. */
@@ -58,6 +61,26 @@ export type ForeignHandoff =
 
 export const ShellContext = createContext<Shell | null>(null);
 
+/**
+ * The slots drawn inside the More menu rather than on the title bar (release
+ * 0.9.10: a calmer bar), and the key that reaches each action without the
+ * menu. Key names stay in English in every language (src/i18n/README.md).
+ */
+export const MENU_SLOTS: Partial<Record<SlotName, Shortcut>> = {
+  new: { shown: "Ctrl+N", aria: "Control+N" },
+  extract: { shown: "Ctrl+E", aria: "Control+E" },
+  remove: { shown: "Delete", aria: "Delete" },
+};
+
+/** A key as the menu shows it, and as `aria-keyshortcuts` spells it. */
+export interface Shortcut {
+  shown: string;
+  aria: string;
+}
+
+/** Set while a `ToolButton` is drawn into a menu slot: it is then a menu item. */
+const MenuItemContext = createContext<{ shortcut: Shortcut } | null>(null);
+
 export function useShell(): Shell | null {
   return use(ShellContext);
 }
@@ -79,7 +102,12 @@ export function ToolSlot({
   if (shell === null) return <>{children}</>;
   if (owner !== "any" && owner !== shell.active) return null;
   const el = shell.slots[name];
-  return el ? createPortal(children, el) : null;
+  if (!el) return null;
+  const shortcut = MENU_SLOTS[name];
+  return createPortal(
+    shortcut === undefined ? children : <MenuItemContext value={{ shortcut }}>{children}</MenuItemContext>,
+    el,
+  );
 }
 
 /** The empty element a `ToolSlot` draws into. Its ref is stable per name. */
@@ -98,7 +126,9 @@ export function SlotHost({ name, className }: { name: SlotName; className?: stri
 /**
  * One toolbar button: an icon only, as in a desktop archiver. The label is the
  * accessible name (kept as hidden text) and the tooltip unless `title` holds a
- * longer one (or why the button is off).
+ * longer one (or why the button is off). Drawn into a menu slot (`MENU_SLOTS`)
+ * it is a menu item instead: icon, label and its key, with the same test id,
+ * state and action, so the owning component does not need to know where it is.
  */
 export function ToolButton({
   icon,
@@ -121,6 +151,27 @@ export function ToolButton({
   pressed?: boolean;
   primary?: boolean;
 }) {
+  const menu = use(MenuItemContext);
+  if (menu !== null) {
+    return (
+      <button
+        type="button"
+        className="menu-item"
+        data-testid={testId}
+        title={title ?? label}
+        disabled={disabled}
+        aria-pressed={pressed}
+        aria-keyshortcuts={menu.shortcut.aria}
+        onClick={onClick}
+      >
+        {icon}
+        <span className="menu-label">{label}</span>
+        <span className="menu-key" aria-hidden="true">
+          {menu.shortcut.shown}
+        </span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"

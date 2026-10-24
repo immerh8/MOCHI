@@ -1,6 +1,7 @@
 // Shared steps for the specs: the window's panes and menus are closed until a person opens them
-// (toolbar Info, the path bar's versions, the toolbar's More menu), so a spec that reads or clicks
-// something inside one opens it the way a person would. Not a spec itself (wdio runs *.e2e.js).
+// (Info and the other rarer actions in the title bar's More menu, the path bar's versions), so a
+// spec that reads or clicks something inside one opens it the way a person would. Not a spec
+// itself (wdio runs *.e2e.js).
 import { $, browser } from "@wdio/globals";
 
 async function expand(testId) {
@@ -44,9 +45,33 @@ export async function closeResultDetails(prefix) {
   await $(`[data-testid="${prefix}-details"]`).waitForDisplayed({ reverse: true, timeoutMsg: `${prefix} Details did not close` });
 }
 
+/**
+ * Make an action that sits in the More menu (New archive, Extract, Remove, Info, Help; release
+ * 0.9.10 moved them off the title bar) clickable: open the menu if the item is in it and the menu
+ * is closed. Anything else is left as it is.
+ */
+export async function revealAction(testId) {
+  const inMenu = await browser.execute(
+    (id) => document.querySelector(`[data-testid="${id}"]`)?.closest("#more-menu") != null,
+    testId,
+  );
+  if (inMenu && !(await $(`[data-testid="${testId}"]`).isDisplayed())) await openMore();
+}
+
+/** Click an action wherever it is: on the title bar, or in the More menu. */
+export async function clickAction(testId) {
+  await revealAction(testId);
+  await $(`[data-testid="${testId}"]`).click();
+}
+
 /** The Info panel (entry details; for a foreign archive, what the app says about the format). */
-export const openInfo = () => expand("toolbar-info");
-export const closeInfo = () => collapse("toolbar-info");
+async function setInfo(open) {
+  const item = await $('[data-testid="toolbar-info"]');
+  if ((await item.getAttribute("aria-pressed")) === String(open)) return;
+  await clickAction("toolbar-info");
+}
+export const openInfo = () => setInfo(true);
+export const closeInfo = () => setInfo(false);
 
 /** The version list under the archive's name. Close it again before clicking in the list. */
 export const openVersions = () => expand("toggle-versions");
@@ -71,11 +96,8 @@ export async function closeTool() {
   await sheet.waitForDisplayed({ reverse: true, timeoutMsg: "the tool window did not close" });
 }
 
-/** The Help panel (keyboard keys, what an archive is not, the user guide). */
-export async function openHelp() {
-  await expand("toolbar-help");
-  await $('[data-testid="tool-sheet"]').waitForDisplayed();
-}
+/** The Help panel (keyboard keys, what an archive is not, the user guide): More > Help. */
+export const openHelp = () => openTool("toolbar-help");
 export const closeHelp = closeTool;
 
 /** Start a new archive: the start screen's button, or the toolbar's New archive. */
@@ -84,7 +106,7 @@ export async function clickNewArchive() {
     await $('[data-testid="start-create"]').click();
     return;
   }
-  await $('[data-testid="new-archive"]').click();
+  await clickAction("new-archive");
 }
 
 /**

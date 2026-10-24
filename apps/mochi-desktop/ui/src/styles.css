@@ -1,5 +1,5 @@
-/* A desktop window, not a web page: one fixed frame (toolbar, path bar, the
-   list, a status bar), compact rows, icons instead of words, and dialogs over
+/* A desktop window, not a web page: one fixed frame (the title bar, which
+   holds the toolbar; the path bar, the list, a status bar), compact rows, icons instead of words, and dialogs over
    the list. Neutral styling throughout: spec §23.3 allows success styling
    only for a verification PASS. The one success style is .status-pass (D4),
    given only to a PASS status; everything else stays neutral. Browsing (D1)
@@ -26,6 +26,9 @@
   --pass: #1a7f37;
   --fail: #82071e;
   --on-strong: #ffffff;
+  /* The title bar's Close button under the pointer (the Windows 11 red), with
+     --on-strong for its glyph. */
+  --close-hover: #c42b1c;
   /* The keyboard focus ring. */
   --focus: #8a3b12;
   /* File-type icons in a listing: decorative, and never a status colour. */
@@ -309,24 +312,90 @@ details.technical {
   flex-direction: column;
   min-height: 0;
 }
-.toolbar {
+/* The window's one title bar (release 0.9.10): the operating system draws
+   none (src-tauri/src/frame.rs). Icon and title, the toolbar, then minimize,
+   maximize/restore and close as on Windows 11: 46-pixel-wide buttons the full
+   height of the bar, Close red under the pointer. The same on Ubuntu. Its
+   empty part moves the window (TitleBar.tsx). */
+.titlebar {
+  position: relative;
+  z-index: 25;
   display: flex;
   flex: none;
   align-items: center;
-  gap: 2px;
   height: 2.9rem;
-  padding: 0 0.5rem;
+  padding-left: 0.5rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.brand {
-  display: flex;
-  align-items: center;
-  margin: 0 0.35rem 0 0;
-}
-.brand .mascot-face {
+.titlebar .titlebar-icon {
   width: 2.1rem;
   height: 1.6rem;
+  margin-right: 0.3rem;
+}
+.titlebar-title {
+  flex: 0 1 auto;
+  min-width: 2.5rem;
+  max-width: min(16rem, 24vw);
+  margin: 0 0.6rem 0 0;
+  font-size: 1em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+/* An inactive window's bar is quieter, as the system's is. */
+.titlebar[data-focused="false"] .titlebar-title {
+  color: var(--muted);
+}
+.titlebar[data-focused="false"] .titlebar-icon {
+  opacity: 0.6;
+}
+.toolbar {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.window-controls {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  /* At the right edge even when nothing else on the bar grows (the compact window). */
+  margin-left: auto;
+  padding-left: 0.4rem;
+}
+button.caption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+button.caption:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+button.caption:active {
+  background: var(--border);
+}
+button.caption-close:hover:not(:disabled),
+button.caption-close:active {
+  color: var(--on-strong);
+  background: var(--close-hover);
+}
+button.caption:focus-visible {
+  outline-offset: -3px;
+}
+.titlebar[data-focused="false"] button.caption:not(:hover) {
+  color: var(--muted);
 }
 .tool-cell,
 .menu-cell {
@@ -372,8 +441,10 @@ button.tool:disabled {
 .searchbox {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
-  width: min(17rem, 32vw);
+  width: min(15rem, 26vw);
+  min-width: 7rem;
   margin: 0 0.35rem;
   color: var(--muted);
 }
@@ -452,6 +523,14 @@ button.menu-item .icon {
   width: 16px;
   height: 16px;
   color: var(--muted);
+}
+/* The key that reaches a menu item without the menu (Ctrl+N, Delete, F1). */
+.menu-key {
+  margin-left: auto;
+  padding-left: 1.5rem;
+  color: var(--muted);
+  font-size: 0.9em;
+  white-space: nowrap;
 }
 button.menu-item:hover:not(:disabled):not([aria-disabled="true"]),
 button.menu-item:focus-visible:not([aria-disabled="true"]) {
@@ -1349,6 +1428,15 @@ h3:focus-visible {
 /* Windows high-contrast and other forced-colour modes drop our colours; keep
    the selection and the status shapes visible. */
 @media (forced-colors: active) {
+  .titlebar {
+    border-bottom-color: CanvasText;
+  }
+  button.caption:hover:not(:disabled),
+  button.caption-close:hover:not(:disabled) {
+    forced-color-adjust: none;
+    color: HighlightText;
+    background: Highlight;
+  }
   .commit.current,
   .tree-label.current,
   .entry.selected {
@@ -1642,6 +1730,17 @@ button.recent-item {
 /* ---- The compact window of the shell's quick verbs ---------------------------- */
 .quick {
   padding: 0.75rem 1rem;
+}
+/* Its own title bar above the content, which scrolls alone. */
+.quick-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+.quick-window > .quick {
+  flex: 1;
+  min-height: 0;
 }
 /* The right-click menu of a file list: a fixed menu at the pointer. */
 .context-menu {

@@ -19,6 +19,7 @@ import type { DetailRow, ResultDetails } from "../result/details";
 import { InlineDetails } from "../result/Result";
 import { formatLabel } from "../write/format";
 import { localCommitNote, progressText as writeProgress } from "../write/messages";
+import { TitleBar } from "../shell/TitleBar";
 import { AddForm } from "./AddForm";
 import type { AddFormStart } from "./AddForm";
 import "./quick.css";
@@ -272,98 +273,102 @@ export function QuickWindow() {
   const addProgress = job?.action === "add";
 
   return (
-    <main className="quick" data-testid="quick" aria-labelledby="quick-title">
-      <h1 id="quick-title" data-testid="quick-title">
-        {heading}
-      </h1>
-      {view.kind === "waiting" && <p data-testid="quick-waiting">{t("common.starting")}</p>}
-      {view.kind === "form" && prompt && <AddForm start={prompt.start} />}
-      {view.kind === "running" && (
-        <>
-          <div className="progress" data-testid="quick-progress">
-            <ProgressMeter
-              completed={view.progress?.completed ?? 0}
-              total={view.progress?.total ?? null}
-              text={
-                view.progress
-                  ? (addProgress ? writeProgress : extractProgress)(
-                      view.progress.phase,
-                      view.progress.completed,
-                      view.progress.total,
-                    )
-                  : t("common.starting")
-              }
-              textTestId="quick-progress-text"
-            />
-          </div>
-          <div className="actions">
-            <button type="button" data-testid="quick-cancel" disabled={cancelling} onClick={cancel}>
-              {cancelling ? t("quick.cancelling") : t("common.cancel")}
-            </button>
-          </div>
-        </>
-      )}
-      {view.kind === "passphrase" && (
-        <form
-          data-testid="quick-passphrase"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submitPassphrase();
-          }}
-        >
-          <p role={view.wrong ? "alert" : "note"} data-testid="quick-passphrase-note">
-            {t(view.wrong ? "quick.passphraseWrong" : "quick.passphraseNeeded", { name: job?.name ?? "" })}
-          </p>
-          <label>
-            {t("quick.passphrase")}
-            <input ref={passphraseRef} type="password" autoComplete="off" data-testid="quick-passphrase-input" />
-          </label>
-          <div className="actions">
-            <button type="submit" data-testid="quick-passphrase-submit">
-              {t("quick.passphraseSubmit")}
-            </button>
-            <button type="button" data-testid="quick-passphrase-cancel" onClick={cancel}>
-              {t("common.cancel")}
-            </button>
-          </div>
-        </form>
-      )}
-      {view.kind === "done" && (
-        <>
-          <div
-            role={view.failed ? "alert" : "status"}
-            data-testid="quick-result"
-            data-state={view.failed ? "failed" : "finished"}
-          >
-            {view.lines.map((line, i) => (
-              <p key={line} className={view.warn && i === 0 ? "warning" : i === 0 ? undefined : "note"}>
-                {line}
-              </p>
-            ))}
-            {view.details && cautionCount(view.details) > 0 && (
-              <span className="sr-only" data-testid="quick-attention">
-                {attentionHint(cautionCount(view.details))}
-              </span>
-            )}
-          </div>
-          {view.details && <InlineDetails prefix="quick" details={view.details} />}
-          <div className="actions">
-            {view.folder && (
-              <button type="button" data-testid="quick-show-folder" onClick={() => showQuickFolder().catch(report)}>
-                {t("quick.showFolder")}
+    <div className="quick-window">
+      {/* The same title bar as the archive windows (release 0.9.10), without maximize. */}
+      <TitleBar name={null} maximizable={false} />
+      <main className="quick" data-testid="quick" aria-labelledby="quick-title">
+        <h1 id="quick-title" data-testid="quick-title">
+          {heading}
+        </h1>
+        {view.kind === "waiting" && <p data-testid="quick-waiting">{t("common.starting")}</p>}
+        {view.kind === "form" && prompt && <AddForm start={prompt.start} />}
+        {view.kind === "running" && (
+          <>
+            <div className="progress" data-testid="quick-progress">
+              <ProgressMeter
+                completed={view.progress?.completed ?? 0}
+                total={view.progress?.total ?? null}
+                text={
+                  view.progress
+                    ? (addProgress ? writeProgress : extractProgress)(
+                        view.progress.phase,
+                        view.progress.completed,
+                        view.progress.total,
+                      )
+                    : t("common.starting")
+                }
+                textTestId="quick-progress-text"
+              />
+            </div>
+            <div className="actions">
+              <button type="button" data-testid="quick-cancel" disabled={cancelling} onClick={cancel}>
+                {cancelling ? t("quick.cancelling") : t("common.cancel")}
               </button>
-            )}
-            <button type="button" ref={closeRef} data-testid="quick-close" onClick={() => closeQuick().catch(report)}>
-              {t("common.close")}
-            </button>
-          </div>
-        </>
-      )}
-      {problem && (
-        <p role="alert" className="error" data-testid="quick-problem">
-          {problem}
-        </p>
-      )}
-    </main>
+            </div>
+          </>
+        )}
+        {view.kind === "passphrase" && (
+          <form
+            data-testid="quick-passphrase"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitPassphrase();
+            }}
+          >
+            <p role={view.wrong ? "alert" : "note"} data-testid="quick-passphrase-note">
+              {t(view.wrong ? "quick.passphraseWrong" : "quick.passphraseNeeded", { name: job?.name ?? "" })}
+            </p>
+            <label>
+              {t("quick.passphrase")}
+              <input ref={passphraseRef} type="password" autoComplete="off" data-testid="quick-passphrase-input" />
+            </label>
+            <div className="actions">
+              <button type="submit" data-testid="quick-passphrase-submit">
+                {t("quick.passphraseSubmit")}
+              </button>
+              <button type="button" data-testid="quick-passphrase-cancel" onClick={cancel}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        )}
+        {view.kind === "done" && (
+          <>
+            <div
+              role={view.failed ? "alert" : "status"}
+              data-testid="quick-result"
+              data-state={view.failed ? "failed" : "finished"}
+            >
+              {view.lines.map((line, i) => (
+                <p key={line} className={view.warn && i === 0 ? "warning" : i === 0 ? undefined : "note"}>
+                  {line}
+                </p>
+              ))}
+              {view.details && cautionCount(view.details) > 0 && (
+                <span className="sr-only" data-testid="quick-attention">
+                  {attentionHint(cautionCount(view.details))}
+                </span>
+              )}
+            </div>
+            {view.details && <InlineDetails prefix="quick" details={view.details} />}
+            <div className="actions">
+              {view.folder && (
+                <button type="button" data-testid="quick-show-folder" onClick={() => showQuickFolder().catch(report)}>
+                  {t("quick.showFolder")}
+                </button>
+              )}
+              <button type="button" ref={closeRef} data-testid="quick-close" onClick={() => closeQuick().catch(report)}>
+                {t("common.close")}
+              </button>
+            </div>
+          </>
+        )}
+        {problem && (
+          <p role="alert" className="error" data-testid="quick-problem">
+            {problem}
+          </p>
+        )}
+      </main>
+    </div>
   );
 }

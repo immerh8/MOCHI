@@ -8,6 +8,7 @@ import {
   CloseIcon,
   ExtractToIcon,
   ExtractIcon,
+  FindIcon,
   FoldersIcon,
   GearIcon,
   HelpIcon,
@@ -16,7 +17,6 @@ import {
   MoreIcon,
   OpenIcon,
   PlusIcon,
-  SearchIcon,
   TrashIcon,
   WrenchIcon,
 } from "../icons";
@@ -67,6 +67,7 @@ import type { FindHit } from "../ipc/find";
 import { Writer } from "../write/Writer";
 import { availableActions, tipFor } from "../shell/availability";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
+import { TitleBar } from "../shell/TitleBar";
 import type { ForeignHandoff, Shell, SlotName } from "../shell/Shell";
 import { ToolSheet } from "../shell/ToolSheet";
 import type { ToolId } from "../shell/ToolSheet";
@@ -209,6 +210,10 @@ export type Picked = { key: string; name: NameText };
 
 const rowKey = (r: EntryRow) => r.key;
 
+// Keys shown beside the More menu's own items (key names stay in English in every language).
+const KEY_INFO = "Alt+Enter";
+const KEY_HELP = "F1";
+
 /** Plan D1: open an archive and browse its snapshots. Read-only. */
 export function Browser({
   foreign,
@@ -249,6 +254,12 @@ export function Browser({
   const [moreOpen, setMoreOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
   const [foreignOpen, setForeignOpen] = useState(false);
+  // The foreign archive's file name, for the title bar.
+  const [foreignName, setForeignName] = useState<string | null>(null);
+  const onForeignOpen = useCallback((isOpen: boolean, name?: string | null) => {
+    setForeignOpen(isOpen);
+    setForeignName(isOpen ? (name ?? null) : null);
+  }, []);
   const [closeForeignToken, setCloseForeignToken] = useState(0);
   const [openForeignToken, setOpenForeignToken] = useState(0);
   const [testRequest, setTestRequest] = useState(0);
@@ -670,6 +681,39 @@ export function Browser({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // The keys of the actions that sit in the More menu: Ctrl+N new archive, Ctrl+E extract,
+  // Alt+Enter details, F1 help (Delete removes; the list handles it). A key presses the very
+  // button the menu shows, so it is on and off exactly when the button is.
+  const keysRef = useRef({ slots, canInspect });
+  useEffect(() => {
+    keysRef.current = { slots, canInspect };
+  });
+  useEffect(() => {
+    const press = (name: SlotName) => {
+      const button = keysRef.current.slots[name]?.querySelector<HTMLButtonElement>("button");
+      if (button && !button.disabled) button.click();
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const ctrl = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (ctrl && !e.altKey && !e.shiftKey && (key === "n" || key === "e")) {
+        e.preventDefault();
+        setMoreOpen(false);
+        press(key === "n" ? "new" : "extract");
+      } else if (e.altKey && !ctrl && !e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        if (keysRef.current.canInspect) setInfoOpen((v) => !v);
+      } else if (e.key === "F1" && !ctrl && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setMoreOpen(false);
+        setTool((v) => (v === "help" ? null : "help"));
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   // Desktop keys: Ctrl+F finds, Ctrl+O opens.
   const openRef = useRef(doOpen);
   useEffect(() => {
@@ -698,7 +742,7 @@ export function Browser({
     active,
     register,
     slots,
-    setForeignOpen,
+    setForeignOpen: onForeignOpen,
     closeForeignToken,
     openForeignToken,
     infoOpen,
@@ -778,105 +822,124 @@ export function Browser({
       : tc(total, "common.itemOne", "common.itemMany") +
         (selected.length > 0 ? t("common.statusSeparator") + t("common.selectedCount", { n: selected.length }) : "");
 
+  // The title bar's title: the file name of the archive on screen (untrusted text).
+  const titleName = foreignOpen ? foreignName : (open?.archive.file_name ?? null);
+
   return (
     <ShellContext value={shell}>
       <section aria-labelledby="browser-heading" className="browser">
-        <div className="toolbar" role="group" aria-label={t("toolbar.label")}>
-          <h1 className="brand" title={t("app.title")}>
-            <span className="mascot-face" aria-hidden="true" />
-            <span className="sr-only">{t("app.title")}</span>
-          </h1>
-          <span className="tool-cell">
-            <ToolButton
-              icon={<OpenIcon />}
-              label={t("browser.open")}
-              testId="toolbar-open"
-              title={t("toolbar.openTip")}
-              disabled={busy}
-              onClick={() => void doOpen()}
-            />
-          </span>
-          <SlotHost name="new" />
-          <span className="toolbar-sep" aria-hidden="true" />
-          <SlotHost name="add" />
-          <SlotHost name="extract" />
-          <SlotHost name="extractTo" />
-          <SlotHost name="test" />
-          <SlotHost name="remove" />
-          <span className="toolbar-spacer" />
-          <SearchBox disabled={!canInspect} onQuery={setQuery} clearToken={clearSearch} />
-          <span className="tool-cell">
-            <ToolButton
-              icon={<InfoIcon />}
-              label={t("toolbar.info")}
-              testId="toolbar-info"
-              title={canInspect ? t("toolbar.infoTip") : t("toolbar.openFirst")}
-              disabled={!canInspect}
-              expanded={infoOpen}
-              onClick={() => setInfoOpen((v) => !v)}
-            />
-          </span>
-          <div className="more" ref={moreRef}>
-            <button
-              ref={moreButtonRef}
-              type="button"
-              className="tool"
-              data-testid="toolbar-more"
-              title={t("toolbar.more")}
-              aria-expanded={moreOpen}
-              aria-controls="more-menu"
-              onClick={() => setMoreOpen((v) => !v)}
-            >
-              <MoreIcon />
-              <span className="sr-only">{t("toolbar.more")}</span>
-            </button>
-            <div id="more-menu" className="menu" ref={menuRef} hidden={!moreOpen}>
-              <button type="button" className="menu-item" data-testid="start-extract" onClick={() => void doOpen(true)} disabled={busy}>
-                <ExtractIcon />
-                {t("start.extractOpen")}
-              </button>
-              <button type="button" className="menu-item" data-testid="menu-foreign" onClick={() => setOpenForeignToken((n) => n + 1)}>
-                <OpenIcon />
-                {t("toolbar.foreign")}
-              </button>
-              <button type="button" className="menu-item" data-testid="menu-find" onClick={() => showTool("find")}>
-                <SearchIcon />
-                {t("find.menuItem")}
-              </button>
-              <hr />
+        <TitleBar name={titleName} heading>
+          <div className="toolbar" role="group" aria-label={t("toolbar.label")}>
+            {/* The primary actions stay on the bar; the rest are in More, each with its key. */}
+            <span className="tool-cell">
+              <ToolButton
+                icon={<OpenIcon />}
+                label={t("browser.open")}
+                testId="toolbar-open"
+                title={t("toolbar.openTip")}
+                disabled={busy}
+                onClick={() => void doOpen()}
+              />
+            </span>
+            <span className="toolbar-sep" aria-hidden="true" />
+            <SlotHost name="add" />
+            <SlotHost name="extractTo" />
+            <SlotHost name="test" />
+            <span className="tool-cell">
+              <ToolButton
+                icon={<FindIcon />}
+                label={t("toolbar.find")}
+                testId="toolbar-find"
+                title={t("toolbar.findTip")}
+                expanded={tool === "find"}
+                onClick={() => showTool("find")}
+              />
+            </span>
+            <span className="toolbar-spacer" />
+            <SearchBox disabled={!canInspect} onQuery={setQuery} clearToken={clearSearch} />
+            <div className="more" ref={moreRef}>
               <button
+                ref={moreButtonRef}
                 type="button"
-                className="menu-item"
-                data-testid="menu-passphrases"
-                disabled={!avail.passphrases.enabled}
-                title={tipFor(avail.passphrases, t("app.sectionPassphrases"))}
-                onClick={() => showTool("passphrases")}
+                className="tool"
+                data-testid="toolbar-more"
+                title={t("toolbar.more")}
+                aria-expanded={moreOpen}
+                aria-controls="more-menu"
+                onClick={() => setMoreOpen((v) => !v)}
               >
-                <KeyIcon />
-                {t("app.sectionPassphrases")}
+                <MoreIcon />
+                <span className="sr-only">{t("toolbar.more")}</span>
               </button>
-              <button type="button" className="menu-item" data-testid="menu-repair" onClick={() => showTool("check")}>
-                <WrenchIcon />
-                {t("toolbar.repair")}
-              </button>
-              <hr />
-              <button type="button" className="menu-item" data-testid="start-settings" onClick={() => showTool("settings")}>
-                <GearIcon />
-                {t("start.settings")}
-              </button>
+              <div id="more-menu" className="menu" ref={menuRef} hidden={!moreOpen}>
+                {/* Drawn here by the components that own them (Shell.tsx `MENU_SLOTS`). */}
+                <SlotHost name="new" className="menu-cell" />
+                <SlotHost name="extract" className="menu-cell" />
+                <SlotHost name="remove" className="menu-cell" />
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="toolbar-info"
+                  title={canInspect ? t("toolbar.infoTip") : t("toolbar.openFirst")}
+                  disabled={!canInspect}
+                  aria-pressed={infoOpen}
+                  aria-keyshortcuts="Alt+Enter"
+                  onClick={() => setInfoOpen((v) => !v)}
+                >
+                  <InfoIcon />
+                  <span className="menu-label">{t("toolbar.info")}</span>
+                  <span className="menu-key" aria-hidden="true">
+                    {KEY_INFO}
+                  </span>
+                </button>
+                <hr />
+                <button type="button" className="menu-item" data-testid="start-extract" onClick={() => void doOpen(true)} disabled={busy}>
+                  <ExtractIcon />
+                  {t("start.extractOpen")}
+                </button>
+                <button type="button" className="menu-item" data-testid="menu-foreign" onClick={() => setOpenForeignToken((n) => n + 1)}>
+                  <OpenIcon />
+                  {t("toolbar.foreign")}
+                </button>
+                <hr />
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="menu-passphrases"
+                  disabled={!avail.passphrases.enabled}
+                  title={tipFor(avail.passphrases, t("app.sectionPassphrases"))}
+                  onClick={() => showTool("passphrases")}
+                >
+                  <KeyIcon />
+                  {t("app.sectionPassphrases")}
+                </button>
+                <button type="button" className="menu-item" data-testid="menu-repair" onClick={() => showTool("check")}>
+                  <WrenchIcon />
+                  {t("toolbar.repair")}
+                </button>
+                <hr />
+                <button type="button" className="menu-item" data-testid="start-settings" onClick={() => showTool("settings")}>
+                  <GearIcon />
+                  {t("start.settings")}
+                </button>
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="toolbar-help"
+                  title={t("toolbar.helpTip")}
+                  aria-keyshortcuts="F1"
+                  onClick={() => showTool("help")}
+                >
+                  <HelpIcon />
+                  <span className="menu-label">{t("help.toolbar")}</span>
+                  <span className="menu-key" aria-hidden="true">
+                    {KEY_HELP}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
-          <span className="tool-cell">
-            <ToolButton
-              icon={<HelpIcon />}
-              label={t("help.toolbar")}
-              testId="toolbar-help"
-              title={t("toolbar.helpTip")}
-              expanded={tool === "help"}
-              onClick={() => setTool((v) => (v === "help" ? null : "help"))}
-            />
-          </span>
-        </div>
+        </TitleBar>
         <h2 id="browser-heading" tabIndex={-1} className="sr-only">
           {open || foreignOpen ? t("browser.heading") : t("start.heading")}
         </h2>

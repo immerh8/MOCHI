@@ -54,6 +54,8 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
           : null;
       case "recent_archives":
         return recents;
+      case "window_watch":
+        return { maximized: false, focused: true };
       case "get_update_settings":
         return {
           check_on_start: false,
@@ -306,6 +308,9 @@ test("the start screen is operable by keyboard alone", async () => {
   screen.getByTestId("toolbar-more").focus();
   await user.keyboard("{Enter}");
   expect(screen.getByTestId("toolbar-more")).toHaveAttribute("aria-expanded", "true");
+  // New archive comes first; Extract, Remove and Info are off with nothing open, so they are skipped.
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByTestId("new-archive"));
   await user.tab();
   expect(document.activeElement).toBe(screen.getByTestId("start-extract"));
   await user.keyboard("{Enter}");

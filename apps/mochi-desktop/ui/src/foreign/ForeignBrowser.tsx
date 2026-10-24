@@ -173,9 +173,11 @@ export function ForeignBrowser() {
   const query = shell?.active === "foreign" ? shell.query : "";
   const clearQuery = shell?.clearQuery;
   const isOpen = open !== null;
+  // The window's title bar shows the open archive's file name (as text).
+  const openName = open?.file_name ?? null;
   useEffect(() => {
-    setForeignOpen?.(isOpen);
-  }, [isOpen, setForeignOpen]);
+    setForeignOpen?.(isOpen, openName);
+  }, [isOpen, openName, setForeignOpen]);
   useEffect(() => {
     if (handle === null) return;
     let live = true;
