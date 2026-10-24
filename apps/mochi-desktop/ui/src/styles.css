@@ -200,6 +200,11 @@ button.icon-button:hover:not(:disabled) {
   color: var(--fg);
   background: var(--accent-bg);
 }
+/* An icon button that cannot act fades, as a toolbar button does (`button.tool:disabled`):
+   its colour alone is already the muted one. */
+button.icon-button:disabled {
+  opacity: 0.55;
+}
 .icon {
   flex: none;
 }
@@ -461,7 +466,8 @@ button.menu-item:disabled,
 button.menu-item[aria-disabled="true"] {
   color: var(--muted);
 }
-/* The path bar: back, folders, the archive and its version, where you are. */
+/* The path bar: folders, back, forward and up, the archive and its version, where you are,
+   and Close at the far right. */
 .pathbar {
   display: flex;
   flex: none;
@@ -475,6 +481,10 @@ button.menu-item[aria-disabled="true"] {
 .pathbar button.icon-button .icon {
   width: 18px;
   height: 18px;
+}
+/* Pushed to the end of the bar whatever its width; the bar never wraps, the crumbs give way. */
+.pathbar .pathbar-close {
+  margin-left: auto;
 }
 .path-meta {
   display: flex;

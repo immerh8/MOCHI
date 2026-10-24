@@ -930,17 +930,6 @@ export function Browser({
             <button
               type="button"
               className="icon-button"
-              data-testid="close-archive"
-              aria-label={t("browser.close")}
-              title={t("browser.close")}
-              onClick={doClose}
-              disabled={busy}
-            >
-              <CloseIcon />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
               data-testid="toggle-folders"
               aria-label={t("browser.paneFolders")}
               title={t("browser.paneFolders")}
@@ -952,7 +941,7 @@ export function Browser({
             >
               <FoldersIcon />
             </button>
-            <NavButtons nav={folder} testIdPrefix="nav" />
+            <NavButtons nav={folder} testIdPrefix="nav" disabled={searching} />
             <div className="path-meta" data-testid="archive-meta">
               <strong className="path-title" title={open.archive.file_name}>
                 {open.archive.file_name}
@@ -1025,6 +1014,17 @@ export function Browser({
                 </span>
               </span>
             )}
+            <button
+              type="button"
+              className="icon-button pathbar-close"
+              data-testid="close-archive"
+              aria-label={t("browser.close")}
+              title={t("browser.close")}
+              onClick={doClose}
+              disabled={busy}
+            >
+              <CloseIcon />
+            </button>
           </div>
         )}
 

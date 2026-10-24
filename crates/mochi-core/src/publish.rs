@@ -104,7 +104,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mochi_format::cbor::{self, CborLimits, Value};
 use mochi_format::codec::{EncodeParams, Protection};
 use mochi_format::digest::{
-    chunk_content_hash, file_content_hash, stored_object_hash, ChunkContentHash, CommitId,
+    chunk_content_hash, stored_object_hash, ChunkContentHash, CommitId, FileContentHasher,
     StoredBytesHasher, StoredObjectHash, StoredObjectScope, TailQuarantineHash,
 };
 use mochi_format::envelope::RecordIdentity;
@@ -2337,11 +2337,89 @@ pub struct Transaction {
     key_removes: Vec<[u8; 16]>,
 }
 
+/// A regular file's content, read when the commit is written
+/// ([`Transaction::put_file_from`]). The writer reads at most one chunk
+/// (the archive's chunk size) at a time, so a commit's size is not bounded
+/// by memory.
+pub trait FileSource: Send + Sync {
+    /// The length expected (the source's `stat`). The TAR-compatible
+    /// profile writes it in the member header before the content, so there
+    /// any other length read fails the commit; other profiles store what was
+    /// read. Also the progress total.
+    fn len(&self) -> u64;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Open the content for reading from its first byte. Called once, while
+    /// the commit is written.
+    fn open(&self) -> Result<Box<dyn FileReader + '_>>;
+
+    /// Names the source in an error message (for example its OS path).
+    fn describe(&self) -> String;
+}
+
+/// Sequential reads of one [`FileSource`].
+pub trait FileReader {
+    /// Fill as much of `buf` as is available; `Ok(0)` only at the end.
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
+}
+
+/// Content of a file in a [`Transaction`].
+#[derive(Clone)]
+enum FileContent {
+    Memory(Vec<u8>),
+    Source(std::sync::Arc<dyn FileSource>),
+}
+
+impl FileContent {
+    fn expected_len(&self) -> u64 {
+        match self {
+            FileContent::Memory(b) => b.len() as u64,
+            FileContent::Source(s) => s.len(),
+        }
+    }
+}
+
+impl std::fmt::Debug for FileContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileContent::Memory(b) => write!(f, "Memory({} bytes)", b.len()),
+            FileContent::Source(s) => write!(f, "Source({}, {} bytes)", s.describe(), s.len()),
+        }
+    }
+}
+
+/// Fill `buf` from `reader` up to `want` bytes (fewer only at the end).
+fn read_piece(reader: &mut dyn FileReader, buf: &mut Vec<u8>, want: usize) -> Result<()> {
+    buf.clear();
+    buf.resize(want, 0);
+    let mut filled = 0;
+    while filled < want {
+        let n = reader.read(&mut buf[filled..])?;
+        if n == 0 {
+            break;
+        }
+        filled = filled
+            .checked_add(n)
+            .filter(|f| *f <= want)
+            .ok_or_else(|| {
+                MochiError::new(
+                    ErrorCode::IoError,
+                    "a file source reported more bytes than it was asked for",
+                )
+            })?;
+    }
+    buf.truncate(filled);
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 enum TxEntry {
     File {
         path: ArchivePath,
-        content: Vec<u8>,
+        content: FileContent,
         attributes: Attributes,
     },
     Dir {
@@ -2367,7 +2445,7 @@ impl Transaction {
         Self::default()
     }
 
-    /// Create or replace a regular file. Content is held in memory for now.
+    /// Create or replace a regular file whose content is in memory.
     pub fn put_file(
         &mut self,
         path: ArchivePath,
@@ -2376,7 +2454,25 @@ impl Transaction {
     ) -> &mut Self {
         self.entries.push(TxEntry::File {
             path,
-            content,
+            content: FileContent::Memory(content),
+            attributes,
+        });
+        self
+    }
+
+    /// Create or replace a regular file whose content is read from `source`
+    /// while the commit is written, one chunk at a time. A read error, or in
+    /// the TAR-compatible profile a length other than `source.len()`, fails
+    /// the commit and nothing is published.
+    pub fn put_file_from(
+        &mut self,
+        path: ArchivePath,
+        source: std::sync::Arc<dyn FileSource>,
+        attributes: Attributes,
+    ) -> &mut Self {
+        self.entries.push(TxEntry::File {
+            path,
+            content: FileContent::Source(source),
             attributes,
         });
         self
@@ -3807,10 +3903,10 @@ impl<S: Storage> ArchiveWriter<S> {
             .entries
             .iter()
             .map(|e| match e {
-                TxEntry::File { content, .. } => content.len() as u64,
+                TxEntry::File { content, .. } => content.expected_len(),
                 _ => 0,
             })
-            .sum();
+            .fold(0u64, u64::saturating_add);
         let mut done = 0u64;
         let mut objects = 0u64;
         let mut ops = Vec::new();
@@ -3876,14 +3972,10 @@ impl<S: Storage> ArchiveWriter<S> {
                     attributes: attrs,
                 } => {
                     let mut extents = Vec::new();
+                    let expected = content.expected_len();
                     if tar {
                         let m = self.tampered_member(
-                            member_for(
-                                path.as_stored(),
-                                EntryKind::File,
-                                content.len() as u64,
-                                attrs,
-                            ),
+                            member_for(path.as_stored(), EntryKind::File, expected, attrs),
                             members,
                         );
                         pending.extend(encode_header(&m)?);
@@ -3896,8 +3988,39 @@ impl<S: Storage> ArchiveWriter<S> {
                         )?;
                         members += 1;
                     }
-                    let piece = usize::try_from(self.params.chunk_size).unwrap_or(usize::MAX);
-                    for (i, part) in content.chunks(piece).enumerate() {
+                    let piece = usize::try_from(self.params.chunk_size)
+                        .unwrap_or(usize::MAX)
+                        .max(1);
+                    // In memory, the pieces are slices of the content; from a
+                    // source, one piece-sized buffer is refilled per chunk.
+                    let mut reader = match content {
+                        FileContent::Memory(_) => None,
+                        FileContent::Source(s) => Some((s, s.open()?)),
+                    };
+                    let mut buf: Vec<u8> = Vec::new();
+                    let mut hasher = FileContentHasher::new();
+                    let mut logical = 0u64;
+                    for i in 0usize.. {
+                        let part: &[u8] = match (&mut reader, content) {
+                            (Some((_, r)), _) => {
+                                read_piece(r.as_mut(), &mut buf, piece)?;
+                                &buf
+                            }
+                            (None, FileContent::Memory(bytes)) => {
+                                let at = i.saturating_mul(piece).min(bytes.len());
+                                let to = at.saturating_add(piece).min(bytes.len());
+                                &bytes[at..to]
+                            }
+                            (None, FileContent::Source(_)) => &[],
+                        };
+                        if part.is_empty() {
+                            break;
+                        }
+                        hasher
+                            .update(DecodedSlice::from_logical(part))
+                            .ok_or_else(|| {
+                                MochiError::new(ErrorCode::LimitExceeded, "file length overflows")
+                            })?;
                         let decoded = DecodedBytes::new(part.to_vec());
                         let key = (decoded.len(), chunk_content_hash(&decoded));
                         let chunk = match self.reusable_chunk(&key, part, &mut dedup)? {
@@ -3927,22 +4050,41 @@ impl<S: Storage> ArchiveWriter<S> {
                                     "too many chunks in one file",
                                 )
                             })?,
-                            logical_offset: done_offset(i, self.params.chunk_size)?,
+                            logical_offset: logical,
                             length: part.len() as u64,
                             source: ExtentSource::Chunk {
                                 chunk,
                                 chunk_offset: 0,
                             },
                         });
-                        done += part.len() as u64;
-                        ctx.report(phase::CONTENT, done, Some(total));
+                        logical = hasher.len();
+                        done = done.saturating_add(part.len() as u64);
+                        ctx.report(phase::CONTENT, done, Some(total.max(done)));
                         ctx.check_cancelled()?;
+                    }
+                    drop(reader);
+                    if tar && logical != expected {
+                        let name = match content {
+                            FileContent::Source(s) => s.describe(),
+                            FileContent::Memory(_) => {
+                                String::from_utf8_lossy(path.as_stored()).into_owned()
+                            }
+                        };
+                        return Err(MochiError::new(
+                            ErrorCode::IoError,
+                            format!(
+                                "{name} changed while it was read: {expected} bytes were \
+                                 expected and {logical} were read. A TAR-compatible archive \
+                                 writes the length before the content, so nothing was \
+                                 committed; try again once the file is no longer changing"
+                            ),
+                        ));
                     }
                     let version = FileVersion {
                         id: FileVersionId::from_bytes(self.ids.next_id()?),
                         kind: EntryKind::File,
-                        logical_len: content.len() as u64,
-                        content_hash: Some(file_content_hash(DecodedSlice::from_logical(content))),
+                        logical_len: logical,
+                        content_hash: Some(hasher.finalize()),
                     };
                     cat.insert_file_version(&version, &extents)?;
                     ops.push(NamespaceOp::Put {
@@ -3957,7 +4099,7 @@ impl<S: Storage> ArchiveWriter<S> {
                     });
                     if tar {
                         // The content chunks above are the member's bytes.
-                        pending = vec![0; tar::padding(content.len() as u64)];
+                        pending = vec![0; tar::padding(logical)];
                     }
                 }
                 TxEntry::Dir {
@@ -5378,12 +5520,6 @@ impl CheckpointTamper {
         }
         Ok(())
     }
-}
-
-fn done_offset(index: usize, chunk_size: u64) -> Result<u64> {
-    (index as u64)
-        .checked_mul(chunk_size)
-        .ok_or_else(|| MochiError::new(ErrorCode::LimitExceeded, "file offset overflows"))
 }
 
 fn system_time() -> Option<Mtime> {

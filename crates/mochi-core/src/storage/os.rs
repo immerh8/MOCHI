@@ -994,7 +994,7 @@ pub use restore_unsupported::OsRestoreDir;
 // ---- Import sources (plan C14, D2) ------------------------------------------
 
 mod source;
-pub use source::OsSourceTree;
+pub use source::{OsFile, OsSourceTree};
 
 fn issue(issues: &mut Vec<AttributeIssue>, attribute: AttributeKind, reason: impl ToString) {
     issues.push(AttributeIssue {
