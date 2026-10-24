@@ -111,9 +111,11 @@ pub struct CreateArgs {
     /// recovery record too.
     #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u16).range(1..=100))]
     pub recovery_record: Option<u16>,
-    /// Most content bytes one commit may hold in memory.
-    #[arg(long, value_name = "BYTES")]
-    pub max_memory: Option<u64>,
+    /// Refuse the inputs if they hold more than BYTES content bytes
+    /// (default: no cap). Content is streamed into the archive one chunk at
+    /// a time, never held in memory whole. `--max-memory` is the old name.
+    #[arg(long, alias = "max-memory", value_name = "BYTES")]
+    pub max_bytes: Option<u64>,
     /// Deferred (plan Q10, spec Annex B D16): refused by name.
     #[arg(long, hide = true, num_args = 0..=1, require_equals = true, value_name = "V")]
     pub exceed_default_limits: Option<Option<String>>,
@@ -131,9 +133,11 @@ pub struct AppendArgs {
     /// stay in the archive's history (spec §10.2, §23.3 #5). Repeatable.
     #[arg(long, value_name = "ARCHIVE_PATH")]
     pub delete: Vec<String>,
-    /// Most content bytes one commit may hold in memory.
-    #[arg(long, value_name = "BYTES")]
-    pub max_memory: Option<u64>,
+    /// Refuse the inputs if they hold more than BYTES content bytes
+    /// (default: no cap). Content is streamed into the archive one chunk at
+    /// a time, never held in memory whole. `--max-memory` is the old name.
+    #[arg(long, alias = "max-memory", value_name = "BYTES")]
+    pub max_bytes: Option<u64>,
     /// Remove an eligible uncommitted tail first (Annex B.2 D14), after
     /// copying it to a verified quarantine sidecar.
     #[arg(long)]

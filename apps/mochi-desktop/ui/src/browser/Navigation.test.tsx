@@ -323,6 +323,79 @@ test("Back and Forward walk the history across the folders; disabled with none",
   expect(btn("nav-forward")).toBeDisabled();
 });
 
+test("going somewhere new after Back clears Forward", async () => {
+  const user = await openDeep();
+  await user.click(btn("nav-back"));
+  await waitFor(() => expect(names()).toEqual(["C"]));
+  await user.click(btn("nav-back"));
+  await waitFor(() => expect(names()).toEqual(["B", "fileA", "fileB"]));
+  expect(btn("nav-forward")).toBeEnabled();
+  await user.click(within(screen.getByTestId("crumbs")).getByTestId("crumb-root"));
+  await waitFor(() => expect(names()).toEqual(["A", "top.txt"]));
+  expect(btn("nav-forward")).toBeDisabled();
+  expect(btn("nav-back")).toBeEnabled();
+  await user.click(btn("nav-back"));
+  await waitFor(() => expect(names()).toEqual(["B", "fileA", "fileB"]));
+  expect(btn("nav-forward")).toBeEnabled();
+});
+
+test("disabled Back, Forward and Up ignore clicks and Alt+arrows at the root", async () => {
+  const user = userEvent.setup();
+  fake();
+  render(<Browser />);
+  await user.click(screen.getByTestId("open-archive"));
+  await screen.findByText(/^2 items/);
+  const top = (await screen.findAllByTestId("entry"))[1] as HTMLElement;
+  await user.click(top);
+  expect(top).toHaveAttribute("aria-pressed", "true");
+  const listed = calls.filter((c) => c.cmd === "list_children").length;
+  for (const id of ["nav-back", "nav-forward", "nav-up"]) {
+    expect(btn(id)).toBeDisabled();
+    await user.click(btn(id));
+  }
+  top.focus();
+  await user.keyboard("{Alt>}{ArrowLeft}{ArrowRight}{ArrowUp}{/Alt}");
+  expect(names()).toEqual(["A", "top.txt"]);
+  expect(calls.filter((c) => c.cmd === "list_children").length).toBe(listed);
+  // Nothing moved, so the selection stays.
+  expect(screen.getAllByTestId("entry")[1]).toHaveAttribute("aria-pressed", "true");
+});
+
+test("closing and opening an archive again starts with no history", async () => {
+  const user = await openDeep();
+  expect(btn("nav-back")).toBeEnabled();
+  await user.click(btn("close-archive"));
+  await user.click(await screen.findByTestId("open-archive"));
+  await screen.findByText(/^2 items/);
+  expect(btn("nav-back")).toBeDisabled();
+  expect(btn("nav-forward")).toBeDisabled();
+  expect(btn("nav-up")).toBeDisabled();
+});
+
+test("Back, Forward and Up are off while search results are on screen", async () => {
+  const user = await openDeep();
+  await user.click(btn("nav-back"));
+  await waitFor(() => expect(names()).toEqual(["C"]));
+  await user.type(screen.getByTestId("search-query"), "deep");
+  await waitFor(() => expect(screen.queryByTestId("entries")).toBeNull(), { timeout: 3000 });
+  expect(btn("nav-back")).toBeDisabled();
+  expect(btn("nav-forward")).toBeDisabled();
+  expect(btn("nav-up")).toBeDisabled();
+  await user.clear(screen.getByTestId("search-query"));
+  await waitFor(() => expect(names()).toEqual(["C"]));
+  expect(btn("nav-back")).toBeEnabled();
+  expect(btn("nav-forward")).toBeEnabled();
+  expect(btn("nav-up")).toBeEnabled();
+});
+
+test("Close is the last control of the path bar", async () => {
+  await openDeep();
+  const close = btn("close-archive");
+  expect(close.parentElement).toHaveClass("pathbar");
+  expect(close.parentElement?.lastElementChild).toBe(close);
+  expect(close).toHaveClass("pathbar-close");
+});
+
 test("the buttons name themselves and their shortcuts", async () => {
   const user = await openDeep();
   expect(btn("nav-back")).toHaveAttribute("aria-label", "Back");
@@ -520,6 +593,7 @@ test("a foreign archive has the same buttons, .. row, crumbs and disabled states
   expect(fb("foreign-nav-back")).toBeDisabled();
   expect(fb("foreign-nav-forward")).toBeDisabled();
   expect(fb("foreign-nav-up")).toBeDisabled();
+  expect(fb("foreign-close").parentElement?.lastElementChild).toBe(fb("foreign-close"));
   expect(screen.queryByTestId("foreign-up-row")).toBeNull();
   expect(within(screen.getByTestId("foreign-crumbs")).getByTestId("crumb-root")).toHaveTextContent("deep.zip");
   const dive = async (name: string, expected: string[]) => {

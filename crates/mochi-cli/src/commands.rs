@@ -19,7 +19,7 @@ use mochi_core::health::{
     self, AnchorRef, CurrentHead, EvidenceCommand, EvidenceHead, EvidenceRecord, HealthPolicy,
     Inputs, EVIDENCE_SCHEMA,
 };
-use mochi_core::import::{import_into, ImportOptions, SourceKind, DEFAULT_MAX_TOTAL_BYTES};
+use mochi_core::import::{import_into, ImportOptions, SourceKind};
 use mochi_core::job::{CancellationToken, JobContext, NullProgress};
 use mochi_core::migrate::{self, MigrateOptions};
 use mochi_core::object::{ArchiveId, OsIds};
@@ -294,7 +294,7 @@ struct Imported {
 fn gather(
     inputs: &[std::path::PathBuf],
     tx: Transaction,
-    max_memory: Option<u64>,
+    max_bytes: Option<u64>,
     deleted: Vec<ArchivePath>,
     ctx: &JobContext<'_>,
 ) -> Result<Imported> {
@@ -308,7 +308,7 @@ fn gather(
         &named,
         tx,
         &ImportOptions {
-            max_total_bytes: max_memory.unwrap_or(DEFAULT_MAX_TOTAL_BYTES),
+            max_total_bytes: max_bytes,
         },
         ctx,
     )?;
@@ -438,13 +438,7 @@ pub fn create(env: &mut Env<'_>, a: &CreateArgs) -> Result<u8> {
         cancel: &cancel,
     };
     let (mut dir, name) = location(&a.archive)?;
-    let imported = gather(
-        &a.inputs,
-        Transaction::new(),
-        a.max_memory,
-        Vec::new(),
-        &ctx,
-    )?;
+    let imported = gather(&a.inputs, Transaction::new(), a.max_bytes, Vec::new(), &ctx)?;
     // The passphrases the key envelopes wrap the data key under: the named
     // sources, else a prompt asked twice. Nothing is created without one.
     let mut read = env.read.clone();
@@ -551,7 +545,7 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
             deleted.push(p);
         }
     }
-    let imported = gather(&a.inputs, tx, a.max_memory, deleted, &ctx)?;
+    let imported = gather(&a.inputs, tx, a.max_bytes, deleted, &ctx)?;
     let archive_id = w.archive_id();
     if imported.import.transaction.is_empty() {
         if let Some(t) = &truncation {
