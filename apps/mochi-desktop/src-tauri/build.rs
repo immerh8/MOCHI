@@ -81,6 +81,11 @@ fn main() {
         "find_query",
         "find_open_hit",
         "find_show_folder",
+        "window_minimize",
+        "window_toggle_maximize",
+        "window_close",
+        "window_start_drag",
+        "window_watch",
     ]);
     let windows = tauri_build::WindowsAttributes::new().static_vc_runtime(release);
     let attributes = tauri_build::Attributes::new()

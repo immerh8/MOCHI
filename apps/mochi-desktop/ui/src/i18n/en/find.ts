@@ -3,7 +3,6 @@
 // cover everything says so, and zero matches with anything uncovered is never "No matches".
 export const find = {
   "find.heading": "Find in archives",
-  "find.menuItem": "Find in archives…",
   "find.intro":
     "Search the file names inside every .mochi archive under the folders below. Only names are searched, not what is inside the files.",
   "find.dialogFolders": "Choose folders to search for MOCHI archives",

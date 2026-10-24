@@ -15,7 +15,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
-import { closeResultDetails, inNewWindow, openResultDetails } from "./_ui.js";
+import { closeResultDetails, inNewWindow, openResultDetails, revealAction } from "./_ui.js";
 
 // Set by wdio.conf.js (the d1_browse_fixtures directory).
 const fixtures = process.env.MOCHI_E2E_FIXTURES;
@@ -84,6 +84,8 @@ async function selectEntry(name) {
 // The panel opens below the fold of the 640 px test window: scroll to a
 // control before clicking it (the app also scrolls the panel into view).
 async function press(testId) {
+  // Extract sits in the title bar's More menu (release 0.9.10).
+  await revealAction(testId);
   const el = await $(`[data-testid="${testId}"]`);
   await el.scrollIntoView({ block: "center" });
   await el.click();

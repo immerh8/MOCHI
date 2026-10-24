@@ -5,7 +5,6 @@ import type { find as enFind } from "../en/find";
 // 搜索未覆盖全部范围时必须直说：有无法搜索的压缩文件时，不能只写“没有匹配”（spec 23.3 #8）。
 export const find = {
   "find.heading": "在压缩文件中查找",
-  "find.menuItem": "在压缩文件中查找…",
   "find.intro": "在下列文件夹中的每个 .mochi 压缩文件里查找文件名。只查找名称，不查找文件内容。",
   "find.dialogFolders": "选择要查找 MOCHI 压缩文件的文件夹",
   "find.foldersLabel": "要查找的文件夹",

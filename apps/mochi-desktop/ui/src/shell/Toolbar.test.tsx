@@ -73,6 +73,8 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
         return null;
       case "recent_archives":
         return [];
+      case "window_watch":
+        return { maximized: false, focused: true };
       case "get_crash_settings":
         return { enabled: false, include_details: false, entries: 0, bytes: 0 };
       case "get_update_settings":
@@ -139,22 +141,107 @@ async function openIt() {
   return { user, b };
 }
 
-test("with nothing open, the archive's buttons are off and More and Help are on", async () => {
+/** What a More menu item says: its label, without the key shown beside it. */
+const itemLabel = (b: HTMLElement) => b.querySelector(".menu-label")?.textContent ?? b.textContent;
+
+test("with nothing open, the archive's buttons are off and More, Find and Help are on", async () => {
   backend();
   render(<App />);
   await screen.findByTestId("start-screen");
   const bar = screen.getByRole("group", { name: "Actions" });
   for (const id of ARCHIVE_TOOLS) expect(within(bar).getByTestId(id), id).toBeDisabled();
   expect(within(bar).getByTestId("toolbar-more")).toBeEnabled();
+  expect(within(bar).getByTestId("toolbar-find")).toBeEnabled();
   expect(within(bar).getByTestId("toolbar-help")).toBeEnabled();
-  // Icons only: one or two words each are the accessible name (hidden text); the
-  // reason a button is off is its tooltip.
-  const names = ["Open", "New archive", "Add", "Extract", "Extract to…", "Test", "Remove", "Info", "More", "Help"];
+  // A calm bar (release 0.9.10): the primary actions only, icons only; one or two words
+  // each are the accessible name (hidden text); the reason a button is off is its tooltip.
+  const names = ["Open", "Add", "Extract to…", "Test", "Find", "More"];
   const buttons = within(bar).getAllByRole("button");
   expect(buttons.map((b) => b.textContent)).toEqual(names);
   for (const b of buttons) expect(b.querySelector(".sr-only")?.textContent, b.textContent ?? "").toBe(b.textContent);
   expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Open an archive first");
   expect(within(bar).getByRole("searchbox", { name: /Search names/ })).toBeDisabled();
+});
+
+test("the rarer actions moved off the bar are in More, each with its key", async () => {
+  const user = userEvent.setup();
+  backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  await user.click(screen.getByTestId("toolbar-more"));
+  const menu = document.getElementById("more-menu") as HTMLElement;
+  const keys = Object.fromEntries(
+    within(menu)
+      .getAllByRole("button")
+      .map((b) => [itemLabel(b), b.getAttribute("aria-keyshortcuts")]),
+  );
+  expect(keys).toMatchObject({
+    "New archive": "Control+N",
+    Extract: "Control+E",
+    Remove: "Delete",
+    Info: "Alt+Enter",
+    Help: "F1",
+  });
+  // The same buttons, test ids and states as before; they are menu items now.
+  for (const id of ["new-archive", "extract-all", "remove-entry", "toolbar-info", "toolbar-help"]) {
+    expect(within(menu).getByTestId(id), id).toHaveClass("menu-item");
+  }
+  expect(within(menu).getByTestId("extract-all")).toBeDisabled();
+  expect(within(menu).getByTestId("new-archive")).toBeEnabled();
+  // The key shown is not part of the item's name.
+  expect(within(menu).getByRole("button", { name: "New archive" })).toBe(screen.getByTestId("new-archive"));
+});
+
+test("one title bar: the open archive's name, the toolbar, and the window buttons", async () => {
+  backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  const bar = screen.getByTestId("titlebar");
+  expect(within(bar).getByRole("heading", { level: 1 })).toHaveTextContent(/^MOCHI$/);
+  expect(within(bar).getByRole("group", { name: "Actions" })).toBeInTheDocument();
+  expect(within(bar).getByRole("group", { name: "Window" })).toBeInTheDocument();
+  expect(document.title).toBe("MOCHI");
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("open-archive"));
+  await screen.findByText(/^3 items/);
+  expect(screen.getByTestId("window-title")).toHaveTextContent(/^tools\.mochi$/);
+  expect(document.title).toBe("tools.mochi - MOCHI");
+  // A ZIP file's name takes its place while it is on screen.
+  await user.click(screen.getByTestId("toolbar-more"));
+  await user.click(screen.getByTestId("menu-foreign"));
+  await screen.findByTestId("foreign-meta");
+  await waitFor(() => expect(screen.getByTestId("window-title")).toHaveTextContent(/^photos\.zip$/));
+});
+
+test("Ctrl+N, Ctrl+E, Alt+Enter and F1 reach the actions in More without opening it", async () => {
+  const { user, b } = await openIt();
+  await user.keyboard("{Alt>}{Enter}{/Alt}");
+  expect(screen.getByTestId("info-panel")).toBeVisible();
+  await user.keyboard("{Alt>}{Enter}{/Alt}");
+  expect(screen.getByTestId("info-panel")).not.toBeVisible();
+  await user.keyboard("{Control>}e{/Control}");
+  await screen.findByTestId("extract-panel");
+  expect(b.calls.find((c) => c.cmd === "plan_extract_default")?.args).toEqual({ handle: 3, seq: 1, keys: [] });
+  await user.keyboard("{F1}");
+  expect(screen.getByTestId("tool-sheet")).toBeVisible();
+  await waitFor(() => expect(document.activeElement).toBe(document.getElementById("help-heading")));
+  await user.keyboard("{F1}");
+  expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
+  await user.keyboard("{Control>}n{/Control}");
+  expect(await screen.findByRole("group", { name: "Create a new archive" })).toBeInTheDocument();
+  expect(document.getElementById("more-menu")).not.toBeVisible();
+});
+
+test("a key for an action that is off does nothing", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<App />);
+  await screen.findByTestId("start-screen");
+  await user.keyboard("{Control>}e{/Control}");
+  await user.keyboard("{Alt>}{Enter}{/Alt}");
+  expect(screen.queryByTestId("extract-panel")).toBeNull();
+  expect(b.cmds()).not.toContain("plan_extract_default");
+  expect(screen.getByTestId("toolbar-info")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("with an archive open the buttons are on; Remove waits for a selection and says why", async () => {
@@ -182,6 +269,7 @@ test("Add and Remove open the panels that were already there", async () => {
 
 test("Extract plans the whole version into a new folder; nothing is written", async () => {
   const { user, b } = await openIt();
+  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-panel");
   expect(b.calls.find((c) => c.cmd === "plan_extract_default")?.args).toEqual({ handle: 3, seq: 1, keys: [] });
@@ -215,13 +303,15 @@ test("Info shows and hides the details pane, which is closed to start with", asy
   const { user } = await openIt();
   const info = screen.getByTestId("toolbar-info");
   const panel = screen.getByTestId("info-panel");
-  expect(info).toHaveAttribute("aria-expanded", "false");
+  expect(info).toHaveAttribute("aria-pressed", "false");
   expect(panel).not.toBeVisible();
+  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(info);
-  expect(info).toHaveAttribute("aria-expanded", "true");
+  expect(info).toHaveAttribute("aria-pressed", "true");
   expect(panel).toBeVisible();
   // The archive's technical facts are in it, as a closed disclosure.
   expect(within(panel).getByTestId("archive-technical")).toHaveTextContent("archive ID");
+  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(info);
   expect(panel).not.toBeVisible();
 });
@@ -239,13 +329,17 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
   await user.click(more);
   expect(more).toHaveAttribute("aria-expanded", "true");
   expect(menu).toBeVisible();
-  expect(within(menu).getAllByRole("button").map((x) => x.textContent)).toEqual([
+  expect(within(menu).getAllByRole("button").map(itemLabel)).toEqual([
+    "New archive",
+    "Extract",
+    "Remove",
+    "Info",
     "Open and extract…",
     "Other formats…",
-    "Find in archives…",
     "Passphrases",
     "Repair",
     "Settings",
+    "Help",
   ]);
   await user.keyboard("{Escape}");
   expect(menu).not.toBeVisible();
@@ -277,25 +371,27 @@ test("More closes when the pointer goes down outside it", async () => {
   expect(screen.getByTestId("toolbar-more")).toHaveAttribute("aria-expanded", "false");
 });
 
-test("New archive opens the create dialog, and closing it gives focus back to the button", async () => {
+test("New archive opens the create dialog, and closing it gives focus back to More", async () => {
   const { user } = await openIt();
+  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(screen.getByTestId("new-archive"));
   const panel = await screen.findByRole("group", { name: "Create a new archive" });
   expect(panel.contains(document.activeElement)).toBe(true);
   await user.click(within(panel).getByTestId("write-close"));
   await waitFor(() => expect(screen.queryByTestId("write-panel")).toBeNull());
-  expect(document.activeElement).toBe(screen.getByTestId("new-archive"));
+  // The item sits in the closed menu; the menu's button takes focus instead.
+  expect(document.activeElement).toBe(screen.getByTestId("toolbar-more"));
 });
 
-test("Help opens the panel with the keyboard keys and the honest limit, and ? again closes it", async () => {
+test("Help opens the panel with the keyboard keys and the honest limit, and its close button closes it", async () => {
   const user = userEvent.setup();
   backend();
   render(<App />);
   await screen.findByTestId("start-screen");
   const help = screen.getByTestId("toolbar-help");
   expect(screen.getByTestId("tool-sheet")).not.toBeVisible();
+  await user.click(screen.getByTestId("toolbar-more"));
   await user.click(help);
-  expect(help).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByTestId("tool-sheet")).toBeVisible();
   await waitFor(() => expect(document.activeElement).toBe(document.getElementById("help-heading")));
   expect(screen.getByTestId("help-keys")).toHaveTextContent("Page Up, Page Down, Home and End jump");

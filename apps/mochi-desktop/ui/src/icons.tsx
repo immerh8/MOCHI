@@ -362,3 +362,71 @@ export function RefreshIcon() {
     </Icon>
   );
 }
+
+/** A folder with a magnifier: MOCHI Find (names inside many archives). */
+export function FindIcon() {
+  return (
+    <Icon>
+      <path d="M3.5 17.5v-11a2 2 0 0 1 2-2h3.7l2 2.2H17a2 2 0 0 1 2 2v1.6" />
+      <path d="M3.5 17.5a2 2 0 0 0 2 2h5" />
+      <circle cx="16" cy="15.5" r="3.6" />
+      <path d="m18.6 18.1 2.6 2.6" />
+    </Icon>
+  );
+}
+
+/**
+ * The title bar's window buttons, drawn as the thin 10-pixel glyphs of a
+ * Windows 11 caption (the same on Ubuntu). Decorative: the button is named.
+ */
+function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      className="caption-glyph"
+      viewBox="0 0 10 10"
+      width={10}
+      height={10}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      aria-hidden="true"
+      focusable="false"
+      shapeRendering="crispEdges"
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function MinimizeGlyph() {
+  return (
+    <Glyph>
+      <path d="M0 5.5h10" />
+    </Glyph>
+  );
+}
+
+export function MaximizeGlyph() {
+  return (
+    <Glyph>
+      <rect x="0.5" y="0.5" width="9" height="9" />
+    </Glyph>
+  );
+}
+
+export function RestoreGlyph() {
+  return (
+    <Glyph>
+      <rect x="0.5" y="2.5" width="7" height="7" />
+      <path d="M2.5 2.5v-2h7v7h-2" />
+    </Glyph>
+  );
+}
+
+export function CloseGlyph() {
+  return (
+    <Glyph>
+      <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" />
+    </Glyph>
+  );
+}

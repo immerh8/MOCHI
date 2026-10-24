@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, $$, expect } from "@wdio/globals";
-import { closeInfo, closeResultDetails, openInfo, openMore, openResultDetails } from "./_ui.js";
+import { closeInfo, closeResultDetails, openInfo, openMore, openResultDetails, revealAction } from "./_ui.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const foreign = path.resolve(here, "../../../../fixtures/foreign");
@@ -34,6 +34,8 @@ const assertNoBannedWording = async () => {
 
 // The panels open below the fold of the 640 px test window.
 async function press(testId) {
+  // Extract sits in the title bar's More menu (release 0.9.10).
+  await revealAction(testId);
   const el = await $(`[data-testid="${testId}"]`);
   await el.scrollIntoView({ block: "center" });
   await el.click();

@@ -71,6 +71,8 @@ function fakeBackend(opts: { open?: () => unknown } = {}) {
     if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;
     if (cmd === "recent_archives") return [];
+    // The title bar's window state (shell/TitleBar.test.tsx tests it).
+    if (cmd === "window_watch") return { maximized: false, focused: true };
     calls.push({ cmd, args: a });
     switch (cmd) {
       case "open_archive":
