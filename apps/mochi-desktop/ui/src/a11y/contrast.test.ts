@@ -42,7 +42,7 @@ test.each(["fg", "muted", "error", "accent"])("text colour --%s reaches 4.5:1 on
 });
 
 test("the status badges' text reaches 4.5:1 on their own fill", () => {
-  for (const fill of ["pass", "fail"]) {
+  for (const fill of ["pass", "fail", "close-hover"]) {
     const ratio = contrast(c("on-strong"), c(fill));
     expect(ratio, `white on --${fill} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
   }

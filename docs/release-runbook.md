@@ -198,7 +198,7 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 
 WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
 
-1. **Pass:** the window asks **What would you like to do?** with **Create archive** and **Open archive**; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed; the toolbar's *Add*, *Extract*, *Test*, *Remove*, *Find* and *Info* are greyed out. Press **Help** (?): **Pass:** one sentence says an archive is not a second copy. **Fail:** more than those two actions on the screen, jargon, or *backup/safe*.
+1. **Pass:** the window asks **What would you like to do?** with **Create archive** and **Open archive**; no word like *snapshot*, *commit*, *hash* on this screen; **Advanced** is closed; the title bar's *Add*, *Extract to…* and *Test* are greyed out (and in **More**, *Extract*, *Remove* and *Info*). Press **More > Help** (or F1): **Pass:** one sentence says an archive is not a second copy. **Fail:** more than those two actions on the screen, jargon, or *backup/safe*.
 2. Drag the scratch file `Note é & more.txt` from Explorer onto the window. **Pass:** the **Create a new archive** panel opens with the file listed under step 1 and the full path of `Note é & more.mochi` (next to the file) under step 2; **Options** is closed. Press **Create archive**. **Pass:** the result is one line, *Created Note é & more.mochi · 1 file · …* (parts are separated by " · "; the one-file note is behind **Details**), and **Show in folder** opens Explorer on that folder. Repeat the drag and create again: **Pass:** the second archive is `Note é & more (2).mochi`; the first is untouched (never replaced).
 3. Close the archive, then drag `Second é & copy.mochi` onto the window. **Pass:** it opens (no panel to add it to a new archive). Drag it together with a text file: **Pass:** both go to the create panel instead.
 4. **More > Open and extract…** → choose `Ärchive & ço.mochi`. **Pass:** the plan names a **new folder next to the archive** (`Ärchive & ço`), says it was made for this, and offers **Extract** and **Choose a different folder…**; press **Extract**. **Pass:** the files appear in that folder; **Show in folder** opens it. Press the toolbar's **Extract** again from the open archive: **Pass:** a second folder `Ärchive & ço (2)`; nothing from the first is overwritten. Press **Close** on that plan without extracting: **Pass:** the empty `(2)`-style folder is removed.
@@ -218,6 +218,19 @@ WebDriver (`tauri-driver`) cannot start a second process that the first forwards
 6. In window 2 press **Close** on the archive (back to the start screen), then double-click the first archive in Explorer. **Pass:** the empty window 2 is reused (no new window).
 7. With an encrypted archive: open it from a window that shows another archive. **Pass:** the new window asks for the passphrase (the passphrase prompt is in the new window, not the old one); a wrong passphrase leaves the prompt up; cancelling leaves an empty window you can close.
 8. Close each window with the **X** button, the last one last. **Pass:** the application exits after the last window; closing one window never closes another. Repeat 1 and 2 on Ubuntu (GNOME Files: double-click the `.mochi`; the second double-click opens a second window).
+
+### W-09c. The window's own title bar (release 0.9.10)
+
+WebDriver cannot press the mouse for the operating system's move or resize of a window, send Alt+F4 to the window manager, or see the shadow, so this one is yours. Do it on Windows 11 and on Ubuntu (GNOME).
+
+1. Start MOCHI. **Pass:** **one** bar at the top: the MOCHI icon, *MOCHI*, the buttons Open, Add, Extract to…, Test, Find, the search field, **More**, then **minimize**, **maximize**, **close** at the right; no system title bar above it. Windows 11: the window has its shadow, a thin border and rounded corners. Open `Ärchive & ço.mochi`: **Pass:** the bar reads `Ärchive & ço.mochi` (a long name ends in "…" and its tooltip is the whole name); the taskbar button reads `Ärchive & ço.mochi - MOCHI`.
+2. Drag the bar's empty part (beside the title, between Find and the search field): **Pass:** the window moves. Double-click the same place: **Pass:** it maximizes with no gap at the screen edges and the button shows the restore icon (tooltip **Restore**); double-click again: back to its size. Pressing a button or typing in the search field never moves the window. Windows: drag the bar to the top edge (maximizes) and to a side (snaps); Windows+Up/Down/Left/Right still work.
+3. Resize from each edge and corner: **Pass:** the pointer changes and the window resizes; it stops at its minimum size (720×480) with no sideways scroll bar.
+4. Hover **close**: **Pass:** red with a white ×; minimize and maximize hover grey. Press **minimize**: **Pass:** the window goes to the taskbar and comes back from it. Tab to the three buttons: **Pass:** each shows a focus ring and NVDA/Orca names it (*Minimize*, *Maximize* or *Restore*, *Close*); in Thai and Chinese the names are translated.
+5. With an extraction running, press **Alt+F4**, then (again with one running) the title bar's **close**. **Pass:** both close only that window and stop its job, as the system's close button did before; the last window's close exits the app.
+6. Click into another application: **Pass:** the bar's title and buttons dim; click back: they are drawn active again.
+7. Windows contrast theme (*Night sky*): **Pass:** the bar, its title and the three buttons are visible; hovering a button shows the highlight colour.
+8. Run **Extract here** from Explorer's menu (the compact window). **Pass:** the same bar with *MOCHI*, **minimize** and **close** only; it can be moved by its bar; **close** during a job stops the job.
 
 ---
 
@@ -306,6 +319,7 @@ Done by <you> on <date>
 | W-08 NVDA N-1 to N-5 |  | not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 | Orca: not run on client hardware for 1.0 |
 | W-09 contrast, 200 %, 1280×720 |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | W-09a step 7 drag out to Explorer / the file manager, Esc cleans up |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
+| W-09c the window's own title bar: move, double-click, edge resize, Alt+F4, shadow, contrast |  | not run | not run | not run |
 | X-1 start-up check off: no request |  | not run on client hardware for 1.0 | same | same |
 | X-2 on: one request |  | same | same | same |
 | X-3 network off message |  | same | same | same |

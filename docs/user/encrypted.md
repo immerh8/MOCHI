@@ -58,6 +58,8 @@ only the freshness check against a head you trust can catch that (R5 / B.2.10 it
 * **Restoring files** needs the key. There is no other path.
 
 What does work without the key: `mochi verify` (see below), and `mochi rekey ARCHIVE --list`.
+`mochi find` never uses a passphrase: it lists an Encrypted archive as not searched, says its
+search is incomplete, and exits 2.
 
 ## Verifying without the key
 

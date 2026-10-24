@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
 import {
+  clickAction,
   clickNewArchive,
   closeHelp,
   closeResultDetails,
@@ -181,7 +182,7 @@ describe("create and add", () => {
       if ((await row.$(".name").getText()) === "extra.txt") await row.click();
     }
     await expect($('[data-testid="details"]')).toBeExisting();
-    await $('[data-testid="remove-entry"]').click();
+    await clickAction("remove-entry");
     await expect($('[data-testid="delete-note"]')).toHaveText(
       expect.stringContaining("stays in the archive's history"),
     );
@@ -191,7 +192,7 @@ describe("create and add", () => {
     await expect($('[data-testid="write-panel"]')).not.toBeExisting();
     await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "2 versions");
 
-    await $('[data-testid="remove-entry"]').click();
+    await clickAction("remove-entry");
     await $('[data-testid="delete-confirm"]').click();
     await waitForStatus("Removed 1 item from this version");
     const status = await $('[data-testid="write-status"]').getText();

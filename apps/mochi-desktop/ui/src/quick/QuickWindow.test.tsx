@@ -497,3 +497,20 @@ test("a cancelled export says no archive was created", async () => {
   b.send({ event: "cancelled", action: "add" });
   expect(await screen.findByTestId("quick-result")).toHaveTextContent("Cancelled. No archive was created.");
 });
+
+test("the compact window has the same title bar, with Minimize and Close only; Close is the window's own close", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  const bar = screen.getByTestId("titlebar");
+  expect(within(bar).getByTestId("window-title")).toHaveTextContent(/^MOCHI$/);
+  const buttons = within(within(bar).getByRole("group", { name: "Window" })).getAllByRole("button");
+  expect(buttons.map((x) => x.getAttribute("aria-label"))).toEqual(["Minimize", "Close"]);
+  // Its only heading is the job's; the bar's title is plain text.
+  expect(within(bar).queryByRole("heading")).toBeNull();
+  await user.click(within(bar).getByRole("button", { name: "Close" }));
+  // The same request as the system's close button (Rust stops the job when the window goes).
+  expect(b.calls.map((c) => c.cmd)).toContain("window_close");
+  // The compact window is granted no maximize and no watch of the window.
+  expect(b.calls.map((c) => c.cmd)).not.toContain("window_watch");
+});

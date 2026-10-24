@@ -55,6 +55,7 @@ const SCHEMAS: &[&str] = &[
     "cli-rekey-list.schema.json",
     "cli-plan-saved.schema.json",
     "cli-migrate.schema.json",
+    "cli-find.schema.json",
 ];
 
 /// The R8 case spec §20.6's example is generated from.
@@ -420,7 +421,7 @@ fn readme_lists_every_schema_and_every_place_that_writes_json() {
     );
 }
 
-/// R7 O2 (owner decision 2026-10-14): each of the eleven command-output
+/// R7 O2 (owner decision 2026-10-14): each of the command-output
 /// schemas requires an in-band tag, a `const` named after its file
 /// (`cli-list.schema.json` -> `mochi-cli-list-v1`), in every branch of a
 /// `oneOf`. The eight frozen documents carry no such property.
@@ -453,7 +454,7 @@ fn command_output_schemas_require_their_in_band_tag() {
         }
         seen += 1;
     }
-    assert_eq!(seen, 12, "the twelve command-output schemas");
+    assert_eq!(seen, 13, "the thirteen command-output schemas");
 }
 
 // ---- enumerations ------------------------------------------------------------------
@@ -766,6 +767,36 @@ fn r8_read_only_outputs_validate() {
     for (schema, n) in &seen {
         assert!(*n >= 10, "{schema}: only {n} real outputs");
     }
+}
+
+/// `mochi find` over the whole R8 set: every case's names, the draft-2
+/// archives as unsupported, the Encrypted ones as not searched, the damaged
+/// ones with their codes. One real output, validated.
+#[test]
+fn r8_find_output_validates() {
+    let (code, v) = checked(
+        "cli-find.schema.json",
+        &[
+            "--no-local-history".to_owned(),
+            "find".into(),
+            "*".into(),
+            s(&r8()),
+        ],
+    );
+    let v = v.expect("find writes its report, not an error");
+    assert_eq!(code, 2, "R8 holds Encrypted, damaged and draft archives");
+    let c = &v["coverage"];
+    assert_eq!(c["complete"], false);
+    let reasons: BTreeSet<&str> = c["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["reason"].as_str().unwrap())
+        .collect();
+    for r in ["encrypted", "unsupported"] {
+        assert!(reasons.contains(r), "{r}: {reasons:?}");
+    }
+    assert!(c["archives_searched"].as_u64().unwrap() >= 40, "{c}");
 }
 
 // ---- temporary archives: everything that writes ----------------------------------
@@ -1170,6 +1201,39 @@ fn corpus() -> Vec<(&'static str, Value)> {
         assert_eq!(v["resealed"], pass.is_some());
         keep("cli-migrate.schema.json", v);
     }
+
+    // find (B.2.18): a complete search with hits, and an incomplete one
+    // with every kind of skip that carries a code and one that does not.
+    fs::create_dir_all(a.p("find-ok/sub")).unwrap();
+    fs::copy(a.p("a.mochi"), a.p("find-ok/sub/a.mochi")).unwrap();
+    let (code, v) = ok(
+        "cli-find.schema.json",
+        &a.g(&["find", "*", &a.s("find-ok")]),
+    );
+    assert_eq!(code, 0);
+    assert_eq!(v["coverage"]["complete"], true);
+    assert!(v["total_hits"].as_u64().unwrap() > 0, "{v}");
+    keep("cli-find.schema.json", v);
+    fs::create_dir_all(a.p("find-mixed")).unwrap();
+    fs::copy(a.p("a.mochi"), a.p("find-mixed/a.mochi")).unwrap();
+    fs::copy(
+        r8().join("legacy/draft2-core-history.mochi"),
+        a.p("find-mixed/draft.mochi"),
+    )
+    .unwrap();
+    fs::copy(
+        r8().join("enc-valid-history.mochi"),
+        a.p("find-mixed/enc.mochi"),
+    )
+    .unwrap();
+    fs::write(a.p("find-mixed/fake.mochi"), b"not an archive").unwrap();
+    let (code, v) = ok(
+        "cli-find.schema.json",
+        &a.g(&["find", "*.txt", &a.s("find-mixed")]),
+    );
+    assert_eq!(code, 2);
+    assert_eq!(v["coverage"]["archives_skipped"], 3, "{v}");
+    keep("cli-find.schema.json", v);
 
     // Evidence lines and the local head history.
     for e in fs::read_dir(a.p("state/evidence")).unwrap() {
@@ -2071,6 +2135,34 @@ fn targeted() -> Vec<(&'static str, &'static str, Value, &'static str, Pick)> {
             "/source_kept",
             json!(false),
             "the source is never removed",
+            any,
+        ),
+        (
+            "cli-find.schema.json",
+            "/coverage/content_searched",
+            json!(true),
+            "find searches names only",
+            any,
+        ),
+        (
+            "cli-find.schema.json",
+            "/coverage/folders_unreadable",
+            json!(1),
+            "complete means every folder was read",
+            |v| v["coverage"]["complete"] == true,
+        ),
+        (
+            "cli-find.schema.json",
+            "/coverage/complete",
+            json!(true),
+            "an archive left out makes the search incomplete",
+            |v| v["coverage"]["archives_skipped"] != 0,
+        ),
+        (
+            "cli-find.schema.json",
+            "/query/match",
+            json!("regex"),
+            "substring or glob only",
             any,
         ),
         (

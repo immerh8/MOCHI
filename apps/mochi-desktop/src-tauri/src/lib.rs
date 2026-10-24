@@ -19,6 +19,7 @@ pub mod find;
 pub mod folders;
 pub mod foreign;
 pub mod formats;
+pub mod frame;
 pub mod help;
 pub mod ipc;
 pub mod jobs;
@@ -73,6 +74,8 @@ pub fn run() -> Result<(), tauri::Error> {
     let setup_recents = Arc::clone(&recents);
     let setup_quick = Arc::clone(&quick);
     let event_quick = Arc::clone(&quick);
+    let frames = Arc::new(frame::Frames::default());
+    let event_frames = Arc::clone(&frames);
     tauri::Builder::default()
         // First, so that a second process hands over before anything else
         // starts. Its arguments are parsed and validated in Rust like the
@@ -98,8 +101,22 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(updates)
         .manage(recents)
         .manage(quick)
+        .manage(frames)
         .on_window_event(move |window, event| {
             let label = window.label();
+            // What the page's own title bar shows: maximize or restore, and
+            // whether the window is active (`frame`).
+            match event {
+                tauri::WindowEvent::Resized(_) => {
+                    let maximized = window.is_maximized().unwrap_or(false);
+                    event_frames.update(label, |s| s.maximized = maximized);
+                }
+                tauri::WindowEvent::Focused(focused) => {
+                    event_frames.update(label, |s| s.focused = *focused);
+                }
+                tauri::WindowEvent::Destroyed => event_frames.forget(label),
+                _ => {}
+            }
             match event {
                 // Items dragged from the file manager arrive here, in Rust.
                 // Only an archive window takes them (into its own staging):
@@ -193,7 +210,12 @@ pub fn run() -> Result<(), tauri::Error> {
             find::find_open_hit,
             find::find_show_folder,
             dragout::drag_out,
-            dragout::drag_out_foreign
+            dragout::drag_out_foreign,
+            frame::window_minimize,
+            frame::window_toggle_maximize,
+            frame::window_close,
+            frame::window_start_drag,
+            frame::window_watch
         ])
         .setup(move |app| {
             // The opt-in crash log (D7): off until the user turns it on.
@@ -282,9 +304,15 @@ fn build_archive_window<M: tauri::Manager<tauri::Wry>>(
         tauri::WebviewWindowBuilder::new(manager, label, tauri::WebviewUrl::default())
             .title("MOCHI")
             .inner_size(size.0, size.1)
-            // The toolbar is one row of buttons and the list needs room: below
-            // this the page would have to scroll sideways.
-            .min_inner_size(720.0, 480.0);
+            // The title bar is one row (title, toolbar, window buttons) and
+            // the list needs room: below this the page would have to scroll
+            // sideways.
+            .min_inner_size(720.0, 480.0)
+            // One title bar, drawn by the page (`frame`, release 0.9.10). The
+            // shadow keeps Windows 11's shadow, border and rounded corners;
+            // the edges still resize the window on Windows and Linux.
+            .decorations(false)
+            .shadow(true);
     if let Some((x, y)) = position {
         builder = builder.position(x, y);
     }
@@ -338,6 +366,9 @@ impl quick::WindowHost for Windows {
         .inner_size(width, height)
         .resizable(false)
         .maximizable(false)
+        // The same title bar as the archive windows, without maximize (`frame`).
+        .decorations(false)
+        .shadow(true)
         .center()
         .focused(true);
         // If it cannot be made the job still runs; its result is kept for a

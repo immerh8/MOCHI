@@ -512,12 +512,11 @@ function windowBackend() {
   };
 }
 
-test("the More menu opens Find; a hit opens its archive at the entry's folder with the entry selected", async () => {
+test("the title bar's Find opens Find; a hit opens its archive at the entry's folder with the entry selected", async () => {
   const user = userEvent.setup();
   const b = windowBackend();
   render(<Browser />);
-  await user.click(screen.getByTestId("toolbar-more"));
-  await user.click(screen.getByTestId("menu-find"));
+  await user.click(screen.getByTestId("toolbar-find"));
   expect(await screen.findByRole("heading", { name: "Find in archives" })).toBeVisible();
   // Opened from the menu, it does not scan on its own.
   expect(b.count("find_start")).toBe(0);

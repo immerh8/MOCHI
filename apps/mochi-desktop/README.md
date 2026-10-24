@@ -87,7 +87,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 
 ## Security decisions (each is a reason AGENTS.md asks for)
 
-- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder", "Add to archive" (`--add-now`) and "Add to archive..." (`--add`, the form below) run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it seven commands and nothing else: `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path), `allow-quick-close`, and, for the Add form, `allow-quick-choose-location` (Browse...: the save dialog is shown from Rust, which keeps the folder; the webview learns the folder's display text and the file name) and `allow-quick-add-submit` (OK: a plain file name, one of five format words, a level, and for `.mochi` only a passphrase that crosses once into a zeroizing type and a recovery percentage; Rust checks it, refuses a name that exists, and makes the archive in the folder it holds). The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
+- **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder", "Add to archive" (`--add-now`) and "Add to archive..." (`--add`, the form below) run in a small second window labelled `quick` (the same page, `#quick`). `capabilities/quick.json` grants it ten commands and nothing else (the last three are its title bar's Minimize, Close and move, below): `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path), `allow-quick-close`, and, for the Add form, `allow-quick-choose-location` (Browse...: the save dialog is shown from Rust, which keeps the folder; the webview learns the folder's display text and the file name) and `allow-quick-add-submit` (OK: a plain file name, one of five format words, a level, and for `.mochi` only a passphrase that crosses once into a zeroizing type and a recovery percentage; Rust checks it, refuses a name that exists, and makes the archive in the folder it holds). The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
 - **One window per archive (`src/windows.rs`).** Like WinRAR, an archive opened while the window already shows one (or runs a job, or has files staged) opens in a **new window**; an empty window (the start screen) is reused, and an archive that is already open is not opened twice: its window is brought forward (same file by device and inode on Linux, by canonical path on Windows). This holds for a double-click or "Open with MOCHI" (the single-instance forward), **Open**, **Recent**, and a `.mochi` or foreign archive dropped on a window. `Placement` (`windows::place`) is the pure decision; `Launches::open_in_window` and the shell's open apply it. Labels are `main` then `win-N`; a new window is the opener's size, cascaded 32 logical pixels down and right (`windows::cascade`), and its title is `<archive name> - MOCHI` (a plain-text title; the name is the user's file name). There is no "open in this window" switch in 1.0: close the archive first. What used to be a singleton for "the open archive" is now **per window**, keyed by the label Tauri reports for the calling webview (the `Win` argument of a command, never a value the page sends): the staged sources, drop listener, extract folder and Test and Repair tool (`windows::WindowState`); which archives, foreign archives, waiting passphrases and password retries (`Archives::open_as`, `Foreign::open_as`) and running jobs (`JobRegistry::start_for`) a window owns. Closing a window (`WindowEvent::Destroyed`) runs `WindowStates::release`: cancels its jobs (a write job holds the archive's writer lock for its length, so the lock goes with it), closes its archives (their readers) and forgets its passphrases; nothing of any other window is touched. Handles are still process-wide counters; a window cannot name another's state, but within one app a page that guessed another window's archive handle could read it (same trust domain, as before). Limits: 4 archives per window, 16 archives and 12 windows in all. The start-up update check is made by `main` only. `capabilities/main.json` grants `win-*` the same commands as `main` and nothing more; no window permission is granted, so a page cannot open windows. The release checklist (W-09b in `docs/release-runbook.md`) covers the multi-window behaviour that WebDriver cannot drive.
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
@@ -115,13 +115,41 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   `allow-clear-crash-log` (D7: the two crash-log switches, showing the log text, saving
   a copy through a save dialog that Rust shows, and deleting it; the log is a local file
   that only Rust opens, so these add no `fs`, `http`, or `dialog` permission and the CSP
-  is unchanged). All are the app's own commands, not plugin permissions. The commands are declared in
+  is unchanged). Also `allow-window-minimize`, `allow-window-toggle-maximize`,
+  `allow-window-close`, `allow-window-start-drag`, and `allow-window-watch` (release 0.9.10,
+  the window's own title bar; below). All are the app's own commands, not plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
   permission. No `fs`, `shell`, `http`, `process`, or `dialog` permission.
   `ci/check-invariants.sh` rule 10 refuses them; the E2E test fails if
   `allow-cancel-job` is removed (checked).
+- **One title bar (release 0.9.10, `src/frame.rs`, `ui/src/shell/TitleBar.tsx`).** Every
+  window is built undecorated (`decorations(false)`) with `shadow(true)`, which keeps
+  Windows 11's shadow, one-pixel border and rounded corners; the windowing library keeps
+  resize borders on the edges of an undecorated window on Windows and Linux, and the archive
+  windows keep their 720×480 minimum. The page draws one bar: the app icon, the title (the
+  archive's file name, untrusted text rendered as text and cut short with an ellipsis; the
+  native title stays `<name> - MOCHI` for the taskbar and `document.title` matches), the
+  toolbar, and minimize, maximize/restore and close (46 pixels wide, the full height of the
+  bar, Close red under the pointer; the same on Ubuntu). The buttons are five small commands
+  that act on **the calling window** (Tauri hands it to the command; the page names none):
+  `window_minimize`, `window_toggle_maximize` (a no-op on a window that may not be
+  maximized), `window_close`, `window_start_drag` (a press on the bar's empty part; the
+  second press of a double click toggles maximize instead, as Tauri's own drag region
+  does), and `window_watch` (the maximized and focused state now and on each change, over a
+  Channel, so the button shows restore or maximize and the bar dims when the window is
+  inactive). `core:window:default` and `core:window:allow-start-dragging` are **not**
+  granted, and no event permission is needed. `window_close` is `Window::close`, the same
+  request as the system's close button and Alt+F4 (`CloseRequested`, then `Destroyed`, where
+  `WindowStates::release` runs), so closing behaves exactly as before. The compact window
+  gets the same bar without maximize (`allow-window-minimize`, `allow-window-close`,
+  `allow-window-start-drag` only; it is neither resizable nor maximizable): one look for the
+  whole app, and its Close stops its job as the system's close did. Not provided: Windows
+  11's snap-layout flyout on hovering Maximize (it needs a native caption button); Windows +
+  arrow keys and dragging to a screen edge still snap. The release checklist (W-09c in
+  `docs/release-runbook.md`) covers what WebDriver cannot drive: dragging, edge resizing,
+  Alt+F4, the shadow and corners, and high contrast.
 - **The open dialog runs in Rust (D1).** `open_archive` shows the operating system's
   dialog from Rust (`tauri-plugin-dialog`, MIT OR Apache-2.0, registered for its Rust
   API only) and opens the chosen file itself. The webview never names a path, so no
@@ -270,7 +298,7 @@ record with a plain format is refused (`UNSUPPORTED_FEATURE`), and the window do
 
 ## MOCHI Find: search the names inside many archives
 
-"Find in archives" (More menu, Ctrl+Shift+F, Explorer's "Find in MOCHI archives" on folders and on a
+"Find in archives" (the title bar's Find button, Ctrl+Shift+F, Explorer's "Find in MOCHI archives" on folders and on a
 folder's background, a Linux folder launcher) searches the **file names** inside every `.mochi` under
 chosen folders. It reads names only, never file content. Code: `src-tauri/src/find.rs`, `ui/src/find/`.
 
@@ -308,8 +336,10 @@ chosen folders. It reads names only, never file content. Code: `src-tauri/src/fi
   launch); the window shows them as text, removes one by position, and opens or shows a hit by
   (scan number, archive position). Rust re-checks that the archive file is unchanged before opening it.
   Entry names are escaped `NameText`, rendered as text.
-* **There is no `mochi find` command.** Spec §23 fixes the 1.0 command line; a multi-archive search on the
-  command line would need a spec and plan change.
+* **`mochi find` is the same search on the command line** (owner decision 2026-10-24, spec Annex B.2.18,
+  D28). The walk, the per-archive listing, the classification of failures and the matcher live in
+  `mochi_core::find` (the folder tree in `storage::os::OsFindTree`); this module keeps the window's parts:
+  scopes, the session cache, the scan's state and events, and the IPC views.
 
 ## Jobs
 
@@ -523,6 +553,12 @@ dialog's own body do, with thin scroll bars):
   (`src/shell/Shell.tsx`, a portal into an empty element the window provides); outside the window
   (a component's own tests) the same buttons are drawn in place. The foreign browser draws its
   archive into the same area (`stage` slot) and its own Extract and Test into the same buttons.
+  Since 0.9.10 the toolbar lives in the window's title bar and keeps only Open, Add, Extract
+  to..., Test and Find (and the search field and More); the slots in `MENU_SLOTS` (New archive,
+  Extract, Remove) are drawn inside the More menu, where `ToolButton` renders as a menu item
+  with its key (Ctrl+N, Ctrl+E, Delete), with the same test id, state and action. Info
+  (Alt+Enter) and Help (F1) are More items too. Each key presses the very button the menu
+  shows, so it is on and off exactly when the button is.
 - **Where the wording went.** An archive is not a second copy, the keys and shortcuts: Help.
   What the format's check covers: the Test button's tooltip and the test result's Details.
   The rest is in the user guide (`docs/user`).
