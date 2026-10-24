@@ -996,6 +996,11 @@ pub use restore_unsupported::OsRestoreDir;
 mod source;
 pub use source::OsSourceTree;
 
+// ---- Find's folder tree (spec Annex B.2.18, D28) -----------------------------
+
+pub mod find;
+pub use find::OsFindTree;
+
 fn issue(issues: &mut Vec<AttributeIssue>, attribute: AttributeKind, reason: impl ToString) {
     issues.push(AttributeIssue {
         attribute,

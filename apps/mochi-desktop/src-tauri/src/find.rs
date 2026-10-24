@@ -1,25 +1,30 @@
 //! MOCHI Find: search the file names inside every `.mochi` archive under some
-//! folders (plan D5 extension; spec §19.1 discovery, §23.3 #8 coverage).
+//! folders (plan D5 extension; spec §19.1 discovery, §23.3 #8 coverage, Annex
+//! B.2.18 D28).
 //!
 //! # How it works
+//!
+//! The walk, the opening of each archive, the matching and the coverage are
+//! [`mochi_core::find`], shared with `mochi find` (spec B.2.18): the two give
+//! the same answers. This module adds what belongs to the window.
 //!
 //! * **Scopes.** The user picks folders (the shell's "Find in MOCHI archives",
 //!   the desktop entry, or the in-app picker). Rust holds the paths; the window
 //!   sees them as text to show and never sends one back.
 //! * **Scan** (a job: [`mochi_core::job::JobContext`] progress and
-//!   cancellation, forwarded over a `Channel` as [`FindEvent`]). One thread
-//!   walks the folders for `*.mochi` files; a bounded pool opens each archive
-//!   **read-only** through `mochi_core` ([`open_head`], which hash-verifies the
-//!   catalog image before it is opened, then [`search`] over the head with an
-//!   empty query). No file content is read or hashed. The entry names, kinds
-//!   and sizes of each archive's head snapshot are kept in memory.
+//!   cancellation, forwarded over a `Channel` as [`FindEvent`]).
+//!   [`Scan::run`] walks the folders for `*.mochi` files and opens each archive
+//!   **read-only** ([`mochi_core::publish::open_head`], which hash-verifies the
+//!   catalog image before it is opened, then a search of the head). No file
+//!   content is read or hashed.
 //! * **Cache.** Per-archive name lists live for the session, keyed by
 //!   (path, size, modified time). A new query is answered from memory; a new
 //!   scan re-reads only archives whose key changed. There is no on-disk cache.
-//! * **Query** ([`Finder::query`]): a name substring (ASCII/Unicode
-//!   case-insensitive, matched against the last path component), or a glob when
-//!   the text has `*` or `?` (matched against the whole component). Text with a
-//!   `/` is matched against the whole path inside the archive.
+//! * **Query** ([`Finder::query`], [`Matcher`]): a name substring
+//!   (ASCII/Unicode case-insensitive, matched against the last path
+//!   component), or a glob when the text has `*` or `?` (matched against the
+//!   whole component). Text with a `/` is matched against the whole path
+//!   inside the archive.
 //! * **Coverage** (§23.3 #8). Every result carries what was searched and what
 //!   was not: archives that are Encrypted (names cannot be read without the
 //!   passphrase), damaged, unreadable, not MOCHI archives, in an unsupported
@@ -40,17 +45,17 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use mochi_core::catalog::namespace::EntryKind;
-use mochi_core::job::{CancellationToken, JobContext, NullProgress, ProgressEvent, ProgressSink};
-use mochi_core::publish::{open_head, ReadOptions};
-use mochi_core::search::{search, Query, SnapshotScope};
-use mochi_core::storage::os::OsReadStorage;
-use mochi_core::{ErrorCode, MochiError};
+use mochi_core::find::{
+    Limit, Matcher, Outcome, Scan, ScanCache, Skip, Skipped, Stamp, MAX_ENTRIES_TOTAL,
+};
+use mochi_core::job::{CancellationToken, JobContext, ProgressEvent, ProgressSink};
+use mochi_core::publish::ReadOptions;
+use mochi_core::storage::os::find::{file_stamp, normalize_scopes};
+use mochi_core::storage::os::OsFindTree;
+use mochi_core::ErrorCode;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
@@ -62,30 +67,12 @@ use crate::ipc::{DialogText, EntryKindView, IpcError, NameText, OpenOutcome};
 use crate::jobs::Spawner;
 use crate::launch::Launches;
 
-/// Progress phase of the scan: `completed` is archives finished, `total` the
-/// archives found once the walk is over.
-pub const PHASE: &str = "find_scan";
+pub use mochi_core::find::{Limits, MAX_QUERY_BYTES, MAX_SCOPES, PHASE};
 
-/// Deepest folder level walked below a scope.
-pub const MAX_DEPTH: usize = 48;
-/// Most folders walked in one scan.
-pub const MAX_FOLDERS: u64 = 200_000;
-/// Most archives found in one scan.
-pub const MAX_ARCHIVES: usize = 20_000;
-/// Most names one archive may hold for Find (a bigger one is "too large").
-pub const MAX_ENTRIES_PER_ARCHIVE: usize = 1_000_000;
-/// Most names one scan holds in memory across all archives.
-pub const MAX_ENTRIES_TOTAL: usize = 3_000_000;
-/// Most scope folders.
-pub const MAX_SCOPES: usize = 64;
-/// Most workers opening archives at once.
-pub const MAX_WORKERS: usize = 8;
 /// Hits that cross IPC. More are counted (`total_hits`) and the UI says so.
 pub const MAX_HITS_SHOWN: usize = 1_000;
 /// Archives listed by name in the coverage; the rest are counted.
 pub const MAX_SKIPPED_SHOWN: usize = 200;
-/// The longest query accepted, in bytes.
-pub const MAX_QUERY_BYTES: usize = 1_024;
 /// Fewest milliseconds between two progress events (the last is always sent).
 const PROGRESS_EVERY: Duration = Duration::from_millis(120);
 
@@ -99,181 +86,6 @@ fn invalid(what: impl Into<String>) -> IpcError {
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     // Only plain data lives behind these locks; a panic elsewhere leaves it usable.
     m.lock().unwrap_or_else(|p| p.into_inner())
-}
-
-// ---- what is kept per archive --------------------------------------------
-
-/// What identifies one version of an archive file for the cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Stamp {
-    size: u64,
-    mtime: Option<SystemTime>,
-}
-
-impl Stamp {
-    fn of(meta: &std::fs::Metadata) -> Stamp {
-        Stamp {
-            size: meta.len(),
-            mtime: meta.modified().ok(),
-        }
-    }
-
-    fn modified_ms(&self) -> Option<i64> {
-        let d = self.mtime?.duration_since(UNIX_EPOCH).ok()?;
-        i64::try_from(d.as_millis()).ok()
-    }
-}
-
-struct Slot {
-    start: u32,
-    len: u32,
-    size: u64,
-    dir: bool,
-}
-
-/// The names of one archive's head snapshot: one byte arena and one slot per
-/// entry, in the catalog's path order.
-#[derive(Default)]
-pub struct ArchiveIndex {
-    names: Vec<u8>,
-    slots: Vec<Slot>,
-}
-
-impl ArchiveIndex {
-    fn push(&mut self, path: &[u8], size: u64, dir: bool) -> bool {
-        let (Ok(start), Ok(len)) = (u32::try_from(self.names.len()), u32::try_from(path.len()))
-        else {
-            return false;
-        };
-        if start.checked_add(len).is_none() {
-            return false;
-        }
-        self.names.extend_from_slice(path);
-        self.slots.push(Slot {
-            start,
-            len,
-            size,
-            dir,
-        });
-        true
-    }
-
-    /// Number of entries (files and folders).
-    pub fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
-    }
-
-    fn path(&self, slot: &Slot) -> &[u8] {
-        let start = slot.start as usize;
-        self.names
-            .get(start..start + slot.len as usize)
-            .unwrap_or_default()
-    }
-}
-
-/// Why an archive could not be searched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Skip {
-    /// The file does not start like a MOCHI archive.
-    NotMochi,
-    /// Encrypted: names are sealed without the passphrase, which Find never has.
-    Encrypted,
-    /// A draft or newer format this build does not read.
-    Unsupported { code: String },
-    /// Damaged, truncated, or otherwise refused by `mochi_core`.
-    Damaged { code: String, message: String },
-    /// Too many names to hold in memory.
-    TooLarge,
-    /// The file could not be opened or read.
-    Unreadable { message: String },
-}
-
-#[derive(Clone)]
-enum Outcome {
-    Indexed(Arc<ArchiveIndex>),
-    Skipped(Skip),
-}
-
-/// Open one archive read-only and list the names of its head snapshot. Only
-/// cancellation is an `Err`; every other failure is the archive's `Skip`.
-fn index_archive(path: &Path, cancel: &CancellationToken) -> Result<Outcome, MochiError> {
-    if !crate::route::has_mochi_magic(path) {
-        return Ok(Outcome::Skipped(Skip::NotMochi));
-    }
-    let src = match OsReadStorage::open(path) {
-        Ok(s) => s,
-        Err(e) => {
-            return Ok(Outcome::Skipped(Skip::Unreadable {
-                message: MochiError::from(e).message,
-            }))
-        }
-    };
-    // No keys: an Encrypted archive opens structurally and stays sealed.
-    let opts = ReadOptions::default();
-    let skip = |e: MochiError| match e.code {
-        ErrorCode::Cancelled => Err(e),
-        ErrorCode::KeyUnavailable => Ok(Outcome::Skipped(Skip::Encrypted)),
-        ErrorCode::UnsupportedFeature => Ok(Outcome::Skipped(Skip::Unsupported {
-            code: e.code.as_str().to_owned(),
-        })),
-        ErrorCode::IoError => Ok(Outcome::Skipped(Skip::Unreadable { message: e.message })),
-        code => Ok(Outcome::Skipped(Skip::Damaged {
-            code: code.as_str().to_owned(),
-            message: e.message,
-        })),
-    };
-    let head = match open_head(&src, &opts) {
-        Ok(h) => h,
-        Err(e) => return skip(e),
-    };
-    if head.descriptor.encrypted() && head.unlocked.is_none() {
-        return Ok(Outcome::Skipped(Skip::Encrypted));
-    }
-    let ctx = JobContext {
-        progress: &NullProgress,
-        cancel,
-    };
-    let result = match search(
-        &src,
-        &head,
-        SnapshotScope::Head,
-        &Query::default(),
-        &opts,
-        &ctx,
-    ) {
-        Ok(r) => r,
-        Err(e) => return skip(e),
-    };
-    if !result.coverage.complete() {
-        let reason = result
-            .coverage
-            .unavailable
-            .first()
-            .map(|u| u.error.clone())
-            .unwrap_or_else(|| {
-                MochiError::new(
-                    ErrorCode::CatalogInvalid,
-                    "the head snapshot was not covered",
-                )
-            });
-        return skip(reason);
-    }
-    if result.hits.len() > MAX_ENTRIES_PER_ARCHIVE {
-        return Ok(Outcome::Skipped(Skip::TooLarge));
-    }
-    let mut index = ArchiveIndex::default();
-    index.slots.reserve(result.hits.len());
-    for h in &result.hits {
-        let dir = h.kind == EntryKind::Directory;
-        if !index.push(h.path.as_stored(), h.logical_len, dir) {
-            return Ok(Outcome::Skipped(Skip::TooLarge));
-        }
-    }
-    Ok(Outcome::Indexed(Arc::new(index)))
 }
 
 // ---- the cache and one run -------------------------------------------------
@@ -291,7 +103,7 @@ pub struct Cache {
     inner: Mutex<CacheInner>,
 }
 
-impl Cache {
+impl ScanCache for Cache {
     fn get(&self, path: &Path, stamp: &Stamp) -> Option<Outcome> {
         let c = lock(&self.inner);
         match c.map.get(path) {
@@ -318,7 +130,9 @@ impl Cache {
         c.entries += n;
         c.map.insert(path.to_path_buf(), (stamp, outcome.clone()));
     }
+}
 
+impl Cache {
     /// Forget everything (the "Scan again" button).
     pub fn clear(&self) {
         let mut c = lock(&self.inner);
@@ -346,12 +160,14 @@ pub enum FindLimit {
     Archives,
 }
 
-#[derive(Default, Clone)]
-struct Walk {
-    folders: u64,
-    unreadable: u64,
-    links: u64,
-    limit: Option<FindLimit>,
+impl From<Limit> for FindLimit {
+    fn from(l: Limit) -> Self {
+        match l {
+            Limit::Depth => FindLimit::Depth,
+            Limit::Folders => FindLimit::Folders,
+            Limit::Archives => FindLimit::Archives,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -367,394 +183,29 @@ pub enum FindState {
     Failed,
 }
 
-struct Record {
-    path: PathBuf,
-    stamp: Stamp,
-    /// `None` while the archive waits to be opened.
-    outcome: Option<Outcome>,
-}
-
-struct RunInner {
-    records: Vec<Record>,
-    walk: Walk,
+struct Status {
     state: FindState,
     failure: Option<String>,
-    from_cache: u64,
 }
 
 /// One scan and what it found. The window refers to it by `id`.
 pub struct RunState {
     id: u32,
-    scopes: Vec<PathBuf>,
-    inner: Mutex<RunInner>,
-    found: AtomicUsize,
-    done: AtomicUsize,
-    held: AtomicUsize,
-    walk_done: AtomicBool,
+    scan: Scan,
+    status: Mutex<Status>,
 }
 
 impl RunState {
     fn new(id: u32, scopes: Vec<PathBuf>) -> Self {
         RunState {
             id,
-            scopes,
-            inner: Mutex::new(RunInner {
-                records: Vec::new(),
-                walk: Walk::default(),
+            scan: Scan::new(scopes),
+            status: Mutex::new(Status {
                 state: FindState::Running,
                 failure: None,
-                from_cache: 0,
             }),
-            found: AtomicUsize::new(0),
-            done: AtomicUsize::new(0),
-            held: AtomicUsize::new(0),
-            walk_done: AtomicBool::new(false),
         }
     }
-}
-
-/// Bounds of a scan (tests lower them).
-#[derive(Debug, Clone)]
-pub struct Limits {
-    pub depth: usize,
-    pub folders: u64,
-    pub archives: usize,
-    pub entries_total: usize,
-    pub workers: usize,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        let cpus = std::thread::available_parallelism().map_or(2, usize::from);
-        Limits {
-            depth: MAX_DEPTH,
-            folders: MAX_FOLDERS,
-            archives: MAX_ARCHIVES,
-            entries_total: MAX_ENTRIES_TOTAL,
-            workers: cpus.clamp(2, MAX_WORKERS),
-        }
-    }
-}
-
-fn is_archive_name(name: &std::ffi::OsStr) -> bool {
-    Path::new(name)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("mochi"))
-}
-
-/// Walk the scopes, registering each `.mochi` file and sending its record
-/// index to the workers. Symbolic links and junctions are counted, not followed.
-fn walk(
-    run: &RunState,
-    limits: &Limits,
-    ctx: &JobContext<'_>,
-    tx: &std::sync::mpsc::SyncSender<usize>,
-) {
-    let mut stats = Walk::default();
-    let mut stack: Vec<(PathBuf, usize)> =
-        run.scopes.iter().rev().map(|p| (p.clone(), 0)).collect();
-    'dirs: while let Some((dir, depth)) = stack.pop() {
-        if ctx.cancel.is_cancelled() {
-            break;
-        }
-        if stats.folders >= limits.folders {
-            stats.limit = Some(FindLimit::Folders);
-            break;
-        }
-        stats.folders += 1;
-        let Ok(read) = std::fs::read_dir(&dir) else {
-            stats.unreadable += 1;
-            continue;
-        };
-        let mut subdirs: Vec<PathBuf> = Vec::new();
-        let mut archives: Vec<(PathBuf, Stamp)> = Vec::new();
-        for entry in read {
-            let Ok(entry) = entry else {
-                stats.unreadable += 1;
-                continue;
-            };
-            let Ok(ft) = entry.file_type() else {
-                stats.unreadable += 1;
-                continue;
-            };
-            if ft.is_symlink() {
-                // A linked folder or file is not followed: it cannot loop, and
-                // the coverage says so.
-                if is_archive_name(&entry.file_name())
-                    || std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir())
-                {
-                    stats.links += 1;
-                }
-            } else if ft.is_dir() {
-                if depth >= limits.depth {
-                    stats.limit = Some(FindLimit::Depth);
-                } else {
-                    subdirs.push(entry.path());
-                }
-            } else if ft.is_file() && is_archive_name(&entry.file_name()) {
-                match entry.metadata() {
-                    Ok(meta) => archives.push((entry.path(), Stamp::of(&meta))),
-                    Err(_) => stats.unreadable += 1,
-                }
-            }
-        }
-        // Archives of a folder in name order, then its subfolders in name
-        // order: results appear in a steady order.
-        archives.sort_by(|a, b| a.0.cmp(&b.0));
-        for (path, stamp) in archives {
-            let idx = {
-                let mut inner = lock(&run.inner);
-                if inner.records.len() >= limits.archives {
-                    stats.limit = Some(FindLimit::Archives);
-                    break 'dirs;
-                }
-                inner.records.push(Record {
-                    path,
-                    stamp,
-                    outcome: None,
-                });
-                inner.records.len() - 1
-            };
-            run.found.fetch_add(1, Ordering::SeqCst);
-            ctx.report(PHASE, run.done.load(Ordering::SeqCst) as u64, None);
-            if tx.send(idx).is_err() {
-                break 'dirs;
-            }
-        }
-        subdirs.sort();
-        stack.extend(subdirs.into_iter().rev().map(|p| (p, depth + 1)));
-    }
-    lock(&run.inner).walk = stats;
-    run.walk_done.store(true, Ordering::SeqCst);
-}
-
-/// Open one registered archive (from the cache when its stamp is unchanged)
-/// and store the outcome.
-fn process(
-    cache: &Cache,
-    run: &RunState,
-    limits: &Limits,
-    ctx: &JobContext<'_>,
-    idx: usize,
-) -> Result<(), MochiError> {
-    ctx.check_cancelled()?;
-    let (path, stamp) = {
-        let inner = lock(&run.inner);
-        let Some(r) = inner.records.get(idx) else {
-            return Ok(());
-        };
-        (r.path.clone(), r.stamp)
-    };
-    let (mut outcome, cached) = match cache.get(&path, &stamp) {
-        Some(o) => (o, true),
-        None => (index_archive(&path, ctx.cancel)?, false),
-    };
-    if let Outcome::Indexed(ix) = &outcome {
-        let n = ix.len();
-        if run.held.fetch_add(n, Ordering::SeqCst).saturating_add(n) > limits.entries_total {
-            run.held.fetch_sub(n, Ordering::SeqCst);
-            outcome = Outcome::Skipped(Skip::TooLarge);
-        }
-    }
-    if !cached {
-        cache.put(&path, stamp, &outcome);
-    }
-    {
-        let mut inner = lock(&run.inner);
-        if cached {
-            inner.from_cache += 1;
-        }
-        if let Some(r) = inner.records.get_mut(idx) {
-            r.outcome = Some(outcome);
-        }
-    }
-    let done = run.done.fetch_add(1, Ordering::SeqCst) + 1;
-    let total = run
-        .walk_done
-        .load(Ordering::SeqCst)
-        .then(|| run.found.load(Ordering::SeqCst) as u64);
-    ctx.report(PHASE, done as u64, total);
-    Ok(())
-}
-
-/// Scan the run's scopes: one walking thread, `limits.workers` opening
-/// archives. `Err(CANCELLED)` if cancelled; what was found stays in `run`.
-pub fn scan(
-    cache: &Cache,
-    run: &RunState,
-    limits: &Limits,
-    ctx: &JobContext<'_>,
-) -> Result<(), MochiError> {
-    let (tx, rx) = sync_channel::<usize>(256);
-    let rx = Mutex::new(rx);
-    std::thread::scope(|s| {
-        for _ in 0..limits.workers.max(1) {
-            s.spawn(|| loop {
-                let next = lock(&rx).recv();
-                let Ok(idx) = next else { return };
-                if process(cache, run, limits, ctx, idx).is_err() {
-                    // Cancelled: drain without working so the walker never blocks.
-                    while lock(&rx).recv().is_ok() {}
-                    return;
-                }
-            });
-        }
-        walk(run, limits, ctx, &tx);
-        drop(tx);
-    });
-    // The walk is over even if it was cut short: report the final count.
-    let total = run.found.load(Ordering::SeqCst) as u64;
-    ctx.report(PHASE, run.done.load(Ordering::SeqCst) as u64, Some(total));
-    ctx.check_cancelled()
-}
-
-// ---- matching --------------------------------------------------------------
-
-/// What a query asks for. Names match as bytes of the stored path (O24); the
-/// only normalization is case folding, applied to the comparison only.
-#[derive(Debug, Clone)]
-pub struct Matcher {
-    kind: MatcherKind,
-    ignore_case: bool,
-    whole_path: bool,
-}
-
-#[derive(Debug, Clone)]
-enum MatcherKind {
-    Any,
-    Substring { raw: Vec<u8>, lower: String },
-    Glob(Vec<char>),
-}
-
-fn chars_of(bytes: &[u8], ignore_case: bool) -> Vec<char> {
-    match std::str::from_utf8(bytes) {
-        Ok(s) if ignore_case => s.chars().flat_map(char::to_lowercase).collect(),
-        Ok(s) => s.chars().collect(),
-        Err(_) => bytes
-            .iter()
-            .map(|&b| {
-                if ignore_case {
-                    char::from(b.to_ascii_lowercase())
-                } else {
-                    char::from(b)
-                }
-            })
-            .collect(),
-    }
-}
-
-/// `*` matches any run, `?` any one character; the pattern covers the whole text.
-fn glob(p: &[char], t: &[char]) -> bool {
-    let (mut pi, mut ti) = (0usize, 0usize);
-    let mut star: Option<usize> = None;
-    let mut mark = 0usize;
-    while ti < t.len() {
-        match p.get(pi) {
-            Some('*') => {
-                star = Some(pi);
-                mark = ti;
-                pi += 1;
-            }
-            Some(&c) if c == '?' || c == t[ti] => {
-                pi += 1;
-                ti += 1;
-            }
-            _ => match star {
-                Some(s) => {
-                    pi = s + 1;
-                    mark += 1;
-                    ti = mark;
-                }
-                None => return false,
-            },
-        }
-    }
-    while p.get(pi) == Some(&'*') {
-        pi += 1;
-    }
-    pi == p.len()
-}
-
-impl Matcher {
-    /// `text` is the user's query. Empty matches everything.
-    pub fn new(text: &str, ignore_case: bool) -> Matcher {
-        let text = text.trim();
-        let whole_path = text.contains('/');
-        let kind = if text.is_empty() {
-            MatcherKind::Any
-        } else if text.contains(['*', '?']) {
-            MatcherKind::Glob(chars_of(text.as_bytes(), ignore_case))
-        } else {
-            MatcherKind::Substring {
-                raw: text.as_bytes().to_vec(),
-                lower: text.to_lowercase(),
-            }
-        };
-        Matcher {
-            kind,
-            ignore_case,
-            whole_path,
-        }
-    }
-
-    /// Whether the stored path `path` matches.
-    pub fn matches(&self, path: &[u8]) -> bool {
-        let target = if self.whole_path {
-            path
-        } else {
-            path.rsplit(|&b| b == b'/').next().unwrap_or(path)
-        };
-        match &self.kind {
-            MatcherKind::Any => true,
-            MatcherKind::Glob(p) => glob(p, &chars_of(target, self.ignore_case)),
-            MatcherKind::Substring { raw, lower } => {
-                if !self.ignore_case {
-                    return contains(target, raw, false);
-                }
-                if lower.is_ascii() {
-                    return contains(target, lower.as_bytes(), true);
-                }
-                match std::str::from_utf8(target) {
-                    Ok(s) => s.to_lowercase().contains(lower.as_str()),
-                    Err(_) => contains(target, raw, false),
-                }
-            }
-        }
-    }
-}
-
-fn contains(hay: &[u8], needle: &[u8], fold: bool) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > hay.len() {
-        return false;
-    }
-    hay.windows(needle.len()).any(|w| {
-        if fold {
-            w.eq_ignore_ascii_case(needle)
-        } else {
-            w == needle
-        }
-    })
-}
-
-/// The matches in one archive: how many, and the first few as slot numbers.
-type Matched = (u64, Vec<u32>);
-
-/// (matches, the first `cap` of them as slot numbers) in one archive.
-fn matches_in(ix: &ArchiveIndex, m: &Matcher, cap: usize) -> Matched {
-    let mut count = 0u64;
-    let mut first = Vec::new();
-    for (i, slot) in ix.slots.iter().enumerate() {
-        if m.matches(ix.path(slot)) {
-            count += 1;
-            if first.len() < cap {
-                first.push(u32::try_from(i).unwrap_or(u32::MAX));
-            }
-        }
-    }
-    (count, first)
 }
 
 // ---- what crosses IPC ------------------------------------------------------
@@ -950,36 +401,6 @@ pub struct Finder {
     limits: Mutex<Option<Limits>>,
 }
 
-/// The folders as the scan walks them: absolute, existing, without a folder
-/// that lies inside another one in the list, and without duplicates.
-fn normalize(paths: Vec<PathBuf>, existing: &[PathBuf]) -> Vec<PathBuf> {
-    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let mut all: Vec<(PathBuf, PathBuf)> = existing
-        .iter()
-        .chain(paths.iter())
-        .filter(|p| p.is_absolute() && p.is_dir())
-        .map(|p| (p.clone(), key(p)))
-        .collect();
-    let mut out: Vec<(PathBuf, PathBuf)> = Vec::new();
-    // Shortest first, so a folder is kept before the ones inside it.
-    all.sort_by_key(|(_, k)| k.components().count());
-    for (p, k) in all {
-        if !out.iter().any(|(_, ok)| k.starts_with(ok)) {
-            out.push((p, k));
-        }
-    }
-    // Back to the order the user gave them.
-    let order = |p: &PathBuf| {
-        existing
-            .iter()
-            .chain(paths.iter())
-            .position(|x| x == p)
-            .unwrap_or(usize::MAX)
-    };
-    out.sort_by_key(|(p, _)| order(p));
-    out.into_iter().map(|(p, _)| p).collect()
-}
-
 fn scope_views(scopes: &[PathBuf]) -> Vec<FindScopeView> {
     scopes
         .iter()
@@ -1036,26 +457,17 @@ impl Finder {
             .current()
             .filter(|r| r.id == run)
             .ok_or_else(|| invalid("that result belongs to an earlier scan; search again"))?;
-        let index = {
-            let inner = lock(&current.inner);
-            match inner.records.get(archive as usize).map(|r| &r.outcome) {
-                Some(Some(Outcome::Indexed(ix))) => Arc::clone(ix),
-                _ => return Err(invalid("that archive is not in the scan")),
-            }
+        let index = match current.scan.record(archive as usize).map(|r| r.outcome) {
+            Some(Some(Outcome::Indexed(ix))) => ix,
+            _ => return Err(invalid("that archive is not in the scan")),
         };
-        let slot = index
-            .slots
-            .iter()
-            .find(|s| index.path(s) == stored.as_slice())
+        let entry = index
+            .find(&stored)
             .ok_or_else(|| invalid("that entry is not in the archive"))?;
         Ok(FoundEntry {
             key: hex(&stored),
             path: NameText::of(&stored),
-            kind: kind(if slot.dir {
-                EntryKind::Directory
-            } else {
-                EntryKind::File
-            }),
+            kind: kind(entry.kind),
         })
     }
 
@@ -1066,7 +478,7 @@ impl Finder {
     /// Replace the folders (what a shell launch does). Paths that are not
     /// existing absolute folders are left out; an error if none is left.
     pub fn set_scopes(&self, paths: Vec<PathBuf>) -> Result<Vec<FindScopeView>, IpcError> {
-        let scopes = normalize(paths, &[]);
+        let scopes = normalize_scopes(&paths, &[]);
         if scopes.is_empty() {
             return Err(invalid("none of the given paths is a folder"));
         }
@@ -1079,7 +491,7 @@ impl Finder {
     /// listed are left out; a listed folder that lies inside a new one is replaced.
     pub fn add_scopes(&self, paths: Vec<PathBuf>) -> Result<Vec<FindScopeView>, IpcError> {
         let mut st = lock(&self.inner);
-        let merged = normalize(paths, &st.scopes);
+        let merged = normalize_scopes(&paths, &st.scopes);
         if merged.len() > MAX_SCOPES {
             return Err(invalid(format!(
                 "at most {MAX_SCOPES} folders can be searched at once"
@@ -1144,10 +556,10 @@ impl Finder {
             fn drop(&mut self) {
                 let state = self.state.take().unwrap_or(FindState::Failed);
                 {
-                    let mut inner = lock(&self.run.inner);
-                    inner.state = state.clone();
-                    if state == FindState::Failed && inner.failure.is_none() {
-                        inner.failure = Some("the scan stopped unexpectedly".to_owned());
+                    let mut status = lock(&self.run.status);
+                    status.state = state.clone();
+                    if state == FindState::Failed && status.failure.is_none() {
+                        status.failure = Some("the scan stopped unexpectedly".to_owned());
                     }
                 }
                 self.sink.send(FindEvent::Finished {
@@ -1174,12 +586,18 @@ impl Finder {
             progress: &progress,
             cancel: token,
         };
-        let result = scan(&self.cache, run, &self.limits(), &ctx);
+        let result = run.scan.run(
+            &OsFindTree,
+            &ReadOptions::default(),
+            &self.limits(),
+            self.cache.as_ref(),
+            &ctx,
+        );
         finish.state = Some(match result {
             Ok(()) => FindState::Complete,
             Err(e) if e.code == ErrorCode::Cancelled => FindState::Cancelled,
             Err(e) => {
-                lock(&run.inner).failure = Some(e.message);
+                lock(&run.status).failure = Some(e.message);
                 FindState::Failed
             }
         });
@@ -1259,48 +677,26 @@ impl Finder {
             });
         }
         let matcher = Matcher::new(text, true);
-        // The searchable archives, in archive path order.
-        let mut sets: Vec<(usize, PathBuf, Stamp, Arc<ArchiveIndex>)> = {
-            let inner = lock(&run.inner);
-            inner
-                .records
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| match &r.outcome {
-                    Some(Outcome::Indexed(ix)) => {
-                        Some((i, r.path.clone(), r.stamp, Arc::clone(ix)))
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        sets.sort_by(|a, b| a.1.cmp(&b.1));
-        let per_archive = search_all(&sets, &matcher);
         let mut total = 0u64;
         let mut hits = Vec::new();
-        for ((idx, path, stamp, ix), (count, slots)) in sets.iter().zip(per_archive) {
-            total = total.saturating_add(count);
-            for s in slots {
+        for m in run.scan.query(&matcher, MAX_HITS_SHOWN) {
+            total = total.saturating_add(m.count);
+            for e in &m.entries {
                 if hits.len() >= MAX_HITS_SHOWN {
                     break;
                 }
-                let Some(slot) = ix.slots.get(s as usize) else {
+                let Some(entry) = m.names.get(*e) else {
                     continue;
                 };
-                let stored = ix.path(slot);
                 hits.push(FindHit {
                     run: run.id,
-                    archive: u32::try_from(*idx).unwrap_or(u32::MAX),
-                    archive_path: path.display().to_string(),
-                    archive_modified_ms: stamp.modified_ms(),
-                    path: NameText::of(stored),
-                    key: hex(stored),
-                    kind: kind(if slot.dir {
-                        EntryKind::Directory
-                    } else {
-                        EntryKind::File
-                    }),
-                    size: slot.size.to_string(),
+                    archive: u32::try_from(m.index).unwrap_or(u32::MAX),
+                    archive_path: m.path.display().to_string(),
+                    archive_modified_ms: m.stamp.modified_ms(),
+                    path: NameText::of(entry.path),
+                    key: hex(entry.path),
+                    kind: kind(entry.kind),
+                    size: entry.size.to_string(),
                 });
             }
         }
@@ -1315,8 +711,8 @@ impl Finder {
     /// scan, and the file's size and modified time unchanged.
     pub fn archive_for_open(&self, run: u32, archive: u32) -> Result<PathBuf, IpcError> {
         let (path, stamp) = self.record(run, archive)?;
-        match std::fs::metadata(&path) {
-            Ok(m) if m.is_file() && Stamp::of(&m) == stamp => Ok(path),
+        match file_stamp(&path) {
+            Ok(Some(s)) if s == stamp => Ok(path),
             Ok(_) => Err(invalid(
                 "this archive changed after it was scanned; scan again to find its current names",
             )),
@@ -1340,123 +736,71 @@ impl Finder {
             .current()
             .filter(|r| r.id == run)
             .ok_or_else(|| invalid("that result belongs to an earlier scan; search again"))?;
-        let inner = lock(&current.inner);
-        inner
-            .records
-            .get(archive as usize)
-            .map(|r| (r.path.clone(), r.stamp))
+        current
+            .scan
+            .record(archive as usize)
+            .map(|r| (r.path, r.stamp))
             .ok_or_else(|| invalid("that archive is not in the scan"))
     }
 }
 
-/// Match every set; large ones on several threads. One result per set, in order.
-fn search_all(sets: &[(usize, PathBuf, Stamp, Arc<ArchiveIndex>)], m: &Matcher) -> Vec<Matched> {
-    let names: usize = sets.iter().map(|s| s.3.len()).sum();
-    let workers = if names < 100_000 {
-        1
-    } else {
-        std::thread::available_parallelism()
-            .map_or(2, usize::from)
-            .clamp(1, MAX_WORKERS)
-    };
-    if workers == 1 {
-        return sets
-            .iter()
-            .map(|s| matches_in(&s.3, m, MAX_HITS_SHOWN))
-            .collect();
-    }
-    let next = AtomicUsize::new(0);
-    let out: Mutex<Vec<Option<Matched>>> = Mutex::new(vec![None; sets.len()]);
-    std::thread::scope(|s| {
-        for _ in 0..workers {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                let Some(set) = sets.get(i) else { return };
-                let r = matches_in(&set.3, m, MAX_HITS_SHOWN);
-                if let Some(slot) = lock(&out).get_mut(i) {
-                    *slot = Some(r);
-                }
-            });
-        }
-    });
-    out.into_inner()
-        .unwrap_or_else(|p| p.into_inner())
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
-fn skipped_view(idx: usize, r: &Record, skip: &Skip) -> FindSkippedView {
-    let (reason, code, message) = match skip {
-        Skip::NotMochi => (FindSkipReason::NotMochi, None, None),
-        Skip::Encrypted => (FindSkipReason::Encrypted, None, None),
-        Skip::Unsupported { code } => (FindSkipReason::Unsupported, Some(code.clone()), None),
-        Skip::Damaged { code, message } => (
+fn skipped_view(s: &Skipped) -> FindSkippedView {
+    let (reason, message) = match &s.skip {
+        Skip::NotMochi => (FindSkipReason::NotMochi, None),
+        Skip::Encrypted => (FindSkipReason::Encrypted, None),
+        Skip::Unsupported { .. } => (FindSkipReason::Unsupported, None),
+        Skip::Damaged { message, .. } => (
             FindSkipReason::Damaged,
-            Some(code.clone()),
             Some(NameText::of(message.as_bytes())),
         ),
-        Skip::TooLarge => (FindSkipReason::TooLarge, None, None),
+        Skip::TooLarge => (FindSkipReason::TooLarge, None),
         Skip::Unreadable { message } => (
             FindSkipReason::Unreadable,
-            None,
             Some(NameText::of(message.as_bytes())),
         ),
     };
     FindSkippedView {
-        archive: u32::try_from(idx).unwrap_or(u32::MAX),
-        path: r.path.display().to_string(),
+        archive: u32::try_from(s.index).unwrap_or(u32::MAX),
+        path: s.path.display().to_string(),
         reason,
-        code,
+        code: s.skip.code().map(|c| c.as_str().to_owned()),
         message,
     }
 }
 
 fn coverage_of(run: &RunState) -> FindCoverageView {
-    let inner = lock(&run.inner);
-    let mut searched = 0u64;
-    let mut pending = 0u64;
-    let mut names = 0u64;
-    let mut skipped_total = 0u64;
-    let mut skipped = Vec::new();
-    for (i, r) in inner.records.iter().enumerate() {
-        match &r.outcome {
-            None => pending += 1,
-            Some(Outcome::Indexed(ix)) => {
-                searched += 1;
-                names = names.saturating_add(ix.len() as u64);
-            }
-            Some(Outcome::Skipped(s)) => {
-                skipped_total += 1;
-                if skipped.len() < MAX_SKIPPED_SHOWN {
-                    skipped.push(skipped_view(i, r, s));
-                }
-            }
-        }
-    }
-    let complete = inner.state == FindState::Complete
-        && pending == 0
-        && skipped_total == 0
-        && inner.walk.unreadable == 0
-        && inner.walk.links == 0
-        && inner.walk.limit.is_none();
+    let c = run.scan.coverage();
+    let (state, failure) = {
+        let status = lock(&run.status);
+        (status.state.clone(), status.failure.clone())
+    };
     FindCoverageView {
         run: run.id,
-        state: inner.state.clone(),
-        complete,
-        folders_visited: inner.walk.folders,
-        folders_unreadable: inner.walk.unreadable,
-        links_not_followed: inner.walk.links,
-        limit: inner.walk.limit,
-        archives_found: inner.records.len() as u64,
-        archives_searched: searched,
-        archives_pending: pending,
-        archives_from_cache: inner.from_cache,
-        archives_skipped: skipped_total,
-        skipped,
-        names_searched: names,
-        scopes: run.scopes.iter().map(|p| p.display().to_string()).collect(),
-        failure: inner.failure.clone(),
+        complete: state == FindState::Complete && c.nothing_left_out(),
+        state,
+        folders_visited: c.folders_visited,
+        folders_unreadable: c.folders_unreadable,
+        links_not_followed: c.links_not_followed,
+        limit: c.limit.map(FindLimit::from),
+        archives_found: c.archives_found,
+        archives_searched: c.archives_searched,
+        archives_pending: c.archives_pending,
+        archives_from_cache: c.archives_from_cache,
+        archives_skipped: c.skipped.len() as u64,
+        skipped: c
+            .skipped
+            .iter()
+            .take(MAX_SKIPPED_SHOWN)
+            .map(skipped_view)
+            .collect(),
+        names_searched: c.names_searched,
+        scopes: run
+            .scan
+            .scopes()
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect(),
+        failure,
         content_not_searched: true,
     }
 }
@@ -1567,7 +911,8 @@ pub async fn find_show_folder(run: u32, archive: u32, win: Win) -> Result<(), Ip
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::time::SystemTime;
 
     use crate::browse::Archives;
     use mochi_core::manifest::Attributes;
