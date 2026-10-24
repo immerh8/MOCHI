@@ -507,18 +507,7 @@ export function ForeignBrowser() {
   const view = open && (
     <>
       <div className="pathbar">
-        <button
-          type="button"
-          className="icon-button"
-          data-testid="foreign-close"
-          aria-label={t("foreign.close")}
-          title={t("foreign.close")}
-          onClick={() => void doClose()}
-          disabled={busy || jobBusy}
-        >
-          <CloseIcon />
-        </button>
-        <NavButtons nav={folder} testIdPrefix="foreign-nav" />
+        <NavButtons nav={folder} testIdPrefix="foreign-nav" disabled={searching} />
         <div className="path-meta" data-testid="foreign-meta">
           <strong className="path-title" title={open.file_name}>
             {open.file_name}
@@ -559,6 +548,17 @@ export function ForeignBrowser() {
           label={t("foreign.currentFolder")}
           testId="foreign-crumbs"
         />
+        <button
+          type="button"
+          className="icon-button pathbar-close"
+          data-testid="foreign-close"
+          aria-label={t("foreign.close")}
+          title={t("foreign.close")}
+          onClick={() => void doClose()}
+          disabled={busy || jobBusy}
+        >
+          <CloseIcon />
+        </button>
       </div>
       {open && wizard && plan === null && (
         <ExtractToDialog count={selectedCount} onSubmit={submitTo} onClose={() => setWizard(false)} />

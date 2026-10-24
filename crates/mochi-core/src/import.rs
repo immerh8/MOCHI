@@ -24,25 +24,28 @@
 //! * **Attributes** are the promised set (O6), captured by the source tree.
 //! * **Failures.** A source entry that cannot be read fails the import:
 //!   nothing is committed, rather than a commit that silently lacks a file.
-//! * **Memory (concession).** [`crate::publish::Transaction::put_file`]
-//!   holds content in memory, so an import is bounded by
-//!   [`ImportOptions::max_total_bytes`] and refused above it
-//!   (`LIMIT_EXCEEDED`), never truncated. Streaming content into the writer
-//!   is a follow-up (`docs/c14-cli.md`).
+//!   A file is opened during the walk (so an unreadable one fails early) and
+//!   read again while the commit is written; a read failure then fails the
+//!   commit, which publishes nothing.
+//! * **Memory.** Content is not held: each file goes into the transaction
+//!   as a [`FileSource`] ([`Transaction::put_file_from`]) and the writer
+//!   reads it one chunk at a time, so an import's size is bounded by the
+//!   archive's limits, not by memory. [`ImportOptions::max_total_bytes`] is
+//!   an optional cap the caller chooses (`LIMIT_EXCEEDED` above it, never
+//!   truncated); there is none by default.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use crate::catalog::path::ArchivePath;
 use crate::error::{ErrorCode, MochiError, Result};
 use crate::job::JobContext;
 use crate::manifest::Attributes;
-use crate::publish::Transaction;
+use crate::publish::{FileSource, Transaction};
 
-/// Progress phase of [`import`]: `completed` is content bytes read.
+/// Progress phase of [`import`]: `completed` is the content bytes found so
+/// far (they are read later, by the commit's `content` phase).
 pub const IMPORT_PHASE: &str = "import";
-
-/// Default for [`ImportOptions::max_total_bytes`]: 2 GiB.
-pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 2 << 30;
 
 /// What a source entry is, without following links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,22 +78,18 @@ pub trait SourceTree {
     /// component, WTF-8 on Windows) and its handle. Any order.
     fn children(&self, node: &Self::Node) -> Result<Vec<(Vec<u8>, Self::Node)>>;
 
-    /// A file's whole content. More than `max` bytes is `LIMIT_EXCEEDED`.
-    fn read(&self, node: &Self::Node, max: u64) -> Result<Vec<u8>>;
+    /// A file's content, to be read while the commit is written. `len` is
+    /// the length [`SourceTree::meta`] reported. An implementation should
+    /// check here that the file can be opened, so that an unreadable file
+    /// fails the walk before anything is written.
+    fn source(&self, node: &Self::Node, len: u64) -> Result<Arc<dyn FileSource>>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImportOptions {
-    /// Most content bytes one import may hold in memory.
-    pub max_total_bytes: u64,
-}
-
-impl Default for ImportOptions {
-    fn default() -> Self {
-        ImportOptions {
-            max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
-        }
-    }
+    /// Most content bytes one import may add, if the caller sets a cap.
+    /// `None` (the default): no cap beyond the archive's own limits.
+    pub max_total_bytes: Option<u64>,
 }
 
 /// An entry that was not imported, and why.
@@ -178,18 +177,14 @@ pub fn import_into<T: SourceTree>(
         let meta = tree.meta(&node)?;
         match meta.kind {
             SourceKind::File => {
-                let left = opts.max_total_bytes.saturating_sub(out.bytes);
-                if meta.len > left {
-                    return Err(too_much(opts));
+                let bytes = out.bytes.saturating_add(meta.len);
+                if let Some(max) = opts.max_total_bytes.filter(|m| bytes > *m) {
+                    return Err(too_much(max));
                 }
-                let content = tree.read(&node, left)?;
-                let n = content.len() as u64;
-                if n > left {
-                    return Err(too_much(opts));
-                }
-                out.bytes += n;
+                let source = tree.source(&node, meta.len)?;
+                out.bytes = bytes;
                 out.files += 1;
-                out.transaction.put_file(path, content, meta.attributes);
+                out.transaction.put_file_from(path, source, meta.attributes);
                 ctx.report(IMPORT_PHASE, out.bytes, None);
             }
             SourceKind::Directory => {
@@ -214,13 +209,12 @@ pub fn import_into<T: SourceTree>(
     Ok(out)
 }
 
-fn too_much(opts: &ImportOptions) -> MochiError {
+fn too_much(max: u64) -> MochiError {
     MochiError::new(
         ErrorCode::LimitExceeded,
         format!(
-            "the input holds more than {} content bytes, the most one commit can hold in memory \
-             in this build; nothing was imported",
-            opts.max_total_bytes
+            "the input holds more than {max} content bytes, the cap chosen for this import; \
+             nothing was imported"
         ),
     )
 }
@@ -258,12 +252,22 @@ mod tests {
                 })
                 .collect())
         }
-        fn read(&self, n: &String, max: u64) -> Result<Vec<u8>> {
-            let data = self.0[n].1.clone();
-            if data.len() as u64 > max {
-                return Err(MochiError::new(ErrorCode::LimitExceeded, "too big"));
-            }
-            Ok(data)
+        fn source(&self, n: &String, _len: u64) -> Result<Arc<dyn FileSource>> {
+            Ok(Arc::new(Bytes(self.0[n].1.clone())))
+        }
+    }
+
+    struct Bytes(Vec<u8>);
+
+    impl FileSource for Bytes {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+        fn open(&self) -> Result<Box<dyn crate::publish::FileReader + '_>> {
+            unreachable!("the walk never reads content")
+        }
+        fn describe(&self) -> String {
+            "memory".into()
         }
     }
 
@@ -283,7 +287,7 @@ mod tests {
         ArchivePath::from_stored(s.as_bytes()).unwrap()
     }
 
-    fn run(t: &Mem, inputs: &[(&str, &str)], max: u64) -> Result<Import> {
+    fn run(t: &Mem, inputs: &[(&str, &str)], max: Option<u64>) -> Result<Import> {
         let cancel = CancellationToken::new();
         let ctx = JobContext {
             progress: &NullProgress,
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn walks_parents_first_and_skips_what_it_cannot_store() {
-        let i = run(&tree(), &[("src", "src"), ("top", "top")], 1 << 20).unwrap();
+        let i = run(&tree(), &[("src", "src"), ("top", "top")], None).unwrap();
         assert_eq!((i.files, i.directories, i.bytes), (3, 2, 6));
         let skipped: Vec<_> = i
             .skipped
@@ -322,17 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_destinations_and_oversized_inputs_are_refused() {
-        let e = run(&tree(), &[("top", "top"), ("top", "src/b.txt")], 1 << 20).unwrap_err();
+    fn duplicate_destinations_and_inputs_over_a_chosen_cap_are_refused() {
+        let e = run(&tree(), &[("top", "top"), ("top", "src/b.txt")], None).unwrap_err();
         assert_eq!(e.code, ErrorCode::InvalidArgument);
-        let e = run(&tree(), &[("src", "src")], 4).unwrap_err();
+        let e = run(&tree(), &[("src", "src")], Some(4)).unwrap_err();
         assert_eq!(e.code, ErrorCode::LimitExceeded);
-        assert!(run(&tree(), &[("src", "src")], 5).is_ok());
+        assert!(run(&tree(), &[("src", "src")], Some(5)).is_ok());
     }
 
     #[test]
     fn an_unreadable_entry_fails_the_whole_import() {
-        let e = run(&tree(), &[("gone", "missing")], 1 << 20).unwrap_err();
+        let e = run(&tree(), &[("gone", "missing")], None).unwrap_err();
         assert_eq!(e.code, ErrorCode::IoError);
     }
 }

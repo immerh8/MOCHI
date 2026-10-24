@@ -17,9 +17,19 @@ export type FolderNavState = {
 
 /**
  * Back, Forward and Up, beside the path bar. Disabled (never hidden) when
- * they cannot act: Up at the root, Back and Forward without history.
+ * they cannot act: Up at the root, Back and Forward without history, all
+ * three while `disabled` (search results are on screen).
  */
-export function NavButtons({ nav, testIdPrefix }: { nav: FolderNavState; testIdPrefix: string }) {
+export function NavButtons({
+  nav,
+  testIdPrefix,
+  disabled = false,
+}: {
+  nav: FolderNavState;
+  testIdPrefix: string;
+  /** All three off, e.g. while search results (not a folder) are on screen. */
+  disabled?: boolean;
+}) {
   return (
     <div className="nav-buttons" role="group" aria-label={t("browser.navGroup")}>
       <button
@@ -28,7 +38,7 @@ export function NavButtons({ nav, testIdPrefix }: { nav: FolderNavState; testIdP
         data-testid={`${testIdPrefix}-back`}
         aria-label={t("browser.navBack")}
         title={t("browser.navBackTip")}
-        disabled={!nav.canBack}
+        disabled={disabled || !nav.canBack}
         onClick={nav.back}
       >
         <BackIcon />
@@ -39,7 +49,7 @@ export function NavButtons({ nav, testIdPrefix }: { nav: FolderNavState; testIdP
         data-testid={`${testIdPrefix}-forward`}
         aria-label={t("browser.navForward")}
         title={t("browser.navForwardTip")}
-        disabled={!nav.canForward}
+        disabled={disabled || !nav.canForward}
         onClick={nav.forward}
       >
         <ForwardIcon />
@@ -50,7 +60,7 @@ export function NavButtons({ nav, testIdPrefix }: { nav: FolderNavState; testIdP
         data-testid={`${testIdPrefix}-up`}
         aria-label={t("browser.navUp")}
         title={t("browser.navUpTip")}
-        disabled={nav.path.length === 0}
+        disabled={disabled || nav.path.length === 0}
         onClick={nav.up}
       >
         <UpIcon />

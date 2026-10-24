@@ -9,19 +9,25 @@
 //!   surrogates survive. Attributes: `READONLY`, `HIDDEN`, `SYSTEM`,
 //!   `ARCHIVE` and mtime. No POSIX attributes.
 //!
-//! Reads are not taken from a snapshot of the source: a file that changes
-//! while it is read is stored as read (as `tar` and `zip` do). Its length is
-//! what was read, never the earlier `stat`.
+//! Reads are not taken from a snapshot of the source: a file is opened during
+//! the walk (to fail early when it cannot be) and read, one chunk at a time,
+//! while the commit is written. A file that changes before or while it is
+//! read is stored as read (as `tar` and `zip` do); its length is what was
+//! read, never the earlier `stat`. The TAR-compatible profile writes the
+//! length first, so there a changed length fails the commit (nothing is
+//! published).
 
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::catalog::path::ArchivePath;
 use crate::error::{ErrorCode, MochiError, Result};
 use crate::import::{SourceKind, SourceMeta, SourceTree};
 use crate::manifest::{Attributes, Mtime};
+use crate::publish::{FileReader, FileSource};
 
 /// The local filesystem as an import source.
 #[derive(Debug, Default, Clone, Copy)]
@@ -177,22 +183,63 @@ impl SourceTree for OsSourceTree {
         Ok(out)
     }
 
-    fn read(&self, node: &PathBuf, max: u64) -> Result<Vec<u8>> {
-        let file = fs::File::open(node).map_err(|e| io(node, e))?;
-        let mut buf = Vec::new();
-        file.take(max.saturating_add(1))
-            .read_to_end(&mut buf)
-            .map_err(|e| io(node, e))?;
-        if buf.len() as u64 > max {
-            return Err(MochiError::new(
-                ErrorCode::LimitExceeded,
-                format!(
-                    "{} grew past the import limit while it was read",
-                    node.display()
-                ),
-            ));
+    fn source(&self, node: &PathBuf, len: u64) -> Result<Arc<dyn FileSource>> {
+        // Opened and closed again: holding a handle per file would exhaust
+        // descriptors on a large tree.
+        fs::File::open(node).map_err(|e| io(node, e))?;
+        Ok(Arc::new(OsFile {
+            path: node.clone(),
+            len,
+        }))
+    }
+}
+
+/// One local file, read when the commit is written.
+#[derive(Debug, Clone)]
+pub struct OsFile {
+    path: PathBuf,
+    len: u64,
+}
+
+impl OsFile {
+    /// The file at `path`, expected to hold `len` bytes. Nothing is opened.
+    pub fn new(path: PathBuf, len: u64) -> Self {
+        OsFile { path, len }
+    }
+}
+
+struct OsReader<'a> {
+    path: &'a Path,
+    file: fs::File,
+}
+
+impl FileReader for OsReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        loop {
+            match self.file.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(io(self.path, e)),
+            }
         }
-        Ok(buf)
+    }
+}
+
+impl FileSource for OsFile {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn open(&self) -> Result<Box<dyn FileReader + '_>> {
+        let file = fs::File::open(&self.path).map_err(|e| io(&self.path, e))?;
+        Ok(Box::new(OsReader {
+            path: &self.path,
+            file,
+        }))
+    }
+
+    fn describe(&self) -> String {
+        self.path.display().to_string()
     }
 }
 

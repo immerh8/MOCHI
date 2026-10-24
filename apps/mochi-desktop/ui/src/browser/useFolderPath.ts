@@ -62,38 +62,49 @@ export function useFolderPath() {
     [],
   );
 
+  // Up, Back and Forward do nothing (not even clear the selection) when they
+  // cannot act: at the root, or with no history that way. Each takes its
+  // target from the state it updates, so two presses in one render cannot
+  // both act on the same (stale) entry.
   const up = useCallback(
     (fromList = true) => {
+      if (s.path.length === 0) return;
       go(s.path.slice(0, -1), fromList);
     },
     [go, s.path],
   );
 
   const back = useCallback(() => {
-    const to = s.back.at(-1);
-    if (to === undefined) return;
+    if (s.back.length === 0) return;
     changedRef.current();
-    setS((p) => ({
-      path: to,
-      back: p.back.slice(0, -1),
-      forward: [...p.forward, p.path],
-      reveal: cameOutOf(p.path, to),
-      focusList: true,
-    }));
-  }, [s.back]);
+    setS((p) => {
+      const to = p.back.at(-1);
+      if (to === undefined) return p;
+      return {
+        path: to,
+        back: p.back.slice(0, -1),
+        forward: [...p.forward, p.path],
+        reveal: cameOutOf(p.path, to),
+        focusList: true,
+      };
+    });
+  }, [s.back.length]);
 
   const forward = useCallback(() => {
-    const to = s.forward.at(-1);
-    if (to === undefined) return;
+    if (s.forward.length === 0) return;
     changedRef.current();
-    setS((p) => ({
-      path: to,
-      back: [...p.back, p.path],
-      forward: p.forward.slice(0, -1),
-      reveal: cameOutOf(p.path, to),
-      focusList: true,
-    }));
-  }, [s.forward]);
+    setS((p) => {
+      const to = p.forward.at(-1);
+      if (to === undefined) return p;
+      return {
+        path: to,
+        back: [...p.back, p.path].slice(-MAX_HISTORY),
+        forward: p.forward.slice(0, -1),
+        reveal: cameOutOf(p.path, to),
+        focusList: true,
+      };
+    });
+  }, [s.forward.length]);
 
   /** A different archive or snapshot: back to the root with no history. */
   const reset = useCallback(() => {

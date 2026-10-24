@@ -38,8 +38,8 @@ use mochi_core::job::JobContext;
 use mochi_core::keys::KeySession;
 use mochi_core::object::OsIds;
 use mochi_core::publish::{
-    ArchiveWriter, CommitOutcome, PublishDurability, ReadOptions, TailRepair, Transaction,
-    WriterOptions,
+    ArchiveWriter, CommitOutcome, FileSource, PublishDurability, ReadOptions, TailRepair,
+    Transaction, WriterOptions,
 };
 use mochi_core::storage::os::{OsDir, OsSourceTree};
 use mochi_core::{ErrorCode, MochiError, Result};
@@ -115,8 +115,8 @@ impl SourceTree for Tree {
         self.os.children(node)
     }
 
-    fn read(&self, node: &PathBuf, max: u64) -> Result<Vec<u8>> {
-        self.os.read(node, max)
+    fn source(&self, node: &PathBuf, len: u64) -> Result<Arc<dyn FileSource>> {
+        self.os.source(node, len)
     }
 }
 
