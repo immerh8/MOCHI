@@ -32,6 +32,7 @@ pub mod damage;
 pub mod descriptor;
 pub mod error;
 pub mod exit;
+pub mod find;
 pub mod gc;
 pub mod health;
 pub mod image;

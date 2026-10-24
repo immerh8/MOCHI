@@ -143,9 +143,7 @@ launcher has no `MimeType`, on purpose** (owner decision): registering `inode/di
 `python3-nautilus`, GNOME Files users use Find in archives... inside MOCHI (More menu, Ctrl+Shift+F);
 `sudo apt install python3-nautilus` adds the right-click entry after Files restarts
 (`nautilus -q`). `smoke-deb.sh` checks all four files and that the launcher has no `MimeType`;
-`smoke-deb-desktop.sh` checks that `mimeinfo.cache` never names it. There is no `mochi find` command:
-spec §23 fixes the 1.0 command surface, so a multi-archive search on the command line needs a
-spec and plan change.
+`smoke-deb-desktop.sh` checks that `mimeinfo.cache` never names it. On the command line, `mochi find PATTERN FOLDER…` runs the same search (spec Annex B.2.18).
 
 **A loaded DLL cannot be replaced.** Explorer keeps a shell extension loaded, so the
 installer never overwrites it: the file name carries the app version, the registration

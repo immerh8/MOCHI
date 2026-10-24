@@ -46,6 +46,7 @@ holds the shared definitions.
 | `cli-rekey-list.schema.json` | `rekey --list` | `rekey` | `schema: "mochi-cli-rekey-list-v1"` | frozen at the 1.0 flip (W20) |
 | `cli-plan-saved.schema.json` | `gc plan --output`, `repair plan --output`, with `--json` | `gc_plan`, `repair_plan` | `schema: "mochi-cli-plan-saved-v1"` | frozen at the 1.0 flip (W20) |
 | `cli-migrate.schema.json` | `migrate` | `migrate_cmd` | `schema: "mochi-cli-migrate-v1"` | frozen at the 1.0 flip (W20) |
+| `cli-find.schema.json` | `find` | `find_cmd` | `schema: "mochi-cli-find-v1"` | frozen when written (B.2.18, 2026-10-24) |
 
 **Frozen** means R7's rule applies: adding an error code is allowed (it appends to
 `error-code` in `common.schema.json`); any other change is a new identifier (a new
@@ -57,7 +58,9 @@ until the flip they were tagged and checked but not frozen. At the flip (1.0, pl
 W20) each tag became a frozen identifier, and a later change is a `-v2` tag and a new
 file. `cli-migrate.schema.json` is the twelfth: `mochi migrate` is new at the flip, so
 it was frozen as it was written. The eight earlier frozen documents received no tag and
-no new field.
+no new field. `cli-find.schema.json` is the thirteenth command output: `mochi find`
+(spec Annex B.2.18, D28, 2026-10-24) came after the flip, carries its tag
+`mochi-cli-find-v1` the same way, and was frozen as it was written.
 
 A consumer that validates an output should use the schema of the tool version that
 wrote it (`tool.version` in a report): a newer tool may emit an error code an older

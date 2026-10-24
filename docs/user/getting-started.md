@@ -85,11 +85,26 @@ What each proves is in [verification.md](verification.md).
 
 ```bash
 mochi search photos.mochi a.txt          # names containing "a.txt"; prints its coverage
+mochi find report ~/Archives             # names containing "report" in every archive under a folder
+mochi find '*.pdf' ~/Archives ~/Desktop  # a pattern for the whole name; several folders
 mochi dump-index photos.mochi            # read-only: row counts per catalog table
 ```
 
 `search` states how many snapshots it searched; file content is not searched, and
 `--content` exits 4.
+
+`find` looks for `.mochi` files under the folders you name (any depth; links are not
+followed), opens each read-only and searches the file and folder names of its newest version.
+It prints one line per match, `ARCHIVE: PATH`, then what it covered. Plain text matches
+anywhere in a name, ignoring case; with `*` or `?` it is a pattern for the whole name (quote it
+so the shell does not expand it); with a `/` it is matched against the whole path inside the
+archive. Archives it cannot search are listed with the reason: **encrypted** ones (their names
+need the passphrase, and `find` never asks for one: use `mochi search` on that archive with
+`--passphrase-file`), damaged or unreadable ones, files that are not MOCHI archives, and
+archives from before 1.0 (convert them with `mochi migrate`). Then the result says
+`coverage INCOMPLETE` instead of "no matches", and the exit code is 2; when everything was
+searched it is 0, whether or not anything matched. `find` does not check the archives: use
+`mochi verify` for that. It writes nothing.
 
 The desktop app can also search the names inside **many** archives at once: **More > Find in
 archives…** (Ctrl+Shift+F), or **Find in MOCHI archives** on folders in Explorer, Dolphin, Nemo or (with the
@@ -97,7 +112,7 @@ archives…** (Ctrl+Shift+F), or **Find in MOCHI archives** on folders in Explor
 searches the file names of its newest version. A name like `*.pdf` works as a pattern. Archives it
 cannot search (encrypted ones, since their names need the passphrase; damaged or unreadable ones;
 files that are not MOCHI archives) and folders it cannot read are listed, and the result then says
-**Search incomplete** instead of "No matches". There is no `mochi` command for this.
+**Search incomplete** instead of "No matches". `mochi find` is the same search on the command line.
 
 ## Options for protection
 

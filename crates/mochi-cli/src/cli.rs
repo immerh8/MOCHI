@@ -3,7 +3,8 @@
 //! * Built: `create`, `append`, `list`, `get`, `snapshot list`, `snapshot
 //!   retain`/`expire`/`release`, `search`, `verify`, `fsck`, `restore-test`,
 //!   `checkpoint`, `compact`, `migrate`, `gc plan`, `gc apply`, `repair plan`,
-//!   `repair apply`, `rekey`, `dump-index`, `health`.
+//!   `repair apply`, `rekey`, `dump-index`, `health`, `find` (spec Annex
+//!   B.2.18, D28).
 //! * In 1.0 scope but not built yet: exit 3 with `NOT_IMPLEMENTED` (a
 //!   development-build condition, never a success). Their arguments are
 //!   accepted and ignored, so the refusal names the command. No command is in
@@ -290,6 +291,21 @@ pub struct SearchArgs {
     /// evidence (exit 2).
     #[arg(long)]
     pub require_complete: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FindArgs {
+    /// The name to look for. Plain text matches anywhere in an entry's last
+    /// path component, ignoring case (`invoice` finds `docs/Invoice-3.PDF`);
+    /// with `*` or `?` it is a pattern for the whole last component
+    /// (`*.pdf`); with a `/` it is matched against the whole path inside the
+    /// archive (`docs/inv`). Quote it so the shell does not expand it.
+    pub pattern: String,
+    /// Folders to search. Every `.mochi` file under them is opened read-only
+    /// and the names of its newest version are searched. Links below a
+    /// folder are not followed (the result says how many were not).
+    #[arg(required = true, num_args = 1.., value_name = "FOLDER")]
+    pub folders: Vec<PathBuf>,
 }
 
 /// Verification levels (spec §20.1).
@@ -580,6 +596,17 @@ pub enum Command {
     Rekey(RekeyArgs),
     /// Dump the catalog of a commit, table by table (read-only).
     DumpIndex(DumpIndexArgs),
+    /// Find entries by name in every archive under some folders (read-only).
+    ///
+    /// Searches the names of the newest version of each `.mochi` file found;
+    /// file content is not searched and nothing is verified. Archives that
+    /// cannot be searched are listed with the reason: Encrypted ones (find
+    /// takes no passphrase), damaged, unreadable, not MOCHI, or in a format
+    /// this build does not read. Exit 0 when every archive found was
+    /// searched, whatever matched; 2 when anything was left out, so zero
+    /// matches is then not proof that no such name exists; 3 for a bad
+    /// invocation.
+    Find(FindArgs),
 
     /// Post-1.0 (Preservation profile): exits 4 in this release line.
     Inventory(PendingArgs),
@@ -628,6 +655,7 @@ impl Command {
             Command::Gc(GcCommand::Apply(_)) => "gc apply",
             Command::Rekey(_) => "rekey",
             Command::DumpIndex(_) => "dump-index",
+            Command::Find(_) => "find",
             Command::Inventory(_) => "inventory",
             Command::Split(_) => "split",
             Command::Join(_) => "join",
@@ -659,6 +687,7 @@ impl Command {
             | Command::Verify(_)
             | Command::Fsck(_)
             | Command::DumpIndex(_)
+            | Command::Find(_)
             | Command::Health(_)
             | Command::RestoreTest(_)
             | Command::Checkpoint(_)
