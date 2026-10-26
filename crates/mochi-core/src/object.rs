@@ -166,6 +166,20 @@ pub fn build_object(
     limits: &Limits,
 ) -> Result<EncodedObject> {
     let stored = codec::encode_object(content, params, protection, limits)?;
+    finish_object(content, params, protection, stored, ids)
+}
+
+/// The rest of [`build_object`] for a frame already made by
+/// `codec::encode_object` (the writer's encode-ahead workers make it on
+/// another thread). The ID is drawn here, so a caller that finishes objects
+/// in order draws IDs in the same order as [`build_object`].
+pub fn finish_object(
+    content: &DecodedBytes,
+    params: &EncodeParams,
+    protection: Protection,
+    stored: StoredObject,
+    ids: &mut dyn IdSource,
+) -> Result<EncodedObject> {
     let record = ObjectRecord {
         id: ObjectId(ids.next_id()?),
         encoding: params.encoding,

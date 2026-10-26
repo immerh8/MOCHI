@@ -30,6 +30,7 @@ pub mod compact;
 pub mod copies;
 pub mod damage;
 pub mod descriptor;
+mod encode_ahead;
 pub mod error;
 pub mod exit;
 pub mod find;

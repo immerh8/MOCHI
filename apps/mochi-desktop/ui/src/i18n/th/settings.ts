@@ -1,10 +1,15 @@
 import type { Catalogue } from "../types";
 import type { settings as enSettings } from "../en/settings";
-// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
+// Settings (plan D7): language, compression speed (0.9.11), and the opt-in crash log. Nothing is ever sent anywhere.
 export const settings = {
   "settings.languageHeading": "ภาษา",
   "settings.languageLabel": "ภาษาที่แสดง",
   "settings.languageNote": "มีผลทันทีและจำไว้บนคอมพิวเตอร์เครื่องนี้ ชื่อไฟล์และโฟลเดอร์ในไฟล์บีบอัดจะไม่ถูกแปล",
+  "settings.speedHeading": "ความเร็ว",
+  "settings.speedAllCores": "บีบอัดด้วยแกนประมวลผลทุกแกน ({n}): เร็วขึ้นสำหรับไฟล์และโฟลเดอร์ขนาดใหญ่",
+  "settings.speedNote": "ปิด: ใช้แกนเดียว ทำให้คอมพิวเตอร์ตอบสนองได้ดีขึ้นระหว่างงานที่ใช้เวลานาน ไฟล์บีบอัดที่ได้จะเหมือนกันทั้งสองแบบ มีผลตั้งแต่งานถัดไป",
+  "settings.speedLoadFailed": "อ่านการตั้งค่าความเร็วไม่สำเร็จ",
+  "settings.speedSaveFailed": "เปลี่ยนการตั้งค่าความเร็วไม่สำเร็จ",
   "settings.heading": "การตั้งค่า",
   "settings.crashHeading": "รายงานการขัดข้อง",
   "settings.crashPolicy":

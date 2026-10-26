@@ -56,6 +56,8 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
         return recents;
       case "window_watch":
         return { maximized: false, focused: true };
+      case "get_speed_settings":
+        return { all_cores: true, cores: 4 };
       case "get_update_settings":
         return {
           check_on_start: false,

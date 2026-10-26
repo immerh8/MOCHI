@@ -1814,6 +1814,7 @@ where
         .and_then(|v| v.profile_inference.as_ref())
         .is_some_and(|i| i.descriptor_reconstructed);
     let wopts = WriterOptions {
+        threads: None,
         chunk_size: plan.writer_parameters.map(|p| p.chunk_size),
         zstd_level: plan.writer_parameters.map(|p| p.zstd_level),
         record_time: false,

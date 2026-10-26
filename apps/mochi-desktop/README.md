@@ -117,7 +117,8 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   that only Rust opens, so these add no `fs`, `http`, or `dialog` permission and the CSP
   is unchanged). Also `allow-window-minimize`, `allow-window-toggle-maximize`,
   `allow-window-close`, `allow-window-start-drag`, and `allow-window-watch` (release 0.9.10,
-  the window's own title bar; below). All are the app's own commands, not plugin permissions. The commands are declared in
+  the window's own title bar; below). Also `allow-get-speed-settings` and
+  `allow-set-speed-settings` (release 0.9.11, *Settings → Speed*; below). All are the app's own commands, not plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
@@ -443,6 +444,19 @@ how to translate or add one is `ui/src/i18n/README.md`. A key that does not exis
   `formatNumber`, never a hard-coded locale.
 - Each translation must have exactly the English keys and the same `{placeholders}`
   (`tsc` and `i18n.test.ts`), and the §23.3 banned words are checked per language.
+
+## Speed: compressing on every core (release 0.9.11)
+
+Writes (Create, Add, the Explorer "Add to archive" verbs) pass
+`WriterOptions::threads` from `src-tauri/src/speed.rs`: by default `None`,
+every processor core up to 8, so `mochi-core` reads, hashes and compresses
+file content on worker threads (`docs/benchmarks/c14-threads.md`: 3.2× on one
+512 MiB file with 4 cores). *Settings → Speed* (`ui/src/settings/Speed.tsx`)
+turns it down to one core, which leaves the computer more responsive during a
+long job. The archive is the same bytes either way, so the choice is not
+recorded in it. Rust saves the choice in `compression-settings.json` next to the
+crash-log settings and reads it at start, before any window can write; a
+missing or damaged file means every core.
 
 ## Crash reports (plan D7): opt-in, local, never sent
 

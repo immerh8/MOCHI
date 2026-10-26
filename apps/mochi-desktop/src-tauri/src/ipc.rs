@@ -1611,6 +1611,16 @@ pub struct ForeignTestReport {
 //
 // Opt-in and local: nothing is sent anywhere (`crashlog` module docs).
 
+/// How many processor cores a write may use to compress (release 0.9.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct SpeedSettingsView {
+    /// Compress with every core (at most 8). On by default.
+    pub all_cores: bool,
+    /// The cores "every core" means on this computer.
+    pub cores: u32,
+}
+
 /// The crash-log switches and what the log holds now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]

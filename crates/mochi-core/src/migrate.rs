@@ -363,6 +363,7 @@ where
     }));
 
     let wopts = WriterOptions {
+        threads: None,
         chunk_size: Some(chunk_size),
         zstd_level: Some(zstd_level),
         record_time: false,

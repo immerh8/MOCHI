@@ -55,6 +55,8 @@ fn main() {
         "check_for_update",
         "get_crash_settings",
         "set_crash_settings",
+        "get_speed_settings",
+        "set_speed_settings",
         "read_crash_log",
         "export_crash_log",
         "clear_crash_log",
