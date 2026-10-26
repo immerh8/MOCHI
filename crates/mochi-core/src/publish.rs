@@ -2391,19 +2391,35 @@ impl std::fmt::Debug for FileContent {
     }
 }
 
+/// The first step a [`read_piece`] buffer grows by: most source files are
+/// far smaller than a chunk, and zero-filling a whole chunk-sized buffer for
+/// each of them dominated committing many small files.
+const READ_PIECE_STEP: usize = 64 * 1024;
+
 /// Fill `buf` from `reader` up to `want` bytes (fewer only at the end).
+/// The buffer grows as data arrives (doubling from [`READ_PIECE_STEP`]), so
+/// a small file costs a small buffer; a buffer that already holds a whole
+/// piece (a later chunk of a large file) is reused at full size.
 fn read_piece(reader: &mut dyn FileReader, buf: &mut Vec<u8>, want: usize) -> Result<()> {
+    let mut step = if buf.capacity() >= want {
+        want
+    } else {
+        READ_PIECE_STEP.min(want)
+    };
     buf.clear();
-    buf.resize(want, 0);
     let mut filled = 0;
     while filled < want {
+        if filled == buf.len() {
+            buf.resize(filled.saturating_add(step).min(want), 0);
+            step = step.saturating_mul(2);
+        }
         let n = reader.read(&mut buf[filled..])?;
         if n == 0 {
             break;
         }
         filled = filled
             .checked_add(n)
-            .filter(|f| *f <= want)
+            .filter(|f| *f <= buf.len())
             .ok_or_else(|| {
                 MochiError::new(
                     ErrorCode::IoError,
@@ -5539,6 +5555,88 @@ impl<S: Storage> Drop for ArchiveWriter<S> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Hands out `data` at most `max` bytes per call.
+    struct Trickle {
+        data: Vec<u8>,
+        at: usize,
+        max: usize,
+    }
+
+    impl FileReader for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+            let n = buf.len().min(self.max).min(self.data.len() - self.at);
+            buf[..n].copy_from_slice(&self.data[self.at..self.at + n]);
+            self.at += n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_piece_grows_with_the_data_and_splits_exact_pieces() {
+        let want = 8 * 1024 * 1024;
+        // A small file does not get a chunk-sized buffer.
+        let mut buf = Vec::new();
+        let mut r = Trickle {
+            data: b"abc".to_vec(),
+            at: 0,
+            max: usize::MAX,
+        };
+        read_piece(&mut r, &mut buf, want).unwrap();
+        assert_eq!(buf, b"abc");
+        assert!(
+            buf.capacity() <= 2 * READ_PIECE_STEP,
+            "capacity {}",
+            buf.capacity()
+        );
+
+        // Sizes around the growth steps, read in odd-sized pieces, split into
+        // `piece`-sized parts exactly as before.
+        for len in [
+            0,
+            1,
+            READ_PIECE_STEP - 1,
+            READ_PIECE_STEP,
+            READ_PIECE_STEP + 1,
+            3 * READ_PIECE_STEP + 7,
+            2 * want + 5,
+        ] {
+            let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            for max in [997, usize::MAX] {
+                let mut r = Trickle {
+                    data: data.clone(),
+                    at: 0,
+                    max,
+                };
+                let mut buf = Vec::new();
+                let mut out = Vec::new();
+                loop {
+                    read_piece(&mut r, &mut buf, want).unwrap();
+                    if buf.is_empty() {
+                        break;
+                    }
+                    assert!(buf.len() == want || out.len() + buf.len() == len);
+                    out.extend_from_slice(&buf);
+                }
+                assert_eq!(out, data, "len {len}, max {max}");
+            }
+        }
+    }
+
+    #[test]
+    fn read_piece_refuses_a_source_that_overreports() {
+        struct Liar;
+        impl FileReader for Liar {
+            fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+                Ok(buf.len() + 1)
+            }
+        }
+        let mut buf = Vec::new();
+        assert_eq!(
+            read_piece(&mut Liar, &mut buf, 1024).unwrap_err().code,
+            ErrorCode::IoError
+        );
+    }
     use super::*;
 
     #[test]
