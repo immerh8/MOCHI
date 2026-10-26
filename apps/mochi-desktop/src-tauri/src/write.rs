@@ -708,6 +708,7 @@ impl Services {
             read: read.clone(),
             zstd_level: preset.zstd_level(),
             record_time: true,
+            threads: crate::speed::writer_threads(),
             profile: (tar_compatible || encrypted || recovery_percent.is_some()).then_some(
                 Profile {
                     tar_compatible,
@@ -862,6 +863,7 @@ fn writer_options(read: ReadOptions) -> WriterOptions {
     WriterOptions {
         read,
         record_time: true,
+        threads: crate::speed::writer_threads(),
         ..WriterOptions::default()
     }
 }

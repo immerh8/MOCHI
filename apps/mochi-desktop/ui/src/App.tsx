@@ -4,6 +4,7 @@ import { Help } from "./help/Help";
 import { Updates } from "./update/Updates";
 import { CrashReports } from "./settings/CrashReports";
 import { Language } from "./settings/Language";
+import { Speed } from "./settings/Speed";
 import { useLocale } from "./i18n";
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
           settings: (
             <CrashReports>
               <Language />
+              <Speed />
               <Updates />
             </CrashReports>
           ),

@@ -213,6 +213,17 @@ pub struct WriterOptions {
     /// is what every product surface uses; a value above the reader defaults
     /// is `LIMIT_EXCEEDED`. The passphrases come from `read.keys`.
     pub kdf: Option<KdfParams>,
+    /// Threads that read, hash and compress file content ahead of the
+    /// writer (release 0.9.11). `None`: the processor count, at most 8;
+    /// `Some(1)`: everything on the calling thread. Writer policy: the
+    /// archive written is byte for byte the same for every value.
+    pub threads: Option<usize>,
+}
+
+/// The thread count [`WriterOptions::threads`] `None` stands for: the
+/// processor count, at most 8.
+pub fn default_writer_threads() -> usize {
+    crate::encode_ahead::default_threads()
 }
 
 /// Write-path deduplication (spec §9.4, §9.5; plan C9). A chunk whose
@@ -2400,7 +2411,11 @@ const READ_PIECE_STEP: usize = 64 * 1024;
 /// The buffer grows as data arrives (doubling from [`READ_PIECE_STEP`]), so
 /// a small file costs a small buffer; a buffer that already holds a whole
 /// piece (a later chunk of a large file) is reused at full size.
-fn read_piece(reader: &mut dyn FileReader, buf: &mut Vec<u8>, want: usize) -> Result<()> {
+pub(crate) fn read_piece(
+    reader: &mut dyn FileReader,
+    buf: &mut Vec<u8>,
+    want: usize,
+) -> Result<()> {
     let mut step = if buf.capacity() >= want {
         want
     } else {
@@ -2813,6 +2828,8 @@ pub struct ArchiveWriter<S: Storage> {
     /// with a put also writes one TAR stream (Annex B.2.9 D19).
     tar: bool,
     dedup: Dedup,
+    /// Encode-ahead threads ([`WriterOptions::threads`]).
+    threads: usize,
     /// Dedup index over the head (see [`Dedup`]); `None` until first used.
     dedup_index: Option<HashMap<DedupKey, ObjectId>>,
     poisoned: Option<String>,
@@ -3129,6 +3146,10 @@ impl<S: Storage> ArchiveWriter<S> {
             needs_directory_sync: true,
             tar,
             dedup,
+            threads: opts
+                .threads
+                .unwrap_or_else(crate::encode_ahead::default_threads)
+                .max(1),
             dedup_index: None,
             poisoned: None,
             audit: Vec::new(),
@@ -3453,6 +3474,10 @@ impl<S: Storage> ArchiveWriter<S> {
                         needs_directory_sync: false,
                         tar,
                         dedup,
+                        threads: opts
+                            .threads
+                            .unwrap_or_else(crate::encode_ahead::default_threads)
+                            .max(1),
                         dedup_index: None,
                         poisoned: None,
                         audit,
@@ -3977,331 +4002,388 @@ impl<S: Storage> ArchiveWriter<S> {
         }
         let mut region: Option<DataRegion> = None;
 
-        // Step 3: content.
-        ctx.report(phase::CONTENT, 0, Some(total));
-        for entry in &tx.entries {
-            ctx.check_cancelled()?;
-            match entry {
+        // Step 3: content. With more than one thread and at least two chunks
+        // of content, the files are read, hashed and compressed ahead on
+        // worker threads (`encode_ahead`); the loop below takes the pieces in
+        // order and writes exactly what the one-thread path writes.
+        let piece = usize::try_from(self.params.chunk_size)
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let ahead_files: Vec<crate::encode_ahead::Content<'_>> = tx
+            .entries
+            .iter()
+            .filter_map(|e| match e {
                 TxEntry::File {
-                    path,
-                    content,
-                    attributes: attrs,
-                } => {
-                    let mut extents = Vec::new();
-                    let expected = content.expected_len();
-                    if tar {
-                        let m = self.tampered_member(
-                            member_for(path.as_stored(), EntryKind::File, expected, attrs),
-                            members,
-                        );
-                        pending.extend(encode_header(&m)?);
-                        self.flush_framing(
-                            &mut pending,
-                            &mut cat,
-                            &mut chunks,
-                            &mut objects,
-                            &encode,
-                        )?;
-                        members += 1;
-                    }
-                    let piece = usize::try_from(self.params.chunk_size)
-                        .unwrap_or(usize::MAX)
-                        .max(1);
-                    // In memory, the pieces are slices of the content; from a
-                    // source, one piece-sized buffer is refilled per chunk.
-                    let mut reader = match content {
-                        FileContent::Memory(_) => None,
-                        FileContent::Source(s) => Some((s, s.open()?)),
-                    };
-                    let mut buf: Vec<u8> = Vec::new();
-                    let mut hasher = FileContentHasher::new();
-                    let mut logical = 0u64;
-                    for i in 0usize.. {
-                        let part: &[u8] = match (&mut reader, content) {
-                            (Some((_, r)), _) => {
-                                read_piece(r.as_mut(), &mut buf, piece)?;
-                                &buf
-                            }
-                            (None, FileContent::Memory(bytes)) => {
-                                let at = i.saturating_mul(piece).min(bytes.len());
-                                let to = at.saturating_add(piece).min(bytes.len());
-                                &bytes[at..to]
-                            }
-                            (None, FileContent::Source(_)) => &[],
-                        };
-                        if part.is_empty() {
-                            break;
+                    content: FileContent::Memory(b),
+                    ..
+                } => Some(crate::encode_ahead::Content::Memory(b)),
+                TxEntry::File {
+                    content: FileContent::Source(s),
+                    ..
+                } => Some(crate::encode_ahead::Content::Source(s.as_ref())),
+                _ => None,
+            })
+            .collect();
+        let use_ahead = self.threads > 1 && total >= (piece as u64).saturating_mul(2);
+        let (ahead_threads, ahead_seal) = (self.threads, self.crypto.is_some());
+        let ahead_limits = self.read.limits;
+        ctx.report(phase::CONTENT, 0, Some(total));
+        let content_step = std::thread::scope(|scope| -> Result<()> {
+            let mut ahead = use_ahead.then(|| {
+                crate::encode_ahead::EncodeAhead::start(
+                    scope,
+                    ahead_files,
+                    piece,
+                    encode,
+                    &ahead_limits,
+                    !ahead_seal,
+                    ahead_threads,
+                )
+            });
+            for entry in &tx.entries {
+                ctx.check_cancelled()?;
+                match entry {
+                    TxEntry::File {
+                        path,
+                        content,
+                        attributes: attrs,
+                    } => {
+                        let mut extents = Vec::new();
+                        let expected = content.expected_len();
+                        if tar {
+                            let m = self.tampered_member(
+                                member_for(path.as_stored(), EntryKind::File, expected, attrs),
+                                members,
+                            );
+                            pending.extend(encode_header(&m)?);
+                            self.flush_framing(
+                                &mut pending,
+                                &mut cat,
+                                &mut chunks,
+                                &mut objects,
+                                &encode,
+                            )?;
+                            members += 1;
                         }
-                        hasher
-                            .update(DecodedSlice::from_logical(part))
-                            .ok_or_else(|| {
-                                MochiError::new(ErrorCode::LimitExceeded, "file length overflows")
-                            })?;
-                        let decoded = DecodedBytes::new(part.to_vec());
-                        let key = (decoded.len(), chunk_content_hash(&decoded));
-                        let chunk = match self.reusable_chunk(&key, part, &mut dedup)? {
-                            Some(id) => {
-                                dedup.chunks_reused += 1;
-                                dedup.bytes_reused += decoded.len();
-                                id
-                            }
-                            None => {
-                                let obj = self.build_chunk(&decoded, &encode)?;
-                                let offset = self.append_data(&obj.stored, &mut region)?;
-                                cat.insert_object(&obj.record, Some(offset))?;
-                                let id = obj.record.id;
-                                new_chunks.push((key, id));
-                                chunks.push(ChunkEntry {
-                                    record: obj.record,
-                                    location: Some(offset),
-                                });
-                                objects += 1;
-                                id
-                            }
+                        // In memory, the pieces are slices of the content; from a
+                        // source, one piece-sized buffer is refilled per chunk.
+                        // With encode-ahead, the pieces come from its reader.
+                        let mut reader = match (&ahead, content) {
+                            (None, FileContent::Source(s)) => Some((s, s.open()?)),
+                            _ => None,
                         };
-                        extents.push(Extent {
-                            ordinal: u32::try_from(i).map_err(|_| {
-                                MochiError::new(
-                                    ErrorCode::LimitExceeded,
-                                    "too many chunks in one file",
-                                )
-                            })?,
-                            logical_offset: logical,
-                            length: part.len() as u64,
-                            source: ExtentSource::Chunk {
-                                chunk,
-                                chunk_offset: 0,
-                            },
-                        });
-                        logical = hasher.len();
-                        done = done.saturating_add(part.len() as u64);
-                        ctx.report(phase::CONTENT, done, Some(total.max(done)));
-                        ctx.check_cancelled()?;
-                    }
-                    drop(reader);
-                    if tar && logical != expected {
-                        let name = match content {
-                            FileContent::Source(s) => s.describe(),
-                            FileContent::Memory(_) => {
-                                String::from_utf8_lossy(path.as_stored()).into_owned()
-                            }
-                        };
-                        return Err(MochiError::new(
-                            ErrorCode::IoError,
-                            format!(
-                                "{name} changed while it was read: {expected} bytes were \
+                        let mut buf: Vec<u8> = Vec::new();
+                        let mut hasher = FileContentHasher::new();
+                        let mut logical = 0u64;
+                        for i in 0usize.. {
+                            let (decoded, key, stored) = match ahead.as_mut() {
+                                Some(a) => match a.next()? {
+                                    crate::encode_ahead::Item::End => break,
+                                    crate::encode_ahead::Item::Piece(p) => {
+                                        (p.decoded, p.key, p.stored)
+                                    }
+                                },
+                                None => {
+                                    let part: &[u8] = match (&mut reader, content) {
+                                        (Some((_, r)), _) => {
+                                            read_piece(r.as_mut(), &mut buf, piece)?;
+                                            &buf
+                                        }
+                                        (None, FileContent::Memory(bytes)) => {
+                                            let at = i.saturating_mul(piece).min(bytes.len());
+                                            let to = at.saturating_add(piece).min(bytes.len());
+                                            &bytes[at..to]
+                                        }
+                                        (None, FileContent::Source(_)) => &[],
+                                    };
+                                    if part.is_empty() {
+                                        break;
+                                    }
+                                    let decoded = DecodedBytes::new(part.to_vec());
+                                    let key = (decoded.len(), chunk_content_hash(&decoded));
+                                    (decoded, key, None)
+                                }
+                            };
+                            let part: &[u8] = decoded.as_bytes();
+                            hasher
+                                .update(DecodedSlice::from_logical(part))
+                                .ok_or_else(|| {
+                                    MochiError::new(
+                                        ErrorCode::LimitExceeded,
+                                        "file length overflows",
+                                    )
+                                })?;
+                            let chunk = match self.reusable_chunk(&key, part, &mut dedup)? {
+                                Some(id) => {
+                                    dedup.chunks_reused += 1;
+                                    dedup.bytes_reused += decoded.len();
+                                    id
+                                }
+                                None => {
+                                    let obj = match stored {
+                                        Some(stored) => {
+                                            self.finish_chunk(&decoded, stored, &encode)?
+                                        }
+                                        None => self.build_chunk(&decoded, &encode)?,
+                                    };
+                                    let offset = self.append_data(&obj.stored, &mut region)?;
+                                    cat.insert_object(&obj.record, Some(offset))?;
+                                    let id = obj.record.id;
+                                    new_chunks.push((key, id));
+                                    chunks.push(ChunkEntry {
+                                        record: obj.record,
+                                        location: Some(offset),
+                                    });
+                                    objects += 1;
+                                    id
+                                }
+                            };
+                            extents.push(Extent {
+                                ordinal: u32::try_from(i).map_err(|_| {
+                                    MochiError::new(
+                                        ErrorCode::LimitExceeded,
+                                        "too many chunks in one file",
+                                    )
+                                })?,
+                                logical_offset: logical,
+                                length: part.len() as u64,
+                                source: ExtentSource::Chunk {
+                                    chunk,
+                                    chunk_offset: 0,
+                                },
+                            });
+                            logical = hasher.len();
+                            done = done.saturating_add(part.len() as u64);
+                            ctx.report(phase::CONTENT, done, Some(total.max(done)));
+                            ctx.check_cancelled()?;
+                        }
+                        drop(reader);
+                        if tar && logical != expected {
+                            let name = match content {
+                                FileContent::Source(s) => s.describe(),
+                                FileContent::Memory(_) => {
+                                    String::from_utf8_lossy(path.as_stored()).into_owned()
+                                }
+                            };
+                            return Err(MochiError::new(
+                                ErrorCode::IoError,
+                                format!(
+                                    "{name} changed while it was read: {expected} bytes were \
                                  expected and {logical} were read. A TAR-compatible archive \
                                  writes the length before the content, so nothing was \
                                  committed; try again once the file is no longer changing"
-                            ),
-                        ));
-                    }
-                    let version = FileVersion {
-                        id: FileVersionId::from_bytes(self.ids.next_id()?),
-                        kind: EntryKind::File,
-                        logical_len: logical,
-                        content_hash: Some(hasher.finalize()),
-                    };
-                    cat.insert_file_version(&version, &extents)?;
-                    ops.push(NamespaceOp::Put {
-                        path: path.clone(),
-                        version: version.id,
-                    });
-                    attributes.insert(version.id, *attrs);
-                    versions.push(FileVersionEntry {
-                        version,
-                        extents,
-                        attributes: *attrs,
-                    });
-                    if tar {
-                        // The content chunks above are the member's bytes.
-                        pending = vec![0; tar::padding(logical)];
-                    }
-                }
-                TxEntry::Dir {
-                    path,
-                    attributes: attrs,
-                } => {
-                    if tar {
-                        let m = self.tampered_member(
-                            member_for(path.as_stored(), EntryKind::Directory, 0, attrs),
-                            members,
-                        );
-                        if !self.drops_directory_member() {
-                            pending.extend(encode_header(&m)?);
-                        }
-                        self.flush_framing(
-                            &mut pending,
-                            &mut cat,
-                            &mut chunks,
-                            &mut objects,
-                            &encode,
-                        )?;
-                        members += 1;
-                    }
-                    let version = FileVersion {
-                        id: FileVersionId::from_bytes(self.ids.next_id()?),
-                        kind: EntryKind::Directory,
-                        logical_len: 0,
-                        content_hash: None,
-                    };
-                    cat.insert_file_version(&version, &[])?;
-                    ops.push(NamespaceOp::Put {
-                        path: path.clone(),
-                        version: version.id,
-                    });
-                    attributes.insert(version.id, *attrs);
-                    versions.push(FileVersionEntry {
-                        version,
-                        extents: Vec::new(),
-                        attributes: *attrs,
-                    });
-                }
-                TxEntry::Delete(path) => ops.push(NamespaceOp::Delete { path: path.clone() }),
-                TxEntry::Copied {
-                    path,
-                    version: entry,
-                    chunks: stored,
-                } => {
-                    let id = entry.version.id;
-                    let held = cat.file_version(&id)?;
-                    if tar {
-                        let m = self.tampered_member(
-                            member_for(
-                                path.as_stored(),
-                                entry.version.kind,
-                                entry.version.logical_len,
-                                &entry.attributes,
-                            ),
-                            members,
-                        );
-                        pending.extend(encode_header(&m)?);
-                        self.flush_framing(
-                            &mut pending,
-                            &mut cat,
-                            &mut chunks,
-                            &mut objects,
-                            &encode,
-                        )?;
-                        members += 1;
-                    }
-                    match held {
-                        Some((v, ex)) => {
-                            if v != entry.version || ex != entry.extents {
-                                return Err(MochiError::new(
-                                    ErrorCode::InvalidArgument,
-                                    format!("copied version {id:?} differs from the one held"),
-                                ));
-                            }
-                            // Its chunks are old frames: the member's bytes
-                            // are written again (D19 rule 6).
-                            if tar {
-                                self.reemit_content(
-                                    &ex,
-                                    &mut cat,
-                                    &mut chunks,
-                                    &mut objects,
-                                    &encode,
-                                    ctx,
-                                )?;
-                            }
-                        }
-                        None => {
-                            // In the TAR profile the version's own chunk
-                            // frames are the member's content, so they go in
-                            // extent order and nothing else may land between.
-                            let ordered: Vec<&(ObjectRecord, StoredObject)> = if tar {
-                                order_copied_chunks(entry, stored, &cat)?
-                            } else {
-                                stored.iter().collect()
-                            };
-                            for (record, bytes) in ordered {
-                                if cat.object(&record.id)?.is_some() {
-                                    continue;
-                                }
-                                verify_stored(record, bytes)?;
-                                // Into an Encrypted archive a chunk arrives as
-                                // its plain Zstandard frame and is sealed anew:
-                                // the new archive has its own ID and key (D20
-                                // item 10), so no sealed byte is carried over.
-                                let (record, bytes) = self.seal_copied(record, bytes)?;
-                                let offset = self.append_data(&bytes, &mut region)?;
-                                cat.insert_object(&record, Some(offset))?;
-                                chunks.push(ChunkEntry {
-                                    record,
-                                    location: Some(offset),
-                                });
-                                objects += 1;
-                                ctx.check_cancelled()?;
-                            }
-                            cat.insert_file_version(&entry.version, &entry.extents)?;
-                            versions.push(entry.clone());
-                        }
-                    }
-                    if tar {
-                        pending = vec![0; tar::padding(entry.version.logical_len)];
-                    }
-                    if let Some(a) = attributes.insert(id, entry.attributes) {
-                        if a != entry.attributes {
-                            return Err(MochiError::new(
-                                ErrorCode::InvalidArgument,
-                                format!("copied version {id:?} has other promised attributes"),
+                                ),
                             ));
                         }
+                        let version = FileVersion {
+                            id: FileVersionId::from_bytes(self.ids.next_id()?),
+                            kind: EntryKind::File,
+                            logical_len: logical,
+                            content_hash: Some(hasher.finalize()),
+                        };
+                        cat.insert_file_version(&version, &extents)?;
+                        ops.push(NamespaceOp::Put {
+                            path: path.clone(),
+                            version: version.id,
+                        });
+                        attributes.insert(version.id, *attrs);
+                        versions.push(FileVersionEntry {
+                            version,
+                            extents,
+                            attributes: *attrs,
+                        });
+                        if tar {
+                            // The content chunks above are the member's bytes.
+                            pending = vec![0; tar::padding(logical)];
+                        }
                     }
-                    ops.push(NamespaceOp::Put {
-                        path: path.clone(),
-                        version: id,
-                    });
-                }
-                TxEntry::Rename { from, to } => {
-                    let version = before.get(from).map(|e| e.version).ok_or_else(|| {
-                        MochiError::new(
-                            ErrorCode::NamespaceInvalid,
-                            "rename source does not exist in the head snapshot",
-                        )
-                    })?;
-                    if tar {
-                        // A rename puts an existing version at a new path:
-                        // its member's bytes are written again (D19 rule 6).
-                        let (v, extents) = cat.file_version(&version)?.ok_or_else(|| {
+                    TxEntry::Dir {
+                        path,
+                        attributes: attrs,
+                    } => {
+                        if tar {
+                            let m = self.tampered_member(
+                                member_for(path.as_stored(), EntryKind::Directory, 0, attrs),
+                                members,
+                            );
+                            if !self.drops_directory_member() {
+                                pending.extend(encode_header(&m)?);
+                            }
+                            self.flush_framing(
+                                &mut pending,
+                                &mut cat,
+                                &mut chunks,
+                                &mut objects,
+                                &encode,
+                            )?;
+                            members += 1;
+                        }
+                        let version = FileVersion {
+                            id: FileVersionId::from_bytes(self.ids.next_id()?),
+                            kind: EntryKind::Directory,
+                            logical_len: 0,
+                            content_hash: None,
+                        };
+                        cat.insert_file_version(&version, &[])?;
+                        ops.push(NamespaceOp::Put {
+                            path: path.clone(),
+                            version: version.id,
+                        });
+                        attributes.insert(version.id, *attrs);
+                        versions.push(FileVersionEntry {
+                            version,
+                            extents: Vec::new(),
+                            attributes: *attrs,
+                        });
+                    }
+                    TxEntry::Delete(path) => ops.push(NamespaceOp::Delete { path: path.clone() }),
+                    TxEntry::Copied {
+                        path,
+                        version: entry,
+                        chunks: stored,
+                    } => {
+                        let id = entry.version.id;
+                        let held = cat.file_version(&id)?;
+                        if tar {
+                            let m = self.tampered_member(
+                                member_for(
+                                    path.as_stored(),
+                                    entry.version.kind,
+                                    entry.version.logical_len,
+                                    &entry.attributes,
+                                ),
+                                members,
+                            );
+                            pending.extend(encode_header(&m)?);
+                            self.flush_framing(
+                                &mut pending,
+                                &mut cat,
+                                &mut chunks,
+                                &mut objects,
+                                &encode,
+                            )?;
+                            members += 1;
+                        }
+                        match held {
+                            Some((v, ex)) => {
+                                if v != entry.version || ex != entry.extents {
+                                    return Err(MochiError::new(
+                                        ErrorCode::InvalidArgument,
+                                        format!("copied version {id:?} differs from the one held"),
+                                    ));
+                                }
+                                // Its chunks are old frames: the member's bytes
+                                // are written again (D19 rule 6).
+                                if tar {
+                                    self.reemit_content(
+                                        &ex,
+                                        &mut cat,
+                                        &mut chunks,
+                                        &mut objects,
+                                        &encode,
+                                        ctx,
+                                    )?;
+                                }
+                            }
+                            None => {
+                                // In the TAR profile the version's own chunk
+                                // frames are the member's content, so they go in
+                                // extent order and nothing else may land between.
+                                let ordered: Vec<&(ObjectRecord, StoredObject)> = if tar {
+                                    order_copied_chunks(entry, stored, &cat)?
+                                } else {
+                                    stored.iter().collect()
+                                };
+                                for (record, bytes) in ordered {
+                                    if cat.object(&record.id)?.is_some() {
+                                        continue;
+                                    }
+                                    verify_stored(record, bytes)?;
+                                    // Into an Encrypted archive a chunk arrives as
+                                    // its plain Zstandard frame and is sealed anew:
+                                    // the new archive has its own ID and key (D20
+                                    // item 10), so no sealed byte is carried over.
+                                    let (record, bytes) = self.seal_copied(record, bytes)?;
+                                    let offset = self.append_data(&bytes, &mut region)?;
+                                    cat.insert_object(&record, Some(offset))?;
+                                    chunks.push(ChunkEntry {
+                                        record,
+                                        location: Some(offset),
+                                    });
+                                    objects += 1;
+                                    ctx.check_cancelled()?;
+                                }
+                                cat.insert_file_version(&entry.version, &entry.extents)?;
+                                versions.push(entry.clone());
+                            }
+                        }
+                        if tar {
+                            pending = vec![0; tar::padding(entry.version.logical_len)];
+                        }
+                        if let Some(a) = attributes.insert(id, entry.attributes) {
+                            if a != entry.attributes {
+                                return Err(MochiError::new(
+                                    ErrorCode::InvalidArgument,
+                                    format!("copied version {id:?} has other promised attributes"),
+                                ));
+                            }
+                        }
+                        ops.push(NamespaceOp::Put {
+                            path: path.clone(),
+                            version: id,
+                        });
+                    }
+                    TxEntry::Rename { from, to } => {
+                        let version = before.get(from).map(|e| e.version).ok_or_else(|| {
                             MochiError::new(
-                                ErrorCode::CatalogInvalid,
-                                "the renamed version is not in the catalog",
+                                ErrorCode::NamespaceInvalid,
+                                "rename source does not exist in the head snapshot",
                             )
                         })?;
-                        let attrs = attributes.get(&version).copied().unwrap_or_default();
-                        let m = self.tampered_member(
-                            member_for(to.as_stored(), v.kind, v.logical_len, &attrs),
-                            members,
-                        );
-                        pending.extend(encode_header(&m)?);
-                        self.flush_framing(
-                            &mut pending,
-                            &mut cat,
-                            &mut chunks,
-                            &mut objects,
-                            &encode,
-                        )?;
-                        members += 1;
-                        self.reemit_content(
-                            &extents,
-                            &mut cat,
-                            &mut chunks,
-                            &mut objects,
-                            &encode,
-                            ctx,
-                        )?;
-                        pending = vec![0; tar::padding(v.logical_len)];
+                        if tar {
+                            // A rename puts an existing version at a new path:
+                            // its member's bytes are written again (D19 rule 6).
+                            let (v, extents) = cat.file_version(&version)?.ok_or_else(|| {
+                                MochiError::new(
+                                    ErrorCode::CatalogInvalid,
+                                    "the renamed version is not in the catalog",
+                                )
+                            })?;
+                            let attrs = attributes.get(&version).copied().unwrap_or_default();
+                            let m = self.tampered_member(
+                                member_for(to.as_stored(), v.kind, v.logical_len, &attrs),
+                                members,
+                            );
+                            pending.extend(encode_header(&m)?);
+                            self.flush_framing(
+                                &mut pending,
+                                &mut cat,
+                                &mut chunks,
+                                &mut objects,
+                                &encode,
+                            )?;
+                            members += 1;
+                            self.reemit_content(
+                                &extents,
+                                &mut cat,
+                                &mut chunks,
+                                &mut objects,
+                                &encode,
+                                ctx,
+                            )?;
+                            pending = vec![0; tar::padding(v.logical_len)];
+                        }
+                        ops.push(NamespaceOp::Delete { path: from.clone() });
+                        ops.push(NamespaceOp::Put {
+                            path: to.clone(),
+                            version,
+                        });
                     }
-                    ops.push(NamespaceOp::Delete { path: from.clone() });
-                    ops.push(NamespaceOp::Put {
-                        path: to.clone(),
-                        version,
-                    });
                 }
             }
-        }
+            Ok(())
+        });
+        content_step?;
 
         // The commit's stream ends with two zero blocks (D19 rule 3); a commit
         // without a put has no stream.
@@ -4687,6 +4769,21 @@ impl<S: Storage> ArchiveWriter<S> {
                 &self.read.limits,
             ),
         }
+    }
+
+    /// [`Self::build_chunk`] for a frame the encode-ahead workers already
+    /// made: the same object, its ID drawn now (in order). A sealed object is
+    /// always built here instead.
+    fn finish_chunk(
+        &mut self,
+        decoded: &DecodedBytes,
+        stored: StoredObject,
+        encode: &EncodeParams,
+    ) -> Result<crate::object::EncodedObject> {
+        if self.crypto.is_some() {
+            return self.build_chunk(decoded, encode);
+        }
+        crate::object::finish_object(decoded, encode, Protection::None, stored, self.ids.as_mut())
     }
 
     /// Append a data object and, in the Encrypted profile, extend the commit's

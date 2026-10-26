@@ -52,6 +52,7 @@ impl ProgressSink for Phases {
 
 fn options() -> WriterOptions {
     WriterOptions {
+        threads: None,
         read: ReadOptions::default(),
         chunk_size: None,
         zstd_level: None,

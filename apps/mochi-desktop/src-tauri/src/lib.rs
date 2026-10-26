@@ -31,6 +31,7 @@ pub mod rekey;
 pub mod route;
 pub mod search;
 pub mod self_test;
+pub mod speed;
 pub mod update;
 pub mod windows;
 #[cfg(test)]
@@ -197,6 +198,8 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::check_for_update,
             commands::get_crash_settings,
             commands::set_crash_settings,
+            commands::get_speed_settings,
+            commands::set_speed_settings,
             commands::read_crash_log,
             commands::export_crash_log,
             commands::clear_crash_log,
@@ -221,6 +224,8 @@ pub fn run() -> Result<(), tauri::Error> {
             // The opt-in crash log (D7): off until the user turns it on.
             use tauri::Manager;
             let crash_log = crashlog::CrashLog::open(app.path().app_local_data_dir()?);
+            // How many cores a write may use (0.9.11), before any write can start.
+            speed::load(app.path().app_local_data_dir()?);
             crashlog::install(Arc::clone(&crash_log));
             app.manage(crash_log);
             setup_quick.set_host(Arc::new(Windows {

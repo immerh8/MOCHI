@@ -17,8 +17,8 @@ use crate::ipc::{
     DialogText, DropEvent, EntryDetails, EnvelopeList, ExtractPlan, ForeignArchiveSummary,
     ForeignChildrenPage, ForeignExtractPlan, ForeignSearchResult, HealthView, IpcError, JobEvent,
     JobId, JobRequest, OpenOutcome, PathKey, PendingId, RepairSetupAction, RepairSetupView,
-    ReportId, Secret, ShowTarget, SnapshotView, SourcePick, StageOutcome, StagedView, SubjectId,
-    SubjectSource, SubjectView,
+    ReportId, Secret, ShowTarget, SnapshotView, SourcePick, SpeedSettingsView, StageOutcome,
+    StagedView, SubjectId, SubjectSource, SubjectView,
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
@@ -987,6 +987,30 @@ pub async fn set_crash_settings(
             include_details,
         })?;
         Ok(crash_view(&log))
+    })
+    .await
+}
+
+fn speed_view() -> SpeedSettingsView {
+    SpeedSettingsView {
+        all_cores: crate::speed::settings().all_cores,
+        cores: u32::try_from(crate::speed::cores()).unwrap_or(u32::MAX),
+    }
+}
+
+/// Whether writes compress on every processor core (0.9.11). On by default.
+#[tauri::command]
+pub async fn get_speed_settings() -> Result<SpeedSettingsView, IpcError> {
+    Ok(speed_view())
+}
+
+/// Change it; applies to writes started from now on. The archive written is
+/// the same either way.
+#[tauri::command]
+pub async fn set_speed_settings(all_cores: bool) -> Result<SpeedSettingsView, IpcError> {
+    blocking(move || {
+        crate::speed::set(crate::speed::Settings { all_cores })?;
+        Ok(speed_view())
     })
     .await
 }

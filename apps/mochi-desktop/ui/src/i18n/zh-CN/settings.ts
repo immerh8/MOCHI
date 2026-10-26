@@ -1,10 +1,15 @@
 import type { Catalogue } from "../types";
 import type { settings as enSettings } from "../en/settings";
-// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
+// Settings (plan D7): language, compression speed (0.9.11), and the opt-in crash log. Nothing is ever sent anywhere.
 export const settings = {
   "settings.languageHeading": "语言",
   "settings.languageLabel": "界面语言",
   "settings.languageNote": "立即生效，并记在这台电脑上。压缩文件中的文件名和文件夹名不会被翻译。",
+  "settings.speedHeading": "速度",
+  "settings.speedAllCores": "使用全部处理器核心（{n} 个）压缩：大文件和文件夹更快",
+  "settings.speedNote": "关闭：只用一个核心，长时间任务时电脑响应更流畅。两种方式生成的压缩文件完全相同。从下一个任务开始生效。",
+  "settings.speedLoadFailed": "无法读取速度设置",
+  "settings.speedSaveFailed": "无法更改速度设置",
   "settings.heading": "设置",
   "settings.crashHeading": "崩溃报告",
   "settings.crashPolicy":

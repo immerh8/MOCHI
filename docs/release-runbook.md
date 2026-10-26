@@ -254,6 +254,14 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 3. Wait a minute; **Check for updates → Download and install** (the signature is checked after the download). Pass/fail as in the table.
 4. Delete the edited asset, upload the original, confirm `releases/latest/download/latest.json` carries the original signature, **then** do X-6.
 
+
+### W-09d. Compressing on every core (release 0.9.11)
+
+1. Make a 2 GB file in the scratch folder (PowerShell: `fsutil file createnew big.bin 0` does not do, it is all zeros; copy a large video or ISO instead, or several large files into one folder). Open Task Manager → Performance → CPU.
+2. Create a new archive from it with the default settings. **Pass:** while it runs, CPU use is spread over several cores (well above one core's share); it finishes.
+3. *More → Settings → Speed*: **Pass:** "Compress on every processor core (N)" is ticked and N is the number of cores (at most 8). Untick it, close MOCHI, start it again: **Pass:** still unticked.
+4. Create a second archive from the same file. **Pass:** about one core busy, slower than step 2. Run **Test** on both archives: **Pass:** both pass, and both list the same files and sizes.
+5. Tick it again. **Pass:** the next job uses several cores again.
 ### W-10. Re-run W-04 step 2 and W-05 on 0.9.1
 
 **Pass:** the same as before, version 0.9.1.
@@ -320,6 +328,7 @@ Done by <you> on <date>
 | W-09 contrast, 200 %, 1280×720 |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | W-09a step 7 drag out to Explorer / the file manager, Esc cleans up |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | W-09c the window's own title bar: move, double-click, edge resize, Alt+F4, shadow, contrast |  | not run | not run | not run |
+| W-09d Settings → Speed: all cores by default, one core remembered, Task Manager shows the difference |  | not run | not run | not run |
 | X-1 start-up check off: no request |  | not run on client hardware for 1.0 | same | same |
 | X-2 on: one request |  | same | same | same |
 | X-3 network off message |  | same | same | same |

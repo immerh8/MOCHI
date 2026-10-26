@@ -41,6 +41,8 @@
     "allow-check-for-update",
     "allow-get-crash-settings",
     "allow-set-crash-settings",
+    "allow-get-speed-settings",
+    "allow-set-speed-settings",
     "allow-read-crash-log",
     "allow-export-crash-log",
     "allow-clear-crash-log",

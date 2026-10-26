@@ -1,8 +1,13 @@
-// Settings (plan D7): language, and the opt-in crash log. Nothing is ever sent anywhere.
+// Settings (plan D7): language, compression speed (0.9.11), and the opt-in crash log. Nothing is ever sent anywhere.
 export const settings = {
   "settings.languageHeading": "Language",
   "settings.languageLabel": "Display language",
   "settings.languageNote": "Applies at once and is remembered on this computer. Names of files and folders in archives are never translated.",
+  "settings.speedHeading": "Speed",
+  "settings.speedAllCores": "Compress on every processor core ({n}): faster for large files and folders",
+  "settings.speedNote": "Off: one core, which leaves the computer more responsive during a long job. The archive is the same either way. Applies from the next job.",
+  "settings.speedLoadFailed": "Could not read the speed setting",
+  "settings.speedSaveFailed": "Could not change the speed setting",
   "settings.heading": "Settings",
   "settings.crashHeading": "Crash reports",
   "settings.crashPolicy":

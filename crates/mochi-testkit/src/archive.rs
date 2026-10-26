@@ -69,6 +69,7 @@ pub fn test_options() -> WriterOptions {
         checkpoint_trigger: None,
         dedup: Dedup::default(),
         kdf: None,
+        threads: None,
     }
 }
 
