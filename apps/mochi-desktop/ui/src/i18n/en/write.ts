@@ -118,7 +118,6 @@ export const write = {
   "write.rowFormat": "Format",
   "write.exportNote": "MOCHI wrote this file with the tools for its format. It did not check the file afterwards.",
   "write.progressScan": "Looking through the files: {n} found",
-  "write.progressExport": "Writing: {done} of {total}",
   "write.progressPhase": "{phase}: {completed}",
   "write.progressPhaseOf": "{phase}: {completed} of {total}",
   "write.committedDeleteOne": "Removed {items} from this version. Earlier versions still have it.",

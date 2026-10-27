@@ -511,6 +511,22 @@ impl Quick {
         }
     }
 
+    /// Pause (`true`) or resume the running job; `false` if none is running.
+    /// It waits at its next safe point; cancelling still ends it.
+    pub fn set_paused(&self, paused: bool) -> bool {
+        match &lock(&self.control).cancel {
+            Some(token) if paused => {
+                token.pause();
+                true
+            }
+            Some(token) => {
+                token.resume();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// The compact window went away: cancel and forget it.
     pub fn closed(&self) {
         self.cancel();

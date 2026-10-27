@@ -7,6 +7,7 @@ import { formatNumber, phaseLabel, t, tc, tn } from "../i18n";
 import type { CommitReport, ExportReportView } from "../ipc/write";
 import type { JobOutcome } from "../ipc/jobs";
 import { formatSize } from "../browser/format";
+import { bytesOfText } from "../progress/messages";
 import { countParts, joinParts } from "../result/details";
 import { formatLabel } from "./format";
 import type { DetailRow, ResultView } from "../result/details";
@@ -27,6 +28,14 @@ export const tarNotes = () => [t("write.tar1"), t("write.tar2"), t("write.tar3")
  * (plan O31) what a ZIP or tar export wrote.
  */
 export type WriteResult = { kind: "text"; lines: string[] } | ({ kind: "commit" | "export" } & ResultView);
+
+/** The red line of a job that failed or stopped unexpectedly; `""` for any other outcome. */
+export function failureText(outcome: JobOutcome): string {
+  if (outcome.status === "failed") {
+    return t("transfer.errorLineCode", { code: outcome.code, message: outcome.message });
+  }
+  return outcome.status === "aborted" ? t("transfer.errorLine", { message: outcome.message }) : "";
+}
 
 /** The result of a job. A commit is one short line plus details; the rest are plain lines. */
 export function outcomeResult(operation: Operation, outcome: JobOutcome): WriteResult {
@@ -206,8 +215,10 @@ export function progressText(phase: string, completed: number, total: number | n
   if (phase === "export") {
     return total === null
       ? t("write.progressImport", { size: formatSize(String(completed)) })
-      : t("write.progressExport", { done: formatSize(String(completed)), total: formatSize(String(total)) });
+      : bytesOfText(completed, total);
   }
+  // The bulk phase of a create or add: bytes read and stored, out of the bytes to store.
+  if (phase === "content" && total !== null) return bytesOfText(completed, total);
   if (phase === "import") return t("write.progressImport", { size: formatSize(String(completed)) });
   if (phase === "delete") {
     return t("write.progressDelete", { completed, total: total ?? t("write.progressTotalUnknown") });

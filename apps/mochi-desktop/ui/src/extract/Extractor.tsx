@@ -3,12 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useJobFocus } from "../a11y/focus";
 import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
-import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { CloseIcon, ExtractIcon, ExtractToIcon, RefreshIcon } from "../icons";
+import { ExtractIcon, ExtractToIcon, RefreshIcon } from "../icons";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { formatNumber, t, tc } from "../i18n";
+import { TransferProgress } from "../progress/TransferProgress";
+import { useTransferRate } from "../progress/useTransferRate";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
@@ -18,7 +19,7 @@ import { planExtract } from "../ipc/extract";
 import { discardExtractFolder, planExtractDefault, planExtractTo, showInFolder } from "../ipc/start";
 import type { ConflictChoice, ExtractPlan } from "../ipc/extract";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
-import { cancelJob, startJob } from "../ipc/jobs";
+import { cancelJob, pauseJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import {
   conflictNote,
@@ -66,6 +67,7 @@ type JobView =
       completed: number;
       total: number | null;
       cancelRequested: boolean;
+      paused: boolean;
     }
   | { state: "done"; outcome: JobOutcome };
 
@@ -89,6 +91,9 @@ export function Extractor({
   const [madeFolder, setMadeFolder] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
+  const rate = useTransferRate();
+  const sampleRate = rate.sample;
+  const resetRate = rate.reset;
   const [error, setError] = useState<string | null>(null);
 
   const busy = job.state === "starting" || job.state === "running";
@@ -204,7 +209,15 @@ export function Extractor({
         case "started":
           return prev.state === "running"
             ? prev
-            : { state: "running", jobId: event.job_id, phase: "", completed: 0, total: null, cancelRequested: false };
+            : {
+                state: "running",
+                jobId: event.job_id,
+                phase: "",
+                completed: 0,
+                total: null,
+                cancelRequested: false,
+                paused: false,
+              };
         case "progress":
           if (prev.state === "done") return prev;
           return {
@@ -214,11 +227,13 @@ export function Extractor({
             completed: event.completed,
             total: event.total,
             cancelRequested: prev.state === "running" && prev.cancelRequested,
+            paused: prev.state === "running" && prev.paused,
           };
         case "finished":
           return { state: "done", outcome: event.outcome };
       }
     });
+    if (event.event === "progress") sampleRate(event.phase, event.completed, event.total, Date.now());
     // A completed extraction makes its plan stale (what it wrote now
     // collides); a cancelled or failed one keeps the panel for another try.
     if (event.event === "finished" && event.outcome.status === "completed") {
@@ -229,12 +244,13 @@ export function Extractor({
       setPlan(null);
       setMadeFolder(false);
     }
-  }, [newFolderRun]);
+  }, [newFolderRun, sampleRate]);
 
   const startFor = (s: Scope, on_conflict: ConflictChoice) => {
     if (handle === null || seq === null) return;
     rememberFocus();
     setError(null);
+    resetRate();
     setJob({ state: "starting" });
     startJob({ kind: "extract_archive", handle, seq, keys: keysOf(s), on_conflict }, onEvent).catch(
       (e: unknown) => {
@@ -285,6 +301,18 @@ export function Extractor({
     cancelJob(jobId).catch(() => undefined);
   };
 
+  const togglePause = () => {
+    if (job.state !== "running" || job.cancelRequested) return;
+    const { jobId } = job;
+    const paused = !job.paused;
+    setJob({ ...job, paused });
+    rate.pause(paused, Date.now());
+    pauseJob(jobId, paused).catch(() => {
+      setJob((now) => (now.state === "running" && now.jobId === jobId ? { ...now, paused: !paused } : now));
+      rate.pause(!paused, Date.now());
+    });
+  };
+
   const close = () => {
     // A new folder nobody extracted into is tidied up (Rust only removes an empty one).
     if (madeFolder) void discardExtractFolder().catch(() => undefined);
@@ -310,33 +338,33 @@ export function Extractor({
 
   // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
   const progressLine = busy && (
-    <div className="progress" data-testid="extract-running">
-      {job.state === "running" && (
-        <>
-          <ProgressMeter
-            completed={job.completed}
-            total={job.total}
-            text={
-              (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
-              (job.cancelRequested ? t("common.cancelling") : "")
-            }
-            textTestId="extract-progress"
-          />
-        </>
-      )}
-      {job.state === "starting" && <span>{t("common.starting")}</span>}
-      <button
-        type="button"
-        className="icon-button"
-        data-testid="extract-cancel"
-        aria-label={t("common.cancel")}
-        title={t("common.cancel")}
-        onClick={cancel}
-        disabled={job.state !== "running" || job.cancelRequested}
-      >
-        <CloseIcon />
-      </button>
-    </div>
+    <TransferProgress
+      title={t("transfer.titleExtract")}
+      subtitle={archive ? t("transfer.subtitleExtract", { name: archive.file_name }) : undefined}
+      phase={job.state === "running" ? job.phase : ""}
+      completed={job.state === "running" ? job.completed : 0}
+      total={job.state === "running" ? job.total : null}
+      rate={rate.state}
+      text={
+        job.state === "running"
+          ? (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+            (job.cancelRequested ? t("common.cancelling") : "")
+          : t("common.starting")
+      }
+      state={
+        job.state !== "running"
+          ? "starting"
+          : job.cancelRequested
+            ? "cancelling"
+            : job.paused
+              ? "paused"
+              : "running"
+      }
+      onPause={togglePause}
+      onResume={togglePause}
+      onCancel={cancel}
+      testIds={{ root: "extract-running", text: "extract-progress", pause: "extract-pause", cancel: "extract-cancel" }}
+    />
   );
 
   return (

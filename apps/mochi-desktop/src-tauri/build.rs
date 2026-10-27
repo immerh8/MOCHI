@@ -16,6 +16,7 @@ fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "start_job",
         "cancel_job",
+        "pause_job",
         "open_archive",
         "unlock_archive",
         "cancel_unlock",
@@ -41,6 +42,7 @@ fn main() {
         "watch_quick",
         "quick_passphrase",
         "quick_cancel",
+        "quick_pause",
         "quick_show_folder",
         "quick_close",
         "quick_choose_location",

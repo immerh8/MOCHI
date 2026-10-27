@@ -1952,3 +1952,170 @@ button.recent-item {
     display: none;
   }
 }
+
+/* The transfer card of a running job (create, add, extract, write ZIP/tar): a header, a big
+   percentage, a thick bar with Pause and Cancel at its end, then how much is done and how much is
+   left. Neutral by design (spec §23.3: only a verification PASS is green): the bar is the accent
+   while running, the warning amber while paused, and the error red once the job has failed, and
+   every state also says so in words. The fill takes `color`, so each state is one token. */
+.transfer {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.75rem 1rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.transfer p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.transfer-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.transfer[data-state="paused"] .transfer-title {
+  color: var(--warning);
+}
+.transfer[data-state="error"] .transfer-title {
+  color: var(--error);
+}
+.transfer-percent {
+  font-size: 1.9rem;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-subtitle,
+.transfer-time {
+  color: var(--muted);
+}
+.transfer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.2rem;
+}
+.transfer progress {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  height: 8px;
+  border: 0;
+  border-radius: 4px;
+  appearance: none;
+  overflow: clip;
+  background: var(--border);
+  color: var(--accent);
+}
+.transfer[data-state="paused"] progress {
+  color: var(--warning);
+}
+.transfer[data-state="error"] progress {
+  color: var(--error);
+}
+.transfer progress::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 4px;
+}
+.transfer progress::-webkit-progress-value {
+  background: currentColor;
+  border-radius: 4px;
+  transition: width 0.15s linear;
+}
+.transfer progress::-moz-progress-bar {
+  background: currentColor;
+  border-radius: 4px;
+}
+/* A bar with no value (nothing counted yet, or no total): a band sliding along the track. */
+.transfer progress:not([value]) {
+  background-image: linear-gradient(90deg, transparent, currentColor, transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: transfer-slide 1.4s ease-in-out infinite;
+}
+@keyframes transfer-slide {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .transfer progress:not([value]) {
+    animation: none;
+    background-position: 30% 0;
+  }
+  .transfer progress::-webkit-progress-value {
+    transition: none;
+  }
+}
+.transfer .icon-button {
+  color: var(--fg);
+}
+.transfer-size {
+  font-variant-numeric: tabular-nums;
+}
+.transfer-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+  color: var(--error);
+  font-weight: 500;
+}
+.transfer-error .icon {
+  margin-top: 0.1rem;
+}
+button.transfer-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-self: start;
+  margin-top: 0.4rem;
+}
+/* In the status bar the card is one line: the bar, its buttons, and the words that go with them. */
+.statusbar .transfer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  white-space: nowrap;
+}
+.statusbar .transfer-title,
+.statusbar .transfer-percent,
+.statusbar .transfer-subtitle {
+  display: none;
+}
+.statusbar .transfer-bar {
+  flex: none;
+  margin: 0;
+}
+.statusbar .transfer progress {
+  flex: none;
+  width: 8rem;
+}
+.statusbar .transfer-size,
+.statusbar .transfer-time {
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+.statusbar .transfer-error {
+  margin: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+.statusbar button.transfer-retry {
+  min-height: 0;
+  margin: 0;
+  padding: 0 0.5rem;
+}

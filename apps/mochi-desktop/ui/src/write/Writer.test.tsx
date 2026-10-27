@@ -121,6 +121,8 @@ function backend(opts: { destination?: string | null; defaultDestination?: strin
         return 5;
       case "cancel_job":
         return true;
+      case "pause_job":
+        return true;
       case "open_archive":
         return { status: "opened", archive: browse.archive };
       case "open_snapshot":
@@ -760,7 +762,7 @@ test("a finished export says what was written and offers Show in folder, with no
   await screen.findByTestId("write-running");
   b.job({ event: "started", job_id: 5 });
   b.job({ event: "progress", job_id: 5, phase: "export", completed: 512, total: 2048 });
-  expect(screen.getByTestId("write-progress")).toHaveTextContent("Writing: 512 bytes of 2.0 KiB");
+  expect(screen.getByTestId("write-progress")).toHaveTextContent("512 bytes of 2.0 KiB");
   b.job({ event: "finished", job_id: 5, outcome: exported(exportReport()) });
   const status = screen.getByTestId("write-status");
   expect(status).toHaveTextContent("Wrote 2 files · 1 folder · 2.0 KiB to pack.zip");
@@ -864,4 +866,127 @@ test("the first look at the staged set does not overwrite what Rust announced fi
   await act(async () => release({ items: [], destination: null, default_destination: null, format: "mochi" }));
   expect(screen.getByText("from-the-shell.txt")).toBeInTheDocument();
   expect(screen.getAllByTestId("staged-item")).toHaveLength(1);
+});
+
+/** Start a create through the panel and deliver the first progress event. */
+async function runningCreate(b: ReturnType<typeof backend>) {
+  const user = userEvent.setup();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  b.job({ event: "started", job_id: 5 });
+  b.job({ event: "progress", job_id: 5, phase: "content", completed: 200, total: 1000 });
+  return user;
+}
+
+test("the transfer card shows the percentage, the operation and the sizes, in the accent state", async () => {
+  const b = backend();
+  await runningCreate(b);
+  const card = screen.getByTestId("write-running");
+  expect(card).toHaveAttribute("data-state", "running");
+  expect(card).toHaveTextContent("Creating archive…");
+  expect(card).toHaveTextContent("20% complete");
+  expect(card).toHaveTextContent("Adding 1 item to new.mochi");
+  expect(screen.getByTestId("write-progress")).toHaveTextContent("200 bytes of 1,000 bytes");
+  const bar = within(card).getByRole("progressbar", { name: "Progress" });
+  expect(bar).toHaveAttribute("aria-valuetext", "200 bytes of 1,000 bytes");
+  expect(screen.getByTestId("write-pause")).toHaveAccessibleName("Pause");
+});
+
+test("Pause sends pause_job with true, shows the paused state, and Resume sends false", async () => {
+  const b = backend();
+  const user = await runningCreate(b);
+  await user.click(screen.getByTestId("write-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "pause_job", args: { jobId: 5, paused: true } });
+  const card = screen.getByTestId("write-running");
+  expect(card).toHaveAttribute("data-state", "paused");
+  expect(card).toHaveTextContent("Paused");
+  expect(card).not.toHaveTextContent("left");
+  expect(screen.getByTestId("write-pause")).toHaveAccessibleName("Resume");
+  // Cancelling a paused job is still possible.
+  expect(screen.getByTestId("write-cancel")).toBeEnabled();
+
+  await user.click(screen.getByTestId("write-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "pause_job", args: { jobId: 5, paused: false } });
+  expect(screen.getByTestId("write-running")).toHaveAttribute("data-state", "running");
+  expect(screen.getByTestId("write-pause")).toHaveAccessibleName("Pause");
+  // Progress after a resume keeps the state.
+  b.job({ event: "progress", job_id: 5, phase: "content", completed: 300, total: 1000 });
+  expect(screen.getByTestId("write-running")).toHaveAttribute("data-state", "running");
+});
+
+test("progress that arrives while paused does not clear the pause", async () => {
+  const b = backend();
+  const user = await runningCreate(b);
+  await user.click(screen.getByTestId("write-pause"));
+  b.job({ event: "progress", job_id: 5, phase: "content", completed: 300, total: 1000 });
+  expect(screen.getByTestId("write-running")).toHaveAttribute("data-state", "paused");
+});
+
+test("after the bulk phase the card reads Finishing instead of dropping back to 0%", async () => {
+  const b = backend();
+  await runningCreate(b);
+  b.job({ event: "progress", job_id: 5, phase: "content", completed: 1000, total: 1000 });
+  b.job({ event: "progress", job_id: 5, phase: "catalog", completed: 0, total: null });
+  const card = screen.getByTestId("write-running");
+  expect(card).toHaveTextContent("Finishing…");
+  expect(card).not.toHaveTextContent("0% complete");
+  expect(within(card).getByRole("progressbar")).toHaveAttribute("value", "1");
+});
+
+test("a failed job freezes the card in the error state, and Try again sends the same request", async () => {
+  const b = backend();
+  const user = await runningCreate(b);
+  const first = b.request();
+  b.job({ event: "finished", job_id: 5, outcome: { status: "failed", code: "IO_ERROR", message: "disk full" } });
+  const card = screen.getByTestId("write-failed");
+  expect(card).toHaveAttribute("data-state", "error");
+  expect(card).toHaveTextContent("Error (IO_ERROR): disk full");
+  expect(card).toHaveTextContent("20% complete");
+  expect(screen.queryByTestId("write-pause")).toBeNull();
+  expect(screen.queryByTestId("write-cancel")).toBeNull();
+
+  await user.click(screen.getByTestId("write-retry"));
+  const starts = b.calls.filter((c) => c.cmd === "start_job");
+  expect(starts).toHaveLength(2);
+  expect(starts[1]?.args.request).toEqual(first);
+  expect(screen.queryByTestId("write-failed")).toBeNull();
+  expect(screen.getByTestId("write-running")).toBeInTheDocument();
+});
+
+test("an unexpected stop is an error too; a cancel is not", async () => {
+  const b = backend();
+  await runningCreate(b);
+  b.job({ event: "finished", job_id: 5, outcome: { status: "aborted", message: "worker crashed" } });
+  expect(screen.getByTestId("write-failed")).toHaveTextContent("Error: worker crashed");
+});
+
+test("a cancelled job shows no error card and no Try again", async () => {
+  const b = backend();
+  await runningCreate(b);
+  b.job({ event: "finished", job_id: 5, outcome: { status: "cancelled" } });
+  expect(screen.queryByTestId("write-failed")).toBeNull();
+  expect(screen.queryByTestId("write-retry")).toBeNull();
+});
+
+test("an encrypted create is never offered a retry: its passphrase is not kept", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  await user.click(screen.getByTestId("stage-folder"));
+  await screen.findByTestId("staged-list");
+  await user.click(screen.getByTestId("create-options").querySelector("summary") as HTMLElement);
+  await user.click(screen.getByTestId("encrypt"));
+  await user.type(screen.getByTestId("create-passphrase"), "correct horse");
+  await user.type(screen.getByTestId("create-passphrase-again"), "correct horse");
+  await user.click(screen.getByTestId("create-confirm"));
+  await screen.findByTestId("write-running");
+  b.job({ event: "started", job_id: 5 });
+  b.job({ event: "finished", job_id: 5, outcome: { status: "failed", code: "IO_ERROR", message: "disk" } });
+  expect(screen.getByTestId("write-failed")).toBeInTheDocument();
+  expect(screen.queryByTestId("write-retry")).toBeNull();
 });

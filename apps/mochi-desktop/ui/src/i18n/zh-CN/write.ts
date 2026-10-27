@@ -118,7 +118,6 @@ export const write = {
   "write.rowFormat": "格式",
   "write.exportNote": "MOCHI 使用该格式对应的工具写出了此文件，写出后没有再检查该文件。",
   "write.progressScan": "正在查找文件：已找到 {n} 个",
-  "write.progressExport": "正在写入：{done} / {total}",
   "write.progressPhase": "{phase}：{completed}",
   "write.progressPhaseOf": "{phase}：{completed} / {total}",
   "write.committedDeleteOne": "已从此版本中移除 {items}。更早的版本中仍有该内容。",

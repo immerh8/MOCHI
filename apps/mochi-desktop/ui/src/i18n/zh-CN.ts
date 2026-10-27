@@ -16,6 +16,7 @@ import { result } from "./zh-CN/result";
 import { settings } from "./zh-CN/settings";
 import { start } from "./zh-CN/start";
 import { toolbar } from "./zh-CN/toolbar";
+import { transfer } from "./zh-CN/transfer";
 import { update } from "./zh-CN/update";
 import { write } from "./zh-CN/write";
 
@@ -34,6 +35,7 @@ export const zhCN = {
   ...settings,
   ...start,
   ...toolbar,
+  ...transfer,
   ...update,
   ...write,
 } satisfies Catalogue<typeof en>;

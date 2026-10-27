@@ -16,6 +16,7 @@ import { result } from "./th/result";
 import { settings } from "./th/settings";
 import { start } from "./th/start";
 import { toolbar } from "./th/toolbar";
+import { transfer } from "./th/transfer";
 import { update } from "./th/update";
 import { write } from "./th/write";
 
@@ -34,6 +35,7 @@ export const th = {
   ...settings,
   ...start,
   ...toolbar,
+  ...transfer,
   ...update,
   ...write,
 } satisfies Catalogue<typeof en>;

@@ -262,6 +262,15 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 3. *More → Settings → Speed*: **Pass:** "Compress on every processor core (N)" is ticked and N is the number of cores (at most 8). Untick it, close MOCHI, start it again: **Pass:** still unticked.
 4. Create a second archive from the same file. **Pass:** about one core busy, slower than step 2. Run **Test** on both archives: **Pass:** both pass, and both list the same files and sizes.
 5. Tick it again. **Pass:** the next job uses several cores again.
+### W-09e. Pause, resume, time left (release 0.9.12)
+
+1. Create a new archive from a 2 GB folder (as in W-09d). **Pass:** the card shows "N% complete", "X of Y", then within a few seconds "About … left · …/s"; the numbers move.
+2. Press **Pause**. **Pass:** within a second the header says "Paused", the bar turns amber, the numbers stop, and Task Manager shows the CPU and disk use drop.
+3. Wait a minute, press **Resume**. **Pass:** it goes on from the same percent; the time left is about what it was before the pause (the paused minute is not counted).
+4. Pause again, then **Cancel**. **Pass:** it stops; no archive file is left.
+5. Right-click a large `.mochi` in Explorer → **Extract here**. Pause and resume in the small window. **Pass:** as steps 2 and 3; the extracted files pass a size comparison with the originals.
+6. Create an archive into a folder on a USB stick, pull the stick out midway. **Pass:** the card turns red with the error and **Try again**; nothing says it was saved.
+
 ### W-10. Re-run W-04 step 2 and W-05 on 0.9.1
 
 **Pass:** the same as before, version 0.9.1.
@@ -329,6 +338,7 @@ Done by <you> on <date>
 | W-09a step 7 drag out to Explorer / the file manager, Esc cleans up |  | not run on client hardware for 1.0 | not run on client hardware for 1.0 | not run on client hardware for 1.0 |
 | W-09c the window's own title bar: move, double-click, edge resize, Alt+F4, shadow, contrast |  | not run | not run | not run |
 | W-09d Settings → Speed: all cores by default, one core remembered, Task Manager shows the difference |  | not run | not run | not run |
+| W-09e pause, resume, time left, Cancel while paused, red error card |  | not run | not run | not run |
 | X-1 start-up check off: no request |  | not run on client hardware for 1.0 | same | same |
 | X-2 on: one request |  | same | same | same |
 | X-3 network off message |  | same | same | same |

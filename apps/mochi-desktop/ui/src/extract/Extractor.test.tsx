@@ -89,6 +89,8 @@ function backend(plans: (ExtractPlan | null | { error: { code: string; message: 
         return 7;
       case "cancel_job":
         return true;
+      case "pause_job":
+        return true;
     }
     throw new Error(`unexpected command ${cmd}`);
   });
@@ -535,4 +537,26 @@ test("a degraded folder entry is a caution in the details: badge on the button, 
   expect(screen.getByTestId("extract-details")).toHaveTextContent("Not confirmed");
   expect(screen.getByTestId("extract-details")).toHaveTextContent("no directory sync");
   expect(container.querySelector(".success, .pass, [data-status='PASS']")).toBeNull();
+});
+
+test("pausing an extraction sends pause_job by id, shows Paused, and Resume sends false", async () => {
+  const user = userEvent.setup();
+  const b = backend([plan()]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  b.job({ event: "started", job_id: 7 });
+  b.job({ event: "progress", job_id: 7, phase: "restore", completed: 2, total: 5 });
+  expect(screen.getByTestId("extract-running")).toHaveTextContent("Extracting…");
+  expect(screen.getByTestId("extract-running")).toHaveTextContent("40% complete");
+
+  await user.click(screen.getByTestId("extract-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "pause_job", args: { jobId: 7, paused: true } });
+  expect(screen.getByTestId("extract-running")).toHaveAttribute("data-state", "paused");
+  expect(screen.getByTestId("extract-pause")).toHaveAccessibleName("Resume");
+
+  await user.click(screen.getByTestId("extract-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "pause_job", args: { jobId: 7, paused: false } });
+  expect(screen.getByTestId("extract-running")).toHaveAttribute("data-state", "running");
 });
