@@ -413,6 +413,11 @@ impl quick::WindowHost for Windows {
         self.bring_forward(label)
     }
 
+    fn window_exists(&self, label: &str) -> bool {
+        use tauri::Manager;
+        self.app.get_webview_window(label).is_some()
+    }
+
     fn set_title(&self, label: &str, title: &str) {
         use tauri::Manager;
         if let Some(window) = self.app.get_webview_window(label) {

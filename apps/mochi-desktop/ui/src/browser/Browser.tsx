@@ -381,7 +381,8 @@ export function Browser({
   /** Show an archive that is open in Rust, replacing the one on screen. */
   const show = async (archive: ArchiveSummary) => {
     setCloseForeignToken((n) => n + 1);
-    if (open) await closeArchive(open.archive.handle);
+    // The same handle comes back when this window already had the file open in Rust: keep it.
+    if (open && open.archive.handle !== archive.handle) await closeArchive(open.archive.handle);
     const head = archive.commits[archive.commits.length - 1]?.seq ?? 0;
     const snapshot = await openSnapshot(archive.handle, head);
     setOpen({ archive, snapshot });
