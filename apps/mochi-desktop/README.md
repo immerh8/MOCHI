@@ -118,7 +118,9 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   is unchanged). Also `allow-window-minimize`, `allow-window-toggle-maximize`,
   `allow-window-close`, `allow-window-start-drag`, and `allow-window-watch` (release 0.9.10,
   the window's own title bar; below). Also `allow-get-speed-settings` and
-  `allow-set-speed-settings` (release 0.9.11, *Settings → Speed*; below). All are the app's own commands, not plugin permissions. The commands are declared in
+  `allow-set-speed-settings` (release 0.9.11, *Settings → Speed*; below). Also
+  `allow-pause-job` (release 0.9.12: pause and resume a running job at its safe points;
+  see Jobs), and for the compact window `allow-quick-pause`. All are the app's own commands, not plugin permissions. The commands are declared in
   `build.rs` (`AppManifest`), so any command not listed there or not granted is
   refused. `core:default` is **not** granted: the app needs no window, event, path,
   menu, tray, or image API, and job events travel over a Channel, which needs no
@@ -348,7 +350,10 @@ Long operations are `mochi-core` jobs (a progress sink and a cancellation token)
 `start_job(request, onEvent)` validates the request, returns a job ID at once, and runs
 the work on Tauri's blocking pool; events (`started`, `progress`, then exactly one
 `finished`) stream over the Channel. `cancel_job(id)` sets the token; the job stops at
-its next safe point and reports `cancelled`. If the window goes away, the next event
+its next safe point and reports `cancelled`. `pause_job(id, paused)` pauses or resumes it:
+a paused job waits at those same safe points (`CancellationToken::check`), so it stops
+only where it could also have been cancelled, and cancelling or closing the window still
+ends it. If the window goes away, the next event
 fails to send and the job is cancelled. A job that unwinds still reports `finished`
 with outcome `aborted`. Only a `completed` outcome is described as complete, and
 nothing on screen gets success styling (spec §23.3: success styling is for a

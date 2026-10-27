@@ -6,17 +6,41 @@
 //! deliberately no second progress mechanism (AGENTS.md).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::error::{ErrorCode, MochiError, Result};
 
-/// Cooperative cancellation. Cheap to clone; all clones share one flag.
+/// Cooperative cancellation, and pausing at the same safe points. Cheap to
+/// clone; all clones share one state.
 ///
 /// Cancelling before publication step 7 leaves the previous head valid
 /// (spec §5.1, plan C5); jobs must call [`CancellationToken::check`] at safe
-/// points only.
+/// points only. A paused job waits inside `check` until it is resumed or
+/// cancelled, so it stops only where it could also have been cancelled.
 #[derive(Debug, Clone, Default)]
-pub struct CancellationToken(Arc<AtomicBool>);
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+    pause: Arc<PauseGate>,
+}
+
+/// Whether the job should wait at its next safe point; cancelling wakes it.
+#[derive(Debug, Default)]
+struct PauseGate {
+    paused: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl PauseGate {
+    fn lock(&self) -> MutexGuard<'_, bool> {
+        // The guarded value is a single flag: still consistent after a panic.
+        self.paused.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn set(&self, paused: bool) {
+        *self.lock() = paused;
+        self.changed.notify_all();
+    }
+}
 
 impl CancellationToken {
     pub fn new() -> Self {
@@ -24,22 +48,49 @@ impl CancellationToken {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.cancelled.store(true, Ordering::SeqCst);
+        // Take the gate's lock so a job about to wait sees the flag or the wake-up.
+        drop(self.pause.lock());
+        self.pause.changed.notify_all();
     }
 
     /// The shared flag itself, for a collaborator outside this crate that
     /// must notice cancellation on its own thread (the foreign-format helper
     /// supervisor kills its child process when it is set).
     pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.0)
+        Arc::clone(&self.cancelled)
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.cancelled.load(Ordering::SeqCst)
     }
 
-    /// `Err(CANCELLED)` if cancellation was requested.
+    /// Ask the job to wait at its next safe point ([`CancellationToken::check`]).
+    pub fn pause(&self) {
+        self.pause.set(true);
+    }
+
+    /// Let a paused job go on.
+    pub fn resume(&self) {
+        self.pause.set(false);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        *self.pause.lock()
+    }
+
+    /// `Err(CANCELLED)` if cancellation was requested. While the job is
+    /// paused, waits here until it is resumed or cancelled.
     pub fn check(&self) -> Result<()> {
+        let mut paused = self.pause.lock();
+        while *paused && !self.is_cancelled() {
+            paused = self
+                .pause
+                .changed
+                .wait(paused)
+                .unwrap_or_else(|p| p.into_inner());
+        }
+        drop(paused);
         if self.is_cancelled() {
             Err(MochiError::new(ErrorCode::Cancelled, "operation cancelled"))
         } else {
@@ -111,6 +162,43 @@ mod tests {
         a.cancel();
         assert!(b.is_cancelled());
         assert_eq!(b.check().unwrap_err().code, ErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn a_paused_job_waits_at_its_next_check_until_resumed() {
+        let token = CancellationToken::new();
+        token.pause();
+        assert!(token.is_paused());
+        let job = token.clone();
+        let passed = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&passed);
+        let worker = std::thread::spawn(move || {
+            let r = job.check();
+            seen.store(true, Ordering::SeqCst);
+            r
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !passed.load(Ordering::SeqCst),
+            "a paused job went past check"
+        );
+        token.resume();
+        assert!(worker.join().unwrap().is_ok());
+        assert!(!token.is_paused());
+    }
+
+    #[test]
+    fn cancelling_wakes_a_paused_job_with_cancelled() {
+        let token = CancellationToken::new();
+        token.pause();
+        let job = token.clone();
+        let worker = std::thread::spawn(move || job.check());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        token.cancel();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code,
+            ErrorCode::Cancelled
+        );
     }
 
     #[test]

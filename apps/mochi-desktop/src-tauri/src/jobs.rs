@@ -131,6 +131,24 @@ impl JobRegistry {
         }
     }
 
+    /// Pause (`true`) or resume (`false`) a running job. `false` if no such
+    /// job is running. A paused job stops at its next safe point, the same
+    /// points where it could be cancelled (`CancellationToken::check`), and
+    /// waits there; cancelling it, or closing its window, still ends it.
+    pub fn set_paused(&self, id: JobId, paused: bool) -> bool {
+        match self.lock().running.get(&id) {
+            Some((token, _)) => {
+                if paused {
+                    token.pause();
+                } else {
+                    token.resume();
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Request cancellation of every job a window started (it was closed).
     /// Returns how many were running. Other windows' jobs are untouched.
     pub fn cancel_owned(&self, owner: &str) -> usize {
@@ -438,6 +456,71 @@ mod tests {
         assert_eq!(reg.running(), 0);
         assert!(!reg.cancel(id), "a finished job cannot be cancelled");
         assert!(rx.try_recv().is_err(), "nothing after finished");
+    }
+
+    #[test]
+    fn a_paused_job_makes_no_progress_until_resumed() {
+        let reg = Arc::new(JobRegistry::default());
+        let (sink, rx) = recorder();
+        let id = reg
+            .start(
+                JobRequest::SelfTest {
+                    steps: 20,
+                    step_ms: 10,
+                },
+                sink,
+                thread_spawner(),
+            )
+            .unwrap();
+        loop {
+            if let JobEvent::Progress { completed: 2.., .. } =
+                rx.recv_timeout(Duration::from_secs(20)).unwrap()
+            {
+                break;
+            }
+        }
+        assert!(reg.set_paused(id, true));
+        // At most the step under way finishes; then nothing until resumed.
+        std::thread::sleep(Duration::from_millis(100));
+        while rx.try_recv().is_ok() {}
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(rx.try_recv().is_err(), "a paused job reported progress");
+        assert_eq!(reg.running(), 1);
+        assert!(reg.set_paused(id, false));
+        let rest = until_finished(&rx);
+        assert!(matches!(
+            rest.last(),
+            Some(JobEvent::Finished {
+                outcome: JobOutcome::Completed { .. },
+                ..
+            })
+        ));
+        assert!(!reg.set_paused(id, true), "a finished job cannot be paused");
+    }
+
+    #[test]
+    fn cancelling_a_paused_job_reports_cancelled() {
+        let reg = Arc::new(JobRegistry::default());
+        let (sink, rx) = recorder();
+        let id = reg
+            .start(
+                JobRequest::SelfTest {
+                    steps: 1000,
+                    step_ms: 5,
+                },
+                sink,
+                thread_spawner(),
+            )
+            .unwrap();
+        assert!(reg.set_paused(id, true));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(reg.cancel(id));
+        let rest = until_finished(&rx);
+        let JobEvent::Finished { outcome, .. } = rest.last().unwrap() else {
+            panic!("no finished event")
+        };
+        assert_eq!(*outcome, JobOutcome::Cancelled);
+        assert_eq!(reg.running(), 0);
     }
 
     #[test]

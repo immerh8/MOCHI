@@ -147,6 +147,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .invoke_handler(tauri::generate_handler![
             commands::start_job,
             commands::cancel_job,
+            commands::pause_job,
             commands::open_archive,
             commands::unlock_archive,
             commands::cancel_unlock,
@@ -184,6 +185,7 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::watch_quick,
             commands::quick_passphrase,
             commands::quick_cancel,
+            commands::quick_pause,
             commands::quick_show_folder,
             commands::quick_close,
             commands::quick_choose_location,

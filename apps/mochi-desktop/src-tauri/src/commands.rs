@@ -127,6 +127,13 @@ pub fn cancel_job(job_id: JobId, jobs: State<'_, Arc<JobRegistry>>) -> bool {
     jobs.cancel(job_id)
 }
 
+/// Pause (`paused: true`) or resume a running job. `false` if it is not
+/// running. The job waits at its next safe point; cancel still ends it.
+#[tauri::command]
+pub fn pause_job(job_id: JobId, paused: bool, jobs: State<'_, Arc<JobRegistry>>) -> bool {
+    jobs.set_paused(job_id, paused)
+}
+
 /// Run `work` on the blocking pool and wait for it.
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> mochi_core::Result<T> + Send + 'static,
@@ -438,6 +445,12 @@ pub fn quick_passphrase(passphrase: Secret, quick: State<'_, Arc<Quick>>) -> Res
 #[tauri::command]
 pub fn quick_cancel(quick: State<'_, Arc<Quick>>) {
     quick.cancel();
+}
+
+/// Pause (`paused: true`) or resume the compact window's job.
+#[tauri::command]
+pub fn quick_pause(paused: bool, quick: State<'_, Arc<Quick>>) -> bool {
+    quick.set_paused(paused)
 }
 
 /// Open the folder the compact window's job wrote into, in the file manager.
