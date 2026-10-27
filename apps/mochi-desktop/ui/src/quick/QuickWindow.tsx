@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ProgressMeter } from "../a11y/ProgressMeter";
+import { TransferProgress } from "../progress/TransferProgress";
+import { useTransferRate } from "../progress/useTransferRate";
 import { formatSize } from "../browser/format";
 import { progressText as extractProgress } from "../extract/messages";
 import { formatNumber, t, tc, useLocale } from "../i18n";
 import {
   cancelQuick,
   closeQuick,
+  quickPause,
   sendQuickPassphrase,
   showQuickFolder,
   subscribeQuick,
@@ -193,6 +195,9 @@ export function QuickWindow() {
   // The Add form: what was chosen (updated when another item joins) and the form's starting values.
   const [prompt, setPrompt] = useState<{ items: number; subject: string; start: AddFormStart } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const rate = useTransferRate();
+  const { sample: sampleRate, reset: resetRate } = rate;
   const [problem, setProblem] = useState<string | null>(null);
   const passphraseRef = useRef<HTMLInputElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -205,6 +210,8 @@ export function QuickWindow() {
           setPrompt(null);
           setView({ kind: "running", progress: null });
           setCancelling(false);
+          setPaused(false);
+          resetRate();
           setProblem(null);
           return;
         }
@@ -223,6 +230,7 @@ export function QuickWindow() {
           return;
         }
         if (event.event === "progress") {
+          sampleRate(event.phase, event.completed, event.total, Date.now());
           setView({
             kind: "running",
             progress: { phase: event.phase, completed: event.completed, total: event.total },
@@ -236,7 +244,7 @@ export function QuickWindow() {
           if (end.kind === "done" && end.record) logRecord(end.record);
         }
       }),
-    [],
+    [sampleRate, resetRate],
   );
 
   useEffect(() => {
@@ -250,6 +258,18 @@ export function QuickWindow() {
   const cancel = () => {
     setCancelling(true);
     cancelQuick().catch(report);
+  };
+
+  const togglePause = () => {
+    if (cancelling) return;
+    const next = !paused;
+    setPaused(next);
+    rate.pause(next, Date.now());
+    quickPause(next).catch((e: unknown) => {
+      setPaused(!next);
+      rate.pause(!next, Date.now());
+      report(e);
+    });
   };
 
   const submitPassphrase = () => {
@@ -284,22 +304,26 @@ export function QuickWindow() {
         {view.kind === "form" && prompt && <AddForm start={prompt.start} />}
         {view.kind === "running" && (
           <>
-            <div className="progress" data-testid="quick-progress">
-              <ProgressMeter
-                completed={view.progress?.completed ?? 0}
-                total={view.progress?.total ?? null}
-                text={
-                  view.progress
-                    ? (addProgress ? writeProgress : extractProgress)(
-                        view.progress.phase,
-                        view.progress.completed,
-                        view.progress.total,
-                      )
-                    : t("common.starting")
-                }
-                textTestId="quick-progress-text"
-              />
-            </div>
+            <TransferProgress
+              title={addProgress ? t("transfer.titleCreate") : t("transfer.titleExtract")}
+              phase={view.progress?.phase ?? ""}
+              completed={view.progress?.completed ?? 0}
+              total={view.progress?.total ?? null}
+              rate={rate.state}
+              text={
+                view.progress
+                  ? (addProgress ? writeProgress : extractProgress)(
+                      view.progress.phase,
+                      view.progress.completed,
+                      view.progress.total,
+                    )
+                  : t("common.starting")
+              }
+              state={view.progress === null ? "starting" : cancelling ? "cancelling" : paused ? "paused" : "running"}
+              onPause={togglePause}
+              onResume={togglePause}
+              testIds={{ root: "quick-progress", text: "quick-progress-text", pause: "quick-pause" }}
+            />
             <div className="actions">
               <button type="button" data-testid="quick-cancel" disabled={cancelling} onClick={cancel}>
                 {cancelling ? t("quick.cancelling") : t("common.cancel")}

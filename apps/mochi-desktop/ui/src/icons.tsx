@@ -430,3 +430,39 @@ export function CloseGlyph() {
     </Glyph>
   );
 }
+
+/** Two arrows in opposite directions: a transfer in progress. */
+export function TransferIcon() {
+  return (
+    <Icon size={18}>
+      <path d="M4 8h14M14.5 4.5 18 8l-3.5 3.5" />
+      <path d="M20 16H6M9.5 12.5 6 16l3.5 3.5" />
+    </Icon>
+  );
+}
+
+export function PauseIcon() {
+  return (
+    <Icon>
+      <path d="M9 6v12M15 6v12" strokeWidth="2.4" />
+    </Icon>
+  );
+}
+
+export function PlayIcon() {
+  return (
+    <Icon>
+      <path d="M8 5.5v13l10.5-6.5z" />
+    </Icon>
+  );
+}
+
+/** A circle with an exclamation mark. */
+export function ErrorIcon() {
+  return (
+    <Icon size={16}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.8v5M12 16.2h.01" />
+    </Icon>
+  );
+}

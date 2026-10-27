@@ -60,6 +60,11 @@ export function cancelQuick(): Promise<null> {
   return invoke<null>("quick_cancel");
 }
 
+/** Pause (`true`) or resume (`false`) the running job; `false` if none is running. */
+export function quickPause(paused: boolean): Promise<boolean> {
+  return invoke<boolean>("quick_pause", { paused });
+}
+
 /** Open the folder the job wrote into; Rust remembers which. */
 export function showQuickFolder(): Promise<null> {
   return invoke<null>("quick_show_folder");

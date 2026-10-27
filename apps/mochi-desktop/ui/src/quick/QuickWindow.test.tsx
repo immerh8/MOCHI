@@ -493,7 +493,7 @@ test("a cancelled export says no archive was created", async () => {
   render(<QuickWindow />);
   b.send({ event: "started", action: "add", subject: name("big.bin"), items: 1 });
   b.send({ event: "progress", phase: "export", completed: 1024, total: 4096 });
-  expect(await screen.findByTestId("quick-progress-text")).toHaveTextContent("Writing: 1.0 KiB (1,024 bytes) of 4.0 KiB (4,096 bytes)");
+  expect(await screen.findByTestId("quick-progress-text")).toHaveTextContent("1.0 KiB of 4.0 KiB");
   b.send({ event: "cancelled", action: "add" });
   expect(await screen.findByTestId("quick-result")).toHaveTextContent("Cancelled. No archive was created.");
 });
@@ -513,4 +513,26 @@ test("the compact window has the same title bar, with Minimize and Close only; C
   expect(b.calls.map((c) => c.cmd)).toContain("window_close");
   // The compact window is granted no maximize and no watch of the window.
   expect(b.calls.map((c) => c.cmd)).not.toContain("window_watch");
+});
+
+test("Pause in the compact window sends quick_pause, shows Paused, and Resume sends false", async () => {
+  const b = backend((cmd) => (cmd === "quick_pause" ? true : null));
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "extract_here", subject: name("photos.mochi"), items: 1 });
+  b.send({ event: "progress", phase: "restore", completed: 3, total: 10 });
+  const card = await screen.findByTestId("quick-progress");
+  expect(card).toHaveAttribute("data-state", "running");
+  expect(card).toHaveTextContent("30% complete");
+
+  await userEvent.click(screen.getByTestId("quick-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "quick_pause", args: { paused: true } });
+  expect(card).toHaveAttribute("data-state", "paused");
+  expect(card).toHaveTextContent("Paused");
+  expect(screen.getByTestId("quick-pause")).toHaveAccessibleName("Resume");
+  // The window's own Cancel still works while paused.
+  expect(screen.getByTestId("quick-cancel")).toBeEnabled();
+
+  await userEvent.click(screen.getByTestId("quick-pause"));
+  expect(b.calls.at(-1)).toEqual({ cmd: "quick_pause", args: { paused: false } });
+  expect(card).toHaveAttribute("data-state", "running");
 });

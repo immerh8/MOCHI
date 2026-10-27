@@ -120,7 +120,6 @@ export const write = {
   "write.rowFormat": "รูปแบบ",
   "write.exportNote": "MOCHI เขียนไฟล์นี้ด้วยเครื่องมือของรูปแบบนั้น และไม่ได้ตรวจไฟล์หลังเขียน",
   "write.progressScan": "กำลังค้นดูไฟล์: พบ {n}",
-  "write.progressExport": "กำลังเขียน: {done} จาก {total}",
   "write.progressPhase": "{phase}: {completed}",
   "write.progressPhaseOf": "{phase}: {completed} จาก {total}",
   "write.committedDeleteOne":

@@ -25,6 +25,14 @@ export function cancelJob(jobId: number): Promise<boolean> {
   return invoke<boolean>("cancel_job", { jobId });
 }
 
+/**
+ * Pause (`true`) or resume (`false`) a job. A paused job waits at its next safe point; cancelling
+ * it still works. `false` if the job is no longer running.
+ */
+export function pauseJob(jobId: number, paused: boolean): Promise<boolean> {
+  return invoke<boolean>("pause_job", { jobId, paused });
+}
+
 export function isIpcError(value: unknown): value is IpcError {
   return (
     typeof value === "object" &&

@@ -3,12 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useJobFocus } from "../a11y/focus";
 import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
-import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText } from "../browser/format";
-import { formatNumber, t } from "../i18n";
+import { formatNumber, t, tn } from "../i18n";
 import { Name } from "../browser/Name";
 import type { ArchiveSummary, NameText } from "../ipc/browse";
-import { cancelJob, startJob } from "../ipc/jobs";
+import { cancelJob, pauseJob, startJob } from "../ipc/jobs";
 import type { IpcError, JobEvent, JobRequest } from "../ipc/jobs";
 import { showInFolder, stageDroppedArchive } from "../ipc/start";
 import {
@@ -33,12 +32,14 @@ import {
   recoveryLabel,
   visibleWithoutKey,
 } from "../crypt/messages";
+import { TransferProgress } from "../progress/TransferProgress";
+import { useTransferRate } from "../progress/useTransferRate";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
-import { commitView, deleteNote, exportView, outcomeResult, progressText, tarNotes } from "./messages";
+import { commitView, deleteNote, exportView, failureText, outcomeResult, progressText, tarNotes } from "./messages";
 import type { Operation, WriteResult } from "./messages";
 import { FormatSelect, PRESETS } from "./FormatFields";
-import { hasLevel, isMochi } from "./format";
+import { formatLabel, hasLevel, isMochi } from "./format";
 
 export { PRESETS };
 
@@ -88,6 +89,7 @@ type JobView =
       completed: number;
       total: number | null;
       cancelRequested: boolean;
+      paused: boolean;
     }
   | {
       state: "done";
@@ -96,8 +98,25 @@ type JobView =
       archive: ArchiveSummary | null;
       /** A ZIP or tar file was written: no archive to open; "Show in folder" uses Rust's memory. */
       exported: boolean;
+      /** A job that failed or stopped unexpectedly (not a cancel): the card keeps its last progress. */
+      failure: { text: string; phase: string; completed: number; total: number | null } | null;
     }
   | { state: "error"; text: string };
+
+/** What the card says about the running job: the operation, how many items, and what it writes to. */
+interface JobMeta {
+  op: Operation;
+  items: number;
+  name: string;
+  format: ArchiveFormat;
+}
+
+/** The last request of a run, kept to try it again. A passphrase is never kept: no request with one is stored. */
+interface LastRun {
+  op: Operation;
+  request: JobRequest;
+  meta: JobMeta;
+}
 
 const EMPTY: StagedView = { items: [], destination: null, default_destination: null, format: "mochi" };
 
@@ -136,6 +155,10 @@ export function Writer({
   const passRef = useRef<HTMLInputElement>(null);
   const againRef = useRef<HTMLInputElement>(null);
   const [job, setJob] = useState<JobView>({ state: "idle" });
+  const [meta, setMeta] = useState<JobMeta>({ op: "create", items: 0, name: "", format: "mochi" });
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
+  const rate = useTransferRate();
+  const sampleRate = rate.sample;
   const [error, setError] = useState<string | null>(null);
   // The format of the next new archive lives in Rust (it names the default file).
   const format: ArchiveFormat = staged.format;
@@ -150,7 +173,7 @@ export function Writer({
     };
   });
   // Files dropped on an open archive go straight in (one commit, no panel).
-  const runRef = useRef<(op: Operation, request: JobRequest) => void>(() => undefined);
+  const runRef = useRef<(op: Operation, request: JobRequest, over?: Partial<JobMeta>) => void>(() => undefined);
   const operationRef = useRef<Operation>("add");
   const onCommittedRef = useRef(onCommitted);
   const onArchiveDroppedRef = useRef(onArchiveDropped);
@@ -187,7 +210,7 @@ export function Writer({
           stageDroppedArchive().then(
             (view) => {
               setStaged(view);
-              runRef.current("add", { kind: "add_to_archive", handle });
+              runRef.current("add", { kind: "add_to_archive", handle }, { items: view.items.length });
             },
             (e: unknown) => setError(errorText(t("write.addSelectionFailed"), e)),
           );
@@ -208,7 +231,7 @@ export function Writer({
           return;
         }
         setMode((m) => (m === "create" ? m : "closed"));
-        runRef.current("add", { kind: "add_to_archive", handle: now.archive.handle });
+        runRef.current("add", { kind: "add_to_archive", handle: now.archive.handle }, { items: event.staged.items.length });
         return;
       }
       setMode((m) => (m === "create" || m === "add" ? m : now.archive ? "add" : "create"));
@@ -224,7 +247,15 @@ export function Writer({
         case "started":
           return prev.state === "running"
             ? prev
-            : { state: "running", jobId: event.job_id, phase: "", completed: 0, total: null, cancelRequested: false };
+            : {
+                state: "running",
+                jobId: event.job_id,
+                phase: "",
+                completed: 0,
+                total: null,
+                cancelRequested: false,
+                paused: false,
+              };
         case "progress":
           if (prev.state === "done") return prev;
           return {
@@ -234,19 +265,30 @@ export function Writer({
             completed: event.completed,
             total: event.total,
             cancelRequested: prev.state === "running" && prev.cancelRequested,
+            paused: prev.state === "running" && prev.paused,
           };
         case "finished": {
           const o = event.outcome;
+          const stopped = o.status === "failed" || o.status === "aborted";
           return {
             state: "done",
             result: outcomeResult(operationRef.current, o),
             committed: o.status === "completed" && o.commit !== undefined,
             archive: o.status === "completed" ? (o.commit?.archive ?? null) : null,
             exported: o.status === "completed" && o.export !== undefined,
+            failure: stopped
+              ? {
+                  text: failureText(o),
+                  phase: prev.state === "running" ? prev.phase : "",
+                  completed: prev.state === "running" ? prev.completed : 0,
+                  total: prev.state === "running" ? prev.total : null,
+                }
+              : null,
           };
         }
       }
     });
+    if (event.event === "progress") sampleRate(event.phase, event.completed, event.total, Date.now());
     if (event.event === "finished") {
       const o = event.outcome;
       // The technical record goes to the console, once per result.
@@ -268,11 +310,25 @@ export function Writer({
         setProblems([]);
       }
     }
-  }, []);
+  }, [sampleRate]);
 
-  const run = (op: Operation, request: JobRequest) => {
+  const run = (op: Operation, request: JobRequest, over: Partial<JobMeta> = {}) => {
     rememberFocus();
     operationRef.current = op;
+    const jobMeta: JobMeta = {
+      op,
+      items: staged.items.length,
+      name:
+        op === "create" || op === "export"
+          ? (staged.destination ?? staged.default_destination ?? "")
+          : (archive?.file_name ?? ""),
+      format,
+      ...over,
+    };
+    setMeta(jobMeta);
+    // A request that carries a passphrase is not kept: trying again means typing it again.
+    setLastRun("passphrase" in request ? null : { op, request, meta: jobMeta });
+    rate.reset();
     setError(null);
     setJob({ state: "starting" });
     startJob(request, onEvent).catch((e: unknown) => {
@@ -375,19 +431,24 @@ export function Writer({
       }
       passphrase = first;
     }
-    const go = () => {
+    const go = (view: StagedView = staged) => {
+      const over = { items: view.items.length, name: view.destination ?? view.default_destination ?? "" };
       if (!isMochi(format)) {
         // A plain ZIP or tar file: none of the MOCHI-only choices exist for it.
-        run("export", { kind: "export_archive", format, level: preset });
+        run("export", { kind: "export_archive", format, level: preset }, over);
         return;
       }
-      run("create", {
-        kind: "create_archive",
-        preset,
-        tar_compatible: tar,
-        ...(passphrase === undefined ? {} : { passphrase }),
-        ...(recovery === null ? {} : { recovery_percent: recovery }),
-      });
+      run(
+        "create",
+        {
+          kind: "create_archive",
+          preset,
+          tar_compatible: tar,
+          ...(passphrase === undefined ? {} : { passphrase }),
+          ...(recovery === null ? {} : { recovery_percent: recovery }),
+        },
+        over,
+      );
       // Rust holds it now; the page does not.
       if (passRef.current) passRef.current.value = "";
       if (againRef.current) againRef.current.value = "";
@@ -402,7 +463,7 @@ export function Writer({
       (view) => {
         if (view === null) return; // the user cancelled the dialog
         setStaged(view);
-        go();
+        go(view);
       },
       (e: unknown) => setError(errorText(t("write.chooseLocationFailed"), e)),
     );
@@ -433,6 +494,24 @@ export function Writer({
     const { jobId } = job;
     setJob({ ...job, cancelRequested: true });
     cancelJob(jobId).catch(() => undefined);
+  };
+
+  const togglePause = () => {
+    if (job.state !== "running" || job.cancelRequested) return;
+    const { jobId } = job;
+    const paused = !job.paused;
+    setJob({ ...job, paused });
+    rate.pause(paused, Date.now());
+    pauseJob(jobId, paused).catch(() => {
+      // Rust could not (the job just ended): show what is true again.
+      setJob((now) => (now.state === "running" && now.jobId === jobId ? { ...now, paused: !paused } : now));
+      rate.pause(!paused, Date.now());
+    });
+  };
+
+  /** Try the same request again; only after a failure, and never a request that held a passphrase. */
+  const retry = () => {
+    if (lastRun && !busy) run(lastRun.op, lastRun.request, lastRun.meta);
   };
 
   /** Choose the format of the new archive: MOCHI-only choices are dropped, never carried over. */
@@ -506,35 +585,72 @@ export function Writer({
   );
 
   // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
-  const progressLine = (job.state === "starting" || job.state === "running") && (
-    <div className="progress" data-testid="write-running">
-      {job.state === "running" && (
-        <>
-          <ProgressMeter
-            completed={job.completed}
-            total={job.total}
-            text={
-              (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
+  // A job that failed keeps its card, frozen at the last progress, with the error and "Try again".
+  const failure = job.state === "done" ? job.failure : null;
+  const cardTitle =
+    meta.op === "create"
+      ? t("transfer.titleCreate")
+      : meta.op === "add"
+        ? t("transfer.titleAdd")
+        : meta.op === "delete"
+          ? t("transfer.titleDelete")
+          : t("transfer.titleExport", { format: formatLabel(meta.format) });
+  const subtitle =
+    meta.op === "create" || meta.op === "export" || meta.op === "add"
+      ? meta.name === ""
+        ? undefined
+        : tn(meta.items, "transfer.subtitleAddOne", "transfer.subtitleAddMany", {
+            n: formatNumber(meta.items),
+            name: meta.name,
+          })
+      : tn(meta.items, "transfer.subtitleDeleteOne", "transfer.subtitleDeleteMany", {
+          n: formatNumber(meta.items),
+          name: meta.name,
+        });
+  const progressLine =
+    (job.state === "starting" || job.state === "running" || failure !== null) && (
+      <TransferProgress
+        title={cardTitle}
+        subtitle={subtitle}
+        phase={job.state === "running" ? job.phase : (failure?.phase ?? "")}
+        completed={job.state === "running" ? job.completed : (failure?.completed ?? 0)}
+        total={job.state === "running" ? job.total : (failure?.total ?? null)}
+        rate={rate.state}
+        text={
+          job.state === "running"
+            ? (job.phase ? progressText(job.phase, job.completed, job.total) : t("common.starting")) +
               (job.cancelRequested ? t("common.cancelling") : "")
-            }
-            textTestId="write-progress"
-          />
-        </>
-      )}
-      {job.state === "starting" && <span>{t("common.starting")}</span>}
-      <button
-        type="button"
-        className="icon-button"
-        data-testid="write-cancel"
-        aria-label={t("common.cancel")}
-        title={t("common.cancel")}
-        onClick={cancel}
-        disabled={job.state !== "running" || job.cancelRequested}
-      >
-        <CloseIcon />
-      </button>
-    </div>
-  );
+            : failure !== null
+              ? failure.phase
+                ? progressText(failure.phase, failure.completed, failure.total)
+                : ""
+              : t("common.starting")
+        }
+        state={
+          failure !== null
+            ? "error"
+            : job.state !== "running"
+              ? "starting"
+              : job.cancelRequested
+                ? "cancelling"
+                : job.paused
+                  ? "paused"
+                  : "running"
+        }
+        errorText={failure?.text}
+        onPause={togglePause}
+        onResume={togglePause}
+        onCancel={cancel}
+        onRetry={lastRun !== null && !busy ? retry : undefined}
+        testIds={{
+          root: failure !== null ? "write-failed" : "write-running",
+          text: "write-progress",
+          pause: "write-pause",
+          cancel: "write-cancel",
+          retry: "write-retry",
+        }}
+      />
+    );
 
   return (
     <section aria-labelledby="write-heading" className="writer" data-testid="writer">
@@ -810,11 +926,15 @@ export function Writer({
               className="primary"
               data-testid="delete-confirm"
               onClick={() =>
-                run("delete", {
-                  kind: "delete_from_archive",
-                  handle: archive.handle,
-                  keys: selected.map((e) => e.key),
-                })
+                run(
+                  "delete",
+                  {
+                    kind: "delete_from_archive",
+                    handle: archive.handle,
+                    keys: selected.map((e) => e.key),
+                  },
+                  { items: selected.length },
+                )
               }
               disabled={busy}
             >

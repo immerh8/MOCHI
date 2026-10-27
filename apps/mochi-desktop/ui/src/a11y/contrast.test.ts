@@ -114,3 +114,20 @@ test.each(["icon-folder", "icon-image", "icon-audio", "icon-video", "icon-archiv
     expect(c(name)).not.toBe(c("pass"));
   },
 );
+
+test("the transfer bar's three fills are non-text marks that reach 3:1 on their track, and none is the pass green", () => {
+  // Running is the accent, paused the warning amber, failed the error red (styles.css `.transfer`).
+  for (const fill of ["accent", "warning", "error"]) {
+    const ratio = contrast(c(fill), c("border"));
+    expect(ratio, `--${fill} on the track (--border) is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    expect(c(fill)).not.toBe(c("pass"));
+  }
+  expect(css).toMatch(/\.transfer progress\s*\{[^}]*color:\s*var\(--accent\)/);
+  expect(css).toMatch(/\.transfer\[data-state="paused"\] progress\s*\{[^}]*color:\s*var\(--warning\)/);
+  expect(css).toMatch(/\.transfer\[data-state="error"\] progress\s*\{[^}]*color:\s*var\(--error\)/);
+});
+
+test("the paused header (--warning text) reaches 4.5:1 on the card surface", () => {
+  const ratio = contrast(c("warning"), c("surface"));
+  expect(ratio, `--warning on --surface is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+});

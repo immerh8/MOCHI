@@ -15,6 +15,7 @@ import { result } from "./en/result";
 import { settings } from "./en/settings";
 import { start } from "./en/start";
 import { toolbar } from "./en/toolbar";
+import { transfer } from "./en/transfer";
 import { update } from "./en/update";
 import { write } from "./en/write";
 
@@ -33,6 +34,7 @@ export const en = {
   ...settings,
   ...start,
   ...toolbar,
+  ...transfer,
   ...update,
   ...write,
 } as const;
