@@ -329,3 +329,18 @@ test("an encrypted archive opened for extraction asks for its passphrase first",
   // The start screen is not shown under the prompt.
   expect(screen.queryByTestId("start-screen")).toBeNull();
 });
+
+test("opening the archive this window already has keeps it open and shows it", async () => {
+  // Rust answers with the same handle when this window already holds the file (its page may
+  // have lost it): the window must show it, not close the handle it was just given.
+  const user = userEvent.setup();
+  const b = backend({ open: () => ({ status: "opened", archive: summary(7, "Test.mochi") }) });
+  render(<App />);
+  await user.click(await screen.findByTestId("open-archive"));
+  await screen.findByTestId("archive-meta");
+  await user.click(screen.getByTestId("toolbar-open"));
+  await act(async () => undefined);
+  expect(b.cmds().filter((c) => c === "open_archive")).toHaveLength(2);
+  expect(b.cmds()).not.toContain("close_archive");
+  expect(screen.getByTestId("archive-meta")).toBeInTheDocument();
+});

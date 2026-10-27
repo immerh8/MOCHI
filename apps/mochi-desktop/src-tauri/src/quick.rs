@@ -198,6 +198,11 @@ pub trait WindowHost: Send + Sync + 'static {
     fn focus_window(&self, _label: &str) -> bool {
         false
     }
+    /// Whether the archive window `label` still exists. Without a host that
+    /// can tell, a registered window is taken to exist.
+    fn window_exists(&self, _label: &str) -> bool {
+        true
+    }
     /// Set the title of the window `label` (plain text).
     fn set_title(&self, _label: &str, _title: &str) {}
 }

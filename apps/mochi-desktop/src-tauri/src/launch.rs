@@ -328,8 +328,8 @@ struct Inner {
 struct Landing {
     /// The window that now has it (or had it).
     window: String,
-    /// What opening produced; `None` when the archive was already open in
-    /// `window` and that window was only brought forward.
+    /// What opening produced; `None` when `window` was only brought forward
+    /// (it has the file as a foreign archive, or waiting for a passphrase).
     outcome: Option<OpenOutcome>,
     /// `window` is the window the user asked in: it shows the outcome itself.
     in_place: bool,
@@ -652,12 +652,33 @@ impl Inner {
         let archives = self.windows.archives();
         let foreign = self.windows.foreign();
         match self.windows.decide(path, requester) {
-            // Nothing to open: `deliver` brings the window forward.
-            Placement::Focus(window) => Ok(Landing {
-                window,
-                outcome: None,
-                in_place: false,
-            }),
+            // Already open there: read it again under the same handle and tell
+            // that window to show it. The window's page may no longer show it
+            // (it went back to the start screen, or reloaded), and bringing the
+            // window forward alone then did nothing at all. A foreign archive, or
+            // one still waiting for its passphrase, is only brought forward.
+            Placement::Focus(window) => {
+                // A window that is gone without its release having run still
+                // holds the file: release it, then decide again (it no longer
+                // holds anything, so this happens at most once per window).
+                if requester != Some(window.as_str())
+                    && self.quick.host().is_some_and(|h| !h.window_exists(&window))
+                {
+                    self.windows.release(&window);
+                    return self.open_routed(requester, path);
+                }
+                let outcome = archives
+                    .handle_of_file(path)
+                    .filter(|&h| archives.owner_of(h).as_deref() == Some(window.as_str()))
+                    .and_then(|h| archives.reopen(h).ok())
+                    .map(|archive| OpenOutcome::Opened { archive });
+                let in_place = outcome.is_some() && requester == Some(window.as_str());
+                Ok(Landing {
+                    window,
+                    outcome,
+                    in_place,
+                })
+            }
             Placement::Reuse(window) => {
                 let outcome = crate::route::open_path_as(archives, foreign, &window, path)?;
                 let in_place = requester == Some(window.as_str());
@@ -1249,6 +1270,8 @@ mod tests {
         titles: Mutex<Vec<(String, String)>>,
         /// Make `create_window` fail.
         refuse: AtomicBool,
+        /// Windows that no longer exist.
+        gone: Mutex<Vec<String>>,
     }
 
     impl crate::quick::WindowHost for FakeHost {
@@ -1271,6 +1294,9 @@ mod tests {
         fn focus_window(&self, label: &str) -> bool {
             self.focused.lock().unwrap().push(label.to_owned());
             true
+        }
+        fn window_exists(&self, label: &str) -> bool {
+            !self.gone.lock().unwrap().iter().any(|g| g == label)
         }
         fn set_title(&self, label: &str, title: &str) {
             self.titles
@@ -1721,11 +1747,16 @@ mod tests {
         assert_eq!(outcome, OpenOutcome::Elsewhere);
         assert!(host.created.lock().unwrap().is_empty(), "no second copy");
         assert!(host.focused.lock().unwrap().contains(&"win-1".to_owned()));
+        // The window is told to show the archive again (under the same
+        // handle: its page may have gone back to the start screen), then where.
         let told = heard(&l, "win-1");
         assert!(
             matches!(
                 told.as_slice(),
-                [LaunchEvent::Reveal { handle, .. }] if *handle == opened.handle
+                [
+                    LaunchEvent::Opened { archive, extract: false },
+                    LaunchEvent::Reveal { handle, .. },
+                ] if archive.handle == opened.handle && *handle == opened.handle
             ),
             "{told:?}"
         );
@@ -2219,7 +2250,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_an_archive_that_is_already_open_brings_its_window_forward() {
+    fn opening_an_archive_that_is_already_open_shows_it_in_its_window() {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (
             write_archive(dir.path(), "a.mochi"),
@@ -2244,14 +2275,59 @@ mod tests {
         assert_eq!(outcome, OpenOutcome::Elsewhere);
         assert_eq!(host.focused.lock().unwrap().last().unwrap(), "main");
         assert_eq!(l.inner.windows.archives().open_count(), 2);
-        // Even in the window that has it.
-        assert_eq!(
-            l.open_in_window("main", &a).unwrap(),
-            OpenOutcome::Elsewhere
-        );
-        // Only the two first events were ever sent.
-        assert_eq!(heard(&l, "main").len(), 1);
+        // The window that has it is told each time to show it, under the same
+        // handle: its page may have lost it (it reloaded, or went back to the
+        // start screen), and only bringing it forward then did nothing at all.
+        let main = heard(&l, "main");
+        assert_eq!(main.len(), 3, "{main:?}");
+        let handles: Vec<_> = main
+            .iter()
+            .map(|e| match e {
+                LaunchEvent::Opened { archive, .. } => archive.handle,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert!(handles.iter().all(|h| *h == handles[0]), "{handles:?}");
+        // In the window that has it, it is shown there (reopened, not a copy).
+        let again = l.open_in_window("main", &a).unwrap();
+        let OpenOutcome::Opened { archive } = again else {
+            panic!("{again:?}");
+        };
+        assert_eq!(archive.handle, handles[0]);
+        assert_eq!(l.inner.windows.archives().open_count(), 2);
+        assert!(heard(&l, "main").is_empty(), "no event for itself");
         assert_eq!(heard(&l, "win-1").len(), 1);
+    }
+
+    #[test]
+    fn a_window_that_is_gone_does_not_keep_its_archive_from_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_archive(dir.path(), "a.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        l.inner.windows.register("win-1");
+        l.inner
+            .windows
+            .archives()
+            .open_as("win-1", &a, mochi_core::publish::ReadOptions::default())
+            .unwrap();
+        // win-1 went away without its release having run.
+        host.gone.lock().unwrap().push("win-1".to_owned());
+        let outcome = l.open_in_window(MAIN_LABEL, &a).unwrap();
+        let OpenOutcome::Opened { archive } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(archive.file_name, "a.mochi");
+        assert!(!l.inner.windows.is_registered("win-1"));
+        assert_eq!(
+            l.inner.windows.archives().open_count(),
+            1,
+            "the old copy is closed"
+        );
+        assert_eq!(
+            l.inner.windows.archives().file_names_of(MAIN_LABEL),
+            ["a.mochi"]
+        );
     }
 
     #[test]
