@@ -24,4 +24,9 @@ attributes_unavailable: NameText | null,
 /**
  * Set when the folder's directory entries are not confirmed durable.
  */
-durability_note: string | null, case_insensitive: boolean, };
+durability_note: string | null, 
+/**
+ * Fast extract was on: files were not flushed one by one, so a power
+ * failure soon after could leave some incomplete.
+ */
+files_not_flushed: boolean, case_insensitive: boolean, };

@@ -1211,6 +1211,7 @@ mod tests {
             attribute_notes: vec![],
             attributes_unavailable: None,
             durability_note: None,
+            files_not_flushed: false,
             case_insensitive: false,
         };
         assert!(require_complete(Some(&report(&[], 0)), false).is_ok());

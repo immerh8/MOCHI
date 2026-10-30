@@ -721,7 +721,7 @@ impl Catalog {
         upto: Option<u64>,
         mut visit: impl FnMut(u64, &Snapshot) -> Result<()>,
     ) -> Result<Snapshot> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-controls"))]
         REPLAYS.with(|n| n.set(n.get() + 1));
         let mut stmt = self
             .conn
@@ -1056,15 +1056,16 @@ impl Catalog {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-controls"))]
 thread_local! {
     static REPLAYS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Full namespace replays run on this thread (unit tests only): lets the
-/// applier's tests show it never rebuilds the namespace per manifest.
-#[cfg(test)]
-pub(crate) fn replay_count() -> u64 {
+/// Full namespace replays run on this thread (tests only): lets the
+/// applier's tests show it never rebuilds the namespace per manifest, and
+/// the restore tests that it never rebuilds it per file.
+#[cfg(any(test, feature = "test-controls"))]
+pub fn replay_count() -> u64 {
     REPLAYS.with(std::cell::Cell::get)
 }
 

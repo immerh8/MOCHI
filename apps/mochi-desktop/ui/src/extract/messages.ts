@@ -129,6 +129,16 @@ function reportDetails(r: ExtractReport): ResultDetails {
       caution: true,
     });
   }
+  if (r.files_not_flushed) {
+    rows.push({
+      label: t("extract.rowFileFlush"),
+      value: t("extract.notFlushed"),
+      sub: t("extract.fastExtractMark"),
+      note: t("extract.notFlushedNote"),
+      caution: true,
+      testId: "extract-not-flushed",
+    });
+  }
   if (r.not_extracted.length > 0 || r.not_extracted_total > 0) {
     rows.push({
       label: t("extract.rowNotExtracted"),
@@ -174,6 +184,7 @@ function reportRecord(r: ExtractReport): string {
     `files ${r.files}, folders ${r.directories}, bytes ${r.bytes}`,
     `not extracted ${r.not_extracted_total}`,
     r.durability_note ? `directory entries not confirmed durable (${r.durability_note})` : "directory entries confirmed",
+    ...(r.files_not_flushed ? ["files not flushed one by one (fast extract)"] : []),
     ...(r.attributes_unavailable ? ["attributes unavailable"] : []),
   ].join("; ");
 }

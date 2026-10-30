@@ -262,6 +262,13 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 3. *More → Settings → Speed*: **Pass:** "Compress on every processor core (N)" is ticked and N is the number of cores (at most 8). Untick it, close MOCHI, start it again: **Pass:** still unticked.
 4. Create a second archive from the same file. **Pass:** about one core busy, slower than step 2. Run **Test** on both archives: **Pass:** both pass, and both list the same files and sizes.
 5. Tick it again. **Pass:** the next job uses several cores again.
+### W-09f. Fast extract (per-file flush skipped)
+
+1. Make a folder of about 50,000 small files (PowerShell: `1..50000 | % { Set-Content "small\f$_.txt" $_ }`) and create an archive from it.
+2. *More → Settings → Speed*: **Pass:** "Fast extract" is unticked by default and its note says files may be incomplete after a power failure.
+3. Extract the archive to a new folder, timing it. **Pass:** the card shows a moving percentage and, within a few seconds, a time left; the result has no "Files on disk" row.
+4. Tick **Fast extract**, close MOCHI, start it again: **Pass:** still ticked. Extract again to another new folder. **Pass:** noticeably faster than step 3; the result shows "Files on disk: Not flushed one by one" marked *Fast extract*; both folders hold the same files (`fc /b` on a few, or compare counts and sizes).
+5. Untick it. **Pass:** the next extraction's result has no "Files on disk" row.
 ### W-09e. Pause, resume, time left (release 0.9.12)
 
 1. Create a new archive from a 2 GB folder (as in W-09d). **Pass:** the card shows "N% complete", "X of Y", then within a few seconds "About … left · …/s"; the numbers move.

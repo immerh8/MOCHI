@@ -18,6 +18,7 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     attribute_notes: [],
     attributes_unavailable: null,
     durability_note: null,
+    files_not_flushed: false,
     case_insensitive: false,
     ...extra,
   };
@@ -88,6 +89,20 @@ test("unavailable attributes, unconfirmed durability, and case folding are all i
     caution: true,
   });
   expect(d.details?.notes.join(" ")).toContain("differ only in case");
+});
+
+test("fast extract is a caution in the details and the record, never in the headline", () => {
+  const o = done(report({ files_not_flushed: true }));
+  const d = describe(o);
+  expect(d.headline).not.toMatch(/flush|fast/i);
+  expect(row(o, "Files on disk")).toMatchObject({
+    value: "Not flushed one by one",
+    sub: "Fast extract",
+    caution: true,
+  });
+  expect(row(o, "Files on disk")?.note).toContain("power fails");
+  expect(d.record).toContain("files not flushed one by one (fast extract)");
+  expect(row(done(report()), "Files on disk")).toBeUndefined();
 });
 
 test("an attribute note names the kind, the count, the first entry and the reason", () => {

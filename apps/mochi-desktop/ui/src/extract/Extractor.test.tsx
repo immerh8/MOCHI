@@ -60,6 +60,7 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     attribute_notes: [],
     attributes_unavailable: null,
     durability_note: null,
+    files_not_flushed: false,
     case_insensitive: false,
     ...extra,
   };

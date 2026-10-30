@@ -10,6 +10,8 @@ export const settings = {
   "settings.speedNote": "关闭：只用一个核心，长时间任务时电脑响应更流畅。两种方式生成的压缩文件完全相同。从下一个任务开始生效。",
   "settings.speedLoadFailed": "无法读取速度设置",
   "settings.speedSaveFailed": "无法更改速度设置",
+  "settings.fastExtract": "快速解压：不在为每个文件命名前将其写入磁盘",
+  "settings.fastExtractNote": "解压大量小文件时快得多，在 Windows 上尤其明显。每个文件在获得名称前仍会经过检查。代价是：如果在解压过程中或刚完成后断电，部分解压出的文件可能不完整。默认关闭。从下一个任务开始生效。",
   "settings.heading": "设置",
   "settings.crashHeading": "崩溃报告",
   "settings.crashPolicy":

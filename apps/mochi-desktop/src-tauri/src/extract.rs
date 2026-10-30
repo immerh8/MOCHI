@@ -469,6 +469,7 @@ fn run_job(
     let options = RestoreOptions {
         restore_setid: false,
         refuse_on_preflight_exceptions: *on_conflict == ConflictChoice::Stop,
+        skip_file_sync: crate::speed::skip_file_sync(),
     };
     #[cfg(feature = "e2e")]
     let paced = Paced(ctx.progress);
@@ -544,6 +545,7 @@ pub fn report_view(report: &RestoreReport, folder: &Path, seq: u32) -> ExtractRe
             DirectoryDurability::Confirmed => None,
             DirectoryDurability::Unconfirmed(why) => Some(why.clone()),
         },
+        files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
     }
 }
@@ -1144,7 +1146,11 @@ mod tests {
     fn cancelling_over_the_registry_reports_cancelled_and_leaves_no_partial_file() {
         let f = fx();
         let reg = registry(&f);
-        let (_, events) = finish(&reg, request(&f, 1, &[], whole()), 3);
+        // Cancel on the first forwarded event: within one phase the
+        // forwarder sends at most one event per 50 ms, so a later count may
+        // never be sent for a job this small. Cancelling mid-way is
+        // `a_cancelled_extraction_leaves_only_complete_files`.
+        let (_, events) = finish(&reg, request(&f, 1, &[], whole()), 0);
         assert!(matches!(
             events.last(),
             Some(JobEvent::Finished {
@@ -1259,6 +1265,7 @@ mod tests {
             bytes: 10,
             exceptions: Vec::new(),
             directory_durability: DirectoryDurability::Unconfirmed("no sync".into()),
+            file_data_synced: false,
             attributes_unavailable: Some("bad\u{1b}[31m manifest".into()),
             attribute_exceptions: Vec::new(),
             case_behavior: CaseBehavior::Insensitive,
@@ -1291,6 +1298,7 @@ mod tests {
         assert_eq!(v.attribute_notes[0].count, 2);
         assert_eq!(v.attribute_notes[0].first_path.text, "a");
         assert_eq!(v.durability_note.as_deref(), Some("no sync"));
+        assert!(v.files_not_flushed);
         assert!(v.case_insensitive);
         let why = v.attributes_unavailable.unwrap();
         assert!(!why.text.contains('\u{1b}') && !why.verbatim);

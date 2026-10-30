@@ -792,6 +792,9 @@ pub struct ExtractReport {
     pub attributes_unavailable: Option<NameText>,
     /// Set when the folder's directory entries are not confirmed durable.
     pub durability_note: Option<String>,
+    /// Fast extract was on: files were not flushed one by one, so a power
+    /// failure soon after could leave some incomplete.
+    pub files_not_flushed: bool,
     pub case_insensitive: bool,
 }
 
@@ -1611,12 +1614,16 @@ pub struct ForeignTestReport {
 //
 // Opt-in and local: nothing is sent anywhere (`crashlog` module docs).
 
-/// How many processor cores a write may use to compress (release 0.9.11).
+/// How many processor cores a write may use to compress (release 0.9.11),
+/// and whether extraction skips the per-file flush.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub struct SpeedSettingsView {
     /// Compress with every core (at most 8). On by default.
     pub all_cores: bool,
+    /// Fast extract: publish each verified file without flushing it first.
+    /// Off by default.
+    pub fast_extract: bool,
     /// The cores "every core" means on this computer.
     pub cores: u32,
 }

@@ -152,6 +152,22 @@ pub fn read_file_in(
     stream_version(src, cat, &entry.version, &label, out, opts, ctx)
 }
 
+/// [`read_file_in`] for a caller that already resolved `path` to its file
+/// version in a replay of its own (the restore engine): no namespace replay
+/// per file, which made restoring N entries cost N replays.
+pub(crate) fn read_entry(
+    src: &dyn ReadStorage,
+    cat: &Catalog,
+    path: &ArchivePath,
+    version: &FileVersionId,
+    out: &mut dyn Write,
+    opts: &ReadOptions,
+    ctx: &JobContext<'_>,
+) -> Result<FileRead> {
+    let label = format!("{:?}", String::from_utf8_lossy(path.as_stored()));
+    stream_version(src, cat, version, &label, out, opts, ctx)
+}
+
 /// Reassemble one file version of the catalog's retained history, reachable
 /// at the head or not, with the same checks as [`read_file`]: every chunk as
 /// stored and decoded bytes, the extents where they are used, and the whole

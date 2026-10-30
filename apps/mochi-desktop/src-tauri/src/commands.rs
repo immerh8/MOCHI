@@ -1007,6 +1007,7 @@ pub async fn set_crash_settings(
 fn speed_view() -> SpeedSettingsView {
     SpeedSettingsView {
         all_cores: crate::speed::settings().all_cores,
+        fast_extract: crate::speed::settings().fast_extract,
         cores: u32::try_from(crate::speed::cores()).unwrap_or(u32::MAX),
     }
 }
@@ -1017,12 +1018,19 @@ pub async fn get_speed_settings() -> Result<SpeedSettingsView, IpcError> {
     Ok(speed_view())
 }
 
-/// Change it; applies to writes started from now on. The archive written is
-/// the same either way.
+/// Change them; they apply to jobs started from now on. The archive written
+/// is the same either way; fast extract trades power-failure durability of
+/// extracted files for speed (`speed` module docs).
 #[tauri::command]
-pub async fn set_speed_settings(all_cores: bool) -> Result<SpeedSettingsView, IpcError> {
+pub async fn set_speed_settings(
+    all_cores: bool,
+    fast_extract: bool,
+) -> Result<SpeedSettingsView, IpcError> {
     blocking(move || {
-        crate::speed::set(crate::speed::Settings { all_cores })?;
+        crate::speed::set(crate::speed::Settings {
+            all_cores,
+            fast_extract,
+        })?;
         Ok(speed_view())
     })
     .await

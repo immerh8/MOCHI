@@ -53,10 +53,10 @@ use std::io::Write;
 use crate::catalog::namespace::{EntryKind, FileVersionId};
 use crate::catalog::path::ArchivePath;
 use crate::error::{ErrorCode, MochiError, Result};
-use crate::job::JobContext;
+use crate::job::{JobContext, NullProgress};
 use crate::manifest::Attributes;
 use crate::publish::{promised_attributes, OpenedHead, ReadOptions};
-use crate::read::read_file_in;
+use crate::read::read_entry;
 use crate::report::{Finding, Severity};
 use crate::storage::{
     case_fold_key, AttributeIssue, AttributeKind, CaseBehavior, DirectoryDurability, NameIssue,
@@ -80,6 +80,14 @@ pub struct RestoreOptions {
     /// collision or unsupported name (`NAME_COLLISION` or
     /// `NAME_UNSUPPORTED`), instead of restoring everything else.
     pub refuse_on_preflight_exceptions: bool,
+    /// Publish each verified file without first flushing its data to the
+    /// device ("fast extract"). Off by default. Every file is still verified
+    /// before it gets its name, and directories are still flushed at the
+    /// end; what is lost is the guarantee that, after a power failure, a
+    /// published name holds the file's complete content. A process crash or
+    /// cancellation is unaffected. The report says which way it ran
+    /// ([`RestoreReport::file_data_synced`]).
+    pub skip_file_sync: bool,
 }
 
 /// The setuid and setgid bits.
@@ -139,6 +147,9 @@ pub struct RestoreReport {
     pub exceptions: Vec<RestoreException>,
     /// The weakest directory flush: `Unconfirmed` if any flush was.
     pub directory_durability: DirectoryDurability,
+    /// Each file's data was flushed before it was published; `false` when
+    /// [`RestoreOptions::skip_file_sync`] asked not to.
+    pub file_data_synced: bool,
     /// `None` if the promised attributes were reconstructed and applied;
     /// otherwise why they were unavailable (nothing was applied).
     pub attributes_unavailable: Option<String>,
@@ -416,6 +427,7 @@ pub fn restore_selected<D: RestoreDir>(
         bytes: 0,
         exceptions: Vec::new(),
         directory_durability: DirectoryDurability::Confirmed,
+        file_data_synced: !options.skip_file_sync,
         attributes_unavailable: None,
         attribute_exceptions: Vec::new(),
         case_behavior: pre.case_behavior,
@@ -457,6 +469,16 @@ pub fn restore_selected<D: RestoreDir>(
     let mut not_restored: std::collections::HashMap<ArchivePath, ErrorCode> =
         std::collections::HashMap::new();
     let mut temp_seq = 0u64;
+
+    // Each file's read reports its own byte progress; inside a restoration
+    // that would interleave a `read` phase with every `restore` event, which
+    // restarts a display's rate estimate per file and multiplies the events.
+    // The restoration reports entries only; cancellation still reaches every
+    // read.
+    let quiet = JobContext {
+        progress: &NullProgress,
+        cancel: ctx.cancel,
+    };
 
     ctx.report(RESTORE_PHASE, 0, Some(total));
     for (done, (path, kind, version)) in selected.iter().enumerate() {
@@ -532,8 +554,21 @@ pub fn restore_selected<D: RestoreDir>(
                         "no free temporary name in the destination directory",
                     ));
                 };
-                let read = read_file_in(src, cat, path, &mut Appender(&mut file), opts, ctx)
-                    .and_then(|r| file.sync_data().map(|()| r).map_err(MochiError::from));
+                let read = read_entry(
+                    src,
+                    cat,
+                    path,
+                    version,
+                    &mut Appender(&mut file),
+                    opts,
+                    &quiet,
+                )
+                .and_then(|r| {
+                    if options.skip_file_sync {
+                        return Ok(r);
+                    }
+                    file.sync_data().map(|()| r).map_err(MochiError::from)
+                });
                 match read {
                     Ok(r) => match parent.publish_no_replace(&temp, name) {
                         Ok(()) => {
