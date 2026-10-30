@@ -463,6 +463,22 @@ recorded in it. Rust saves the choice in `compression-settings.json` next to the
 crash-log settings and reads it at start, before any window can write; a
 missing or damaged file means every core.
 
+## Fast extract: no per-file flush (off by default)
+
+An extraction (MOCHI or a foreign archive, the drag-out included) normally
+flushes each verified file to the device before giving it its name
+(`sync_data`, then a no-replace publish), so that after a power failure a
+name never holds incomplete content. On Windows each flush is a
+`FlushFileBuffers`, which dominates the time for many small files. *Settings →
+Speed → Fast extract* passes `RestoreOptions::skip_file_sync` (and
+`ForeignRestoreOptions::skip_file_sync`): every file is still verified (or its
+format's own check run) before it is published, and directories are still
+flushed at the end; only the per-file data flush is skipped. The report
+carries `file_data_synced: false`, and the result shows "Files on disk: Not
+flushed one by one" as a caution. Saved with the core setting in
+`compression-settings.json` (`fast_extract`; absent means off). The CLI always
+flushes.
+
 ## Crash reports (plan D7): opt-in, local, never sent
 
 There is no reporting endpoint, so nothing is sent. The app has an **off-by-default

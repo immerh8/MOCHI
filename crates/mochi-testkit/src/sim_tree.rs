@@ -155,6 +155,16 @@ impl SimTree {
         }
     }
 
+    /// How many of the file's bytes were synced (its `sync_data` calls),
+    /// for what a power failure would keep.
+    pub fn file_synced_len(&self, path: &[u8]) -> Option<usize> {
+        let p: Vec<Vec<u8>> = path.split(|b| *b == b'/').map(<[u8]>::to_vec).collect();
+        match self.tree.lock().unwrap().nodes.get(&p) {
+            Some(Node::File(s)) => Some(s.synced_len()),
+            _ => None,
+        }
+    }
+
     /// Whether `path` is a directory.
     pub fn is_dir(&self, path: &[u8]) -> bool {
         let p: Vec<Vec<u8>> = path.split(|b| *b == b'/').map(<[u8]>::to_vec).collect();

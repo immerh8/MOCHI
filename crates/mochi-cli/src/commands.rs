@@ -1361,6 +1361,7 @@ pub fn get(env: &mut Env<'_>, a: &GetArgs) -> Result<u8> {
     let options = RestoreOptions {
         restore_setid: a.restore_setid,
         refuse_on_preflight_exceptions: a.refuse_on_conflict,
+        skip_file_sync: false,
     };
     let r = restore_selected(&src, &head, &paths, root, &options, &env.read, &ctx)?;
     Ok(emit_restore(env, "get", &head, &dest, &r))
@@ -3190,6 +3191,7 @@ mod tests {
             bytes: 1,
             exceptions,
             directory_durability: mochi_core::storage::DirectoryDurability::Confirmed,
+            file_data_synced: true,
             attributes_unavailable: None,
             attribute_exceptions: Vec::new(),
             case_behavior: mochi_core::storage::CaseBehavior::Sensitive,

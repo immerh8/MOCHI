@@ -8,6 +8,8 @@ export const settings = {
   "settings.speedNote": "Off: one core, which leaves the computer more responsive during a long job. The archive is the same either way. Applies from the next job.",
   "settings.speedLoadFailed": "Could not read the speed setting",
   "settings.speedSaveFailed": "Could not change the speed setting",
+  "settings.fastExtract": "Fast extract: don't flush each file to disk before giving it its name",
+  "settings.fastExtractNote": "Much faster when extracting many small files, especially on Windows. Every file is still checked before it gets its name. The cost: if the power fails during or just after an extraction, some extracted files may be incomplete. Off by default. Applies from the next job.",
   "settings.heading": "Settings",
   "settings.crashHeading": "Crash reports",
   "settings.crashPolicy":

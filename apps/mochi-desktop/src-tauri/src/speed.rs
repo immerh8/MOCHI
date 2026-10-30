@@ -1,4 +1,6 @@
-//! How many processor cores a write may use to compress (release 0.9.11).
+//! How many processor cores a write may use to compress (release 0.9.11),
+//! and whether extraction flushes each file before naming it ("fast
+//! extract").
 //!
 //! `mochi-core` reads, hashes and compresses a commit's content on worker
 //! threads ahead of the writer (`WriterOptions::threads`); the archive is the
@@ -7,6 +9,12 @@
 //! responsive during a long job. The choice is saved next to the crash-log
 //! settings and read once at start, before any window can start a write
 //! (the Explorer "Add to archive" verbs included).
+//!
+//! Fast extract is off by default. On, an extraction publishes each verified
+//! file without first flushing its data to the device
+//! (`RestoreOptions::skip_file_sync`): much faster for many small files,
+//! especially on Windows, but after a power failure an extracted name may
+//! hold incomplete content. Verification is unchanged either way.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,15 +32,23 @@ const SETTINGS_FILE: &str = "compression-settings.json";
 pub struct Settings {
     /// Use every core (at most 8) to compress.
     pub all_cores: bool,
+    /// Extract without a per-file flush. Absent in files saved before it
+    /// existed, which means off.
+    #[serde(default)]
+    pub fast_extract: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { all_cores: true }
+        Settings {
+            all_cores: true,
+            fast_extract: false,
+        }
     }
 }
 
 static ALL_CORES: AtomicBool = AtomicBool::new(true);
+static FAST_EXTRACT: AtomicBool = AtomicBool::new(false);
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Read the saved choice from `dir` (a missing or unreadable file means the
@@ -40,6 +56,7 @@ static DIR: OnceLock<PathBuf> = OnceLock::new();
 pub fn load(dir: PathBuf) {
     let saved = read(&dir);
     ALL_CORES.store(saved.all_cores, Ordering::Relaxed);
+    FAST_EXTRACT.store(saved.fast_extract, Ordering::Relaxed);
     let _ = DIR.set(dir);
 }
 
@@ -54,15 +71,17 @@ fn read(dir: &Path) -> Settings {
 pub fn settings() -> Settings {
     Settings {
         all_cores: ALL_CORES.load(Ordering::Relaxed),
+        fast_extract: FAST_EXTRACT.load(Ordering::Relaxed),
     }
 }
 
-/// Change and save the choice. It applies to writes started from now on.
+/// Change and save the choices. They apply to jobs started from now on.
 pub fn set(wanted: Settings) -> Result<Settings> {
     if let Some(dir) = DIR.get() {
         save(dir, wanted)?;
     }
     ALL_CORES.store(wanted.all_cores, Ordering::Relaxed);
+    FAST_EXTRACT.store(wanted.fast_extract, Ordering::Relaxed);
     Ok(wanted)
 }
 
@@ -89,6 +108,11 @@ pub fn writer_threads() -> Option<usize> {
     }
 }
 
+/// What an extraction passes as `skip_file_sync`.
+pub fn skip_file_sync() -> bool {
+    FAST_EXTRACT.load(Ordering::Relaxed)
+}
+
 /// The cores "all cores" means on this computer.
 pub fn cores() -> usize {
     mochi_core::publish::default_writer_threads()
@@ -102,10 +126,34 @@ mod tests {
     #[test]
     fn the_choice_survives_a_restart_and_a_damaged_file_means_all_cores() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(read(dir.path()), Settings { all_cores: true });
-        save(dir.path(), Settings { all_cores: false }).unwrap();
-        assert_eq!(read(dir.path()), Settings { all_cores: false });
+        assert_eq!(read(dir.path()), Settings::default());
+        assert_eq!(
+            Settings::default(),
+            Settings {
+                all_cores: true,
+                fast_extract: false
+            }
+        );
+        let changed = Settings {
+            all_cores: false,
+            fast_extract: true,
+        };
+        save(dir.path(), changed).unwrap();
+        assert_eq!(read(dir.path()), changed);
         fs::write(dir.path().join(SETTINGS_FILE), b"{not json").unwrap();
         assert_eq!(read(dir.path()), Settings::default());
+    }
+
+    #[test]
+    fn a_file_saved_before_fast_extract_means_it_is_off() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(SETTINGS_FILE), br#"{"all_cores":false}"#).unwrap();
+        assert_eq!(
+            read(dir.path()),
+            Settings {
+                all_cores: false,
+                fast_extract: false
+            }
+        );
     }
 }

@@ -8,13 +8,16 @@ import type { SpeedSettingsView } from "../ipc/speed";
 /**
  * Release 0.9.11: whether writes compress on every processor core (the
  * default) or on one. Only a speed choice: the archive is the same bytes
- * either way. Rust saves it and applies it to the next job.
+ * either way. Also fast extract (off by default): extraction skips the
+ * per-file flush, which the note says costs durability after a power
+ * failure. Rust saves both and applies them to the next job.
  */
 export function Speed() {
   const [state, setState] = useState<SpeedSettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const noteId = useId();
+  const fastNoteId = useId();
 
   useEffect(() => {
     let live = true;
@@ -31,11 +34,11 @@ export function Speed() {
     };
   }, []);
 
-  const change = async (allCores: boolean) => {
+  const change = async (allCores: boolean, fastExtract: boolean) => {
     setError(null);
     setBusy(true);
     try {
-      setState(await setSpeedSettings(allCores));
+      setState(await setSpeedSettings(allCores, fastExtract));
     } catch (e) {
       setError(errorText(t("settings.speedSaveFailed"), e));
     } finally {
@@ -54,13 +57,29 @@ export function Speed() {
             aria-describedby={noteId}
             checked={state?.all_cores ?? true}
             disabled={state === null || busy}
-            onChange={(e) => void change(e.target.checked)}
+            onChange={(e) => void change(e.target.checked, state?.fast_extract ?? false)}
           />{" "}
           {t("settings.speedAllCores", { n: state?.cores ?? "…" })}
         </label>
       </p>
       <p id={noteId} className="note">
         {t("settings.speedNote")}
+      </p>
+      <p>
+        <label>
+          <input
+            type="checkbox"
+            data-testid="speed-fast-extract"
+            aria-describedby={fastNoteId}
+            checked={state?.fast_extract ?? false}
+            disabled={state === null || busy}
+            onChange={(e) => void change(state?.all_cores ?? true, e.target.checked)}
+          />{" "}
+          {t("settings.fastExtract")}
+        </label>
+      </p>
+      <p id={fastNoteId} className="note">
+        {t("settings.fastExtractNote")}
       </p>
       {error !== null && <p role="alert">{error}</p>}
     </>

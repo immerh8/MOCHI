@@ -587,3 +587,95 @@ fn c6_restore_many_files_is_one_replay_and_one_phase() {
     assert_eq!(counts, (0..=201).collect::<Vec<u64>>());
     assert_eq!(tree.file(b"d/f123").as_deref(), Some(&b"d/f123"[..]));
 }
+
+/// Fast extract (`skip_file_sync`): the same verified files, published
+/// without a per-file flush, and the report says so. The default flushes
+/// every file before it gets its name.
+#[test]
+fn c6_restore_fast_extract_skips_only_the_file_flush() {
+    let s = archive_with(&[("d", None), ("d/a", Some(b"alpha")), ("d/b", Some(b"beta"))]);
+    let head = open_head(&s, &opts()).unwrap();
+    let go = |skip_file_sync: bool| {
+        let tree = SimTree::new();
+        let r = restore(
+            &s,
+            &head,
+            None,
+            tree.clone(),
+            &RestoreOptions {
+                skip_file_sync,
+                ..RestoreOptions::default()
+            },
+            &opts(),
+            &Job::new().ctx(),
+        )
+        .unwrap();
+        (tree, r)
+    };
+
+    let (tree, r) = go(false);
+    assert!(r.complete() && r.file_data_synced);
+    assert_eq!(tree.file_synced_len(b"d/a"), Some(5));
+    assert_eq!(tree.file_synced_len(b"d/b"), Some(4));
+
+    let (tree, r) = go(true);
+    assert!(r.complete(), "{:?}", r.exceptions);
+    assert!(!r.file_data_synced);
+    assert_eq!((r.files, r.directories), (2, 1));
+    assert_eq!(tree.file(b"d/a").as_deref(), Some(&b"alpha"[..]));
+    assert_eq!(tree.file(b"d/b").as_deref(), Some(&b"beta"[..]));
+    assert_eq!(tree.file_synced_len(b"d/a"), Some(0));
+    assert_eq!(tree.file_synced_len(b"d/b"), Some(0));
+    assert_eq!(r.directory_durability, DirectoryDurability::Confirmed);
+    no_temporaries(&tree.paths());
+}
+
+/// A file that fails verification is still never published under fast
+/// extract: skipping the flush does not skip the check.
+#[test]
+fn c6_restore_fast_extract_still_refuses_a_damaged_file() {
+    let s = scripted();
+    let head = open_head(&s, &opts()).unwrap();
+    let (_, extents) = {
+        let snap = head.catalog.replay(None).unwrap();
+        let e = snap.get(&path("big")).unwrap();
+        head.catalog.file_version(&e.version).unwrap().unwrap()
+    };
+    let ExtentSource::Chunk { chunk, .. } = extents[2].source else {
+        panic!("a chunk")
+    };
+    let at = head.catalog.object_location(&chunk).unwrap().unwrap();
+    let mut bytes = s.contents();
+    bytes[at as usize + 20] ^= 0x10;
+    let damaged = SimStorage::from_bytes(bytes);
+    let head = open_head(&damaged, &opts()).unwrap();
+    let tree = SimTree::new();
+    let r = restore(
+        &damaged,
+        &head,
+        None,
+        tree.clone(),
+        &RestoreOptions {
+            skip_file_sync: true,
+            ..RestoreOptions::default()
+        },
+        &opts(),
+        &Job::new().ctx(),
+    )
+    .unwrap();
+    assert!(!r.file_data_synced);
+    assert!(tree.file(b"big").is_none());
+    assert!(
+        matches!(
+            exception(&r, "big"),
+            Some(ExceptionKind::Integrity {
+                code: ErrorCode::StoredIntegrityFailed,
+                ..
+            })
+        ),
+        "{:?}",
+        r.exceptions
+    );
+    assert_eq!(r.exceptions.len(), 1);
+    no_temporaries(&tree.paths());
+}

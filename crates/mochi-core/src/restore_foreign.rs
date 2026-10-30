@@ -380,6 +380,9 @@ pub struct ForeignRestoreOptions {
     /// End the job before writing anything if the preflight finds any
     /// collision or unsupported name (or any entry refused outright).
     pub refuse_on_exceptions: bool,
+    /// Publish each checked file without first flushing its data ("fast
+    /// extract"); as [`crate::restore::RestoreOptions::skip_file_sync`].
+    pub skip_file_sync: bool,
 }
 
 /// The result: the shared restore report, plus the entries refused outright.
@@ -520,6 +523,7 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
                 bytes: 0,
                 exceptions: Vec::new(),
                 directory_durability: DirectoryDurability::Confirmed,
+                file_data_synced: !options.skip_file_sync,
                 attributes_unavailable: None,
                 attribute_exceptions: Vec::new(),
                 case_behavior: pre.case_behavior,
@@ -727,6 +731,7 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
                 self.step();
                 return Ok(());
             }
+            Ok(()) if !self.report.file_data_synced => Ok(()),
             Ok(()) => file.sync_data().map_err(MochiError::from),
         };
         if let Err(e) = result {

@@ -427,6 +427,7 @@ fn refuse_on_exceptions_ends_the_job_before_anything_is_written() {
         |_| None,
         ForeignRestoreOptions {
             refuse_on_exceptions: true,
+            ..ForeignRestoreOptions::default()
         },
         &Job::new().ctx(),
     )
@@ -446,6 +447,7 @@ fn refuse_on_exceptions_ends_the_job_before_anything_is_written() {
         |_| None,
         ForeignRestoreOptions {
             refuse_on_exceptions: true,
+            ..ForeignRestoreOptions::default()
         },
         &Job::new().ctx(),
     )
@@ -599,4 +601,44 @@ fn on_a_real_directory_a_planted_symlink_is_never_followed() {
         m.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
         1_577_836_800
     );
+}
+
+/// Fast extract: the same files, published without a per-file flush, and
+/// the report says so; a file whose own check failed is still not published.
+#[test]
+fn fast_extract_skips_only_the_file_flush() {
+    let entries = [file(0, "a.txt"), file(1, "b.txt"), file(2, "bad.txt")];
+    let go = |skip_file_sync: bool| {
+        let tree = SimTree::new();
+        let r = run_with(
+            &entries,
+            &[],
+            tree.clone(),
+            |i| (i == 2).then(|| FileFailure::CheckFailed("CRC32 did not match".into())),
+            ForeignRestoreOptions {
+                skip_file_sync,
+                ..ForeignRestoreOptions::default()
+            },
+            &Job::new().ctx(),
+        )
+        .unwrap();
+        (tree, r)
+    };
+
+    let (tree, r) = go(false);
+    assert!(r.report.file_data_synced);
+    assert_eq!(tree.file_synced_len(b"a.txt"), Some(body(0).len()));
+
+    let (tree, r) = go(true);
+    assert!(!r.report.file_data_synced);
+    assert_eq!(r.report.files, 2);
+    assert_eq!(tree.file(b"a.txt").unwrap(), body(0));
+    assert_eq!(tree.file(b"b.txt").unwrap(), body(1));
+    assert_eq!(tree.file_synced_len(b"a.txt"), Some(0));
+    assert!(tree.file(b"bad.txt").is_none());
+    assert!(matches!(
+        exception(&r.report, "bad.txt"),
+        Some(ExceptionKind::Integrity { .. })
+    ));
+    assert!(tree.paths().iter().all(|p| !p.contains(".mochi-restore")));
 }

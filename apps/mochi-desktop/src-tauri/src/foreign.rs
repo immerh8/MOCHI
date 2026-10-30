@@ -743,6 +743,7 @@ impl Foreign {
         let entries = core_entries(&s.entries);
         let options = ForeignRestoreOptions {
             refuse_on_exceptions: on_conflict == ConflictChoice::Stop,
+            skip_file_sync: crate::speed::skip_file_sync(),
         };
         let mut restorer = ForeignRestorer::new(&entries, &wanted, root, options, ctx)?;
         let indices = restorer.wanted();
@@ -991,6 +992,7 @@ fn report_view(report: &mochi_core::restore::RestoreReport, folder: &Path) -> Ex
             DirectoryDurability::Confirmed => None,
             DirectoryDurability::Unconfirmed(why) => Some(why.clone()),
         },
+        files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
     }
 }

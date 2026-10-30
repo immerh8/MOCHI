@@ -80,6 +80,14 @@ pub struct RestoreOptions {
     /// collision or unsupported name (`NAME_COLLISION` or
     /// `NAME_UNSUPPORTED`), instead of restoring everything else.
     pub refuse_on_preflight_exceptions: bool,
+    /// Publish each verified file without first flushing its data to the
+    /// device ("fast extract"). Off by default. Every file is still verified
+    /// before it gets its name, and directories are still flushed at the
+    /// end; what is lost is the guarantee that, after a power failure, a
+    /// published name holds the file's complete content. A process crash or
+    /// cancellation is unaffected. The report says which way it ran
+    /// ([`RestoreReport::file_data_synced`]).
+    pub skip_file_sync: bool,
 }
 
 /// The setuid and setgid bits.
@@ -139,6 +147,9 @@ pub struct RestoreReport {
     pub exceptions: Vec<RestoreException>,
     /// The weakest directory flush: `Unconfirmed` if any flush was.
     pub directory_durability: DirectoryDurability,
+    /// Each file's data was flushed before it was published; `false` when
+    /// [`RestoreOptions::skip_file_sync`] asked not to.
+    pub file_data_synced: bool,
     /// `None` if the promised attributes were reconstructed and applied;
     /// otherwise why they were unavailable (nothing was applied).
     pub attributes_unavailable: Option<String>,
@@ -416,6 +427,7 @@ pub fn restore_selected<D: RestoreDir>(
         bytes: 0,
         exceptions: Vec::new(),
         directory_durability: DirectoryDurability::Confirmed,
+        file_data_synced: !options.skip_file_sync,
         attributes_unavailable: None,
         attribute_exceptions: Vec::new(),
         case_behavior: pre.case_behavior,
@@ -551,7 +563,12 @@ pub fn restore_selected<D: RestoreDir>(
                     opts,
                     &quiet,
                 )
-                .and_then(|r| file.sync_data().map(|()| r).map_err(MochiError::from));
+                .and_then(|r| {
+                    if options.skip_file_sync {
+                        return Ok(r);
+                    }
+                    file.sync_data().map(|()| r).map_err(MochiError::from)
+                });
                 match read {
                     Ok(r) => match parent.publish_no_replace(&temp, name) {
                         Ok(()) => {
