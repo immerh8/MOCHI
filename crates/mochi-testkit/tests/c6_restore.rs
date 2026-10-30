@@ -534,3 +534,56 @@ fn c6_preflight_selected_reports_without_writing() {
     let e = preflight_selected(&head, &[path("missing")], &mut root).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidArgument);
 }
+
+/// Many small files (the desktop's "0 % for ever" report): the restoration
+/// replays the namespace a fixed number of times, not once per file, and
+/// reports one `restore` phase only, so a display's rate estimate is never
+/// restarted by a per-file `read` phase.
+#[test]
+fn c6_restore_many_files_is_one_replay_and_one_phase() {
+    use mochi_core::catalog::replay_count;
+    use mochi_core::job::{ProgressEvent, ProgressSink};
+    use std::sync::Mutex;
+
+    struct Phases(Mutex<Vec<(&'static str, u64)>>);
+    impl ProgressSink for Phases {
+        fn report(&self, e: &ProgressEvent) {
+            self.0.lock().unwrap().push((e.phase, e.completed));
+        }
+    }
+
+    let names: Vec<String> = (0..200).map(|i| format!("d/f{i:03}")).collect();
+    let mut entries: Vec<(&str, Option<&[u8]>)> = vec![("d", None)];
+    entries.extend(names.iter().map(|n| (n.as_str(), Some(n.as_bytes()))));
+    let s = archive_with(&entries);
+    let head = open_head(&s, &opts()).unwrap();
+
+    let phases = Phases(Mutex::new(Vec::new()));
+    let cancel = CancellationToken::new();
+    let ctx = JobContext {
+        progress: &phases,
+        cancel: &cancel,
+    };
+    let tree = SimTree::new();
+    let before = replay_count();
+    let r = restore(
+        &s,
+        &head,
+        None,
+        tree.clone(),
+        &RestoreOptions::default(),
+        &opts(),
+        &ctx,
+    )
+    .unwrap();
+    let replays = replay_count() - before;
+    assert!(r.complete(), "{:?}", r.exceptions);
+    assert_eq!(r.files, 200);
+    assert!(replays <= 3, "{replays} namespace replays for 200 files");
+
+    let events = phases.0.into_inner().unwrap();
+    assert!(events.iter().all(|(p, _)| *p == "restore"), "{events:?}");
+    let counts: Vec<u64> = events.iter().map(|(_, c)| *c).collect();
+    assert_eq!(counts, (0..=201).collect::<Vec<u64>>());
+    assert_eq!(tree.file(b"d/f123").as_deref(), Some(&b"d/f123"[..]));
+}
