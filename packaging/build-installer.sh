@@ -48,7 +48,16 @@ cargo build --release --locked -p mochi-foreign --features engine --bin mochi-fo
 mkdir -p apps/mochi-desktop/src-tauri/binaries
 cp "target/release/mochi-foreign-helper$ext" "apps/mochi-desktop/src-tauri/binaries/mochi-foreign-helper-$triple$ext"
 
-# 3a. Windows only: the Explorer context-menu handler (crates/mochi-shellext, a classic
+# 3a. The `mochi` command-line program (crates/mochi-cli), so that an installed MOCHI can
+# also be scripted. NSIS: <install dir>\bin\mochi.exe, a folder holding only it, which
+# packaging/nsis/hooks.nsh adds to the user's PATH (the install directory itself also holds
+# uninstall.exe, which must not be on PATH). deb: /usr/bin/mochi, through externalBin.
+cargo build --release --locked -p mochi-cli --bin mochi
+if [ "$kind" = deb ]; then
+  cp target/release/mochi "apps/mochi-desktop/src-tauri/binaries/mochi-$triple"
+fi
+
+# 3b. Windows only: the Explorer context-menu handler (crates/mochi-shellext, a classic
 # IContextMenu COM DLL; owner decision 2026-10-20, O10). The overlay below installs it as
 # mochi-shellext-<app version>.dll next to the app: a VERSIONED name, because Explorer keeps
 # a loaded shell extension locked and an update must not need to overwrite it
@@ -58,7 +67,7 @@ if [ "$kind" = nsis ]; then
   test -f target/release/mochi_shellext.dll
 fi
 
-# 3b. The user guide (audit F8): docs/user converted to static, offline HTML. It is installed as
+# 3c. The user guide (audit F8): docs/user converted to static, offline HTML. It is installed as
 # the resource `guide/` (NSIS: <install dir>\guide\; deb: /usr/lib/MOCHI/guide/), which is where
 # Help, User guide looks (apps/mochi-desktop/src-tauri/src/help.rs, GUIDE_RESOURCE). The smoke
 # checks assert the file at that path.
@@ -66,7 +75,7 @@ guide=target/packaging/guide
 rm -rf "$guide"
 python3 -I packaging/guide.py "$guide"
 
-# 4. Overlay config: ship the list, the guide and the helper inside the installer (merged over tauri.conf.json).
+# 4. Overlay config: ship the list, the guide, the helper and the CLI inside the installer (merged over tauri.conf.json).
 python3 - "$kind" "$licenses" "$guide" <<'PY'
 import json, os, sys
 kind, lic, guide = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -75,10 +84,13 @@ guide_rel = os.path.relpath(guide, "apps/mochi-desktop/src-tauri").replace(os.se
 if kind == "nsis":  # next to the exe: <install dir>\licenses\
     version = json.load(open("apps/mochi-desktop/src-tauri/tauri.conf.json"))["version"]
     dll_rel = os.path.relpath("target/release/mochi_shellext.dll", "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
-    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt", guide_rel: "guide", dll_rel: f"mochi-shellext-{version}.dll"}}
+    cli_rel = os.path.relpath("target/release/mochi.exe", "apps/mochi-desktop/src-tauri").replace(os.sep, "/")
+    bundle = {"resources": {rel: "licenses/THIRD-PARTY-LICENSES.txt", guide_rel: "guide", dll_rel: f"mochi-shellext-{version}.dll",
+                            cli_rel: "bin/mochi.exe"}}
+    bundle["externalBin"] = ["binaries/mochi-foreign-helper"]
 else:  # Debian convention
     bundle = {"resources": {guide_rel: "guide"}, "linux": {"deb": {"files": {"/usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt": rel}}}}
-bundle["externalBin"] = ["binaries/mochi-foreign-helper"]
+    bundle["externalBin"] = ["binaries/mochi-foreign-helper", "binaries/mochi"]  # /usr/bin/mochi
 # Release builds only: write the updater's `.sig` files (needs the signing key in the environment).
 if os.environ.get("MOCHI_UPDATER_ARTIFACTS") == "1":
     bundle["createUpdaterArtifacts"] = True

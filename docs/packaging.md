@@ -43,11 +43,14 @@ is prepended.
 
 - `package (ubuntu-22.04)`: builds the `.deb`; `packaging/smoke-deb.sh --install`
   checks name, `amd64`, `Depends` has `libwebkit2gtk-4.1-0` (and not the 4.0 series),
-  exactly one executable in `/usr/bin`, the `.desktop` entry, the license list; then
-  installs with `apt`, checks `ldd` for unresolved libraries, and removes it.
+  the app, the helper and `mochi` as the only executables in `/usr/bin`, the `.desktop`
+  entry, the license list; then installs with `apt`, checks `ldd` for unresolved
+  libraries, runs `mochi --version` from PATH, and removes it.
 - `package (windows-latest)`: builds the NSIS setup; `packaging/smoke-nsis.ps1` runs a
   silent per-user install (`/S`), checks the app exe, `uninstall.exe`, the license list,
-  and the `HKCU` uninstall entry, then silently uninstalls.
+  `bin\mochi.exe` (alone in `bin\`, `--version` runs) and the user `Path` (exactly the
+  `bin` folder appended; restored on uninstall; a Path longer than an NSIS string left
+  untouched), and the `HKCU` uninstall entry, then silently uninstalls.
 - `package smoke (ubuntu-24.04)`: installs the 22.04-built `.deb` on 24.04.
 - Both installers and the license list are uploaded as workflow artifacts
   (`mochi-installer-*-unsigned`). Nothing is published; releases come from `release.yml`
@@ -56,6 +59,28 @@ is prepended.
   requests): the part of the release checklist that needs no human eyes. It installs the
   CI-built setup in real Windows 11 and Windows 10 22H2 *client* VMs and the `.deb` on
   Ubuntu 22.04 and 24.04; see "Release checklist" below and `docs/release-runbook.md`.
+
+## The `mochi` command line in the installers
+
+Both installers also install the `mochi` command-line program (`crates/mochi-cli`, built by
+`packaging/build-installer.sh` step 3a), so an installed MOCHI can be scripted and used from
+a terminal. Its dependencies are in the license list (`packaging/licenses.py`, `CLI_MANIFEST`).
+
+- **Windows (NSIS)**: `%LOCALAPPDATA%\MOCHI\bin\mochi.exe`, a bundle resource in a folder
+  that holds only it. `packaging/nsis/hooks.nsh` appends that folder to the **user's**
+  `Path` (`HKCU\Environment`, no elevation) and tells running programs the environment
+  changed; a terminal opened after the install finds `mochi`. The install directory itself
+  is never put on PATH, because it also holds `uninstall.exe`. An update keeps the entry; an
+  uninstall removes exactly that entry and nothing else.
+- **Safety rule for PATH.** NSIS strings hold 1023 characters (the standard NSIS 3.11 build
+  Tauri uses). For a longer value `ReadRegStr` returns an empty string **with the error flag
+  set**, the same as for a missing value. Treating that as "no Path yet" would replace the
+  user's whole PATH. `MochiReadPath` therefore tells the cases apart (`EnumRegValue`), and a
+  `Path` that exists but cannot be read whole, is not a string, or would not fit with the
+  entry added is never written; the installer log says so and `mochi.exe` is installed all
+  the same. The smoke check covers a 1,801-character Path.
+- **Ubuntu (deb)**: `/usr/bin/mochi` (Tauri `externalBin`), already on PATH; removing the
+  package removes it.
 
 ## Shell integration (plan D6, decision O10)
 
@@ -313,6 +338,13 @@ uninstalled): run the setup, confirm the bootstrapper installs WebView2 (this ne
 network), the app starts, the Start-menu entry exists, and uninstall leaves nothing in
 `%LOCALAPPDATA%\MOCHI`. On Ubuntu 22.04 and 24.04 desktops: install by double-click and
 by `apt install ./mochi_*.deb`, start from the launcher, remove.
+
+**The `mochi` command line.** On the same Windows client machines, after the install open a
+**new** PowerShell window (one opened before the install keeps the old PATH): `mochi
+--version` prints the release's version, and `(Get-Command mochi).Source` is
+`%LOCALAPPDATA%\MOCHI\bin\mochi.exe`. After uninstalling, a new window no longer finds
+`mochi`, and the user Path (System Properties → Environment Variables) is as before the
+install. On Ubuntu: `mochi --version` in a new terminal.
 
 **Shell integration (D6).** Windows Server runners have no Explorer shell to show a
 context menu, and no second user setting defaults, so on the same clean Windows 10 22H2

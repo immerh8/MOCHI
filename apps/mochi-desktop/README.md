@@ -637,6 +637,14 @@ dialog's own body do, with thin scroll bars):
 The new commands are app commands in `build.rs` and `capabilities/main.json`; none takes or
 returns a path and no `fs`, `shell`, `opener`, or `dialog` permission was added.
 
+## The `mochi` command line in the installers
+
+Both installers also install the `mochi` CLI: on Windows `%LOCALAPPDATA%\MOCHI\bin\mochi.exe`,
+with that folder added to the user's PATH (a new terminal finds `mochi`); on Ubuntu
+`/usr/bin/mochi`. The app does not use it. How it is built, put on PATH (and why a
+too-long PATH is never edited), and smoke-tested: `docs/packaging.md` "The `mochi` command
+line in the installers".
+
 ## Foreign-format helper in the installers
 
 Both installers ship `mochi-foreign-helper` next to the app (T16), so a packaged

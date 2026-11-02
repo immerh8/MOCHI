@@ -49,7 +49,8 @@ else
   rec U-INSTALL FAIL "apt install ./$(basename "$deb") failed (log above)"
   finish
 fi
-exe=$(dpkg -L mochi | grep -E '^/usr/bin/' | grep -v mochi-foreign-helper | head -1)
+# The app: not the foreign-format helper, not the `mochi` command line (/usr/bin/mochi).
+exe=$(dpkg -L mochi | grep -E '^/usr/bin/' | grep -v mochi-foreign-helper | grep -vx /usr/bin/mochi | head -1)
 desktop=$(dpkg -L mochi | grep -E '^/usr/share/applications/.*\.desktop$' | grep -v '/mochi-find\.desktop$' | head -1)
 desktop_id=$(basename "$desktop")
 find_desktop=/usr/share/applications/mochi-find.desktop

@@ -5,15 +5,25 @@ directory with a build of this repository.
 
 > A `.mochi` file is not a backup; archives from before 1.0 need `mochi migrate` ([experimental.md](experimental.md)).
 
-## Build
+## Install or build
+
+The MOCHI installers include `mochi`:
+
+- **Windows** (the MOCHI setup): `%LOCALAPPDATA%\MOCHI\bin\mochi.exe`. Setup adds that folder
+  to your user PATH, so a terminal you open **after** installing finds `mochi`. If your PATH
+  is too long for setup to edit safely, it leaves PATH alone; run the full path instead, or
+  add the folder yourself.
+- **Ubuntu** (the MOCHI `.deb`): `/usr/bin/mochi`.
+
+Or build it from this repository:
 
 ```bash
 cargo build -p mochi-cli --release      # the binary is target/release/mochi
 mochi --help
 ```
 
-(Rust 1.89 or newer; `rust-toolchain.toml` pins 1.91. Installers are not available yet.)
-The examples below assume `mochi` is on your `PATH`; otherwise use
+(Rust 1.89 or newer; `rust-toolchain.toml` pins 1.91.)
+The examples below assume `mochi` is on your `PATH`; otherwise use its full path, or
 `cargo run -p mochi-cli --` in its place.
 
 ## Create, change, list, restore

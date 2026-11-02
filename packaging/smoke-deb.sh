@@ -2,7 +2,7 @@
 # Smoke-check a built .deb (plan D7, D6, O11): metadata, dependency, contents, the
 # .desktop MimeType and the shared-mime-info type for .mochi; with
 # --install, also install it with apt, check that every shared library resolves, that the
-# installed foreign-format helper lists a fixture (D8),
+# installed foreign-format helper lists a fixture (D8), that the mochi CLI runs,
 # then remove it. Usage: smoke-deb.sh [--install] path/to/mochi.deb
 set -euo pipefail
 install=0
@@ -26,10 +26,13 @@ echo "$contents"
 # The app and, next to it, the foreign-format helper (D8, T16; the app looks for it in
 # its own directory, mochi_foreign::default_helper_path).
 helper=usr/bin/mochi-foreign-helper
+# The `mochi` command-line program (packaging/build-installer.sh, externalBin), on PATH.
+cli=usr/bin/mochi
 exes=$(echo "$contents" | awk '$1 ~ /^-..x/ && $6 ~ /^usr\/bin\// {print $6}')
 echo "$exes" | grep -qx "$helper" || fail "$helper missing or not executable in the package"
-exe=$(echo "$exes" | grep -vx "$helper" || true)
-[ "$(echo "$exe" | grep -c .)" = 1 ] || fail "expected the app plus $helper in /usr/bin, got: $exes"
+echo "$exes" | grep -qx "$cli" || fail "$cli missing or not executable in the package"
+exe=$(echo "$exes" | grep -vx -e "$helper" -e "$cli" || true)
+[ "$(echo "$exe" | grep -c .)" = 1 ] || fail "expected the app plus $helper and $cli in /usr/bin, got: $exes"
 echo "$contents" | grep -Eq ' usr/share/applications/[^ ]*\.desktop$' || fail "no .desktop entry"
 lic=usr/share/doc/mochi/THIRD-PARTY-LICENSES.txt
 echo "$contents" | grep -q " $lic\$" || fail "third-party license list ($lic) missing"
@@ -51,6 +54,8 @@ grep -q "UnRAR source code may be used in any software" "$dir/$lic" || fail "lic
 for c in unrar_sys sevenz-rust2 zip tar flate2; do
   grep -Eq "Used by:.*(^|[ ,])$c [0-9]" "$dir/$lic" || fail "license list does not cover the helper's dependency $c"
 done
+# The CLI's own graph (clap is only in it).
+grep -Eq "Used by:.*(^|[ ,])clap [0-9]" "$dir/$lic" || fail "license list does not cover the CLI's dependency clap"
 
 # D6 (O10): .mochi association and "Open with". The .desktop passes the file
 # (%f) and lists application/x-mochi; the foreign formats are only listed; the
@@ -132,6 +137,11 @@ if [ "$install" = 1 ]; then
   here=$(cd "$(dirname "$0")/.." && pwd)
   python3 -I "$here/packaging/helper_probe.py" "$hbin" "$here/fixtures/foreign/basic_infozip.zip" \
     --expect a.txt --expect sub/b.txt || fail "$hbin did not list the fixture"
+  # The CLI is installed, links, runs, and is found on PATH.
+  missing=$(ldd "/$cli" | grep 'not found' || true)
+  [ -z "$missing" ] || fail "mochi: unresolved libraries: $missing"
+  [ "$(command -v mochi)" = "/$cli" ] || fail "mochi on PATH is '$(command -v mochi)', expected /$cli"
+  mochi --version | head -n 1 | grep -q '^mochi ' || fail "mochi --version did not answer"
   # F8: the installed guide is where the app looks for it.
   [ -s "/$guide" ] || fail "/$guide not installed"
   # dpkg triggers (shared-mime-info, desktop-file-utils) registered the type.
@@ -141,6 +151,7 @@ if [ "$install" = 1 ]; then
   sudo apt-get remove -y mochi
   [ ! -e "$bin" ] || fail "$bin still present after removal"
   [ ! -e "$hbin" ] || fail "$hbin still present after removal"
+  [ ! -e "/$cli" ] || fail "/$cli still present after removal"
   [ ! -e "/$guide" ] || fail "/$guide still present after removal"
   [ ! -e "/$mime" ] || fail "/$mime still present after removal"
   for f in "$find" "$fsm" "$fnemo" "$fnaut"; do [ ! -e "/$f" ] || fail "/$f still present after removal"; done
