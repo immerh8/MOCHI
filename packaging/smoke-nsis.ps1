@@ -60,6 +60,25 @@ $foreignExts = "zip", "7z", "rar", "tar", "tgz", "gz"
 
 $installKey = "HKCU:\Software\The MOCHI Project contributors\MOCHI"
 
+# The user's Path exactly as stored (unexpanded), or $null if there is none.
+function Get-UserPath {
+  $k = $classes.OpenSubKey("Environment")
+  try { return $k.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $k.Close() }
+}
+function Set-UserPath($value) {
+  $k = $classes.OpenSubKey("Environment", $true)
+  try {
+    if ($null -eq $value) { $k.DeleteValue("Path", $false) }
+    else { $k.SetValue("Path", $value, [Microsoft.Win32.RegistryValueKind]::ExpandString) }
+  } finally { $k.Close() }
+}
+$cliDir = Join-Path $dir "bin"
+$cli = Join-Path $cliDir "mochi.exe"
+$shortPath = "C:\smoke-a;%USERPROFILE%\smoke-b"
+# Longer than an NSIS string (1023 characters): ReadRegStr cannot read it whole, so the
+# installer must leave it exactly as it is (packaging/nsis/hooks.nsh, MochiReadPath).
+$longPath = (@("C:\smoke-x") + (1..60 | ForEach-Object { "C:\smoke\a\long\folder\name$_" })) -join ";"
+
 function Assert-NothingRegistered($when) {
   foreach ($k in $verbKeys + $legacyKeys + @("MOCHI.Archive", "MOCHI.Foreign")) {
     if (Test-ClassKey $k) { Fail "$when : HKCU\Software\Classes\$k exists" }
@@ -72,9 +91,10 @@ function Assert-NothingRegistered($when) {
   if (Test-Path $installKey) { Fail "$when : $installKey exists" }
 }
 
-function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
+function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign, [string]$StartPath = $shortPath) {
   Assert-NothingRegistered "before install"
   if (Test-Path $dir) { Fail "$dir exists before install" }
+  Set-UserPath $StartPath
   $p = Start-Process -FilePath $Setup -ArgumentList $SetupArgs -Wait -PassThru
   if ($p.ExitCode -ne 0) { Fail "installer exit code $($p.ExitCode)" }
 
@@ -116,6 +136,19 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign) {
   $probe = Join-Path $PSScriptRoot "helper_probe.py"
   & python -I $probe $helper (Resolve-Path $fixture).Path --expect a.txt --expect sub/b.txt
   if ($LASTEXITCODE -ne 0) { Fail "the installed helper did not list the fixture" }
+  # The mochi command-line program, alone in bin\ (never the install directory itself on
+  # PATH: it holds uninstall.exe), runs, and that folder was appended to the user's Path,
+  # unless the Path was too long to edit, which must then be untouched.
+  if (-not (Test-Path $cli)) { Fail "bin\mochi.exe not installed" }
+  $binFiles = @(Get-ChildItem $cliDir | Select-Object -ExpandProperty Name)
+  if ($binFiles.Count -ne 1) { Fail "bin\ should hold only mochi.exe, holds: $($binFiles -join ', ')" }
+  $ver = & $cli --version
+  if ($LASTEXITCODE -ne 0 -or -not ($ver -join "`n").StartsWith("mochi ")) { Fail "bin\mochi.exe --version gave: $ver" }
+  if ($text -notmatch "Used by:[^\r\n]*(^|[ ,])clap \d") { Fail "license list does not cover the CLI's dependency clap" }
+  $path = Get-UserPath
+  if ($StartPath -eq $longPath) {
+    if ($path -ne $longPath) { Fail "a Path too long to edit was changed by the installer" }
+  } elseif ($path -ne "$StartPath;$cliDir") { Fail "user Path after install is '$path', expected '$StartPath;$cliDir'" }
   # Tauri writes its install-location key (read again by the next install).
   if (-not (Test-Path $installKey)) { Fail "no $installKey after install" }
   # Per-user: the uninstall entry is under HKCU, nothing needed elevation.
@@ -206,6 +239,9 @@ if (-not `$o) { exit 4 }
   if ($u.ExitCode -ne 0) { Fail "uninstaller exit code $($u.ExitCode)" }
   if (Test-Path (Join-Path $dir $exe.Name)) { Fail "app exe still present after uninstall" }
   if (Test-Path $helper) { Fail "mochi-foreign-helper.exe still present after uninstall" }
+  if (Test-Path $cli) { Fail "bin\mochi.exe still present after uninstall" }
+  $path = Get-UserPath
+  if ($path -ne $StartPath) { Fail "user Path after uninstall is '$path', expected it restored to '$StartPath'" }
   if (Test-Path $guideIndex) { Fail "user guide still present after uninstall" }
   if (Test-Path $dll) { Fail "$dll still present after uninstall" }
   Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -213,8 +249,16 @@ if (-not `$o) { exit 4 }
   Assert-NothingRegistered "after uninstall"
 }
 
-# A silent install takes the default: the foreign-format opt-in is off.
-Run-Cycle @("/S") $false
-# The explicit switch turns it on; uninstall still removes all of it.
-Run-Cycle @("/S", "/ASSOCIATE_FOREIGN") $true
+# The user's own Path is put back however the checks end.
+$savedPath = Get-UserPath
+try {
+  # A silent install takes the default: the foreign-format opt-in is off.
+  Run-Cycle @("/S") $false
+  # The explicit switch turns it on; uninstall still removes all of it.
+  Run-Cycle @("/S", "/ASSOCIATE_FOREIGN") $true
+  # A Path longer than an NSIS string: installed all the same, the Path never written.
+  Run-Cycle @("/S") $false $longPath
+} finally {
+  Set-UserPath $savedPath
+}
 "NSIS smoke check passed"

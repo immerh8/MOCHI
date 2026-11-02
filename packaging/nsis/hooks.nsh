@@ -56,6 +56,19 @@
 ;                   installs say no). It never writes a type's default value and
 ;                   never touches the user's choice; Windows lets only the user
 ;                   make MOCHI the default (Settings > Default apps).
+;   The CLI         The `mochi` command-line program is installed as $INSTDIR\bin\mochi.exe
+;                   (a resource; packaging/build-installer.sh). That folder, which holds
+;                   only it, is appended to the user's PATH (HKCU\Environment, value
+;                   "Path"), so a new terminal finds `mochi`. The install directory itself
+;                   is never put on PATH: it also holds uninstall.exe. An uninstall removes
+;                   exactly that entry and nothing else; an update keeps it.
+;                   NSIS strings hold NSIS_MAX_STRLEN - 1 characters (1023 in the standard
+;                   build Tauri uses). For a longer value ReadRegStr returns "" with the
+;                   error flag set, exactly as for a missing one: treating that as "no
+;                   Path yet" would REPLACE the user's whole PATH. So a Path that exists
+;                   but cannot be read whole, or would not fit with the entry added, is
+;                   never written: the CLI is still installed, and the installer log says
+;                   PATH was left alone.
 ;
 ; Windows Server runners cannot show Explorer's menu; the keys are checked by
 ; packaging/smoke-nsis.ps1 and the menu itself is on the release checklist
@@ -188,6 +201,94 @@
   DeleteRegKey HKCU "${MOCHI_CLASSES}\${MOCHI_FOREIGN_PROGID}"
 !macroend
 
+!define MOCHI_CLI_DIR "$INSTDIR\bin"
+
+; The user's Path into $R0, and in $R5 whether it could be read: "ok", "absent" (no such
+; value), or "unreadable" (it exists but ReadRegStr failed: too long for an NSIS string,
+; or not a string type). Never treat "unreadable" as empty. Uses $R0, $R5, $R6.
+!macro MochiReadPath
+  ClearErrors
+  ReadRegStr $R0 HKCU "Environment" "Path"
+  ${IfNot} ${Errors}
+    StrCpy $R5 "ok"
+  ${Else}
+    StrCpy $R5 "absent"
+    StrCpy $R6 0
+    ${Do}
+      ClearErrors
+      EnumRegValue $R0 HKCU "Environment" $R6
+      ${If} ${Errors}
+      ${OrIf} $R0 == ""
+        ${ExitDo}
+      ${EndIf}
+      ${If} $R0 == "Path"
+        StrCpy $R5 "unreadable"
+        ${ExitDo}
+      ${EndIf}
+      IntOp $R6 $R6 + 1
+    ${Loop}
+    StrCpy $R0 ""
+  ${EndIf}
+!macroend
+
+; Append MOCHI_CLI_DIR to the user's Path unless it is there already. Uses $R0-$R6.
+!macro MochiPathAdd
+  !insertmacro MochiReadPath
+  StrLen $R1 $R0
+  StrLen $R2 "${MOCHI_CLI_DIR}"
+  IntOp $R1 $R1 + $R2
+  IntOp $R1 $R1 + 2
+  ${If} $R5 == "unreadable"
+  ${OrIf} $R1 >= ${NSIS_MAX_STRLEN}
+    DetailPrint "PATH left unchanged: it is too long to edit safely. Add ${MOCHI_CLI_DIR} yourself to use mochi in a terminal."
+  ${Else}
+    ${WordReplace} ";$R0;" ";${MOCHI_CLI_DIR};" ";" "+" $R3
+    ${If} $R3 == ";$R0;"
+      ${If} $R0 == ""
+        StrCpy $R0 "${MOCHI_CLI_DIR}"
+      ${Else}
+        StrCpy $R4 $R0 1 -1
+        ${If} $R4 == ";"
+          StrCpy $R0 $R0 -1
+        ${EndIf}
+        StrCpy $R0 "$R0;${MOCHI_CLI_DIR}"
+      ${EndIf}
+      WriteRegExpandStr HKCU "Environment" "Path" $R0
+      SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+; Remove every MOCHI_CLI_DIR entry from the user's Path, and nothing else. Uses $R0-$R6.
+!macro MochiPathRemove
+  !insertmacro MochiReadPath
+  StrLen $R1 $R0
+  IntOp $R1 $R1 + 2
+  ${If} $R5 == "unreadable"
+  ${OrIf} $R1 >= ${NSIS_MAX_STRLEN}
+    DetailPrint "PATH left unchanged: it is too long to edit safely. Remove ${MOCHI_CLI_DIR} yourself if it is there."
+  ${ElseIf} $R5 == "ok"
+    StrCpy $R3 ";$R0;"
+    ${Do}
+      ${WordReplace} "$R3" ";${MOCHI_CLI_DIR};" ";" "+" $R4
+      ${If} $R4 == $R3
+        ${ExitDo}
+      ${EndIf}
+      StrCpy $R3 $R4
+    ${Loop}
+    ${If} $R3 != ";$R0;"
+      StrCpy $R3 $R3 "" 1
+      StrCpy $R3 $R3 -1
+      ${If} $R3 == ""
+        DeleteRegValue HKCU "Environment" "Path"
+      ${Else}
+        WriteRegExpandStr HKCU "Environment" "Path" $R3
+      ${EndIf}
+      SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   ; Same-version reinstall: the DLL may be loaded by Explorer and cannot be overwritten,
   ; but it can be renamed. Move it aside before the files are written.
@@ -206,6 +307,8 @@
   !insertmacro MochiWriteItem "SystemFileAssociations\.mochi" "MochiExtractToFolder" "Extract to a new folder" "--extract-to-folder"
   ; Older versions of the DLL (locked ones are renamed aside and deleted at restart).
   !insertmacro MochiSweepShellExt "${MOCHI_SHELLEXT_DLL}"
+  ; The CLI's folder on the user's PATH (an update finds it there already).
+  !insertmacro MochiPathAdd
 
   ; The opt-in. An update keeps whatever the user chose at the first install.
   ${If} $UpdateMode <> 1
@@ -254,6 +357,7 @@
   DeleteRegKey /ifempty HKCU "${MOCHI_CLASSES}\.mochi"
 
   ${If} $UpdateMode <> 1
+    !insertmacro MochiPathRemove
     !insertmacro MochiUnregisterForeign
     ; Tauri's install-location key (written at install, ${MANUPRODUCTKEY}; with
     ; installMode currentUser that is HKCU). Its uninstaller removes it only when
