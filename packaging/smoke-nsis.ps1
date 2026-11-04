@@ -73,6 +73,13 @@ function Set-UserPath($value) {
   } finally { $k.Close() }
 }
 $cliDir = Join-Path $dir "bin"
+# The CLI's registered location (packaging/nsis/hooks.nsh, MOCHI_APP_PATHS).
+$appPaths = "Software\Microsoft\Windows\CurrentVersion\App Paths\mochi.exe"
+function Get-AppPath($name) {
+  $k = $classes.OpenSubKey($appPaths)
+  if (-not $k) { return $null }
+  try { return [string]$k.GetValue($name) } finally { $k.Close() }
+}
 $cli = Join-Path $cliDir "mochi.exe"
 $shortPath = "C:\smoke-a;%USERPROFILE%\smoke-b"
 # Longer than an NSIS string (1023 characters): ReadRegStr cannot read it whole, so the
@@ -87,6 +94,7 @@ function Assert-NothingRegistered($when) {
   foreach ($e in $foreignExts) {
     if (Test-OpenWith $e) { Fail "$when : MOCHI.Foreign still offered for .$e" }
   }
+  if ($classes.OpenSubKey($appPaths)) { Fail "$when : HKCU\$appPaths exists" }
   # Tauri's install-location key; packaging/nsis/hooks.nsh removes it on uninstall.
   if (Test-Path $installKey) { Fail "$when : $installKey exists" }
 }
@@ -145,6 +153,10 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign, [string]$StartPat
   $ver = & $cli --version
   if ($LASTEXITCODE -ne 0 -or -not ($ver -join "`n").StartsWith("mochi ")) { Fail "bin\mochi.exe --version gave: $ver" }
   if ($text -notmatch "Used by:[^\r\n]*(^|[ ,])clap \d") { Fail "license list does not cover the CLI's dependency clap" }
+  $registered = Get-AppPath ""
+  $registeredDir = Get-AppPath "Path"
+  if ($registered -ne $cli) { Fail "App Paths\mochi.exe default is '$registered', expected '$cli'" }
+  if ($registeredDir -ne $cliDir) { Fail "App Paths\mochi.exe Path is '$registeredDir', expected '$cliDir'" }
   $path = Get-UserPath
   if ($StartPath -eq $longPath) {
     if ($path -ne $longPath) { Fail "a Path too long to edit was changed by the installer" }

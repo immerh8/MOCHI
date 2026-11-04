@@ -48,7 +48,7 @@ is prepended.
   libraries, runs `mochi --version` from PATH, and removes it.
 - `package (windows-latest)`: builds the NSIS setup; `packaging/smoke-nsis.ps1` runs a
   silent per-user install (`/S`), checks the app exe, `uninstall.exe`, the license list,
-  `bin\mochi.exe` (alone in `bin\`, `--version` runs) and the user `Path` (exactly the
+  `bin\mochi.exe` (alone in `bin\`, `--version` runs, registered under App Paths) and the user `Path` (exactly the
   `bin` folder appended; restored on uninstall; a Path longer than an NSIS string left
   untouched), and the `HKCU` uninstall entry, then silently uninstalls.
 - `package smoke (ubuntu-24.04)`: installs the 22.04-built `.deb` on 24.04.
@@ -79,6 +79,14 @@ a terminal. Its dependencies are in the license list (`packaging/licenses.py`, `
   `Path` that exists but cannot be read whole, is not a string, or would not fit with the
   entry added is never written; the installer log says so and `mochi.exe` is installed all
   the same. The smoke check covers a 1,801-character Path.
+- **Where programs find it (0.9.15).** The hook also registers the CLI's location in
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\mochi.exe`: the default value is
+  the full path of `mochi.exe`, the `Path` value its folder. App Paths is Windows' own
+  registration of a program's location (it also lets Win+R start `mochi`). A program that
+  calls `mochi` should read it from there rather than rely on PATH, because a process started
+  before the install never sees PATH change. Uninstall removes the key; an update rewrites it.
+  The smoke check reads both values, and checks the key is absent before install and after
+  uninstall.
 - **Ubuntu (deb)**: `/usr/bin/mochi` (Tauri `externalBin`), already on PATH; removing the
   package removes it.
 
