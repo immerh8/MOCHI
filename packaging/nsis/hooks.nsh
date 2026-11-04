@@ -69,6 +69,13 @@
 ;                   but cannot be read whole, or would not fit with the entry added, is
 ;                   never written: the CLI is still installed, and the installer log says
 ;                   PATH was left alone.
+;   CLI path        Where the CLI is, for programs that call it (they need not rely on
+;                   PATH, which a running program does not see change):
+;                   HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\mochi.exe,
+;                   default value the full path of mochi.exe, "Path" its folder. App Paths is
+;                   Windows' own registration of a program's location (it also lets Win+R
+;                   start `mochi`). Per user, no elevation. An uninstall removes the key; an
+;                   update rewrites it.
 ;
 ; Windows Server runners cannot show Explorer's menu; the keys are checked by
 ; packaging/smoke-nsis.ps1 and the menu itself is on the release checklist
@@ -202,6 +209,7 @@
 !macroend
 
 !define MOCHI_CLI_DIR "$INSTDIR\bin"
+!define MOCHI_APP_PATHS "Software\Microsoft\Windows\CurrentVersion\App Paths\mochi.exe"
 
 ; The user's Path into $R0, and in $R5 whether it could be read: "ok", "absent" (no such
 ; value), or "unreadable" (it exists but ReadRegStr failed: too long for an NSIS string,
@@ -307,8 +315,11 @@
   !insertmacro MochiWriteItem "SystemFileAssociations\.mochi" "MochiExtractToFolder" "Extract to a new folder" "--extract-to-folder"
   ; Older versions of the DLL (locked ones are renamed aside and deleted at restart).
   !insertmacro MochiSweepShellExt "${MOCHI_SHELLEXT_DLL}"
-  ; The CLI's folder on the user's PATH (an update finds it there already).
+  ; The CLI's folder on the user's PATH (an update finds it there already), and its path
+  ; registered where programs can look it up.
   !insertmacro MochiPathAdd
+  WriteRegStr HKCU "${MOCHI_APP_PATHS}" "" "${MOCHI_CLI_DIR}\mochi.exe"
+  WriteRegStr HKCU "${MOCHI_APP_PATHS}" "Path" "${MOCHI_CLI_DIR}"
 
   ; The opt-in. An update keeps whatever the user chose at the first install.
   ${If} $UpdateMode <> 1
@@ -358,6 +369,7 @@
 
   ${If} $UpdateMode <> 1
     !insertmacro MochiPathRemove
+    DeleteRegKey HKCU "${MOCHI_APP_PATHS}"
     !insertmacro MochiUnregisterForeign
     ; Tauri's install-location key (written at install, ${MANUPRODUCTKEY}; with
     ; installMode currentUser that is HKCU). Its uninstaller removes it only when
