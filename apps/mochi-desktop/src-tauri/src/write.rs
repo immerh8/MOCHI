@@ -1423,20 +1423,23 @@ mod tests {
             assert_eq!(file(&state_of(&dest), "big.txt").unwrap(), text);
             sizes.push(std::fs::metadata(&dest).unwrap().len());
         }
-        // Turbo, Fast, Maximum, Extreme.
-        let [turbo, fast, maximum, extreme] = [sizes[0], sizes[2], sizes[4], sizes[6]];
+        // Faster levels make bigger files where the gap is wide. Levels 19, 20
+        // and 22 are compared only with level 1: zstd does not promise that a
+        // higher level is never larger, and on this text 22 and 19 land within
+        // a byte or two of each other (the archive also holds random IDs).
+        let [turbo, _, fast, _, maximum, ultra, extreme] = sizes[..] else {
+            panic!("one size per preset")
+        };
         assert!(
             fast < turbo,
             "level 1 ({fast}) must beat level -4 ({turbo}) on repetitive text"
         );
-        assert!(
-            maximum < fast,
-            "level 19 ({maximum}) must beat level 1 ({fast}) on repetitive text"
-        );
-        assert!(
-            extreme <= maximum,
-            "level 22 ({extreme}) must not lose to level 19 ({maximum})"
-        );
+        for (level, size) in [(19, maximum), (20, ultra), (22, extreme)] {
+            assert!(
+                size < fast,
+                "level {level} ({size}) must beat level 1 ({fast}) on repetitive text"
+            );
+        }
     }
 
     #[test]
