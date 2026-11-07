@@ -80,9 +80,13 @@ impl CompressionPreset {
     /// The `mochi-export` level.
     pub fn export_level(self) -> mochi_export::Level {
         match self {
+            CompressionPreset::Turbo => mochi_export::Level::Turbo,
+            CompressionPreset::VeryFast => mochi_export::Level::VeryFast,
             CompressionPreset::Fast => mochi_export::Level::Fast,
             CompressionPreset::Balanced => mochi_export::Level::Balanced,
-            CompressionPreset::Smaller => mochi_export::Level::Smaller,
+            CompressionPreset::Maximum => mochi_export::Level::Maximum,
+            CompressionPreset::Ultra => mochi_export::Level::Ultra,
+            CompressionPreset::Extreme => mochi_export::Level::Extreme,
         }
     }
 }

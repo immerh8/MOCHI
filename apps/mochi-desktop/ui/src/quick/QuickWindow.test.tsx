@@ -292,10 +292,10 @@ test("OK sends the name, the format and the level, and no path", async () => {
   b.send(prompt());
   await screen.findByTestId("quick-form");
   await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
-  await user.selectOptions(screen.getByTestId("quick-level"), "smaller");
+  await user.selectOptions(screen.getByTestId("quick-level"), "ultra");
   await user.click(screen.getByTestId("quick-ok"));
   expect(b.calls.filter((c) => c.cmd === "quick_add_submit").map((c) => c.args)).toEqual([
-    { request: { name: "notes.tar.zst", format: "tar_zst", level: "smaller" } },
+    { request: { name: "notes.tar.zst", format: "tar_zst", level: "ultra" } },
   ]);
   // The job's events take over the window: the form is replaced by its progress.
   b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 1 });

@@ -99,27 +99,57 @@ impl Format {
 }
 
 /// The compression effort. Meaningless for plain tar.
+///
+/// The names follow the desktop app's presets. Zstandard (`.tar.zst`) uses
+/// the level each name stands for; Deflate (ZIP, `.tar.gz`) has no negative
+/// or ultra levels, so the fast end maps to 1 and the slow end to 9.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
+    /// Zstandard `--fast=4` (level -4).
+    Turbo,
+    /// Zstandard `--fast=1` (level -1).
+    VeryFast,
+    /// Level 1.
     Fast,
+    /// Zstandard 3, Deflate 6.
     Balanced,
-    Smaller,
+    /// Zstandard 19.
+    Maximum,
+    /// Zstandard 20.
+    Ultra,
+    /// Zstandard 22, the highest; a window of up to 128 MiB.
+    Extreme,
 }
 
 impl Level {
+    /// Every level, fastest first.
+    pub const ALL: [Level; 7] = [
+        Level::Turbo,
+        Level::VeryFast,
+        Level::Fast,
+        Level::Balanced,
+        Level::Maximum,
+        Level::Ultra,
+        Level::Extreme,
+    ];
+
     fn deflate(self) -> u32 {
         match self {
-            Level::Fast => 1,
+            Level::Turbo | Level::VeryFast | Level::Fast => 1,
             Level::Balanced => 6,
-            Level::Smaller => 9,
+            Level::Maximum | Level::Ultra | Level::Extreme => 9,
         }
     }
 
     fn zstd(self) -> i32 {
         match self {
+            Level::Turbo => -4,
+            Level::VeryFast => -1,
             Level::Fast => 1,
             Level::Balanced => 3,
-            Level::Smaller => 19,
+            Level::Maximum => 19,
+            Level::Ultra => 20,
+            Level::Extreme => 22,
         }
     }
 }

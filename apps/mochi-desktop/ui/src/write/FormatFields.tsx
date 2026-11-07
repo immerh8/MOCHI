@@ -4,9 +4,13 @@ import { formatLabel, FORMATS, hasLevel } from "./format";
 
 /** The compression levels, in the order shown. */
 export const PRESETS: { id: CompressionPreset; label: () => string; hint: () => string }[] = [
+  { id: "turbo", label: () => t("write.presetTurbo"), hint: () => t("write.presetTurboHint") },
+  { id: "very_fast", label: () => t("write.presetVeryFast"), hint: () => t("write.presetVeryFastHint") },
   { id: "fast", label: () => t("write.presetFast"), hint: () => t("write.presetFastHint") },
   { id: "balanced", label: () => t("write.presetBalanced"), hint: () => t("write.presetBalancedHint") },
-  { id: "smaller", label: () => t("write.presetSmaller"), hint: () => t("write.presetSmallerHint") },
+  { id: "maximum", label: () => t("write.presetMaximum"), hint: () => t("write.presetMaximumHint") },
+  { id: "ultra", label: () => t("write.presetUltra"), hint: () => t("write.presetUltraHint") },
+  { id: "extreme", label: () => t("write.presetExtreme"), hint: () => t("write.presetExtremeHint") },
 ];
 
 export interface FormatSelectProps {

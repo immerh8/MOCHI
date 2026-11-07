@@ -75,9 +75,13 @@ impl CompressionPreset {
     /// The Zstandard level; `None` is the writer's default.
     pub fn zstd_level(self) -> Option<i32> {
         match self {
+            CompressionPreset::Turbo => Some(-4),
+            CompressionPreset::VeryFast => Some(-1),
             CompressionPreset::Fast => Some(1),
             CompressionPreset::Balanced => None,
-            CompressionPreset::Smaller => Some(19),
+            CompressionPreset::Maximum => Some(19),
+            CompressionPreset::Ultra => Some(20),
+            CompressionPreset::Extreme => Some(22),
         }
     }
 }
@@ -1371,9 +1375,20 @@ mod tests {
 
     #[test]
     fn presets_map_to_distinct_levels_and_each_makes_a_valid_archive() {
-        assert_eq!(CompressionPreset::Fast.zstd_level(), Some(1));
-        assert_eq!(CompressionPreset::Balanced.zstd_level(), None);
-        assert_eq!(CompressionPreset::Smaller.zstd_level(), Some(19));
+        use CompressionPreset::*;
+        let all = [Turbo, VeryFast, Fast, Balanced, Maximum, Ultra, Extreme];
+        assert_eq!(
+            all.map(CompressionPreset::zstd_level),
+            [
+                Some(-4),
+                Some(-1),
+                Some(1),
+                None,
+                Some(19),
+                Some(20),
+                Some(22)
+            ]
+        );
         // Words from a small vocabulary in a pseudo-random order: the longer
         // matches and larger window of level 19 pay off, level 1's do not.
         let words = [
@@ -1388,7 +1403,7 @@ mod tests {
             })
             .collect();
         let mut sizes = Vec::new();
-        for preset in [CompressionPreset::Fast, CompressionPreset::Smaller] {
+        for preset in all {
             let fx = fixture();
             let src = put(&fx.root, "big.txt", &text);
             let dest = fx.out.join("p.mochi");
@@ -1408,11 +1423,19 @@ mod tests {
             assert_eq!(file(&state_of(&dest), "big.txt").unwrap(), text);
             sizes.push(std::fs::metadata(&dest).unwrap().len());
         }
+        // Turbo, Fast, Maximum, Extreme.
+        let [turbo, fast, maximum, extreme] = [sizes[0], sizes[2], sizes[4], sizes[6]];
         assert!(
-            sizes[1] < sizes[0],
-            "level 19 ({}) must beat level 1 ({}) on repetitive text",
-            sizes[1],
-            sizes[0]
+            fast < turbo,
+            "level 1 ({fast}) must beat level -4 ({turbo}) on repetitive text"
+        );
+        assert!(
+            maximum < fast,
+            "level 19 ({maximum}) must beat level 1 ({fast}) on repetitive text"
+        );
+        assert!(
+            extreme <= maximum,
+            "level 22 ({extreme}) must not lose to level 19 ({maximum})"
         );
     }
 

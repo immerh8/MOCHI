@@ -435,12 +435,20 @@ pub struct EntryDetails {
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub enum CompressionPreset {
-    /// Level 1: quickest, largest.
+    /// Level -4 (`zstd --fast=4`): quickest, largest.
+    Turbo,
+    /// Level -1 (`zstd --fast=1`).
+    VeryFast,
+    /// Level 1.
     Fast,
-    /// The writer's default level.
+    /// The writer's default level (3).
     Balanced,
-    /// Level 19: slowest, smallest.
-    Smaller,
+    /// Level 19.
+    Maximum,
+    /// Level 20 (the first of zstd's `--ultra` levels).
+    Ultra,
+    /// Level 22 (zstd's highest): slowest, smallest, most memory.
+    Extreme,
 }
 
 /// The words of a native dialog, in the language the window is showing

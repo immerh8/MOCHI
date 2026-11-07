@@ -218,7 +218,7 @@ fn every_format_round_trips_nested_empty_unicode_and_long_names() {
 #[test]
 fn every_level_produces_a_readable_archive() {
     for format in [Format::Zip, Format::TarGz, Format::TarZst] {
-        for level in [Level::Fast, Level::Balanced, Level::Smaller] {
+        for level in Level::ALL {
             let fx = Fixture::new();
             let name = format!("l{}", format.extension());
             fx.run(format, level, &name).unwrap();
@@ -229,6 +229,41 @@ fn every_level_produces_a_readable_archive() {
             );
         }
     }
+}
+
+#[test]
+fn levels_map_to_the_named_zstd_and_deflate_levels() {
+    assert_eq!(Level::ALL.map(Level::zstd), [-4, -1, 1, 3, 19, 20, 22]);
+    assert_eq!(Level::ALL.map(Level::deflate), [1, 1, 1, 6, 9, 9, 9]);
+}
+
+/// The window a Zstandard frame header declares (RFC 8878 §3.1.1.1): after
+/// the 4-byte magic, the frame header descriptor, then the window descriptor.
+fn declared_window(frame: &[u8]) -> u64 {
+    let (descriptor, wd) = (frame[4], frame[5]);
+    assert_eq!(
+        descriptor & 0x20,
+        0,
+        "a streamed frame is not single-segment"
+    );
+    let base = 1u64 << (10 + u32::from(wd >> 3));
+    base + base / 8 * u64::from(wd & 7)
+}
+
+/// `zstd --ultra -22` asks for a 128 MiB window when the size is unknown, as it
+/// is for a streamed `.tar.zst`. MOCHI's own reader (`mochi-foreign`, ruzstd)
+/// caps the window at 128 MiB, so the highest level must not exceed it.
+#[test]
+fn the_highest_level_stays_within_the_readers_window_cap() {
+    let fx = Fixture::new();
+    fx.run(Format::TarZst, Level::Extreme, "x.tar.zst").unwrap();
+    let bytes = fs::read(fx.out("x.tar.zst")).unwrap();
+    let window = declared_window(&bytes);
+    assert!(window <= 128 << 20, "window {window}");
+    assert!(
+        window > 8 << 20,
+        "level 22 should use a large window, got {window}"
+    );
 }
 
 #[test]
