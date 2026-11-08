@@ -1061,10 +1061,12 @@ fn salvage_scan_is_sound(storage: &crate::SimStorage, opts: &mochi_core::publish
                 // Its commit record is known only when a chain reached it.
                 // That commit is one the scan confirmed (or contradicted:
                 // the trusted chain keeps the commit it reached, D23 item
-                // 4), or the trusted head itself, which needed the scan's
-                // regenerated descriptor to open. Never one it left
-                // unconfirmed or rejected. (Skipped when the scan stopped
-                // at its limit or the lists were cut short.)
+                // 4), or one of the trusted head's own chain that the
+                // ordinary walk reached (the head, and below it down to the
+                // chain break), which needed only the scan's regenerated
+                // descriptor to open. Never one it left unconfirmed or
+                // rejected. (Skipped when the scan stopped at its limit or
+                // the lists were cut short.)
                 let Some(id) = s.commit_id.as_deref() else {
                     continue;
                 };
@@ -1072,12 +1074,23 @@ fn salvage_scan_is_sound(storage: &crate::SimStorage, opts: &mochi_core::publish
                     continue;
                 }
                 let is_head = p.head.as_ref().is_some_and(|h| h.commit_id == id);
+                // The trusted chain is surveyed first, so a sequence it
+                // reached is never supplied by a salvaged segment.
+                let on_head_chain = p.head.as_ref().is_some_and(|h| {
+                    s.seq <= h.seq
+                        && p.chain_break
+                            .as_ref()
+                            .is_none_or(|b| s.seq >= b.first_trusted_seq)
+                });
                 let contradicted = sv
                     .contradictory
                     .iter()
                     .any(|c| c.commits.iter().any(|x| x.commit_id == id));
                 assert!(
-                    sv.confirmed.iter().any(|c| c.commit_id == id) || is_head || contradicted,
+                    sv.confirmed.iter().any(|c| c.commit_id == id)
+                        || is_head
+                        || on_head_chain
+                        || contradicted,
                     "snapshot {} came from a commit the scan did not confirm",
                     s.seq
                 );

@@ -285,6 +285,22 @@ test("leaving .mochi drops its password and repair data: they are not carried to
   expect(sent?.args).toEqual({ request: { name: "notes.zip", format: "zip", level: "balanced" } });
 });
 
+test("the level list follows the format: three for ZIP, seven for tar.zst", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  const level = screen.getByTestId("quick-level");
+  const options = () => [...level.querySelectorAll("option")].map((o) => o.getAttribute("value"));
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
+  expect(options()).toHaveLength(7);
+  await user.selectOptions(level, "extreme");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  expect(options()).toEqual(["fast", "balanced", "maximum"]);
+  expect(level).toHaveValue("maximum");
+});
+
 test("OK sends the name, the format and the level, and no path", async () => {
   const user = userEvent.setup();
   const b = backend();
@@ -292,10 +308,10 @@ test("OK sends the name, the format and the level, and no path", async () => {
   b.send(prompt());
   await screen.findByTestId("quick-form");
   await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
-  await user.selectOptions(screen.getByTestId("quick-level"), "smaller");
+  await user.selectOptions(screen.getByTestId("quick-level"), "ultra");
   await user.click(screen.getByTestId("quick-ok"));
   expect(b.calls.filter((c) => c.cmd === "quick_add_submit").map((c) => c.args)).toEqual([
-    { request: { name: "notes.tar.zst", format: "tar_zst", level: "smaller" } },
+    { request: { name: "notes.tar.zst", format: "tar_zst", level: "ultra" } },
   ]);
   // The job's events take over the window: the form is replaced by its progress.
   b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 1 });

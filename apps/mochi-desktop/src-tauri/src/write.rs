@@ -75,9 +75,13 @@ impl CompressionPreset {
     /// The Zstandard level; `None` is the writer's default.
     pub fn zstd_level(self) -> Option<i32> {
         match self {
+            CompressionPreset::Turbo => Some(-4),
+            CompressionPreset::VeryFast => Some(-1),
             CompressionPreset::Fast => Some(1),
             CompressionPreset::Balanced => None,
-            CompressionPreset::Smaller => Some(19),
+            CompressionPreset::Maximum => Some(19),
+            CompressionPreset::Ultra => Some(20),
+            CompressionPreset::Extreme => Some(22),
         }
     }
 }
@@ -586,10 +590,15 @@ impl Services {
                 }
                 Ok(())
             }
-            JobRequest::ExportArchive { format, .. } => {
+            JobRequest::ExportArchive { format, level } => {
                 if format.export().is_none() {
                     return Err(invalid(
                         "ExportArchive writes ZIP, tar, tar.gz, and tar.zst; use CreateArchive for .mochi",
+                    ));
+                }
+                if !format.offers(*level) {
+                    return Err(invalid(
+                        "ZIP and tar.gz offer the Fast, Balanced and Maximum levels only",
                     ));
                 }
                 let t = self.staging.take();
@@ -1371,9 +1380,20 @@ mod tests {
 
     #[test]
     fn presets_map_to_distinct_levels_and_each_makes_a_valid_archive() {
-        assert_eq!(CompressionPreset::Fast.zstd_level(), Some(1));
-        assert_eq!(CompressionPreset::Balanced.zstd_level(), None);
-        assert_eq!(CompressionPreset::Smaller.zstd_level(), Some(19));
+        use CompressionPreset::*;
+        let all = [Turbo, VeryFast, Fast, Balanced, Maximum, Ultra, Extreme];
+        assert_eq!(
+            all.map(CompressionPreset::zstd_level),
+            [
+                Some(-4),
+                Some(-1),
+                Some(1),
+                None,
+                Some(19),
+                Some(20),
+                Some(22)
+            ]
+        );
         // Words from a small vocabulary in a pseudo-random order: the longer
         // matches and larger window of level 19 pay off, level 1's do not.
         let words = [
@@ -1388,7 +1408,7 @@ mod tests {
             })
             .collect();
         let mut sizes = Vec::new();
-        for preset in [CompressionPreset::Fast, CompressionPreset::Smaller] {
+        for preset in all {
             let fx = fixture();
             let src = put(&fx.root, "big.txt", &text);
             let dest = fx.out.join("p.mochi");
@@ -1408,12 +1428,23 @@ mod tests {
             assert_eq!(file(&state_of(&dest), "big.txt").unwrap(), text);
             sizes.push(std::fs::metadata(&dest).unwrap().len());
         }
+        // Faster levels make bigger files where the gap is wide. Levels 19, 20
+        // and 22 are compared only with level 1: zstd does not promise that a
+        // higher level is never larger, and on this text 22 and 19 land within
+        // a byte or two of each other (the archive also holds random IDs).
+        let [turbo, _, fast, _, maximum, ultra, extreme] = sizes[..] else {
+            panic!("one size per preset")
+        };
         assert!(
-            sizes[1] < sizes[0],
-            "level 19 ({}) must beat level 1 ({}) on repetitive text",
-            sizes[1],
-            sizes[0]
+            fast < turbo,
+            "level 1 ({fast}) must beat level -4 ({turbo}) on repetitive text"
         );
+        for (level, size) in [(19, maximum), (20, ultra), (22, extreme)] {
+            assert!(
+                size < fast,
+                "level {level} ({size}) must beat level 1 ({fast}) on repetitive text"
+            );
+        }
     }
 
     #[test]
@@ -2260,6 +2291,42 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(e.code, "INVALID_ARGUMENT");
+    }
+
+    #[test]
+    fn zip_and_tar_gz_offer_three_levels_and_refuse_the_other_four() {
+        use CompressionPreset::*;
+        let all = [Turbo, VeryFast, Fast, Balanced, Maximum, Ultra, Extreme];
+        let offered = |f: ArchiveFormat| -> Vec<CompressionPreset> {
+            all.into_iter().filter(|p| f.offers(*p)).collect()
+        };
+        for f in [ArchiveFormat::Zip, ArchiveFormat::TarGz] {
+            assert_eq!(offered(f), [Fast, Balanced, Maximum], "{f:?}");
+        }
+        for f in [
+            ArchiveFormat::Mochi,
+            ArchiveFormat::TarZst,
+            ArchiveFormat::Tar,
+        ] {
+            assert_eq!(offered(f), all, "{f:?}");
+        }
+
+        // A request for a level ZIP does not offer is refused before a job
+        // starts, and the staged set is left for another try.
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        fx.svc.staging.set_destination(fx.out.join("z.zip"));
+        for level in [Turbo, VeryFast, Ultra, Extreme] {
+            let e = fx
+                .svc
+                .validate(&JobRequest::ExportArchive {
+                    format: ArchiveFormat::Zip,
+                    level,
+                })
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument, "{level:?}");
+        }
+        assert_eq!(fx.svc.staging.view().items.len(), 1);
     }
 
     #[test]

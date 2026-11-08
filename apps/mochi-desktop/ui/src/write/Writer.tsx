@@ -38,8 +38,8 @@ import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { commitView, deleteNote, exportView, failureText, outcomeResult, progressText, tarNotes } from "./messages";
 import type { Operation, WriteResult } from "./messages";
-import { FormatSelect, PRESETS } from "./FormatFields";
-import { formatLabel, hasLevel, isMochi } from "./format";
+import { FormatSelect, PRESETS, presetsShown } from "./FormatFields";
+import { fitPreset, formatLabel, hasLevel, isMochi } from "./format";
 
 export { PRESETS };
 
@@ -517,6 +517,7 @@ export function Writer({
   /** Choose the format of the new archive: MOCHI-only choices are dropped, never carried over. */
   const chooseFormat = (next: ArchiveFormat) => {
     setError(null);
+    setPreset((p) => fitPreset(next, p));
     if (!isMochi(next)) {
       setEncrypt(false);
       setTar(false);
@@ -745,7 +746,7 @@ export function Writer({
             {hasLevel(format) ? (
               <fieldset disabled={busy}>
                 <legend>{t("write.compression")}</legend>
-                {PRESETS.map((p) => (
+                {presetsShown(format).map((p) => (
                   <label key={p.id}>
                     <input
                       type="radio"

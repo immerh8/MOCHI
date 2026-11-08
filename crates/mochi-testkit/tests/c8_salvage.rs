@@ -1538,10 +1538,54 @@ fn salvage_20_the_trusted_heads_chain_never_walks_past_what_the_scan_confirmed()
     mochi_testkit::fuzz::exercise_salvage_scan(&bad.contents());
 }
 
+/// **A commit the ordinary walk reached from the trusted head keeps its
+/// record when only the descriptor needed the scan** (D23 items 4, 5;
+/// found by the `salvage_scan` fuzz target, CI run 42501819636,
+/// `crash-0e608cfb…`, kept whole). The ordinary walk reaches commits 2 and 1
+/// from the head and breaks below them, but no catalog opens until the scan
+/// re-encodes the descriptor. The scan's own frame walk never finds commit
+/// 1 (it resyncs past it), so commit 1 is neither confirmed nor listed. The
+/// trusted chain from the break up is kept as the ordinary walk found it,
+/// so snapshot 1 carries commit 1's record and is labelled salvage because
+/// it needed the regenerated descriptor. The exerciser's oracle had allowed
+/// only the head itself; it now allows the head's chain down to its break.
+#[test]
+fn salvage_21_the_trusted_heads_chain_down_to_its_break_keeps_its_records() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../fixtures/fuzz-regressions/salvage_scan/crash-0e608cfbfda3fdf1358c3d1e2a0749b75a9700ce",
+    );
+    let bad = SimStorage::from_bytes(std::fs::read(path).unwrap());
+    let p = plan_s(&bad);
+    let sv = p.salvage.as_ref().expect("the scan ran");
+    assert_eq!(p.head.as_ref().map(|h| h.seq), Some(2), "{p:#?}");
+    assert_eq!(
+        p.chain_break.as_ref().map(|b| b.first_trusted_seq),
+        Some(1),
+        "{p:#?}"
+    );
+    let profile = sv.profile_inference.as_ref().expect("descriptor evidence");
+    assert!(profile.descriptor_reconstructed, "{sv:#?}");
+    let listed = |seq: u64| {
+        sv.confirmed
+            .iter()
+            .chain(&sv.unconfirmed)
+            .chain(&sv.rejected)
+            .any(|c| c.seq == seq)
+    };
+    assert!(!listed(1), "the scan never saw commit 1: {sv:#?}");
+    let ids = commit_ids(&p);
+    assert_eq!(ids.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [0, 1, 2]);
+    assert!(ids.iter().all(|(_, id)| id.is_some()), "{ids:?}");
+    assert!(p.snapshots.iter().all(|s| s.trust == Trust::Salvage));
+    assert_ne!(p.outcome, Outcome::Complete);
+    mochi_testkit::fuzz::exercise_salvage_scan(&bad.contents());
+}
+
 /// The input the `salvage_scan` fuzz target found in CI (run 38452009022,
 /// `crash-599502c9…`), kept whole: no nightly toolchain was at hand to
 /// minimize it. See `salvage_19` for the same case built by hand. The
-/// `crash-s1-*` inputs are from CI run 38952433601 (see `salvage_20`).
+/// `crash-s1-*` inputs are from CI run 38952433601 (see `salvage_20`), and
+/// `crash-0e608cfb…` from CI run 42501819636 (see `salvage_21`).
 #[test]
 fn salvage_fuzz_regression_inputs() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

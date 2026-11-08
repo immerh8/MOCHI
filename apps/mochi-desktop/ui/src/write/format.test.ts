@@ -1,6 +1,16 @@
 import { expect, test } from "vitest";
 
-import { extensionOf, FORMATS, hasLevel, isMochi, nameForFormat, stripArchiveExtension } from "./format";
+import {
+  ALL_PRESETS,
+  extensionOf,
+  fitPreset,
+  FORMATS,
+  hasLevel,
+  isMochi,
+  nameForFormat,
+  presetsFor,
+  stripArchiveExtension,
+} from "./format";
 
 test("the five formats, .mochi first, each with its own extension", () => {
   expect(FORMATS).toEqual(["mochi", "zip", "tar", "tar_gz", "tar_zst"]);
@@ -24,4 +34,29 @@ test("a name takes the extension of the chosen format, as Rust does", () => {
 test("only plain tar has no level, and only .mochi has the MOCHI options", () => {
   expect(FORMATS.filter((f) => !hasLevel(f))).toEqual(["tar"]);
   expect(FORMATS.filter(isMochi)).toEqual(["mochi"]);
+});
+
+test("ZIP and tar.gz offer three presets; .mochi and tar.zst all seven; plain tar none", () => {
+  expect(presetsFor("zip")).toEqual(["fast", "balanced", "maximum"]);
+  expect(presetsFor("tar_gz")).toEqual(["fast", "balanced", "maximum"]);
+  expect(presetsFor("mochi")).toEqual(ALL_PRESETS);
+  expect(presetsFor("tar_zst")).toEqual(ALL_PRESETS);
+  expect(presetsFor("tar")).toEqual([]);
+});
+
+test("a preset the format lacks becomes the nearest one it offers", () => {
+  expect(ALL_PRESETS.map((p) => fitPreset("zip", p))).toEqual([
+    "fast",
+    "fast",
+    "fast",
+    "balanced",
+    "maximum",
+    "maximum",
+    "maximum",
+  ]);
+  for (const p of ALL_PRESETS) {
+    expect(fitPreset("tar_zst", p)).toBe(p);
+    expect(fitPreset("mochi", p)).toBe(p);
+    expect(fitPreset("tar", p)).toBe(p);
+  }
 });

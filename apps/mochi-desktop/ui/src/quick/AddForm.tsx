@@ -9,7 +9,7 @@ import { chooseQuickLocation, closeQuick, submitQuickAdd } from "../ipc/quick";
 import type { ArchiveFormat } from "../ipc/quick";
 import type { CompressionPreset } from "../ipc/write";
 import { FormatSelect, LevelSelect } from "../write/FormatFields";
-import { isMochi, nameForFormat, stripArchiveExtension } from "../write/format";
+import { fitPreset, isMochi, nameForFormat, stripArchiveExtension } from "../write/format";
 
 /** What the form starts with, from Rust: the suggested name, the folder, and the format. */
 export interface AddFormStart {
@@ -52,6 +52,7 @@ export function AddForm({ start }: { start: AddFormStart }) {
   const chooseFormat = (next: ArchiveFormat) => {
     setFormat(next);
     setName((n) => nameForFormat(n, next));
+    setLevel((l) => fitPreset(next, l));
     if (!isMochi(next)) {
       setEncrypt(false);
       setRecovery(null);

@@ -4,4 +4,4 @@
  * How hard the compressor works (Zstandard level; spec §7 leaves the level to
  * the writer, and readers cannot tell the difference). Not a format choice.
  */
-export type CompressionPreset = "fast" | "balanced" | "smaller";
+export type CompressionPreset = "turbo" | "very_fast" | "fast" | "balanced" | "maximum" | "ultra" | "extreme";
