@@ -590,10 +590,15 @@ impl Services {
                 }
                 Ok(())
             }
-            JobRequest::ExportArchive { format, .. } => {
+            JobRequest::ExportArchive { format, level } => {
                 if format.export().is_none() {
                     return Err(invalid(
                         "ExportArchive writes ZIP, tar, tar.gz, and tar.zst; use CreateArchive for .mochi",
+                    ));
+                }
+                if !format.offers(*level) {
+                    return Err(invalid(
+                        "ZIP and tar.gz offer the Fast, Balanced and Maximum levels only",
                     ));
                 }
                 let t = self.staging.take();
@@ -2286,6 +2291,42 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(e.code, "INVALID_ARGUMENT");
+    }
+
+    #[test]
+    fn zip_and_tar_gz_offer_three_levels_and_refuse_the_other_four() {
+        use CompressionPreset::*;
+        let all = [Turbo, VeryFast, Fast, Balanced, Maximum, Ultra, Extreme];
+        let offered = |f: ArchiveFormat| -> Vec<CompressionPreset> {
+            all.into_iter().filter(|p| f.offers(*p)).collect()
+        };
+        for f in [ArchiveFormat::Zip, ArchiveFormat::TarGz] {
+            assert_eq!(offered(f), [Fast, Balanced, Maximum], "{f:?}");
+        }
+        for f in [
+            ArchiveFormat::Mochi,
+            ArchiveFormat::TarZst,
+            ArchiveFormat::Tar,
+        ] {
+            assert_eq!(offered(f), all, "{f:?}");
+        }
+
+        // A request for a level ZIP does not offer is refused before a job
+        // starts, and the staged set is left for another try.
+        let fx = fixture();
+        stage_ok(&fx.svc, &[fx.root.join("docs")]);
+        fx.svc.staging.set_destination(fx.out.join("z.zip"));
+        for level in [Turbo, VeryFast, Ultra, Extreme] {
+            let e = fx
+                .svc
+                .validate(&JobRequest::ExportArchive {
+                    format: ArchiveFormat::Zip,
+                    level,
+                })
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument, "{level:?}");
+        }
+        assert_eq!(fx.svc.staging.view().items.len(), 1);
     }
 
     #[test]

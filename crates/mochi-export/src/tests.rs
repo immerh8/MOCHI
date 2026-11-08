@@ -237,6 +237,16 @@ fn levels_map_to_the_named_zstd_and_deflate_levels() {
     assert_eq!(Level::ALL.map(Level::deflate), [1, 1, 1, 6, 9, 9, 9]);
 }
 
+#[test]
+fn deflate_formats_offer_only_levels_that_differ() {
+    for format in [Format::Zip, Format::TarGz] {
+        let deflate: Vec<u32> = format.levels().iter().map(|l| l.deflate()).collect();
+        assert_eq!(deflate, [1, 6, 9], "{format:?}");
+    }
+    assert_eq!(Format::TarZst.levels(), Level::ALL);
+    assert!(Format::Tar.levels().is_empty());
+}
+
 /// The window a Zstandard frame header declares (RFC 8878 §3.1.1.1): after
 /// the 4-byte magic, the frame header descriptor, then the window descriptor.
 fn declared_window(frame: &[u8]) -> u64 {

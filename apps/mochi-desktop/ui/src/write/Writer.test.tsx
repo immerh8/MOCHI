@@ -243,6 +243,28 @@ test("the compression presets run from Turbo to Extreme, Balanced by default", a
   ]);
 });
 
+test("ZIP and tar.gz show three presets, and a choice they lack moves to the nearest", async () => {
+  const user = userEvent.setup();
+  backend();
+  renderWriter();
+  await user.click(screen.getByTestId("new-archive"));
+  const shown = () =>
+    [...screen.getByTestId("create-options").querySelectorAll<HTMLInputElement>('input[name="preset"]')].map((r) =>
+      r.getAttribute("data-testid"),
+    );
+  await user.click(screen.getByTestId("preset-extreme"));
+  for (const format of ["zip", "tar_gz"] as const) {
+    await user.selectOptions(screen.getByTestId("create-format"), format);
+    expect(shown()).toEqual(["preset-fast", "preset-balanced", "preset-maximum"]);
+    expect(screen.getByTestId("preset-maximum")).toBeChecked();
+  }
+  await user.selectOptions(screen.getByTestId("create-format"), "tar_zst");
+  expect(shown()).toHaveLength(7);
+  await user.click(screen.getByTestId("preset-turbo"));
+  await user.selectOptions(screen.getByTestId("create-format"), "zip");
+  expect(screen.getByTestId("preset-fast")).toBeChecked();
+});
+
 test("with a default place there is no dialog: one click creates, and the place is shown", async () => {
   const user = userEvent.setup();
   const b = backend({ defaultDestination: "/home/me/photos.mochi" });
@@ -736,10 +758,10 @@ test("choosing ZIP asks Rust for the format, hides the .mochi-only options, and 
   expect(screen.queryByTestId("recovery-none")).toBeNull();
   expect(screen.queryByTestId("tar-compatible")).toBeNull();
   // The compression level stays, and is used.
-  await user.click(screen.getByTestId("preset-turbo"));
+  await user.click(screen.getByTestId("preset-maximum"));
   await user.click(screen.getByTestId("create-confirm"));
   await screen.findByTestId("write-running");
-  expect(b.request()).toEqual({ kind: "export_archive", format: "zip", level: "turbo" });
+  expect(b.request()).toEqual({ kind: "export_archive", format: "zip", level: "maximum" });
   expect(b.cmds()).not.toContain("create_archive");
 });
 

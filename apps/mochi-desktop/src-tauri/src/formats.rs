@@ -76,6 +76,19 @@ pub fn strip_archive_extension(name: &str) -> &str {
     name
 }
 
+impl ArchiveFormat {
+    /// Whether the format offers `preset`: `.mochi` offers all seven, ZIP and
+    /// tar.gz only Fast, Balanced and Maximum (Deflate has no more levels
+    /// that differ), tar.zst all seven, and plain tar ignores the level.
+    /// The window shows the same lists (`ui/src/write/format.ts`).
+    pub fn offers(self, preset: CompressionPreset) -> bool {
+        match self.export() {
+            None => true,
+            Some(f) => !f.has_level() || f.levels().contains(&preset.export_level()),
+        }
+    }
+}
+
 impl CompressionPreset {
     /// The `mochi-export` level.
     pub fn export_level(self) -> mochi_export::Level {

@@ -96,13 +96,26 @@ impl Format {
     pub fn has_level(self) -> bool {
         !matches!(self, Format::Tar)
     }
+
+    /// The levels worth offering for this format, fastest first. Deflate has
+    /// three that differ (1, 6, 9), so ZIP and `.tar.gz` offer three;
+    /// Zstandard offers all seven. Plain tar has none.
+    pub fn levels(self) -> &'static [Level] {
+        match self {
+            Format::Zip | Format::TarGz => &[Level::Fast, Level::Balanced, Level::Maximum],
+            Format::TarZst => &Level::ALL,
+            Format::Tar => &[],
+        }
+    }
 }
 
 /// The compression effort. Meaningless for plain tar.
 ///
 /// The names follow the desktop app's presets. Zstandard (`.tar.zst`) uses
-/// the level each name stands for; Deflate (ZIP, `.tar.gz`) has no negative
-/// or ultra levels, so the fast end maps to 1 and the slow end to 9.
+/// the level each name stands for. Deflate (ZIP, `.tar.gz`) has no negative
+/// or ultra levels, so it offers only Fast, Balanced and Maximum
+/// ([`Format::levels`]); the others still map (to 1 and 9) so that the
+/// mapping is total, but the desktop app refuses them for those formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     /// Zstandard `--fast=4` (level -4).

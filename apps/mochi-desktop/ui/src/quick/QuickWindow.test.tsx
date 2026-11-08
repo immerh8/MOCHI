@@ -285,6 +285,22 @@ test("leaving .mochi drops its password and repair data: they are not carried to
   expect(sent?.args).toEqual({ request: { name: "notes.zip", format: "zip", level: "balanced" } });
 });
 
+test("the level list follows the format: three for ZIP, seven for tar.zst", async () => {
+  const user = userEvent.setup();
+  const b = backend();
+  render(<QuickWindow />);
+  b.send(prompt());
+  await screen.findByTestId("quick-form");
+  const level = screen.getByTestId("quick-level");
+  const options = () => [...level.querySelectorAll("option")].map((o) => o.getAttribute("value"));
+  await user.selectOptions(screen.getByTestId("quick-format"), "tar_zst");
+  expect(options()).toHaveLength(7);
+  await user.selectOptions(level, "extreme");
+  await user.selectOptions(screen.getByTestId("quick-format"), "zip");
+  expect(options()).toEqual(["fast", "balanced", "maximum"]);
+  expect(level).toHaveValue("maximum");
+});
+
 test("OK sends the name, the format and the level, and no path", async () => {
   const user = userEvent.setup();
   const b = backend();
