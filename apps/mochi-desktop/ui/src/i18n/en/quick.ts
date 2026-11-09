@@ -54,4 +54,11 @@ export const quick = {
   "quick.rowFormat": "Format",
   "quick.exportNote": "MOCHI wrote this file with the tools for its format. It did not check the file afterwards.",
   "quick.showFolder": "Show in folder",
+  "quick.openWhenDone": "Open the folder when done",
+  "quick.openedFolder": "The folder was opened in the file manager.",
+  "quick.folderName": "Folder name",
+  "quick.rename": "Rename",
+  "quick.moveTo": "Move to…",
+  "quick.renamed": "Renamed. The folder is now {location}",
+  "quick.moved": "Moved. The folder is now {location}",
 } as const;

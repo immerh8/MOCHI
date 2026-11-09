@@ -79,6 +79,7 @@ export const common = {
   "dialog.chooseFolder": "เลือกโฟลเดอร์ที่จะเพิ่ม",
   "dialog.saveArchiveAs": "บันทึกไฟล์บีบอัดใหม่เป็น",
   "dialog.extractTo": "แตกไฟล์ไปที่…",
+  "dialog.moveFolder": "ย้ายโฟลเดอร์ไปที่…",
   "dialog.chooseSubject": "เลือกไฟล์บีบอัดที่จะทดสอบหรือซ่อม",
   "dialog.chooseCopy": "เลือกสำเนาอิสระของไฟล์บีบอัดเดียวกัน",
   "dialog.exportReport": "ส่งออกรายงาน (JSON)",

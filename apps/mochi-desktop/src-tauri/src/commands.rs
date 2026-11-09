@@ -22,7 +22,7 @@ use crate::ipc::{
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
-use crate::quick::{Quick, QuickAddRequest, QuickEvent, QuickLocation, QuickSink};
+use crate::quick::{Quick, QuickAddRequest, QuickEvent, QuickFolder, QuickLocation, QuickSink};
 use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::windows::{WindowState, WindowStates};
@@ -458,6 +458,47 @@ pub fn quick_pause(paused: bool, quick: State<'_, Arc<Quick>>) -> bool {
 #[tauri::command]
 pub fn quick_show_folder(quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
     quick.show_folder().map_err(IpcError::from)
+}
+
+/// The compact window's "Open the folder when done" check box: on or off,
+/// saved for the next extraction (and the running one, if it has not finished).
+/// Only the `quick` window may call it.
+#[tauri::command]
+pub fn quick_set_open_folder(open: bool, quick: State<'_, Arc<Quick>>) -> Result<bool, IpcError> {
+    quick
+        .set_open_folder_when_done(open)
+        .map_err(IpcError::from)
+}
+
+/// Rename the folder the last "Extract to new folder" made. The webview
+/// sends one folder name, never a path; Rust renames in the same parent and
+/// never replaces a name that exists. Only the `quick` window may call it.
+#[tauri::command]
+pub fn quick_rename_folder(
+    name: String,
+    quick: State<'_, Arc<Quick>>,
+) -> Result<QuickFolder, IpcError> {
+    quick.rename_folder(&name).map_err(IpcError::from)
+}
+
+/// Move the folder the last "Extract to new folder" made: the folder dialog
+/// is shown from Rust and the folder keeps its name there. `null` if the user
+/// cancelled. Only the `quick` window may call it.
+#[tauri::command]
+pub async fn quick_move_folder(
+    app: AppHandle,
+    text: Option<DialogText>,
+    quick: State<'_, Arc<Quick>>,
+) -> Result<Option<QuickFolder>, IpcError> {
+    let quick = Arc::clone(&quick);
+    let text = text.unwrap_or_default();
+    blocking(
+        move || match crate::picker::pick_extract_folder(&app, &text) {
+            Some(parent) => quick.move_folder(&parent).map(Some),
+            None => Ok(None),
+        },
+    )
+    .await
 }
 
 /// The Add form's Browse…: show the save dialog (in Rust) for the format the

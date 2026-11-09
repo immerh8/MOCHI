@@ -8,15 +8,16 @@
 // mounts twice in development) still hears the whole job.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-import { destinationDialog } from "./dialogs";
+import { destinationDialog, moveFolderDialog } from "./dialogs";
 
 import type { ArchiveFormat } from "./generated/ArchiveFormat";
 import type { QuickAction } from "./generated/QuickAction";
 import type { QuickAddRequest } from "./generated/QuickAddRequest";
 import type { QuickEvent } from "./generated/QuickEvent";
+import type { QuickFolder } from "./generated/QuickFolder";
 import type { QuickLocation } from "./generated/QuickLocation";
 
-export type { ArchiveFormat, QuickAction, QuickAddRequest, QuickEvent, QuickLocation };
+export type { ArchiveFormat, QuickAction, QuickAddRequest, QuickEvent, QuickFolder, QuickLocation };
 
 const listeners = new Set<(event: QuickEvent) => void>();
 let log: QuickEvent[] = [];
@@ -68,6 +69,27 @@ export function quickPause(paused: boolean): Promise<boolean> {
 /** Open the folder the job wrote into; Rust remembers which. */
 export function showQuickFolder(): Promise<null> {
   return invoke<null>("quick_show_folder");
+}
+
+/** "Open the folder when done": on or off, saved by Rust for the next extraction too. */
+export function setQuickOpenFolder(open: boolean): Promise<boolean> {
+  return invoke<boolean>("quick_set_open_folder", { open });
+}
+
+/**
+ * Rename the folder "Extract to new folder" made. Only a folder name crosses; Rust renames it in
+ * place and refuses a name that exists (an `IpcError`).
+ */
+export function renameQuickFolder(name: string): Promise<QuickFolder> {
+  return invoke<QuickFolder>("quick_rename_folder", { name });
+}
+
+/**
+ * Move that folder: Rust shows the folder dialog and moves it there, keeping its name. `null`
+ * when the dialog was cancelled; a name that exists there, or another drive, is refused.
+ */
+export function moveQuickFolder(): Promise<QuickFolder | null> {
+  return invoke<QuickFolder | null>("quick_move_folder", { text: moveFolderDialog() });
 }
 
 export function closeQuick(): Promise<null> {

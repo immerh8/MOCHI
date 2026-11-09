@@ -37,6 +37,14 @@
 //! * **No secret on a command line.** An Encrypted archive asks for its
 //!   passphrase in the compact window; it crosses IPC once, into a zeroizing
 //!   [`Secret`], and a wrong one asks again (`KEY_UNAVAILABLE`).
+//! * **After an extraction (owner request 2026-11-09).** The folder extracted
+//!   into opens in a new file-manager window when the job is done, unless the
+//!   user turned that off in the compact window ("Open the folder when done",
+//!   saved in `quick-settings.json`). A folder that "Extract to new folder"
+//!   made can then be renamed or moved from the result, with a no-replace
+//!   rename on the same volume ([`rename_no_replace`]): an existing name is
+//!   refused, nothing is copied, and only that folder (the one this job made)
+//!   can be renamed or moved, never the folder an "Extract here" wrote into.
 //! * **Honest results (spec §23.3).** A new archive is a `LOCAL_COMMITTED`
 //!   commit on this computer, and the result says no more. An extraction is
 //!   not a verification. A cancelled extraction leaves the files already
@@ -48,6 +56,7 @@
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
@@ -55,7 +64,7 @@ use mochi_core::job::{CancellationToken, JobContext, ProgressEvent, ProgressSink
 use mochi_core::keys::KeySession;
 use mochi_core::publish::ReadOptions;
 use mochi_core::restore::{preflight_selected, ExceptionKind};
-use mochi_core::storage::os::OsRestoreDir;
+use mochi_core::storage::os::{rename_no_replace, OsRestoreDir};
 use mochi_core::{ErrorCode, MochiError, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -70,6 +79,9 @@ use crate::write::{JobDone, Services, Staging};
 
 /// Events kept for a window that is not listening yet.
 const MAX_PENDING: usize = 64;
+
+/// Where the compact window's own choice is saved (app local data folder).
+const SETTINGS_FILE: &str = "quick-settings.json";
 
 /// Names tried before giving up (`name`, `name (2)`, …).
 const MAX_NAME_TRIES: u32 = 1000;
@@ -95,6 +107,9 @@ pub enum QuickEvent {
         action: QuickAction,
         subject: NameText,
         items: u32,
+        /// Whether the folder extracted into opens when the job is done (the
+        /// saved choice; the window shows it as a check box).
+        open_folder: bool,
     },
     /// The archive is Encrypted: ask for its passphrase. `wrong` after a
     /// passphrase that did not open it.
@@ -157,6 +172,12 @@ pub enum QuickEvent {
         /// The size of the file written; `0` for an extraction.
         #[ts(type = "number")]
         output_bytes: u64,
+        /// The folder was opened in the file manager (an extraction, with
+        /// "Open the folder when done" on).
+        opened_folder: bool,
+        /// The folder can be renamed or moved from the result: it is the new
+        /// folder "Extract to new folder" made.
+        movable: bool,
     },
     Cancelled {
         action: QuickAction,
@@ -268,6 +289,57 @@ pub struct QuickLocation {
     pub name: String,
 }
 
+/// The saved choices of the compact window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Settings {
+    /// Open the folder extracted into when the job is done. On by default.
+    #[serde(default = "yes")]
+    open_folder_when_done: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            open_folder_when_done: true,
+        }
+    }
+}
+
+fn read_settings(dir: &Path) -> Settings {
+    std::fs::read(dir.join(SETTINGS_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Settings>(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_settings(dir: &Path, settings: Settings) -> Result<()> {
+    let io = |what: &str, p: &Path, e: std::io::Error| {
+        MochiError::new(ErrorCode::IoError, format!("{what} {}: {e}", p.display()))
+    };
+    std::fs::create_dir_all(dir).map_err(|e| io("creating the settings folder", dir, e))?;
+    let json = serde_json::to_vec(&settings)
+        .map_err(|e| MochiError::new(ErrorCode::IoError, format!("saving the settings: {e}")))?;
+    let path = dir.join(SETTINGS_FILE);
+    let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
+    std::fs::write(&tmp, json).map_err(|e| io("saving the settings to", &tmp, e))?;
+    std::fs::rename(&tmp, &path).map_err(|e| io("saving the settings to", &path, e))?;
+    Ok(())
+}
+
+/// Where the extracted folder is now, after a rename or a move.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct QuickFolder {
+    /// The folder's name.
+    pub name: NameText,
+    /// Its full path, as display text.
+    pub location: NameText,
+}
+
 /// The form while it waits: what was chosen and where the archive goes.
 struct Prompt {
     paths: Vec<PathBuf>,
@@ -298,12 +370,19 @@ struct Control {
     prompt: Option<Prompt>,
     /// What "Show in folder" opens.
     folder: Option<PathBuf>,
+    /// The new folder the last "Extract to new folder" made and filled: the
+    /// only folder Rename and Move to… act on.
+    made: Option<PathBuf>,
 }
 
 /// The compact window's state: its event stream and the running job.
 #[derive(Default)]
 pub struct Quick {
     host: OnceLock<Arc<dyn WindowHost>>,
+    /// The user turned "Open the folder when done" off.
+    keep_folder_closed: AtomicBool,
+    /// Where the choice is saved; unset in tests that do not save it.
+    settings_dir: OnceLock<PathBuf>,
     delivery: Mutex<Delivery>,
     control: Mutex<Control>,
 }
@@ -420,6 +499,28 @@ pub fn add_target(paths: &[PathBuf]) -> Result<(PathBuf, String)> {
     Ok((dir.to_path_buf(), stem))
 }
 
+/// A failed rename or move, said plainly.
+fn move_error(e: &std::io::Error, target: &Path) -> MochiError {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty => MochiError::new(
+            ErrorCode::DestinationExists,
+            format!(
+                "{} already exists. Choose another name; MOCHI does not replace files or folders.",
+                target.display()
+            ),
+        ),
+        ErrorKind::CrossesDevices => invalid(
+            "the folder can only be moved to a folder on the same drive. To extract to another \
+             drive, use Extract to… in the main window",
+        ),
+        _ => MochiError::new(
+            ErrorCode::IoError,
+            format!("the folder could not be moved to {}: {e}", target.display()),
+        ),
+    }
+}
+
 /// Forwards `mochi-core` progress to the window.
 struct Forward<'a>(&'a Quick);
 
@@ -445,6 +546,95 @@ impl Quick {
 
     pub fn host(&self) -> Option<Arc<dyn WindowHost>> {
         self.host.get().cloned()
+    }
+
+    /// Read the saved choices from `dir` (a missing or damaged file means the
+    /// defaults) and save there from now on. Once, at start-up.
+    pub fn load_settings(&self, dir: PathBuf) {
+        let saved = read_settings(&dir);
+        self.keep_folder_closed
+            .store(!saved.open_folder_when_done, Ordering::Relaxed);
+        let _ = self.settings_dir.set(dir);
+    }
+
+    /// Whether the folder extracted into opens when the job is done.
+    pub fn open_folder_when_done(&self) -> bool {
+        !self.keep_folder_closed.load(Ordering::Relaxed)
+    }
+
+    /// Turn "Open the folder when done" on or off, and save it. It applies
+    /// to the running job too, if that has not finished yet.
+    pub fn set_open_folder_when_done(&self, open: bool) -> Result<bool> {
+        if let Some(dir) = self.settings_dir.get() {
+            save_settings(
+                dir,
+                Settings {
+                    open_folder_when_done: open,
+                },
+            )?;
+        }
+        self.keep_folder_closed.store(!open, Ordering::Relaxed);
+        Ok(open)
+    }
+
+    /// Rename the folder the last "Extract to new folder" made to `name`, in
+    /// the same parent. An existing name is refused, never replaced.
+    pub fn rename_folder(&self, name: &str) -> Result<QuickFolder> {
+        let typed = name.trim();
+        if typed.is_empty() {
+            return Err(invalid("type a name for the folder"));
+        }
+        let typed = crate::formats::check_archive_name(typed)
+            .map_err(|e| invalid(e.replace("for a file", "for a folder")))?;
+        let current = self.made_folder()?;
+        let parent = current
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| invalid("the folder has no parent folder"))?
+            .to_path_buf();
+        self.move_made(&current, &parent.join(typed))
+    }
+
+    /// Move the folder the last "Extract to new folder" made into `parent`,
+    /// keeping its name. An existing name there is refused, never replaced;
+    /// another drive is refused, nothing is copied.
+    pub fn move_folder(&self, parent: &Path) -> Result<QuickFolder> {
+        let current = self.made_folder()?;
+        let name = current
+            .file_name()
+            .ok_or_else(|| invalid("the folder has no name"))?
+            .to_os_string();
+        if !std::fs::metadata(parent).is_ok_and(|m| m.is_dir()) {
+            return Err(invalid("that folder does not exist; choose one that does"));
+        }
+        let target = parent.join(&name);
+        if target.starts_with(&current) {
+            return Err(invalid("a folder cannot be moved into itself"));
+        }
+        self.move_made(&current, &target)
+    }
+
+    fn made_folder(&self) -> Result<PathBuf> {
+        lock(&self.control)
+            .made
+            .clone()
+            .ok_or_else(|| invalid("there is no extracted folder to rename or move"))
+    }
+
+    fn move_made(&self, current: &Path, target: &Path) -> Result<QuickFolder> {
+        if target != current {
+            rename_no_replace(current, target).map_err(|e| move_error(&e, target))?;
+        }
+        let mut c = lock(&self.control);
+        // A job that started meanwhile has its own folder: keep it.
+        if c.made.as_deref() == Some(current) {
+            c.made = Some(target.to_path_buf());
+            c.folder = Some(target.to_path_buf());
+        }
+        Ok(QuickFolder {
+            name: file_name_text(target),
+            location: path_text(target),
+        })
     }
 
     fn emit(&self, event: QuickEvent) {
@@ -580,6 +770,7 @@ impl Quick {
             action,
             subject,
             items,
+            open_folder: self.open_folder_when_done(),
         });
     }
 
@@ -604,6 +795,7 @@ impl Quick {
             c.passphrase = None;
             c.prompt = None;
             c.folder = None;
+            c.made = None;
         }
         let action = match job {
             QuickJob::Extract { action, .. } => *action,
@@ -630,7 +822,7 @@ impl Quick {
                 }
             },
         }));
-        let event = match outcome {
+        let mut event = match outcome {
             Ok(Ok(event)) => event,
             Ok(Err(e)) if e.code == ErrorCode::Cancelled => QuickEvent::Cancelled { action },
             Ok(Err(e)) => QuickEvent::Failed {
@@ -645,6 +837,17 @@ impl Quick {
             let mut c = lock(&self.control);
             c.cancel = None;
             c.prompt = None;
+        }
+        if let QuickEvent::Done {
+            action: QuickAction::ExtractHere | QuickAction::ExtractToFolder,
+            opened_folder,
+            ..
+        } = &mut event
+        {
+            // Read now, not at the start: the box may have been changed while
+            // the job ran. A file manager that cannot be started leaves the
+            // "Show in folder" button, which says why.
+            *opened_folder = self.open_folder_when_done() && self.show_folder().is_ok();
         }
         self.emit(event);
     }
@@ -946,6 +1149,10 @@ impl Quick {
         let view = done
             .extract
             .ok_or_else(|| invalid("the extraction produced no report"))?;
+        let movable = action == QuickAction::ExtractToFolder;
+        if movable {
+            lock(&self.control).made = Some(folder.clone());
+        }
         Ok(QuickEvent::Done {
             action,
             name: file_name_text(&folder),
@@ -959,6 +1166,8 @@ impl Quick {
             durability_note: view.durability_note,
             format: ArchiveFormat::Mochi,
             output_bytes: 0,
+            opened_folder: false,
+            movable,
         })
     }
 
@@ -1088,6 +1297,8 @@ impl Quick {
                 durability_note: commit.durability_note,
                 format: ArchiveFormat::Mochi,
                 output_bytes: 0,
+                opened_folder: false,
+                movable: false,
             });
         }
         let export = done
@@ -1112,6 +1323,8 @@ impl Quick {
             durability_note: export.durability_note,
             format: export.format,
             output_bytes: export.output_bytes,
+            opened_folder: false,
+            movable: false,
         })
     }
 }
@@ -1390,6 +1603,190 @@ mod tests {
         );
     }
 
+    fn opened(host: &Host) -> Vec<String> {
+        host.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.starts_with("open "))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn the_extracted_folder_opens_when_done_unless_that_is_turned_off_and_the_choice_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = tempfile::tempdir().unwrap();
+        let path = archive(dir.path(), "docs.mochi", &[("a.txt", b"alpha")]);
+        let (q, host, sink) = quick();
+        q.load_settings(settings.path().to_path_buf());
+        assert!(q.open_folder_when_done(), "on by default");
+        let main = Main::default();
+        let job = QuickJob::Extract {
+            action: QuickAction::ExtractToFolder,
+            path,
+        };
+        q.run(&job, &main);
+        assert!(matches!(
+            sink.events()[0],
+            QuickEvent::Started {
+                open_folder: true,
+                ..
+            }
+        ));
+        let QuickEvent::Done { opened_folder, .. } = last(&sink) else {
+            panic!("{:?}", sink.events())
+        };
+        assert!(opened_folder);
+        assert_eq!(
+            opened(&host),
+            vec![format!("open {}", dir.path().join("docs").display())]
+        );
+
+        // Off: saved, read again by the next start, and nothing is opened.
+        assert!(!q.set_open_folder_when_done(false).unwrap());
+        let again = Quick::new();
+        again.load_settings(settings.path().to_path_buf());
+        assert!(!again.open_folder_when_done());
+        q.run(&job, &main);
+        let QuickEvent::Done {
+            opened_folder,
+            name,
+            ..
+        } = last(&sink)
+        else {
+            panic!("{:?}", sink.events())
+        };
+        assert_eq!((opened_folder, name.text.as_str()), (false, "docs (2)"));
+        assert_eq!(opened(&host).len(), 1);
+        // A damaged file means the default.
+        std::fs::write(settings.path().join(SETTINGS_FILE), b"{oops").unwrap();
+        let third = Quick::new();
+        third.load_settings(settings.path().to_path_buf());
+        assert!(third.open_folder_when_done());
+    }
+
+    #[test]
+    fn a_failed_extraction_opens_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("junk.mochi");
+        std::fs::write(&junk, b"this is not an archive").unwrap();
+        let (q, host, sink) = quick();
+        q.run(
+            &QuickJob::Extract {
+                action: QuickAction::ExtractToFolder,
+                path: junk,
+            },
+            &Main::default(),
+        );
+        assert!(matches!(last(&sink), QuickEvent::Failed { .. }));
+        assert!(opened(&host).is_empty());
+        assert!(q.rename_folder("x").is_err());
+    }
+
+    #[test]
+    fn the_new_folder_is_renamed_and_moved_but_never_onto_a_name_that_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = archive(dir.path(), "docs.mochi", &[("a.txt", b"alpha")]);
+        std::fs::create_dir(dir.path().join("taken")).unwrap();
+        std::fs::write(dir.path().join("file"), b"mine").unwrap();
+        let (q, host, sink) = quick();
+        let main = Main::default();
+        q.run(
+            &QuickJob::Extract {
+                action: QuickAction::ExtractToFolder,
+                path,
+            },
+            &main,
+        );
+        let QuickEvent::Done { movable, .. } = last(&sink) else {
+            panic!("{:?}", sink.events())
+        };
+        assert!(movable);
+        for bad in ["", "  ", "a/b", "a\\b", "..", "x\u{7}"] {
+            assert_eq!(
+                q.rename_folder(bad).unwrap_err().code,
+                ErrorCode::InvalidArgument,
+                "{bad:?}"
+            );
+        }
+        // An empty folder or a file of that name is never replaced.
+        for taken in ["taken", "file"] {
+            assert_eq!(
+                q.rename_folder(taken).unwrap_err().code,
+                ErrorCode::DestinationExists
+            );
+        }
+        assert!(dir.path().join("docs").join("a.txt").is_file());
+        assert_eq!(std::fs::read(dir.path().join("file")).unwrap(), b"mine");
+
+        let renamed = q.rename_folder(" Report 2026 ").unwrap();
+        assert_eq!(renamed.name.text, "Report 2026");
+        assert!(!dir.path().join("docs").exists());
+        let here = dir.path().join("Report 2026");
+        assert_eq!(std::fs::read(here.join("a.txt")).unwrap(), b"alpha");
+        // The same name again is no change.
+        assert_eq!(q.rename_folder("Report 2026").unwrap(), renamed);
+
+        // Move: into another folder, keeping the name; not into itself, not
+        // onto a name that exists there.
+        assert!(q.move_folder(&here).is_err());
+        assert!(q.move_folder(&dir.path().join("missing")).is_err());
+        let elsewhere = dir.path().join("taken");
+        std::fs::create_dir(elsewhere.join("Report 2026")).unwrap();
+        assert_eq!(
+            q.move_folder(&elsewhere).unwrap_err().code,
+            ErrorCode::DestinationExists
+        );
+        std::fs::remove_dir(elsewhere.join("Report 2026")).unwrap();
+        let moved = q.move_folder(&elsewhere).unwrap();
+        assert_eq!(moved.name.text, "Report 2026");
+        let there = elsewhere.join("Report 2026");
+        assert_eq!(std::fs::read(there.join("a.txt")).unwrap(), b"alpha");
+        assert!(!here.exists());
+        // "Show in folder" follows the folder.
+        q.show_folder().unwrap();
+        assert_eq!(
+            host.calls.lock().unwrap().last().unwrap(),
+            &format!("open {}", there.display())
+        );
+    }
+
+    #[test]
+    fn extract_here_offers_no_rename_and_an_add_is_never_opened_automatically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = archive(dir.path(), "docs.mochi", &[("a.txt", b"alpha")]);
+        let (q, host, sink) = quick();
+        q.run(
+            &QuickJob::Extract {
+                action: QuickAction::ExtractHere,
+                path,
+            },
+            &Main::default(),
+        );
+        let QuickEvent::Done { movable, .. } = last(&sink) else {
+            panic!("{:?}", sink.events())
+        };
+        assert!(!movable);
+        // The folder written into is the archive's own: never renamed or moved.
+        assert!(q.rename_folder("other").is_err());
+        assert!(q.move_folder(dir.path()).is_err());
+        let before = opened(&host).len();
+        let file = dir.path().join("n.txt");
+        std::fs::write(&file, b"n").unwrap();
+        q.run(&QuickJob::Add { paths: vec![file] }, &Main::default());
+        let QuickEvent::Done {
+            opened_folder,
+            movable,
+            ..
+        } = last(&sink)
+        else {
+            panic!("{:?}", sink.events())
+        };
+        assert_eq!((opened_folder, movable), (false, false));
+        assert_eq!(opened(&host).len(), before);
+    }
+
     #[test]
     fn a_missing_or_unreadable_archive_is_a_failure_in_the_compact_window() {
         let dir = tempfile::tempdir().unwrap();
@@ -1493,6 +1890,7 @@ mod tests {
             action: QuickAction::Add,
             subject: NameText::of(b"a"),
             items: 1,
+            open_folder: true,
         });
         for i in 0..200 {
             q.emit(QuickEvent::Progress {
@@ -1521,6 +1919,7 @@ mod tests {
             action: QuickAction::Add,
             subject: NameText::of(b"b"),
             items: 1,
+            open_folder: true,
         });
         let next = Sink::live();
         q.watch(next.clone());

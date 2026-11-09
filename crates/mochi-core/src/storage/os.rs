@@ -834,6 +834,59 @@ fn publish_no_replace_at(
     Ok(PublishMechanism::MoveWriteThrough)
 }
 
+/// Rename the folder (or file) `src` to `dst` on the same volume, never
+/// replacing anything: an existing `dst` (an empty folder included) is
+/// [`io::ErrorKind::AlreadyExists`] and `src` is left as it was. A move to
+/// another volume fails ([`io::ErrorKind::CrossesDevices`]); nothing is
+/// copied. Linux: `renameat2(RENAME_NOREPLACE)`, refused where the
+/// filesystem lacks the flag (a folder cannot be hard-linked, so there is no
+/// safe fallback). Windows: `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`.
+/// Elsewhere: refused. The desktop app renames and moves the folder its quick
+/// "Extract to new folder" made with it.
+pub fn rename_no_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    rename_no_replace_impl(src, dst)
+}
+
+#[cfg(target_os = "linux")]
+fn rename_no_replace_impl(src: &Path, dst: &Path) -> io::Result<()> {
+    use rustix::fs::{renameat_with, RenameFlags, CWD};
+    const EXDEV: i32 = 18;
+    match renameat_with(CWD, src, CWD, dst, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let raw = e.raw_os_error();
+            match classify_rename_errno(raw) {
+                RenameOutcome::Exists => Err(io::Error::from(io::ErrorKind::AlreadyExists)),
+                RenameOutcome::Unsupported => Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "this file system cannot rename without the risk of replacing a name",
+                )),
+                RenameOutcome::Failed if raw == EXDEV => {
+                    Err(io::Error::from(io::ErrorKind::CrossesDevices))
+                }
+                RenameOutcome::Failed => Err(io::Error::from_raw_os_error(raw)),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn rename_no_replace_impl(src: &Path, dst: &Path) -> io::Result<()> {
+    // ERROR_NOT_SAME_DEVICE: without MOVEFILE_COPY_ALLOWED nothing is copied.
+    const ERROR_NOT_SAME_DEVICE: i32 = 17;
+    match mochi_sys::move_no_replace_write_through(src, dst) {
+        Err(e) if e.raw_os_error() == Some(ERROR_NOT_SAME_DEVICE) => {
+            Err(io::Error::from(io::ErrorKind::CrossesDevices))
+        }
+        other => other,
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn rename_no_replace_impl(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
 #[cfg(not(any(target_os = "linux", windows)))]
 fn publish_no_replace_at(
     src: &Path,
@@ -1543,6 +1596,32 @@ mod tests {
                 "{other}"
             );
         }
+    }
+
+    /// A folder is renamed, and never onto a name that exists: not a
+    /// file, not a folder, and not an empty folder (which a plain POSIX
+    /// rename would replace).
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn rename_no_replace_moves_a_folder_and_never_replaces_a_name() {
+        let (td, _) = tmp();
+        let dir = td.path();
+        let src = dir.join("docs");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"alpha").unwrap();
+        std::fs::create_dir(dir.join("empty")).unwrap();
+        std::fs::write(dir.join("file"), b"mine").unwrap();
+        for taken in ["empty", "file"] {
+            let e = rename_no_replace(&src, &dir.join(taken)).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{taken}");
+            assert_eq!(std::fs::read(src.join("a.txt")).unwrap(), b"alpha");
+        }
+        assert!(dir.join("empty").is_dir());
+        assert_eq!(std::fs::read(dir.join("file")).unwrap(), b"mine");
+        let sub = dir.join("empty").join("docs");
+        rename_no_replace(&src, &sub).unwrap();
+        assert!(!src.exists());
+        assert_eq!(std::fs::read(sub.join("a.txt")).unwrap(), b"alpha");
     }
 
     /// **T20 DoD (fallback).** A rename that the filesystem rejects with
