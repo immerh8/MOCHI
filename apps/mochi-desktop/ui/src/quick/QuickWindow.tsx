@@ -8,12 +8,16 @@ import { formatNumber, t, tc, useLocale } from "../i18n";
 import {
   cancelQuick,
   closeQuick,
+  moveQuickFolder,
   quickPause,
+  renameQuickFolder,
   sendQuickPassphrase,
+  setQuickOpenFolder,
   showQuickFolder,
   subscribeQuick,
   type QuickAction,
   type QuickEvent,
+  type QuickFolder,
 } from "../ipc/quick";
 import { isIpcError } from "../ipc/jobs";
 import { attentionHint, cautionCount, countParts, joinParts, logRecord } from "../result/details";
@@ -45,6 +49,12 @@ type View =
       warn: boolean;
       details: ResultDetails | null;
       record: string | null;
+      /** The folder was opened in the file manager when the job ended. */
+      opened: boolean;
+      /** The new folder "Extract to new folder" made: it can be renamed or moved. */
+      movable: boolean;
+      /** That folder's name, to start the rename field. */
+      folderName: string;
     };
 
 function title(job: Job): string {
@@ -130,6 +140,9 @@ function finished(event: QuickEvent): View | null {
           notes: [plain ? t("quick.exportNote") : add ? localCommitNote() : t("quick.extractNote")],
         },
         record,
+        opened: event.opened_folder,
+        movable: event.movable,
+        folderName: event.name.text,
       };
     }
     case "fallback":
@@ -146,6 +159,9 @@ function finished(event: QuickEvent): View | null {
         warn: false,
         details: null,
         record: null,
+        opened: false,
+        movable: false,
+        folderName: "",
       };
     case "cancelled":
       return {
@@ -156,6 +172,9 @@ function finished(event: QuickEvent): View | null {
         warn: false,
         details: null,
         record: null,
+        opened: false,
+        movable: false,
+        folderName: "",
       };
     case "failed":
       return {
@@ -166,6 +185,9 @@ function finished(event: QuickEvent): View | null {
         warn: false,
         details: null,
         record: null,
+        opened: false,
+        movable: false,
+        folderName: "",
       };
     case "aborted":
       return {
@@ -176,6 +198,9 @@ function finished(event: QuickEvent): View | null {
         warn: false,
         details: null,
         record: null,
+        opened: false,
+        movable: false,
+        folderName: "",
       };
     default:
       return null;
@@ -185,7 +210,9 @@ function finished(event: QuickEvent): View | null {
 /**
  * The compact window of "Extract here", "Extract to new folder", and "Add to archive" (plan
  * D6, owner decision 2026-10-16): progress while Rust runs the job, then a short result with
- * "Show in folder" and Close. It names no path; an archive that is encrypted asks for its
+ * "Show in folder" and Close. An extraction opens its folder when done unless "Open the folder
+ * when done" is off, and the folder "Extract to new folder" made can be renamed or moved (owner
+ * request 2026-11-09; Rust does both, by folder name or its own dialog). It names no path; an archive that is encrypted asks for its
  * passphrase here, once.
  */
 export function QuickWindow() {
@@ -196,6 +223,12 @@ export function QuickWindow() {
   const [prompt, setPrompt] = useState<{ items: number; subject: string; start: AddFormStart } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [paused, setPaused] = useState(false);
+  // "Open the folder when done": the saved choice, as Rust sent it when the job began.
+  const [openFolder, setOpenFolder] = useState(true);
+  // After a rename or a move: where the folder is now.
+  const [moved, setMoved] = useState<string | null>(null);
+  const [folderName, setFolderName] = useState("");
+  const [busy, setBusy] = useState(false);
   const rate = useTransferRate();
   const { sample: sampleRate, reset: resetRate } = rate;
   const [problem, setProblem] = useState<string | null>(null);
@@ -207,6 +240,8 @@ export function QuickWindow() {
       subscribeQuick((event) => {
         if (event.event === "started") {
           setJob({ action: event.action, name: event.subject.text, items: event.items });
+          setOpenFolder(event.open_folder);
+          setMoved(null);
           setPrompt(null);
           setView({ kind: "running", progress: null });
           setCancelling(false);
@@ -240,6 +275,7 @@ export function QuickWindow() {
         const end = finished(event);
         if (end) {
           setView(end);
+          if (end.kind === "done") setFolderName(end.folderName);
           // The technical record goes to the console, once per result.
           if (end.kind === "done" && end.record) logRecord(end.record);
         }
@@ -272,6 +308,30 @@ export function QuickWindow() {
     });
   };
 
+  const toggleOpenFolder = (open: boolean) => {
+    setOpenFolder(open);
+    setQuickOpenFolder(open).catch((e: unknown) => {
+      setOpenFolder(!open);
+      report(e);
+    });
+  };
+
+  // Rename and Move to…: Rust acts on the folder it made and says where it is now.
+  const relocate = (work: () => Promise<QuickFolder | null>, key: "quick.renamed" | "quick.moved") => {
+    if (busy) return;
+    setBusy(true);
+    setProblem(null);
+    work()
+      .then((now) => {
+        if (now) {
+          setFolderName(now.name.text);
+          setMoved(t(key, { location: now.location.text }));
+        }
+      })
+      .catch(report)
+      .finally(() => setBusy(false));
+  };
+
   const submitPassphrase = () => {
     const input = passphraseRef.current;
     if (!input || input.value === "") return;
@@ -291,6 +351,18 @@ export function QuickWindow() {
         ? title(job)
         : t("quick.waiting");
   const addProgress = job?.action === "add";
+  const extracting = job !== null && job.action !== "add";
+  const openBox = extracting && (
+    <label className="quick-check" data-testid="quick-open-when-done-label">
+      <input
+        type="checkbox"
+        data-testid="quick-open-when-done"
+        checked={openFolder}
+        onChange={(e) => toggleOpenFolder(e.currentTarget.checked)}
+      />
+      {t("quick.openWhenDone")}
+    </label>
+  );
 
   return (
     <div className="quick-window">
@@ -324,6 +396,7 @@ export function QuickWindow() {
               onResume={togglePause}
               testIds={{ root: "quick-progress", text: "quick-progress-text", pause: "quick-pause" }}
             />
+            {openBox}
             <div className="actions">
               <button type="button" data-testid="quick-cancel" disabled={cancelling} onClick={cancel}>
                 {cancelling ? t("quick.cancelling") : t("common.cancel")}
@@ -374,7 +447,53 @@ export function QuickWindow() {
                 </span>
               )}
             </div>
+            {view.opened && (
+              <p className="note" data-testid="quick-opened">
+                {t("quick.openedFolder")}
+              </p>
+            )}
             {view.details && <InlineDetails prefix="quick" details={view.details} />}
+            {view.movable && (
+              <form
+                className="quick-rename"
+                data-testid="quick-rename"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  relocate(() => renameQuickFolder(folderName), "quick.renamed");
+                }}
+              >
+                <label>
+                  {t("quick.folderName")}
+                  <span className="quick-row">
+                    <input
+                      type="text"
+                      data-testid="quick-folder-name"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={folderName}
+                      onChange={(e) => setFolderName(e.currentTarget.value)}
+                    />
+                    <button type="submit" data-testid="quick-rename-submit" disabled={busy || folderName.trim() === ""}>
+                      {t("quick.rename")}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="quick-move"
+                      disabled={busy}
+                      onClick={() => relocate(moveQuickFolder, "quick.moved")}
+                    >
+                      {t("quick.moveTo")}
+                    </button>
+                  </span>
+                </label>
+                {moved && (
+                  <p role="status" className="note" data-testid="quick-moved">
+                    {moved}
+                  </p>
+                )}
+              </form>
+            )}
+            {view.details !== null && openBox}
             <div className="actions">
               {view.folder && (
                 <button type="button" data-testid="quick-show-folder" onClick={() => showQuickFolder().catch(report)}>

@@ -57,4 +57,11 @@ export const quick = {
   "quick.rowFormat": "格式",
   "quick.exportNote": "MOCHI 使用该格式对应的工具写出了此文件，写出后没有再检查该文件。",
   "quick.showFolder": "在文件夹中显示",
+  "quick.openWhenDone": "完成后打开文件夹",
+  "quick.openedFolder": "已在文件管理器中打开该文件夹。",
+  "quick.folderName": "文件夹名称",
+  "quick.rename": "重命名",
+  "quick.moveTo": "移动到…",
+  "quick.renamed": "已重命名。文件夹现在位于 {location}",
+  "quick.moved": "已移动。文件夹现在位于 {location}",
 } satisfies Catalogue<typeof enQuick>;

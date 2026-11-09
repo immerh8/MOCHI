@@ -30,7 +30,11 @@ options" on Windows 11). On a `.mochi` file it has "Open with MOCHI", "Extract h
 archive...". "Extract here", "Extract to a new folder" and "Add to archive" work at once in
 a small window and never overwrite: if a name in the way exists, nothing is written and the
 extract plan opens in the main window; a new archive is named for the item (or the folder)
-and gets a number if the name is taken. The command-line equivalents are `mochi get`
+and gets a number if the name is taken. When an extraction is done, the folder it went into
+opens in a new file-manager window; untick **Open the folder when done** in that small window
+to stop this (the choice is remembered). After "Extract to a new folder", type a new name and
+press **Rename**, or press **Move to…** to put the folder somewhere else on the same drive; a
+name that already exists is refused, never replaced. The command-line equivalents are `mochi get`
 and `mochi create` and `mochi append`. A new archive is a local file, not a backup.
 
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04

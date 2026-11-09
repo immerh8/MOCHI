@@ -56,4 +56,11 @@ export const quick = {
   "quick.rowFormat": "รูปแบบ",
   "quick.exportNote": "MOCHI เขียนไฟล์นี้ด้วยเครื่องมือของรูปแบบนั้น และไม่ได้ตรวจไฟล์หลังเขียน",
   "quick.showFolder": "แสดงในโฟลเดอร์",
+  "quick.openWhenDone": "เปิดโฟลเดอร์เมื่อเสร็จ",
+  "quick.openedFolder": "เปิดโฟลเดอร์ในตัวจัดการไฟล์แล้ว",
+  "quick.folderName": "ชื่อโฟลเดอร์",
+  "quick.rename": "เปลี่ยนชื่อ",
+  "quick.moveTo": "ย้ายไปที่…",
+  "quick.renamed": "เปลี่ยนชื่อแล้ว ตอนนี้โฟลเดอร์อยู่ที่ {location}",
+  "quick.moved": "ย้ายแล้ว ตอนนี้โฟลเดอร์อยู่ที่ {location}",
 } satisfies Catalogue<typeof enQuick>;

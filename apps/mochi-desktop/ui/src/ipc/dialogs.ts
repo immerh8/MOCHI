@@ -40,6 +40,9 @@ export function destinationDialog(format: ArchiveFormat): DialogText {
 /** Choose the folder to extract into. */
 export const extractFolderDialog = (): DialogText => ({ title: t("dialog.extractTo") });
 
+/** Choose where the folder a quick extraction made goes. */
+export const moveFolderDialog = (): DialogText => ({ title: t("dialog.moveFolder") });
+
 /** Choose the archive to test or repair. */
 export const checkSubjectDialog = (): DialogText => ({
   title: t("dialog.chooseSubject"),

@@ -47,7 +47,7 @@ afterEach(() => clearMocks());
 test("an extraction shows its progress, then a plain result with Show in folder and Close", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "extract_here", subject: name("photos.mochi"), items: 1 });
+  b.send({ event: "started", action: "extract_here", subject: name("photos.mochi"), items: 1, open_folder: true });
   expect(await screen.findByTestId("quick-title")).toHaveTextContent("Extracting photos.mochi");
   b.send({ event: "progress", phase: "restore", completed: 3, total: 10 });
   expect(await screen.findByTestId("quick-progress-text")).toHaveTextContent("3");
@@ -65,6 +65,8 @@ test("an extraction shows its progress, then a plain result with Show in folder 
     durability_note: null,
     format: "mochi",
     output_bytes: 0,
+    opened_folder: false,
+    movable: false,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent(/^Extracted 3 files · 1 folder · 12 bytes into Pictures$/);
@@ -89,7 +91,7 @@ test("an extraction shows its progress, then a plain result with Show in folder 
 test("a new archive is reported as a local commit and never as backed up or safe", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 3 });
+  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 3, open_folder: true });
   expect(await screen.findByTestId("quick-title")).toHaveTextContent("Adding notes.txt and 2 more to a new archive");
   b.send({
     event: "done",
@@ -105,6 +107,8 @@ test("a new archive is reported as a local commit and never as backed up or safe
     durability_note: null,
     format: "mochi",
     output_bytes: 0,
+    opened_folder: false,
+    movable: false,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Archive created: notes.mochi · 3 files · 1.5 KiB · 1 not added");
@@ -125,7 +129,7 @@ test("a new archive is reported as a local commit and never as backed up or safe
 test("an encrypted archive asks for its passphrase once, empties the field, and asks again if it was wrong", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "extract_to_folder", subject: name("secret.mochi"), items: 1 });
+  b.send({ event: "started", action: "extract_to_folder", subject: name("secret.mochi"), items: 1, open_folder: true });
   b.send({ event: "need_passphrase", wrong: false });
   const input = await screen.findByTestId("quick-passphrase-input");
   expect(input).toHaveAttribute("type", "password");
@@ -141,7 +145,7 @@ test("an encrypted archive asks for its passphrase once, empties the field, and 
 test("a collision explains that nothing was written and where the plan is", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "extract_here", subject: name("a.mochi"), items: 1 });
+  b.send({ event: "started", action: "extract_here", subject: name("a.mochi"), items: 1, open_folder: true });
   b.send({ event: "fallback", conflicts: 2, destination: name("/home/me") });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Nothing was written: 2 entries");
@@ -152,7 +156,7 @@ test("a collision explains that nothing was written and where the plan is", asyn
 test("a failure is text with its code, hostile markup inert, and cancel is sent to Rust", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "extract_here", subject: name("<img src=x onerror=alert(1)>.mochi"), items: 1 });
+  b.send({ event: "started", action: "extract_here", subject: name("<img src=x onerror=alert(1)>.mochi"), items: 1, open_folder: true });
   expect(await screen.findByTestId("quick-title")).toHaveTextContent("<img src=x onerror=alert(1)>.mochi");
   expect(document.querySelector("img")).toBeNull();
   await userEvent.click(await screen.findByTestId("quick-cancel"));
@@ -167,7 +171,7 @@ test("a failure is text with its code, hostile markup inert, and cancel is sent 
 test("a window that mounts after the job began still hears all of it", async () => {
   const b = backend();
   const first = render(<QuickWindow />);
-  b.send({ event: "started", action: "add", subject: name("x"), items: 1 });
+  b.send({ event: "started", action: "add", subject: name("x"), items: 1, open_folder: true });
   b.send({ event: "cancelled", action: "add" });
   first.unmount();
   render(<QuickWindow />);
@@ -177,7 +181,7 @@ test("a window that mounts after the job began still hears all of it", async () 
 test("a degraded directory entry is a note in the details, not in the line, and gets no success styling", async () => {
   const b = backend();
   const { container } = render(<QuickWindow />);
-  b.send({ event: "started", action: "add", subject: name("a.txt"), items: 1 });
+  b.send({ event: "started", action: "add", subject: name("a.txt"), items: 1, open_folder: true });
   b.send({
     event: "done",
     action: "add",
@@ -192,6 +196,8 @@ test("a degraded directory entry is a note in the details, not in the line, and 
     durability_note: "directory flush ran, but Windows does not document it as durable",
     format: "mochi",
     output_bytes: 0,
+    opened_folder: false,
+    movable: false,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Archive created: a.mochi · 1 file · 10 bytes");
@@ -314,7 +320,7 @@ test("OK sends the name, the format and the level, and no path", async () => {
     { request: { name: "notes.tar.zst", format: "tar_zst", level: "ultra" } },
   ]);
   // The job's events take over the window: the form is replaced by its progress.
-  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 1 });
+  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 1, open_folder: true });
   expect(await screen.findByTestId("quick-progress")).toBeInTheDocument();
   expect(screen.queryByTestId("quick-form")).toBeNull();
 });
@@ -473,7 +479,7 @@ test("a plain ZIP or tar file is reported as what was written: no commit, no sta
   const user = userEvent.setup();
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 2 });
+  b.send({ event: "started", action: "add", subject: name("notes.txt"), items: 2, open_folder: true });
   b.send({
     event: "done",
     action: "add",
@@ -488,6 +494,8 @@ test("a plain ZIP or tar file is reported as what was written: no commit, no sta
     durability_note: null,
     format: "zip",
     output_bytes: 1_200_000,
+    opened_folder: false,
+    movable: false,
   });
   const result = await screen.findByTestId("quick-result");
   expect(result).toHaveTextContent("Wrote 12 files · 3 folders · 3.2 MiB to trip.zip · 1 not added");
@@ -507,7 +515,7 @@ test("a plain ZIP or tar file is reported as what was written: no commit, no sta
 test("a cancelled export says no archive was created", async () => {
   const b = backend();
   render(<QuickWindow />);
-  b.send({ event: "started", action: "add", subject: name("big.bin"), items: 1 });
+  b.send({ event: "started", action: "add", subject: name("big.bin"), items: 1, open_folder: true });
   b.send({ event: "progress", phase: "export", completed: 1024, total: 4096 });
   expect(await screen.findByTestId("quick-progress-text")).toHaveTextContent("1.0 KiB of 4.0 KiB");
   b.send({ event: "cancelled", action: "add" });
@@ -534,7 +542,7 @@ test("the compact window has the same title bar, with Minimize and Close only; C
 test("Pause in the compact window sends quick_pause, shows Paused, and Resume sends false", async () => {
   const b = backend((cmd) => (cmd === "quick_pause" ? true : null));
   render(<QuickWindow />);
-  b.send({ event: "started", action: "extract_here", subject: name("photos.mochi"), items: 1 });
+  b.send({ event: "started", action: "extract_here", subject: name("photos.mochi"), items: 1, open_folder: true });
   b.send({ event: "progress", phase: "restore", completed: 3, total: 10 });
   const card = await screen.findByTestId("quick-progress");
   expect(card).toHaveAttribute("data-state", "running");
@@ -551,4 +559,101 @@ test("Pause in the compact window sends quick_pause, shows Paused, and Resume se
   await userEvent.click(screen.getByTestId("quick-pause"));
   expect(b.calls.at(-1)).toEqual({ cmd: "quick_pause", args: { paused: false } });
   expect(card).toHaveAttribute("data-state", "running");
+});
+
+// Owner request 2026-11-09: after a quick extraction the folder opens in the file manager unless
+// the user turned that off, and the folder "Extract to new folder" made can be renamed or moved.
+const extracted = (over: Partial<Extract<QuickEvent, { event: "done" }>> = {}): QuickEvent => ({
+  event: "done",
+  action: "extract_to_folder",
+  name: name("docs"),
+  location: name("/home/me/Desktop/docs"),
+  files: 2,
+  directories: 0,
+  bytes: 10,
+  skipped: 0,
+  note: null,
+  status: null,
+  durability_note: null,
+  format: "mochi",
+  output_bytes: 0,
+  opened_folder: true,
+  movable: true,
+  ...over,
+});
+
+test("'Open the folder when done' shows the saved choice, is sent to Rust when changed, and the result says the folder opened", async () => {
+  const b = backend((cmd, args) => (cmd === "quick_set_open_folder" ? args.open : null));
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "extract_to_folder", subject: name("docs.mochi"), items: 1, open_folder: true });
+  const box = await screen.findByTestId("quick-open-when-done");
+  expect(box).toBeChecked();
+  expect(screen.getByTestId("quick-open-when-done-label")).toHaveTextContent("Open the folder when done");
+  await userEvent.click(box);
+  expect(box).not.toBeChecked();
+  expect(b.calls.filter((c) => c.cmd === "quick_set_open_folder").map((c) => c.args)).toEqual([{ open: false }]);
+  b.send(extracted({ opened_folder: false }));
+  await screen.findByTestId("quick-result");
+  expect(screen.queryByTestId("quick-opened")).toBeNull();
+  // Still there after the job, to turn it back on for the next one.
+  expect(screen.getByTestId("quick-open-when-done")).not.toBeChecked();
+
+  b.send({ event: "started", action: "extract_here", subject: name("a.mochi"), items: 1, open_folder: true });
+  b.send(extracted({ action: "extract_here", movable: false }));
+  expect(await screen.findByTestId("quick-opened")).toHaveTextContent("opened in the file manager");
+  // Extract here wrote into the archive's own folder: nothing to rename or move.
+  expect(screen.queryByTestId("quick-rename")).toBeNull();
+});
+
+test("an add never shows the open-folder box or the rename controls", async () => {
+  const b = backend();
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "add", subject: name("n.txt"), items: 1, open_folder: true });
+  expect(await screen.findByTestId("quick-progress")).toBeInTheDocument();
+  expect(screen.queryByTestId("quick-open-when-done")).toBeNull();
+  b.send(extracted({ action: "add", name: name("n.mochi"), status: "LOCAL_COMMITTED", movable: false, opened_folder: false }));
+  await screen.findByTestId("quick-result");
+  expect(screen.queryByTestId("quick-open-when-done")).toBeNull();
+  expect(screen.queryByTestId("quick-rename")).toBeNull();
+});
+
+test("the new folder is renamed by name only, a refusal is shown, and Move to… lets Rust pick the place", async () => {
+  let renames = 0;
+  const b = backend((cmd, args) => {
+    if (cmd === "quick_rename_folder") {
+      renames += 1;
+      if (renames === 1) throw { code: "DESTINATION_EXISTS", message: "taken already exists" };
+      const n = String(args.name);
+      return { name: name(n), location: name(`/home/me/Desktop/${n}`) };
+    }
+    if (cmd === "quick_move_folder") return { name: name("Report"), location: name("/home/me/Documents/Report") };
+    return null;
+  });
+  render(<QuickWindow />);
+  b.send({ event: "started", action: "extract_to_folder", subject: name("docs.mochi"), items: 1, open_folder: true });
+  b.send(extracted());
+  const field = await screen.findByTestId("quick-folder-name");
+  expect(field).toHaveValue("docs");
+  await userEvent.clear(field);
+  await userEvent.type(field, "taken{Enter}");
+  expect(await screen.findByTestId("quick-problem")).toHaveTextContent("DESTINATION_EXISTS");
+  expect(screen.queryByTestId("quick-moved")).toBeNull();
+  await userEvent.clear(field);
+  expect(screen.getByTestId("quick-rename-submit")).toBeDisabled();
+  await userEvent.type(field, "Report");
+  await userEvent.click(screen.getByTestId("quick-rename-submit"));
+  expect(await screen.findByTestId("quick-moved")).toHaveTextContent("Renamed. The folder is now /home/me/Desktop/Report");
+  expect(screen.queryByTestId("quick-problem")).toBeNull();
+  await userEvent.click(screen.getByTestId("quick-move"));
+  await waitFor(() =>
+    expect(screen.getByTestId("quick-moved")).toHaveTextContent("Moved. The folder is now /home/me/Documents/Report"),
+  );
+  const sent = b.calls.filter((c) => c.cmd === "quick_rename_folder" || c.cmd === "quick_move_folder");
+  // Only a folder name crosses for a rename; the move names no path at all (Rust shows the dialog).
+  expect(sent.map((c) => [c.cmd, c.args.name])).toEqual([
+    ["quick_rename_folder", "taken"],
+    ["quick_rename_folder", "Report"],
+    ["quick_move_folder", undefined],
+  ]);
+  expect(Object.keys(sent[2]?.args ?? {})).toEqual(["text"]);
 });

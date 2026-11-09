@@ -93,3 +93,19 @@
 .quick-form .hint {
   align-self: flex-start;
 }
+
+/* After an extraction (owner request 2026-11-09): "Open the folder when done", and Rename and
+   Move to… for the folder "Extract to new folder" made. */
+.quick .quick-check input {
+  display: inline;
+  width: auto;
+  margin: 0 0.25rem 0 0;
+}
+.quick-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.quick-rename .quick-row {
+  display: flex;
+}

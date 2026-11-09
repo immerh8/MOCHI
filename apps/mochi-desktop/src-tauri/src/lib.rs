@@ -190,6 +190,9 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::quick_close,
             commands::quick_choose_location,
             commands::quick_add_submit,
+            commands::quick_set_open_folder,
+            commands::quick_rename_folder,
+            commands::quick_move_folder,
             commands::set_archive_format,
             commands::choose_check_subject,
             commands::health_report,
@@ -228,6 +231,8 @@ pub fn run() -> Result<(), tauri::Error> {
             let crash_log = crashlog::CrashLog::open(app.path().app_local_data_dir()?);
             // How many cores a write may use (0.9.11), before any write can start.
             speed::load(app.path().app_local_data_dir()?);
+            // The compact window's "Open the folder when done", before a quick verb runs.
+            setup_quick.load_settings(app.path().app_local_data_dir()?);
             crashlog::install(Arc::clone(&crash_log));
             app.manage(crash_log);
             setup_quick.set_host(Arc::new(Windows {
@@ -354,7 +359,8 @@ impl quick::WindowHost for Windows {
         use tauri::Manager;
         // The Add form is taller than a job's progress and result.
         let (width, height) = match size {
-            quick::QuickSize::Compact => (460.0, 280.0),
+            // Room for "Open the folder when done" and the rename row after an extraction.
+            quick::QuickSize::Compact => (460.0, 340.0),
             quick::QuickSize::Form => (480.0, 470.0),
         };
         if let Some(window) = self.app.get_webview_window(QUICK_LABEL) {

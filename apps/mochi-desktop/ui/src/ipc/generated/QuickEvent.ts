@@ -6,7 +6,12 @@ import type { QuickAction } from "./QuickAction";
 /**
  * What the compact window is told.
  */
-export type QuickEvent = { "event": "started", action: QuickAction, subject: NameText, items: number, } | { "event": "need_passphrase", wrong: boolean, } | { "event": "add_prompt", items: number, subject: NameText, 
+export type QuickEvent = { "event": "started", action: QuickAction, subject: NameText, items: number, 
+/**
+ * Whether the folder extracted into opens when the job is done (the
+ * saved choice; the window shows it as a check box).
+ */
+open_folder: boolean, } | { "event": "need_passphrase", wrong: boolean, } | { "event": "add_prompt", items: number, subject: NameText, 
 /**
  * The suggested file name, with its extension.
  */
@@ -49,4 +54,14 @@ format: ArchiveFormat,
 /**
  * The size of the file written; `0` for an extraction.
  */
-output_bytes: number, } | { "event": "cancelled", action: QuickAction, } | { "event": "failed", code: string, message: string, } | { "event": "aborted", message: string, };
+output_bytes: number, 
+/**
+ * The folder was opened in the file manager (an extraction, with
+ * "Open the folder when done" on).
+ */
+opened_folder: boolean, 
+/**
+ * The folder can be renamed or moved from the result: it is the new
+ * folder "Extract to new folder" made.
+ */
+movable: boolean, } | { "event": "cancelled", action: QuickAction, } | { "event": "failed", code: string, message: string, } | { "event": "aborted", message: string, };

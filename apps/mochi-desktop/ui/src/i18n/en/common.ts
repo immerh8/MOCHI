@@ -64,6 +64,7 @@ export const common = {
   "dialog.chooseFolder": "Choose a folder to add",
   "dialog.saveArchiveAs": "Save the new archive as",
   "dialog.extractTo": "Extract to…",
+  "dialog.moveFolder": "Move the folder to…",
   "dialog.chooseSubject": "Choose an archive to test or repair",
   "dialog.chooseCopy": "Choose an independent copy of the same archive",
   "dialog.exportReport": "Export the report (JSON)",

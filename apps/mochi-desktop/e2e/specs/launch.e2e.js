@@ -209,6 +209,56 @@ describe("a second launch", () => {
     await closeQuickWindow(mainWindow);
   });
 
+  // Owner request 2026-11-09: the folder opens in the file manager when done (unless turned
+  // off), and the folder "Extract to new folder" made is renamed or moved from the result.
+  it("a quick extraction opens its folder, and the new folder is renamed and moved without replacing anything", async () => {
+    const dir = path.join(work, "after");
+    mkdirSync(dir);
+    const elsewhere = path.join(work, "elsewhere");
+    mkdirSync(elsewhere);
+    mkdirSync(path.join(dir, "taken"));
+    const archive = path.join(dir, "docs.mochi");
+    copyFileSync(fixture, archive);
+    writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
+    const ended = await secondLaunch(["--extract-to-folder", "--", archive]);
+    expect(ended.code).toBe(0);
+    await switchToWindowWith("quick-result");
+    await browser.waitUntil(
+      () => readFileSync(process.env.MOCHI_E2E_OPEN_LOG, "utf8").split("\n").includes(path.join(dir, "docs")),
+      { timeoutMsg: "the extracted folder was not opened" },
+    );
+    await expect($('[data-testid="quick-opened"]')).toExist();
+    await expect($('[data-testid="quick-open-when-done"]')).toBeSelected();
+    // A name in the way is refused; nothing is replaced.
+    await $('[data-testid="quick-folder-name"]').setValue("taken");
+    await $('[data-testid="quick-rename-submit"]').click();
+    await expect($('[data-testid="quick-problem"]')).toHaveText(expect.stringContaining("DESTINATION_EXISTS"));
+    expect(readdirSync(path.join(dir, "taken"))).toEqual([]);
+    await $('[data-testid="quick-folder-name"]').setValue("Report");
+    await $('[data-testid="quick-rename-submit"]').click();
+    await expect($('[data-testid="quick-moved"]')).toHaveText(expect.stringContaining(path.join(dir, "Report")));
+    expect(readdirSync(dir).sort()).toEqual(["Report", "docs.mochi", "taken"]);
+    writeFileSync(process.env.MOCHI_E2E_PICK_FILE, elsewhere);
+    await $('[data-testid="quick-move"]').click();
+    await expect($('[data-testid="quick-moved"]')).toHaveText(expect.stringContaining(path.join(elsewhere, "Report")));
+    expect(readdirSync(elsewhere)).toEqual(["Report"]);
+    expect(readdirSync(path.join(elsewhere, "Report")).length).toBeGreaterThan(0);
+    // Turned off, the next extraction opens nothing.
+    await $('[data-testid="quick-open-when-done"]').click();
+    await expect($('[data-testid="quick-open-when-done"]')).not.toBeSelected();
+    await closeQuickWindow(mainWindow);
+    writeFileSync(process.env.MOCHI_E2E_OPEN_LOG, "");
+    const again = await secondLaunch(["--extract-to-folder", "--", archive]);
+    expect(again.code).toBe(0);
+    await switchToWindowWith("quick-result");
+    await browser.waitUntil(() => readdirSync(dir).includes("docs"), { timeoutMsg: "the second extraction did not run" });
+    await expect($('[data-testid="quick-opened"]')).not.toExist();
+    expect(readFileSync(process.env.MOCHI_E2E_OPEN_LOG, "utf8")).toBe("");
+    // Back on for the specs that follow.
+    await $('[data-testid="quick-open-when-done"]').click();
+    await closeQuickWindow(mainWindow);
+  });
+
   it("'Extract here' replaces nothing: a name in the way writes nothing and opens the plan in a new window", async () => {
     const dir = path.join(work, "collide");
     mkdirSync(dir);

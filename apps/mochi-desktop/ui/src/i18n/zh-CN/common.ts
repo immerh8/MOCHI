@@ -74,6 +74,7 @@ export const common = {
   "dialog.chooseFolder": "选择要添加的文件夹",
   "dialog.saveArchiveAs": "将新压缩文件另存为",
   "dialog.extractTo": "解压到…",
+  "dialog.moveFolder": "将文件夹移动到…",
   "dialog.chooseSubject": "选择要测试或修复的压缩文件",
   "dialog.chooseCopy": "选择同一压缩文件的独立副本",
   "dialog.exportReport": "导出报告（JSON）",
