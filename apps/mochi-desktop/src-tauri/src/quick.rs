@@ -39,9 +39,9 @@
 //!   [`Secret`], and a wrong one asks again (`KEY_UNAVAILABLE`).
 //! * **After an extraction (owner request 2026-11-09).** The folder extracted
 //!   into opens in a new file-manager window when the job is done, unless the
-//!   user turned that off in the compact window ("Open the folder when done",
-//!   saved in `quick-settings.json`). A folder that "Extract to new folder"
-//!   made can then be renamed or moved from the result, with a no-replace
+//!   user turned that off ("Open the folder when done", one choice shared
+//!   with the archive windows, `afterextract.rs`). A folder that "Extract to
+//!   new folder" made can then be renamed or moved from the result, with a no-replace
 //!   rename on the same volume ([`rename_no_replace`]): an existing name is
 //!   refused, nothing is copied, and only that folder (the one this job made)
 //!   can be renamed or moved, never the folder an "Extract here" wrote into.
@@ -56,7 +56,6 @@
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
@@ -69,6 +68,7 @@ use mochi_core::{ErrorCode, MochiError, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::afterextract::AfterExtract;
 use crate::browse::{head_encrypted, Archives};
 use crate::extract::{self, Destination};
 use crate::ipc::{
@@ -79,9 +79,6 @@ use crate::write::{JobDone, Services, Staging};
 
 /// Events kept for a window that is not listening yet.
 const MAX_PENDING: usize = 64;
-
-/// Where the compact window's own choice is saved (app local data folder).
-const SETTINGS_FILE: &str = "quick-settings.json";
 
 /// Names tried before giving up (`name`, `name (2)`, …).
 const MAX_NAME_TRIES: u32 = 1000;
@@ -289,47 +286,6 @@ pub struct QuickLocation {
     pub name: String,
 }
 
-/// The saved choices of the compact window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct Settings {
-    /// Open the folder extracted into when the job is done. On by default.
-    #[serde(default = "yes")]
-    open_folder_when_done: bool,
-}
-
-fn yes() -> bool {
-    true
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            open_folder_when_done: true,
-        }
-    }
-}
-
-fn read_settings(dir: &Path) -> Settings {
-    std::fs::read(dir.join(SETTINGS_FILE))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Settings>(&b).ok())
-        .unwrap_or_default()
-}
-
-fn save_settings(dir: &Path, settings: Settings) -> Result<()> {
-    let io = |what: &str, p: &Path, e: std::io::Error| {
-        MochiError::new(ErrorCode::IoError, format!("{what} {}: {e}", p.display()))
-    };
-    std::fs::create_dir_all(dir).map_err(|e| io("creating the settings folder", dir, e))?;
-    let json = serde_json::to_vec(&settings)
-        .map_err(|e| MochiError::new(ErrorCode::IoError, format!("saving the settings: {e}")))?;
-    let path = dir.join(SETTINGS_FILE);
-    let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
-    std::fs::write(&tmp, json).map_err(|e| io("saving the settings to", &tmp, e))?;
-    std::fs::rename(&tmp, &path).map_err(|e| io("saving the settings to", &path, e))?;
-    Ok(())
-}
-
 /// Where the extracted folder is now, after a rename or a move.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
@@ -379,10 +335,8 @@ struct Control {
 #[derive(Default)]
 pub struct Quick {
     host: OnceLock<Arc<dyn WindowHost>>,
-    /// The user turned "Open the folder when done" off.
-    keep_folder_closed: AtomicBool,
-    /// Where the choice is saved; unset in tests that do not save it.
-    settings_dir: OnceLock<PathBuf>,
+    /// "Open the folder when done", shared with the archive windows (`afterextract.rs`).
+    after: Arc<AfterExtract>,
     delivery: Mutex<Delivery>,
     control: Mutex<Control>,
 }
@@ -548,33 +502,26 @@ impl Quick {
         self.host.get().cloned()
     }
 
-    /// Read the saved choices from `dir` (a missing or damaged file means the
-    /// defaults) and save there from now on. Once, at start-up.
+    /// Read the saved choice from `dir` (a missing or damaged file means on) and save there
+    /// from now on. Once, at start-up.
     pub fn load_settings(&self, dir: PathBuf) {
-        let saved = read_settings(&dir);
-        self.keep_folder_closed
-            .store(!saved.open_folder_when_done, Ordering::Relaxed);
-        let _ = self.settings_dir.set(dir);
+        self.after.load(dir);
+    }
+
+    /// The "Open the folder when done" choice, to share with the archive windows.
+    pub fn after_extract(&self) -> Arc<AfterExtract> {
+        Arc::clone(&self.after)
     }
 
     /// Whether the folder extracted into opens when the job is done.
     pub fn open_folder_when_done(&self) -> bool {
-        !self.keep_folder_closed.load(Ordering::Relaxed)
+        self.after.open_when_done()
     }
 
     /// Turn "Open the folder when done" on or off, and save it. It applies
     /// to the running job too, if that has not finished yet.
     pub fn set_open_folder_when_done(&self, open: bool) -> Result<bool> {
-        if let Some(dir) = self.settings_dir.get() {
-            save_settings(
-                dir,
-                Settings {
-                    open_folder_when_done: open,
-                },
-            )?;
-        }
-        self.keep_folder_closed.store(!open, Ordering::Relaxed);
-        Ok(open)
+        self.after.set(open)
     }
 
     /// Rename the folder the last "Extract to new folder" made to `name`, in
@@ -1660,7 +1607,11 @@ mod tests {
         assert_eq!((opened_folder, name.text.as_str()), (false, "docs (2)"));
         assert_eq!(opened(&host).len(), 1);
         // A damaged file means the default.
-        std::fs::write(settings.path().join(SETTINGS_FILE), b"{oops").unwrap();
+        std::fs::write(
+            settings.path().join(crate::afterextract::SETTINGS_FILE),
+            b"{oops",
+        )
+        .unwrap();
         let third = Quick::new();
         third.load_settings(settings.path().to_path_buf());
         assert!(third.open_folder_when_done());

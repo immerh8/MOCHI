@@ -5,11 +5,16 @@
  */
 export type ExtractWizardSetup = { 
 /**
- * The folder the field starts with: the one used last, else the Desktop
- * (empty when this computer has neither).
+ * The folder the field starts with: the Desktop (owner request
+ * 2026-11-10), else the one used last (empty when this computer has
+ * neither).
  */
 destination: string, 
 /**
  * Recent folders that still exist, newest first, at most [`MAX_FOLDERS`].
  */
-recent: Array<string>, };
+recent: Array<string>, 
+/**
+ * "Open the folder when done", the choice shared with the compact window.
+ */
+open_folder: boolean, };

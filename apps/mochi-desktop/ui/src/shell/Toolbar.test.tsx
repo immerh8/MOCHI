@@ -153,12 +153,16 @@ test("with nothing open, the archive's buttons are off and More, Find and Help a
   expect(within(bar).getByTestId("toolbar-more")).toBeEnabled();
   expect(within(bar).getByTestId("toolbar-find")).toBeEnabled();
   expect(within(bar).getByTestId("toolbar-help")).toBeEnabled();
-  // A calm bar (release 0.9.10): the primary actions only, icons only; one or two words
-  // each are the accessible name (hidden text); the reason a button is off is its tooltip.
+  // A calm bar (release 0.9.10): the primary actions only. Each has one or two words beside its
+  // icon, shown whenever they all fit (owner request 2026-11-10) and the accessible name either
+  // way; More is an icon alone. The reason a button is off is its tooltip.
   const names = ["Open", "Add", "Extract to…", "Test", "Find", "More"];
   const buttons = within(bar).getAllByRole("button");
   expect(buttons.map((b) => b.textContent)).toEqual(names);
-  for (const b of buttons) expect(b.querySelector(".sr-only")?.textContent, b.textContent ?? "").toBe(b.textContent);
+  for (const b of buttons.slice(0, -1)) expect(b.querySelector(".tool-label")?.textContent, b.textContent ?? "").toBe(b.textContent);
+  expect(buttons.at(-1)?.querySelector(".sr-only")).toHaveTextContent("More");
+  // jsdom lays nothing out, so nothing overflows: the words are on.
+  expect(bar).toHaveAttribute("data-labels", "on");
   expect(screen.getByTestId("extract-all")).toHaveAttribute("title", "Open an archive first");
   expect(within(bar).getByRole("searchbox", { name: /Search names/ })).toBeDisabled();
 });

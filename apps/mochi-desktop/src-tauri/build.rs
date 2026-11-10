@@ -71,6 +71,8 @@ fn main() {
         "browse_extract_folder",
         "plan_extract_to",
         "plan_extract_foreign_to",
+        "preview_extract_to",
+        "set_open_folder_when_done",
         "discard_extract_folder",
         "recent_archives",
         "forget_recent_archives",

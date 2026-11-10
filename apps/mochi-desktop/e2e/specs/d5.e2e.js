@@ -144,7 +144,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await $('[data-testid="unlock-input"]').setValue(PASS);
     await $('[data-testid="unlock-submit"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("vault.mochi"));
+    await expect($('[data-testid="crumb-root"]')).toHaveText(expect.stringContaining("vault.mochi"));
     await expect($('[data-testid="encrypted-note"]')).toBeExisting();
     await browser.waitUntil(async () => (await entryNames()).includes("vault-docs"));
     await assertNoPassphraseOnPage();
@@ -199,7 +199,7 @@ describe("passphrases, rekey, recovery record, and search", () => {
     await $('[data-testid="recovery-10"]').click();
     await $('[data-testid="create-confirm"]').click();
     await waitForStatus("Created recovered.mochi");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("recovered.mochi"));
+    await expect($('[data-testid="crumb-root"]')).toHaveText(expect.stringContaining("recovered.mochi"));
     // The profile is technical detail, in a closed disclosure: read its text, not what is shown.
     await expect($('[data-testid="archive-technical"]')).toHaveElementProperty(
       "textContent",

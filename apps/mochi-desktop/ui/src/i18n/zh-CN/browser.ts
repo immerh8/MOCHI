@@ -84,4 +84,8 @@ export const browser = {
   "menu.add": "添加文件…",
   "menu.delete": "删除",
   "browser.copyFailed": "无法复制名称",
+  "selection.label": "所选项目",
+  "selection.extractTip": "将所选项目解压到你选择的文件夹",
+  "selection.removeTip": "从此版本中移除所选项目（之前的版本仍保留）",
+  "selection.clear": "取消选择 (Esc)",
 } satisfies Catalogue<typeof enBrowser>;

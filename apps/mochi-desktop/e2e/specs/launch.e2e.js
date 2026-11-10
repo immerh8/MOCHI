@@ -148,7 +148,7 @@ describe("a second launch", () => {
     const ended = await secondLaunch(["--open", "--", fixture]);
     expect(ended.code).toBe(0);
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("browse.mochi"));
     await openVersions();
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
     await closeVersions();
@@ -160,10 +160,10 @@ describe("a second launch", () => {
     // The main window shows browse.mochi: one window per archive.
     const second = await launchIntoNewWindow([other], mainWindow);
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 30_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("again.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("again.mochi"));
     // The first window still shows the first archive.
     await browser.switchToWindow(mainWindow);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("browse.mochi"));
     expect(await browser.getWindowHandles()).toHaveLength(archiveWindows.size);
 
     // The same archive again, by the same path or another one (the fixture is open in the main window):
@@ -173,9 +173,9 @@ describe("a second launch", () => {
     await browser.pause(1500);
     expect(await browser.getWindowHandles()).toHaveLength(archiveWindows.size);
     await browser.switchToWindow(second);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("again.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("again.mochi"));
     await browser.switchToWindow(mainWindow);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("browse.mochi"));
   });
 
   // Owner decision 2026-10-16: the quick verbs work at once in a small second window.

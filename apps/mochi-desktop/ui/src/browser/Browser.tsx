@@ -68,6 +68,7 @@ import { Writer } from "../write/Writer";
 import { availableActions, tipFor } from "../shell/availability";
 import { SlotHost, ShellContext, ToolButton, ToolSlot } from "../shell/Shell";
 import { TitleBar } from "../shell/TitleBar";
+import { useToolbarLabels } from "../shell/useToolbarLabels";
 import type { ForeignHandoff, Shell, SlotName } from "../shell/Shell";
 import { ToolSheet } from "../shell/ToolSheet";
 import type { ToolId } from "../shell/ToolSheet";
@@ -629,6 +630,9 @@ export function Browser({
   const versionsRef = useRef<HTMLDivElement>(null);
   const versionsButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Words beside the toolbar's icons whenever they fit (owner request 2026-11-10).
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useToolbarLabels(toolbarRef);
   // A choice closes the menu. Some items are drawn into it from other components
   // (a portal), whose clicks do not bubble through this element in React's tree, so
   // this listens on the element itself.
@@ -830,7 +834,7 @@ export function Browser({
     <ShellContext value={shell}>
       <section aria-labelledby="browser-heading" className="browser">
         <TitleBar name={titleName} heading>
-          <div className="toolbar" role="group" aria-label={t("toolbar.label")}>
+          <div className="toolbar" ref={toolbarRef} role="group" aria-label={t("toolbar.label")}>
             {/* The primary actions stay on the bar; the rest are in More, each with its key. */}
             <span className="tool-cell">
               <ToolButton
@@ -1006,10 +1010,17 @@ export function Browser({
               <FoldersIcon />
             </button>
             <NavButtons nav={folder} testIdPrefix="nav" disabled={searching} />
+            <Crumbs
+              rootName={open.archive.file_name}
+              path={path}
+              onGo={navigate}
+              label={t("browser.currentFolder")}
+              testId="crumbs"
+            />
             <div className="path-meta" data-testid="archive-meta">
-              <strong className="path-title" title={open.archive.file_name}>
-                {open.archive.file_name}
-              </strong>
+              {/* The root crumb and the window title already show the name: here it is for
+                  assistive technology only, which hears it before the badge and the version. */}
+              <span className="sr-only">{open.archive.file_name}</span>
               {open.archive.profile.encrypted && (
                 <span
                   className="badge"
@@ -1049,13 +1060,6 @@ export function Browser({
                 />
               </div>
             </div>
-            <Crumbs
-              rootName={open.archive.file_name}
-              path={path}
-              onGo={navigate}
-              label={t("browser.currentFolder")}
-              testId="crumbs"
-            />
             {open.archive.retention_error && (
               <span role="note" className="path-warn" title={t("browser.retentionError", {
                 code: open.archive.retention_error.code,
@@ -1300,6 +1304,57 @@ export function Browser({
                   >
                     {searching ? search.statusText : statusText}
                   </span>
+                  {/* The selection's own actions, one click away (owner request 2026-11-10).
+                      The same actions as the More menu, the list's menu and their keys, with
+                      the same availability; a button that cannot act is off with its reason,
+                      never hidden, so nothing moves under the pointer. */}
+                  {selected.length > 0 && (
+                    <div className="selection-bar" role="group" aria-label={t("selection.label")} data-testid="selection-bar">
+                      <button
+                        type="button"
+                        className="selection-action"
+                        data-testid="selection-extract"
+                        title={tipFor(avail.extractTo, t("selection.extractTip"))}
+                        disabled={!avail.extractTo.enabled}
+                        onClick={() => setExtractToRequest((n) => n + 1)}
+                      >
+                        <ExtractToIcon />
+                        <span>{t("extract.to")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="selection-action"
+                        data-testid="selection-remove"
+                        title={tipFor(avail.remove, t("selection.removeTip"))}
+                        disabled={!avail.remove.enabled}
+                        onClick={() => setRemoveRequest((n) => n + 1)}
+                      >
+                        <TrashIcon />
+                        <span>{t("write.remove")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="selection-action"
+                        data-testid="selection-info"
+                        title={t("toolbar.infoTip")}
+                        aria-pressed={infoOpen}
+                        onClick={() => setInfoOpen((v) => !v)}
+                      >
+                        <InfoIcon />
+                        <span>{t("toolbar.info")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button selection-clear"
+                        data-testid="selection-clear"
+                        aria-label={t("selection.clear")}
+                        title={t("selection.clear")}
+                        onClick={() => listKeyHandlers.none()}
+                      >
+                        <CloseIcon />
+                      </button>
+                    </div>
+                  )}
                 </ToolSlot>
               </>
             )}

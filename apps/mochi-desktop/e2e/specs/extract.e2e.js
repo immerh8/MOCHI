@@ -125,7 +125,7 @@ describe("extract", () => {
     queuePicks(browseCopy);
     await $('[data-testid="open-archive"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="crumb-root"]')).toHaveText(expect.stringContaining("browse.mochi"));
   });
 
   it("extracts everything into a new folder next to the archive, with no folder dialog", async () => {
@@ -214,6 +214,110 @@ describe("extract", () => {
     expect(size(selectedDir, "docs", "a.txt")).toBe(130);
     expect(readdirSync(path.join(selectedDir, "docs")).sort()).toEqual(["a.txt", "empty"]);
     await expect($('[data-testid="extract-status"]')).toHaveAttribute("data-complete", "true");
+  });
+
+  // Owner request 2026-11-10: the selection's actions beside "N selected", and words beside the
+  // toolbar's icons only when they fit, measured on the real layout.
+  it("shows the selection's actions in the status bar, and the toolbar never overflows", async () => {
+    await selectEntry("docs");
+    const bar = await $('[data-testid="selection-bar"]');
+    await bar.waitForExist({ timeout: 30_000 });
+    await expect($('[data-testid="selection-extract"]')).toBeEnabled();
+    await expect($('[data-testid="selection-remove"]')).toBeEnabled();
+    const info = await $('[data-testid="selection-info"]');
+    await info.click();
+    await expect($('[data-testid="info-panel"]')).toBeDisplayed();
+    await info.click();
+    await expect($('[data-testid="info-panel"]')).not.toBeDisplayed();
+    await $('[data-testid="selection-clear"]').click();
+    await bar.waitForExist({ reverse: true, timeout: 30_000 });
+    await expect($('[data-testid="entry-count"]')).not.toHaveText(expect.stringContaining("selected"));
+
+    const toolbar = await browser.execute(() => {
+      const el = document.querySelector('[role="group"].toolbar');
+      return el ? { labels: el.getAttribute("data-labels"), fits: el.scrollWidth <= el.clientWidth + 1 } : null;
+    });
+    expect(toolbar?.labels === "on" || toolbar?.labels === "off").toBe(true);
+    expect(toolbar?.fits).toBe(true);
+  });
+
+  // Owner request 2026-11-10: "Extract to..." creates a folder that does not exist yet, says
+  // what OK will do before it is pressed, numbers a new folder whose name is taken, and opens
+  // the folder when done. Its own parents, so the names the later tests expect stay free.
+  async function extractToWindow() {
+    await press("extract-to");
+    await $('[data-testid="extract-to-dialog"]').waitForExist({ timeout: 30_000 });
+    // Ready: the starting folder has arrived and been looked at (the line under the field says something).
+    await browser.waitUntil(async () => (await previewText()) !== "", {
+      timeout: 30_000,
+      timeoutMsg: "the window never said what OK would do",
+    });
+    const open = await $('[data-testid="extract-to-open-folder"]');
+    if (!(await open.isSelected())) await open.click();
+  }
+  const previewText = async () => {
+    const el = await $('[data-testid="extract-to-preview"]');
+    return (await el.isExisting()) ? await el.getText() : "";
+  };
+  /** Type `folder` into the field and wait until the field holds exactly that. */
+  async function typeFolder(folder) {
+    const input = await $('[data-testid="extract-to-folder"]');
+    await input.setValue(folder);
+    await browser.waitUntil(async () => (await input.getValue()) === folder, {
+      timeout: 10_000,
+      timeoutMsg: `the folder field does not hold ${folder}`,
+    });
+  }
+  async function previewSays(text) {
+    let last = "";
+    await browser.waitUntil(
+      async () => {
+        last = await previewText();
+        return last.includes(text);
+      },
+      { timeout: 30_000, timeoutMsg: `the window never said "${text}"` },
+    ).catch((e) => {
+      throw new Error(`${e.message}; it said "${last}"`);
+    });
+  }
+  const folderLog = () => readFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "utf8").split("\n");
+
+  it("Extract to... creates a folder that does not exist yet, says so first, and opens it when done", async () => {
+    await selectEntry("docs");
+    const target = path.join(root, "made", "here");
+    await extractToWindow();
+    await typeFolder(target);
+    await $('[data-testid="extract-to-new-folder"]').click();
+    await previewSays("doesn't exist yet");
+    // Saying so creates nothing.
+    expect(existsSync(path.join(root, "made"))).toBe(false);
+    await $('[data-testid="extract-to-ok"]').click();
+    await waitForState("completed");
+    expect(readdirSync(target)).toEqual(["docs"]);
+    expect(size(target, "docs", "a.txt")).toBe(130);
+    await browser.waitUntil(() => folderLog().includes(target), { timeoutMsg: `${target} was not opened` });
+    // The status bar shows one line; the rest is its tooltip and is read out: read the text,
+    // not what is drawn.
+    await expect($('[data-testid="extract-status"]')).toHaveElementProperty(
+      "textContent",
+      expect.stringContaining("The folder was opened in the file manager."),
+    );
+  });
+
+  it("Extract to... into a folder that already has the archive's name makes a numbered new folder and replaces nothing", async () => {
+    await selectEntry("docs");
+    const parent = dir("taken");
+    mkdirSync(path.join(parent, "browse"));
+    writeFileSync(path.join(parent, "browse", "mine.txt"), "mine");
+    await extractToWindow();
+    await typeFolder(parent);
+    await previewSays("“browse” already exists here");
+    await previewSays("“browse (2)”");
+    await $('[data-testid="extract-to-ok"]').click();
+    await waitForState("completed");
+    expect(readdirSync(path.join(parent, "browse (2)"))).toEqual(["docs"]);
+    expect(readdirSync(path.join(parent, "browse"))).toEqual(["mine.txt"]);
+    expect(readFileSync(path.join(parent, "browse", "mine.txt"), "utf8")).toBe("mine");
   });
 
   it("lists collisions before writing, skips them on request, and overwrites nothing", async () => {
@@ -326,7 +430,7 @@ describe("extract", () => {
     // An archive is open: the toolbar's Open opens another, in a window of its own.
     await inNewWindow(() => $('[data-testid="toolbar-open"]').click());
     await browser.waitUntil(
-      async () => (await $('[data-testid="archive-meta"]').getText()).includes("large.mochi"),
+      async () => (await $('[data-testid="crumb-root"]').getText()).includes("large.mochi"),
       { timeout: 60_000 },
     );
     await press("extract-all");

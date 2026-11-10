@@ -285,3 +285,48 @@ test("selecting past one page loads every row in backend-sized pages", async () 
   await waitFor(() => expect(result.current.rows).toHaveLength(2500));
   expect(asked).toEqual([LOAD_CHUNK, LOAD_CHUNK, 500]);
 });
+
+// Owner request 2026-11-10: the selection's own actions beside "N selected", one click away.
+test("a selection shows its actions in the status bar: Extract to…, Remove, Info, and clear", async () => {
+  const { user, calls } = await openIt();
+  expect(screen.queryByTestId("selection-bar")).toBeNull();
+  const rows = screen.getAllByTestId("entry");
+  await user.click(rows[1] as HTMLElement);
+  await user.keyboard("{Control>}");
+  await user.click(rows[2] as HTMLElement);
+  await user.keyboard("{/Control}");
+  const bar = await screen.findByRole("group", { name: "Selected items" });
+  expect(bar).toHaveAttribute("data-testid", "selection-bar");
+  expect(screen.getByTestId("selection-extract")).toHaveAccessibleName("Extract to…");
+  expect(screen.getByTestId("selection-remove")).toBeEnabled();
+  expect(screen.getByTestId("selection-clear")).toHaveAccessibleName("Clear the selection (Esc)");
+
+  // Extract to… is the same window as the list's menu, for the same selection; nothing is planned yet.
+  await user.click(screen.getByTestId("selection-extract"));
+  expect(await screen.findByTestId("extract-to-dialog")).toBeInTheDocument();
+  expect(screen.getByTestId("extract-to-what")).toHaveTextContent("The 2 selected entries will be extracted.");
+  expect(calls.some((c) => c.cmd === "plan_extract_to")).toBe(false);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByTestId("extract-to-dialog")).toBeNull());
+
+  // Info shows and hides the details pane, and says which it is.
+  const info = screen.getByTestId("selection-info");
+  expect(info).toHaveAttribute("aria-pressed", "false");
+  await user.click(info);
+  expect(info).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByTestId("info-panel")).toBeVisible();
+  await user.click(info);
+  expect(screen.getByTestId("info-panel")).not.toBeVisible();
+
+  // Clear empties the selection, and the bar goes with it.
+  await user.click(screen.getByTestId("selection-clear"));
+  await waitFor(() => expect(screen.queryByTestId("selection-bar")).toBeNull());
+  expect(screen.getByTestId("entry-count")).not.toHaveTextContent("selected");
+});
+
+test("the selection bar's Remove opens the same remove panel as the Delete key", async () => {
+  const { user } = await openIt();
+  await user.click(screen.getAllByTestId("entry")[1] as HTMLElement);
+  await user.click(await screen.findByTestId("selection-remove"));
+  expect(await screen.findByTestId("delete-note")).toBeInTheDocument();
+});

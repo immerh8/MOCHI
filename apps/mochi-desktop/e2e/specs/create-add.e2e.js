@@ -136,7 +136,7 @@ describe("create and add", () => {
     expect(existsSync(mainArchive)).toBe(true);
 
     // The new archive opened in the browser, at its head.
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("main.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("main.mochi"));
     await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "1 version");
     await browser.waitUntil(async () => (await entryNames()).includes("photos"));
   });
@@ -228,7 +228,7 @@ describe("create and add", () => {
     await $('[data-testid="tar-compatible"]').click();
     await $('[data-testid="create-confirm"]').click();
     await waitForStatus("Created tar.mochi");
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("tar.mochi"));
     await expect($('[data-testid="archive-technical"]')).toHaveElementProperty(
       "textContent",
       expect.stringContaining("TAR-compatible"),
@@ -252,7 +252,7 @@ describe("create and add", () => {
     await $('[data-testid="write-cancel"]').click();
     await waitForStatus("Cancelled. No archive was created.");
     expect(existsSync(cancelled)).toBe(false);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("tar.mochi"));
     await expect($('[data-testid="write-status"]')).toHaveAttribute("data-committed", "false");
   });
 
@@ -309,7 +309,7 @@ describe("create and add", () => {
       timeoutMsg: "the folder was not shown",
     });
     // The archive on screen is the one from before: a ZIP is not opened by creating it.
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("tar.mochi"));
     await assertNoBannedWording();
   });
 
@@ -378,6 +378,6 @@ describe("create and add", () => {
     await waitForStatus("Cancelled. No archive was created.");
     expect(existsSync(`${cancelledZip}.zip`)).toBe(false);
     expect(readdirSync(out).filter((n) => n.startsWith("cancelled-zip") || n.endsWith(".part"))).toEqual([]);
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("tar.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("tar.mochi"));
   });
 });

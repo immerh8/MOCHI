@@ -442,6 +442,50 @@ button.tool:disabled {
   opacity: 0.55;
   border-color: transparent;
 }
+/* Icon and text (owner request 2026-11-10). The words show whenever every one of them fits
+   (useToolbarLabels measures it and sets data-labels); otherwise the bar is icons only, as
+   before, and the words stay the buttons' accessible names. */
+.toolbar:not([data-labels="off"]) button.tool:has(.tool-label) {
+  gap: 0.4rem;
+  width: auto;
+  height: 2rem;
+  padding: 0 0.65rem 0 0.5rem;
+  border-radius: 7px;
+}
+.toolbar:not([data-labels="off"]) button.tool:has(.tool-label) .icon {
+  width: 18px;
+  height: 18px;
+}
+.tool-label {
+  font-size: 0.93em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.toolbar[data-labels="off"] .tool-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* With the words on, the search field and the archive's name keep a usable width: the words
+   are the first thing to go when the window narrows, not the field or the title. */
+.titlebar:has(.toolbar:not([data-labels="off"])) .titlebar-title {
+  flex-shrink: 0;
+}
+.toolbar:not([data-labels="off"]) .searchbox {
+  min-width: 10rem;
+}
+button.tool {
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+button.tool:active:not(:disabled) {
+  background: var(--border);
+}
 /* The search field, at the right of the toolbar. */
 .searchbox {
   position: relative;
@@ -499,7 +543,10 @@ button.searchbox-clear {
   z-index: 30;
   display: flex;
   flex-direction: column;
+  /* As wide as its longest item: a label never wraps under its icon, a key is never cut. */
+  width: max-content;
   min-width: 14rem;
+  max-width: min(24rem, calc(100vw - 1rem));
   padding: 0.25rem;
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -516,6 +563,7 @@ button.menu-item {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  white-space: nowrap;
   width: 100%;
   min-height: 1.9rem;
   padding: 0.15rem 0.6rem;
@@ -997,7 +1045,8 @@ button.crumb[aria-current="location"] {
   flex: none;
   align-items: center;
   gap: 0.75rem;
-  height: 1.75rem;
+  /* Tall enough for the selection's buttons, so the bar does not grow when they appear. */
+  height: 2.25rem;
   padding: 0 0.6rem;
   overflow: clip;
   font-size: 0.92em;
@@ -1009,6 +1058,80 @@ button.crumb[aria-current="location"] {
   flex: none;
   display: flex;
   align-items: center;
+  gap: 0.75rem;
+}
+/* The selection's actions, beside "N selected" (owner request 2026-11-10). */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  animation: selection-in 140ms ease-out;
+}
+@keyframes selection-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .selection-bar {
+    animation: none;
+  }
+}
+button.selection-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 1.65rem;
+  min-height: 0;
+  padding: 0 0.6rem 0 0.45rem;
+  font-size: 1em;
+  color: var(--fg);
+  white-space: nowrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+button.selection-action .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+button.selection-action:hover:not(:disabled) {
+  background: var(--accent-bg);
+  border-color: var(--border-strong);
+}
+button.selection-action:active:not(:disabled) {
+  background: var(--border);
+}
+button.selection-action[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: var(--border-strong);
+}
+button.selection-action:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+}
+.statusbar .selection-clear {
+  margin-left: 0.1rem;
+}
+/* A narrow window keeps the buttons and drops their words (still their accessible names). */
+@media (max-width: 48rem) {
+  button.selection-action {
+    padding: 0 0.4rem;
+  }
+  button.selection-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 .statusbar-text {
   white-space: nowrap;
@@ -1188,6 +1311,15 @@ button.crumb[aria-current="location"] {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+/* What OK will do with the folder typed (owner request 2026-11-10). It keeps its height
+   while the folder is looked at again, so the window does not jump as the user types. */
+.extract-to .extract-to-preview {
+  min-height: 1.4em;
+  overflow-wrap: anywhere;
+}
+.extract-to-preview[data-state="invalid"] {
+  color: var(--fg);
 }
 /* The tools of the More menu: one at a time, in a larger window with a close
    button and its own scrolling. */

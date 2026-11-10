@@ -83,12 +83,17 @@ const REPORT: ExtractReport = {
   durability_note: null,
   files_not_flushed: false,
   case_insensitive: false,
+  opened_folder: false,
 };
 
 interface Opts {
   commits?: number;
   /** What the window opens with. */
-  setup?: { destination: string; recent: string[] };
+  setup?: { destination: string; recent: string[]; open_folder?: boolean };
+  /** Holds the window's starting folder back until it resolves (a slow answer). */
+  setupLate?: Promise<unknown>;
+  /** What Rust says the typed folder would do; by default it exists. */
+  preview?: (folder: string, newFolder: boolean) => unknown;
   /** The folder dialog's answers, one per Browse click. */
   browse?: (string | null)[];
   toPlan?: ExtractPlan | { error: { code: string; message: string } };
@@ -143,7 +148,14 @@ function backend(opts: Opts = {}) {
           attributes: { state: "recorded", posix: null, windows: null, mtime: null },
         };
       case "extract_wizard_setup":
-        return opts.setup ?? { destination: "/home/me/Desktop", recent: ["/home/me/Desktop"] };
+        if (opts.setupLate) return opts.setupLate;
+        return { open_folder: true, ...(opts.setup ?? { destination: "/home/me/Desktop", recent: ["/home/me/Desktop"] }) };
+      case "preview_extract_to":
+        return opts.preview
+          ? opts.preview(a.folder as string, a.newFolder as boolean)
+          : { state: "ready", creates: false, target: a.folder, taken: null };
+      case "set_open_folder_when_done":
+        return a.open;
       case "browse_extract_folder":
         return (opts.browse ?? [null])[browsed++] ?? null;
       case "plan_extract_to": {
@@ -224,7 +236,7 @@ test("the button is off with nothing open, and says to open an archive", async (
   expect(button).toHaveTextContent("Extract to…");
 });
 
-test("the window opens prefilled: the last folder, the recent folders newest first, a new folder ticked", async () => {
+test("the window opens prefilled: the folder Rust chose, the recent folders newest first, a new folder ticked", async () => {
   const { user, b } = await openMochi({
     setup: { destination: "/data/out", recent: ["/data/out", "/home/me/Desktop", "/mnt/usb"] },
   });
@@ -616,4 +628,105 @@ test("the Delete key does nothing in a read-only archive; Passphrases waits for 
   expect(b.cmds()).not.toContain("start_job");
   await user.click(screen.getByTestId("toolbar-more"));
   expect(screen.getByTestId("menu-passphrases")).toBeDisabled();
+});
+
+// ---- Owner request 2026-11-10: the Desktop by default, a folder that does not exist is
+// created, what OK will do is said as the folder is typed, and the folder opens when done.
+
+test("the line under the field says, as the folder is typed, whether it exists, will be created, or gets a numbered new folder", async () => {
+  const { user, b } = await openMochi({
+    preview: (folder, newFolder) => {
+      if (folder === "") return { state: "invalid", reason: "enter the folder to extract into" };
+      if (folder === "/home/me/Desktop/new") return { state: "ready", creates: true, target: folder, taken: null };
+      if (newFolder) return { state: "ready", creates: false, target: `${folder}/tools (2)`, taken: "tools" };
+      return { state: "ready", creates: false, target: folder, taken: null };
+    },
+  });
+  await openWizard(user);
+  const line = () => screen.getByTestId("extract-to-preview");
+  // A new folder named after the archive, whose name is taken on the Desktop: it gets a number.
+  await waitFor(() =>
+    expect(line()).toHaveTextContent("“tools” already exists here, so files go into a new folder: “tools (2)”."),
+  );
+  expect(b.args("preview_extract_to")).toEqual({
+    folder: "/home/me/Desktop",
+    newFolder: true,
+    archive: { kind: "mochi", handle: 3 },
+  });
+  // Straight into the folder.
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await waitFor(() => expect(line()).toHaveTextContent("Files go straight into this folder."));
+  // The whole path is the tooltip.
+  expect(line()).toHaveAttribute("title", "/home/me/Desktop");
+  // A folder that does not exist yet: OK creates it.
+  await user.type(field(), "/new");
+  await waitFor(() =>
+    expect(line()).toHaveTextContent("This folder doesn't exist yet. OK creates it."),
+  );
+  expect(line()).toHaveAttribute("aria-live", "polite");
+  // Text that will not do says why, before OK.
+  await user.clear(field());
+  await waitFor(() => expect(line()).toHaveTextContent("enter the folder to extract into"));
+  expect(line()).toHaveAttribute("data-state", "invalid");
+  // Looking is not planning: nothing was made or started.
+  expect(b.cmds()).not.toContain("plan_extract_to");
+  expect(b.cmds()).not.toContain("start_job");
+});
+
+test("a folder that does not exist yet is sent as typed; Rust creates it when it plans", async () => {
+  const { user, b } = await openMochi({
+    preview: (folder) => ({ state: "ready", creates: folder !== "/home/me/Desktop", target: folder, taken: null }),
+  });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.clear(field());
+  await user.type(field(), "/home/me/Desktop/Trip photos");
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.click(screen.getByTestId("extract-to-ok"));
+  await waitFor(() => expect(b.cmds()).toContain("start_job"));
+  expect(b.args("plan_extract_to")).toMatchObject({ folder: "/home/me/Desktop/Trip photos", newFolder: false });
+});
+
+test("Open the folder when done shows the saved choice, saves a change, and the result says the folder opened", async () => {
+  const { user, b } = await openMochi({ setup: { destination: "/home/me/Desktop", recent: [], open_folder: false } });
+  await openWizard(user);
+  const box = screen.getByTestId("extract-to-open-folder");
+  await waitFor(() => expect(box).not.toBeChecked());
+  await user.click(box);
+  expect(box).toBeChecked();
+  expect(b.calls.filter((c) => c.cmd === "set_open_folder_when_done").map((c) => c.args)).toEqual([{ open: true }]);
+  await user.click(screen.getByTestId("extract-to-ok"));
+  await waitFor(() => expect(b.cmds()).toContain("start_job"));
+  b.job({ event: "started", job_id: 7 });
+  b.job({
+    event: "finished",
+    job_id: 7,
+    outcome: { status: "completed", summary: "s", extract: { ...REPORT, opened_folder: true } },
+  });
+  expect(await screen.findByText("The folder was opened in the file manager.")).toBeInTheDocument();
+  // Rust opened it: the window asked for nothing more.
+  expect(b.cmds()).not.toContain("show_in_folder");
+});
+
+test("a foreign archive's preview names that archive", async () => {
+  const { user, b } = await openForeign();
+  await user.click(screen.getByTestId("foreign-extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await waitFor(() => expect(b.args("preview_extract_to")).toMatchObject({ archive: { kind: "foreign", handle: 9 } }));
+});
+
+test("a folder typed before the starting folder arrives is kept, not replaced", async () => {
+  let release: (v: unknown) => void = () => undefined;
+  const late = new Promise((r) => {
+    release = r;
+  });
+  const { user } = await openMochi({ setupLate: late });
+  await user.click(screen.getByTestId("extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await user.type(field(), "/srv/mine");
+  await act(async () => {
+    release({ destination: "/home/me/Desktop", recent: [], open_folder: true });
+    await late;
+  });
+  expect(field()).toHaveValue("/srv/mine");
 });

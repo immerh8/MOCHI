@@ -84,4 +84,8 @@ export const browser = {
   "menu.add": "เพิ่มไฟล์...",
   "menu.delete": "ลบ",
   "browser.copyFailed": "คัดลอกชื่อไม่สำเร็จ",
+  "selection.label": "รายการที่เลือก",
+  "selection.extractTip": "แตกไฟล์รายการที่เลือกไปยังโฟลเดอร์ที่คุณเลือก",
+  "selection.removeTip": "นำรายการที่เลือกออกจากเวอร์ชันนี้ (เวอร์ชันก่อนหน้ายังมีอยู่)",
+  "selection.clear": "ยกเลิกการเลือก (Esc)",
 } satisfies Catalogue<typeof enBrowser>;

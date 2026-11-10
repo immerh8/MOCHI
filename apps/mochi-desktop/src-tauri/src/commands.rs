@@ -4,6 +4,9 @@
 
 use std::sync::Arc;
 
+use serde::Deserialize;
+use ts_rs::TS;
+
 use tauri::ipc::{Channel, CommandArg, CommandItem, InvokeError};
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -677,9 +680,67 @@ pub async fn plan_extract_default(
 /// still exists), else the user's Desktop from Tauri's path resolver, and the
 /// recent folders that still exist.
 #[tauri::command]
-pub fn extract_wizard_setup(app: AppHandle, win: Win) -> ExtractWizardSetup {
+pub fn extract_wizard_setup(
+    app: AppHandle,
+    win: Win,
+    quick: State<'_, Arc<Quick>>,
+) -> ExtractWizardSetup {
     let desktop = app.path().desktop_dir().ok().filter(|d| d.is_dir());
-    win.state.destination.history.setup(desktop.as_deref())
+    win.state
+        .destination
+        .history
+        .setup(desktop.as_deref(), quick.open_folder_when_done())
+}
+
+/// "Open the folder when done" from an archive window's "Extract to..." (owner
+/// request 2026-11-10): the same saved choice as the compact window's check box.
+#[tauri::command]
+pub fn set_open_folder_when_done(
+    open: bool,
+    quick: State<'_, Arc<Quick>>,
+) -> Result<bool, IpcError> {
+    quick
+        .set_open_folder_when_done(open)
+        .map_err(IpcError::from)
+}
+
+/// Which archive a preview is for: its folder is named after it.
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum PreviewArchive {
+    Mochi { handle: ArchiveHandle },
+    Foreign { handle: ArchiveHandle },
+}
+
+/// What the folder typed into "Extract to..." would do (owner request 2026-11-10): it
+/// exists, or will be created; with a new folder, the name it will get (numbered when the
+/// archive's own name is taken there). Read-only: nothing is created or written.
+#[tauri::command]
+pub async fn preview_extract_to(
+    folder: String,
+    new_folder: bool,
+    archive: PreviewArchive,
+    archives: State<'_, Arc<Archives>>,
+    foreign: State<'_, Arc<Foreign>>,
+) -> Result<crate::folders::ExtractToPreview, IpcError> {
+    let archives = Arc::clone(&archives);
+    let foreign = Arc::clone(&foreign);
+    blocking(move || {
+        let path = match archive {
+            PreviewArchive::Mochi { handle } => archives.path(handle),
+            PreviewArchive::Foreign { handle } => foreign.path(handle),
+        };
+        let name = path
+            .ok()
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned));
+        Ok(crate::folders::preview(
+            &folder,
+            new_folder,
+            name.as_deref(),
+        ))
+    })
+    .await
 }
 
 /// Show the folder dialog for "Extract to..." (in Rust), starting in `start`
@@ -705,10 +766,12 @@ pub async fn browse_extract_folder(
 }
 
 /// "Extract to..." (WinRAR's window): plan extracting `keys` (empty:
-/// everything) into `folder`, an existing folder the user typed or chose, or,
+/// everything) into `folder`, a folder the user typed or chose (created now,
+/// with any missing folders above it, if it does not exist yet; removed again
+/// while empty if the plan is closed unused: owner request 2026-11-10), or,
 /// with `new_folder`, into a new folder named after the archive inside it
 /// (`name`, `name (2)`, ...; never an existing one, made now). The folder text
-/// is validated in Rust (`folders::existing_folder`). The webview starts the
+/// is validated in Rust (`folders::folder_to_extract_into`). The webview starts the
 /// extraction itself with `start_job`, which writes into the folder Rust
 /// remembers; entries that collide are listed in the plan and never
 /// overwritten. Nothing is extracted here.
@@ -726,13 +789,28 @@ pub async fn plan_extract_to(
     let archives = Arc::clone(&archives);
     let destination = Arc::clone(&win.state.destination);
     blocking(move || {
-        let folder = crate::folders::existing_folder(&folder)?;
-        if new_folder {
-            crate::extract::plan_in_new_folder(&archives, &destination, &folder, handle, seq, &keys)
-        } else {
-            destination.discard_made();
-            crate::extract::plan(&archives, &destination, Some(folder), handle, seq, &keys)
-        }
+        let (folder, _) = crate::folders::folder_to_extract_into(&folder)?;
+        crate::extract::with_missing_created(&destination, &folder, || {
+            if new_folder {
+                crate::extract::plan_in_new_folder(
+                    &archives,
+                    &destination,
+                    &folder,
+                    handle,
+                    seq,
+                    &keys,
+                )
+            } else {
+                crate::extract::plan(
+                    &archives,
+                    &destination,
+                    Some(folder.clone()),
+                    handle,
+                    seq,
+                    &keys,
+                )
+            }
+        })
     })
     .await
 }
@@ -750,13 +828,14 @@ pub async fn plan_extract_foreign_to(
     let foreign = Arc::clone(&foreign);
     let destination = Arc::clone(&win.state.destination);
     blocking(move || {
-        let folder = crate::folders::existing_folder(&folder)?;
-        if new_folder {
-            foreign.plan_in_new_folder(&destination, &folder, handle, &keys)
-        } else {
-            destination.discard_made();
-            foreign.plan(&destination, Some(folder), handle, &keys)
-        }
+        let (folder, _) = crate::folders::folder_to_extract_into(&folder)?;
+        crate::extract::with_missing_created(&destination, &folder, || {
+            if new_folder {
+                foreign.plan_in_new_folder(&destination, &folder, handle, &keys)
+            } else {
+                foreign.plan(&destination, Some(folder.clone()), handle, &keys)
+            }
+        })
     })
     .await
 }

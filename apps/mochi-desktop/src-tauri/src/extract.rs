@@ -76,9 +76,11 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Debug, Default)]
 pub struct Destination {
     chosen: Mutex<Option<PathBuf>>,
-    /// The new folder `plan_default` made, until something is extracted into
-    /// it: closing the plan removes it again if it is still empty.
-    made: Mutex<Option<PathBuf>>,
+    /// The folders a plan made, deepest first, until something is extracted into them:
+    /// the new folder named after the archive (`plan_default`, `make_new_in`) and the
+    /// folders "Extract to..." created because the typed folder did not exist yet
+    /// (`with_missing_created`). Closing the plan removes them again while they are empty.
+    made: Mutex<Vec<PathBuf>>,
     /// The folder to remember after a successful extraction when it is not
     /// the chosen one itself: the parent a new folder was made in. `set`
     /// clears it (an explicit choice is remembered as chosen).
@@ -120,18 +122,25 @@ impl Destination {
         }
     }
 
-    /// Remove the folder `plan_default` made, if it is still empty and still
-    /// the chosen one. A folder with anything in it is never touched.
+    /// Remove the folders a plan made, deepest first, while each is empty. A folder with
+    /// anything in it is never touched, and neither is any folder above it.
     pub fn discard_made(&self) {
-        let Some(made) = lock(&self.made).take() else {
-            return;
-        };
-        if std::fs::remove_dir(&made).is_ok() {
+        let made = std::mem::take(&mut *lock(&self.made));
+        for folder in made {
+            if std::fs::remove_dir(&folder).is_err() {
+                break;
+            }
             let mut chosen = lock(&self.chosen);
-            if chosen.as_deref() == Some(made.as_path()) {
+            if chosen.as_deref() == Some(folder.as_path()) {
                 *chosen = None;
             }
         }
+    }
+
+    /// Also tidy up `folders` (deepest first, above anything made already) if the plan is
+    /// closed unused.
+    fn also_made(&self, folders: Vec<PathBuf>) {
+        lock(&self.made).extend(folders);
     }
 }
 
@@ -218,8 +227,84 @@ impl Destination {
             .and_then(folder_stem)
             .ok_or_else(|| invalid("this archive's name cannot be used for a folder"))?;
         let folder = create_unique_dir(parent, &stem)?;
-        *lock(&self.made) = Some(folder.clone());
+        *lock(&self.made) = vec![folder.clone()];
         Ok(folder)
+    }
+}
+
+/// The name the next new folder for `stem` in `parent` would get: `stem`, else
+/// `stem (2)`, ... (what [`create_unique_dir`] would make now). For a preview only: the
+/// folder is made later, with `create_dir`, which never reuses a name that appeared meanwhile.
+pub fn next_free_name(parent: &Path, stem: &str) -> Option<String> {
+    (1..=MAX_NUMBERED)
+        .map(|n| numbered(stem, n))
+        .find(|name| !parent.join(name).exists())
+}
+
+/// Create `folder` and any folders above it that do not exist yet, top down, each with
+/// `create_dir` (a name that appeared meanwhile is used only if it is a folder, and is not
+/// counted as ours). Returns the folders this call made, deepest first.
+pub fn create_missing(folder: &Path) -> Result<Vec<PathBuf>> {
+    let mut missing = Vec::new();
+    let mut at = Some(folder);
+    while let Some(p) = at {
+        if p.exists() {
+            break;
+        }
+        missing.push(p.to_path_buf());
+        at = p.parent().filter(|q| !q.as_os_str().is_empty());
+    }
+    let mut made = Vec::new();
+    for p in missing.iter().rev() {
+        match std::fs::create_dir(p) {
+            Ok(()) => made.push(p.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && p.is_dir() => {}
+            Err(e) => {
+                remove_empty(&made);
+                return Err(MochiError::new(
+                    ErrorCode::IoError,
+                    format!("could not create the folder {}: {e}", p.display()),
+                ));
+            }
+        }
+    }
+    made.reverse();
+    Ok(made)
+}
+
+/// Remove folders made by [`create_missing`], given in the order they were made (top
+/// down), deepest first, while each is empty.
+fn remove_empty(made_top_down: &[PathBuf]) {
+    for p in made_top_down.iter().rev() {
+        if std::fs::remove_dir(p).is_err() {
+            break;
+        }
+    }
+}
+
+/// "Extract to..." into `folder`, which may not exist yet: create it (and the folders above
+/// it that are missing), then run `plan`. The folders created are tidied up with the plan
+/// (`Destination::discard_made`) if nothing is extracted into them, and at once if the plan
+/// fails. An earlier unused plan's folders are removed first.
+pub fn with_missing_created<T>(
+    destination: &Destination,
+    folder: &Path,
+    plan: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    destination.discard_made();
+    let created = create_missing(folder)?;
+    match plan() {
+        Ok(p) => {
+            destination.also_made(created);
+            Ok(p)
+        }
+        Err(e) => {
+            destination.discard_made();
+            let mut top_down = created;
+            top_down.reverse();
+            remove_empty(&top_down);
+            Err(e)
+        }
     }
 }
 
@@ -266,7 +351,7 @@ pub fn plan_default(
             format!("could not create the folder {}: {e}", folder.display()),
         )
     })?;
-    *lock(&destination.made) = Some(folder.clone());
+    *lock(&destination.made) = vec![folder.clone()];
     let parent = folder.parent().map(Path::to_path_buf);
     match plan(archives, destination, Some(folder), handle, seq, keys) {
         Ok(p) => {
@@ -547,6 +632,7 @@ pub fn report_view(report: &RestoreReport, folder: &Path, seq: u32) -> ExtractRe
         },
         files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
+        opened_folder: false,
     }
 }
 
@@ -1074,6 +1160,7 @@ mod tests {
             foreign: Arc::default(),
             checks: Arc::default(),
             updates: Arc::default(),
+            after_extract: None,
         }))
     }
 
@@ -1140,6 +1227,140 @@ mod tests {
         assert!(commit.is_none());
         assert_eq!(extract.as_ref().unwrap().directories, 2);
         assert_eq!(tree(&f.dest), head_tree());
+    }
+
+    /// Owner request 2026-11-10: an extraction in an archive window opens its folder when
+    /// done, unless "Open the folder when done" is off, and the report says which.
+    #[test]
+    fn a_finished_extraction_opens_its_folder_unless_that_is_turned_off() {
+        let f = fx();
+        let after = Arc::new(crate::afterextract::AfterExtract::default());
+        let opened = Arc::new(std::sync::Mutex::new(Vec::<PathBuf>::new()));
+        let log = Arc::clone(&opened);
+        after.set_opener(Arc::new(move |p: &Path| {
+            log.lock().unwrap().push(p.to_path_buf());
+            Ok(())
+        }));
+        let reg = Arc::new(JobRegistry::with_services(Services {
+            archives: Arc::clone(&f.archives),
+            destination: Arc::clone(&f.destination),
+            after_extract: Some(Arc::clone(&after)),
+            ..Services::default()
+        }));
+        let opened_in = |events: &[JobEvent]| match events.last() {
+            Some(JobEvent::Finished {
+                outcome: JobOutcome::Completed { extract, .. },
+                ..
+            }) => extract.as_ref().unwrap().opened_folder,
+            other => panic!("completed: {other:?}"),
+        };
+        let (_, events) = finish(&reg, request(&f, 1, &["top.txt"], whole()), u64::MAX);
+        assert!(opened_in(&events));
+        assert_eq!(*opened.lock().unwrap(), vec![f.dest.clone()]);
+
+        after.set(false).unwrap();
+        let again = f.tmp.path().join("again");
+        std::fs::create_dir(&again).unwrap();
+        f.destination.set(again);
+        let (_, events) = finish(&reg, request(&f, 1, &["top.txt"], whole()), u64::MAX);
+        assert!(!opened_in(&events));
+        assert_eq!(opened.lock().unwrap().len(), 1);
+
+        // A cancelled extraction opens nothing, whatever the choice.
+        after.set(true).unwrap();
+        let third = f.tmp.path().join("third");
+        std::fs::create_dir(&third).unwrap();
+        f.destination.set(third);
+        // Cancelled on the first forwarded event (`cancelling_over_the_registry...`).
+        let (_, events) = finish(&reg, request(&f, 1, &[], whole()), 0);
+        assert!(matches!(
+            events.last(),
+            Some(JobEvent::Finished {
+                outcome: JobOutcome::Cancelled,
+                ..
+            })
+        ));
+        assert_eq!(opened.lock().unwrap().len(), 1);
+    }
+
+    /// Owner request 2026-11-10: "Extract to..." into a folder that does not exist yet
+    /// creates it (and the folders above it), and tidies them up again if unused.
+    #[test]
+    fn a_folder_that_does_not_exist_is_created_and_removed_again_if_unused() {
+        let f = fx();
+        let root = f.tmp.path().join("new");
+        let deeper = root.join("deeper");
+        let d = Destination::default();
+        with_missing_created(&d, &deeper, || {
+            plan(&f.archives, &d, Some(deeper.clone()), f.handle, 1, &[])
+        })
+        .unwrap();
+        assert!(deeper.is_dir());
+        assert_eq!(d.get(), Some(deeper.clone()));
+        // The plan is closed unused: both folders go, the one above them stays.
+        d.discard_made();
+        assert!(!root.exists());
+        assert!(f.tmp.path().is_dir());
+        assert_eq!(d.get(), None);
+
+        // With a new folder named after the archive inside it: three levels, all tidied up.
+        with_missing_created(&d, &deeper, || {
+            plan_in_new_folder(&f.archives, &d, &deeper, f.handle, 1, &[])
+        })
+        .unwrap();
+        let named = d.get().unwrap();
+        assert_eq!(named.parent(), Some(deeper.as_path()));
+        d.discard_made();
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn a_created_folder_is_kept_once_something_is_extracted_into_it() {
+        let f = fx();
+        let made = f.tmp.path().join("made").join("here");
+        with_missing_created(&f.destination, &made, || {
+            plan(
+                &f.archives,
+                &f.destination,
+                Some(made.clone()),
+                f.handle,
+                1,
+                &[],
+            )
+        })
+        .unwrap();
+        report(go(&f, &request(&f, 1, &["top.txt"], whole())).unwrap());
+        assert_eq!(std::fs::read(made.join("top.txt")).unwrap(), b"top");
+        // A later plan tidies only what is empty: this folder and the one above stay.
+        f.destination.discard_made();
+        assert!(made.join("top.txt").is_file());
+    }
+
+    #[test]
+    fn a_failing_plan_removes_the_folders_it_created_and_a_file_in_the_way_is_refused() {
+        let f = fx();
+        let root = f.tmp.path().join("fresh");
+        let d = Destination::default();
+        let r = with_missing_created(&d, &root.join("x"), || {
+            plan(
+                &f.archives,
+                &d,
+                Some(root.join("x")),
+                f.handle,
+                1,
+                &[hex(b"nope")],
+            )
+        });
+        assert!(r.is_err());
+        assert!(!root.exists());
+        // A file where a folder would go: refused, and nothing is created.
+        let file = f.tmp.path().join("a-file");
+        std::fs::write(&file, b"mine").unwrap();
+        assert!(crate::folders::folder_to_extract_into(file.to_str().unwrap()).is_err());
+        assert!(create_missing(&file.join("below")).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"mine");
+        // An existing folder is used as it is: nothing is created.
+        assert!(create_missing(&f.dest).unwrap().is_empty());
     }
 
     #[test]

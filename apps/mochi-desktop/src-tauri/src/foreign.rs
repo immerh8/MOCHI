@@ -221,6 +221,11 @@ impl Foreign {
         ForeignClient::new(self.helper_path())
     }
 
+    /// The file of the open foreign archive `handle`.
+    pub fn path(&self, handle: u32) -> Result<PathBuf> {
+        Ok(self.session(handle)?.path.clone())
+    }
+
     fn session(&self, handle: u32) -> Result<Arc<Session>> {
         lock(&self.inner)
             .open
@@ -994,6 +999,7 @@ fn report_view(report: &mochi_core::restore::RestoreReport, folder: &Path) -> Ex
         },
         files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
+        opened_folder: false,
     }
 }
 

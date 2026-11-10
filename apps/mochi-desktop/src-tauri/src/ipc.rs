@@ -804,6 +804,10 @@ pub struct ExtractReport {
     /// failure soon after could leave some incomplete.
     pub files_not_flushed: bool,
     pub case_insensitive: bool,
+    /// The folder was opened in the file manager when the job ended ("Open the folder when
+    /// done", owner request 2026-11-10).
+    #[serde(default)]
+    pub opened_folder: bool,
 }
 
 // ---- D4: test, health, and repair -------------------------------------------
