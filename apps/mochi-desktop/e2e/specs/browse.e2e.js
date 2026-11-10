@@ -37,7 +37,7 @@ async function enterFolder(name) {
 describe("archive browser", () => {
   it("opens an archive and shows its history and hostile names as text", async () => {
     await openNext();
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("browse.mochi"));
     await expect($('[data-testid="toggle-versions"]')).toHaveAttribute("title", "4 versions");
     await openVersions();
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
@@ -100,7 +100,7 @@ describe("archive browser", () => {
     await $('[data-testid="close-archive"]').click();
     await expect($('[data-testid="start-screen"]')).toBeExisting();
     await openNext();
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("large.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("large.mochi"));
     await enterFolder("many");
     await expect($('[data-testid="entry-count"]')).toHaveText(
       expect.stringContaining("100,000 items"),

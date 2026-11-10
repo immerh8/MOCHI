@@ -48,7 +48,7 @@ describe("the start screen", () => {
     queuePicks(archive);
     await $('[data-testid="open-archive"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("trip.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("trip.mochi"));
     await $('[data-testid="close-archive"]').click();
     await $('[data-testid="start-screen"]').waitForExist();
     // The list is kept across app runs (and earlier specs opened archives), newest first.
@@ -61,7 +61,7 @@ describe("the start screen", () => {
   it("opens a recent archive without a dialog", async () => {
     await $('[data-testid="recent-open"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("trip.mochi"));
+    await expect($('[data-testid="window-title"]')).toHaveText(expect.stringContaining("trip.mochi"));
     await $('[data-testid="close-archive"]').click();
     await $('[data-testid="start-screen"]').waitForExist();
   });
