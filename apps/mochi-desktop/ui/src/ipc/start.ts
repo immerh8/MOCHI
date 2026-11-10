@@ -6,7 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { DialogText } from "./generated/DialogText";
 import type { ExtractPlan } from "./generated/ExtractPlan";
+import type { ExtractToPreview } from "./generated/ExtractToPreview";
 import type { ExtractWizardSetup } from "./generated/ExtractWizardSetup";
+import type { PreviewArchive } from "./generated/PreviewArchive";
 import type { OpenOutcome } from "./generated/OpenOutcome";
 import type { RecentView } from "./generated/RecentView";
 import type { ShowTarget } from "./generated/ShowTarget";
@@ -64,6 +66,22 @@ export function extractWizardSetup(): Promise<ExtractWizardSetup> {
  * The folder dialog for "Extract to...", starting in `start` when it is an
  * existing folder. Resolves to the folder's text, or `null` if cancelled.
  */
+export type { ExtractToPreview, PreviewArchive };
+
+/**
+ * What "Extract to..." would do with `folder` (owner request 2026-11-10): it exists or will
+ * be created, and where the files go (a numbered new folder when the archive's name is taken).
+ * Read-only in Rust: nothing is created or written.
+ */
+export function previewExtractTo(folder: string, newFolder: boolean, archive: PreviewArchive): Promise<ExtractToPreview> {
+  return invoke<ExtractToPreview>("preview_extract_to", { folder, newFolder, archive });
+}
+
+/** "Open the folder when done": the same saved choice as the compact window's. */
+export function setOpenFolderWhenDone(open: boolean): Promise<boolean> {
+  return invoke<boolean>("set_open_folder_when_done", { open });
+}
+
 export function browseExtractFolder(start: string, text?: DialogText): Promise<string | null> {
   return invoke<string | null>("browse_extract_folder", { start: start === "" ? null : start, text });
 }

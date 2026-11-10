@@ -12,9 +12,11 @@
 //! held a path. "Extract to..." shows an editable folder field, so it sends
 //! the text the user typed or chose, and Rust treats it as untrusted input:
 //! [`validate_folder`] accepts only an absolute path of bounded length with no
-//! control characters or `..`, and the folder must already exist (nothing
-//! here creates a folder from typed text). The restore engine then applies
-//! its own checks, and never overwrites. The list is a convenience, so a
+//! control characters or `..`. A folder that does not exist yet is created
+//! when the plan is made (owner request 2026-11-10; `extract::create_missing`,
+//! each level with a no-replace `create_dir`, removed again while empty if the
+//! plan is closed unused); a name that is a file is refused. The restore
+//! engine then applies its own checks, and never overwrites. The list is a convenience, so a
 //! missing or damaged file means an empty list, and a folder that has since
 //! gone is not offered.
 
@@ -37,11 +39,89 @@ pub const MAX_FOLDER_CHARS: usize = 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub struct ExtractWizardSetup {
-    /// The folder the field starts with: the one used last, else the Desktop
-    /// (empty when this computer has neither).
+    /// The folder the field starts with: the Desktop (owner request
+    /// 2026-11-10), else the one used last (empty when this computer has
+    /// neither).
     pub destination: String,
     /// Recent folders that still exist, newest first, at most [`MAX_FOLDERS`].
     pub recent: Vec<String>,
+    /// "Open the folder when done", the choice shared with the compact window.
+    pub open_folder: bool,
+}
+
+/// What the folder typed into "Extract to..." would do, shown under the field as it is
+/// typed (owner request 2026-11-10). Nothing is created or written to answer it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ExtractToPreview {
+    /// The text cannot be used; `reason` says why.
+    Invalid { reason: String },
+    /// The folder exists, or does not and will be created (with the folders above
+    /// it that are missing). `target` is where the files go: the folder itself, or
+    /// the new folder named after the archive inside it.
+    Ready {
+        creates: bool,
+        target: String,
+        /// With a new folder: the archive's own name, when that is taken in the
+        /// folder, so `target` carries a number (`photos (2)`).
+        taken: Option<String>,
+    },
+}
+
+/// [`validate_folder`], and the name, if it exists, is a folder (it need not exist
+/// yet). The second value is whether it exists.
+pub fn folder_to_extract_into(text: &str) -> Result<(PathBuf, bool)> {
+    let path = validate_folder(text)?;
+    match std::fs::metadata(&path) {
+        Ok(m) if m.is_dir() => Ok((path, true)),
+        Ok(_) => Err(MochiError::new(
+            ErrorCode::InvalidArgument,
+            "that is a file, not a folder; choose a folder",
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((path, false)),
+        Err(e) => Err(MochiError::new(
+            ErrorCode::IoError,
+            format!("that folder cannot be read: {e}"),
+        )),
+    }
+}
+
+/// The preview for `text`; with `new_folder`, `archive_name` is the archive's file name
+/// (the new folder is named after it).
+pub fn preview(text: &str, new_folder: bool, archive_name: Option<&str>) -> ExtractToPreview {
+    let (folder, exists) = match folder_to_extract_into(text) {
+        Ok(f) => f,
+        Err(e) => return ExtractToPreview::Invalid { reason: e.message },
+    };
+    let shown = |p: &Path| crate::help::for_shell(p).to_string_lossy().into_owned();
+    if !new_folder {
+        return ExtractToPreview::Ready {
+            creates: !exists,
+            target: shown(&folder),
+            taken: None,
+        };
+    }
+    let Some(stem) = archive_name.and_then(crate::extract::folder_stem) else {
+        return ExtractToPreview::Invalid {
+            reason: "this archive's name cannot be used for a folder".to_owned(),
+        };
+    };
+    let name = if exists {
+        crate::extract::next_free_name(&folder, &stem)
+    } else {
+        Some(stem.clone())
+    };
+    match name {
+        Some(name) => ExtractToPreview::Ready {
+            creates: !exists,
+            taken: (name != stem).then_some(stem),
+            target: shown(&folder.join(&name)),
+        },
+        None => ExtractToPreview::Invalid {
+            reason: "too many folders with this name already exist".to_owned(),
+        },
+    }
 }
 
 /// A folder text from the window as a path, or why it is refused.
@@ -149,17 +229,19 @@ impl FolderHistory {
             .collect()
     }
 
-    /// What the window opens with. `fallback` is the Desktop, if there is one.
-    pub fn setup(&self, fallback: Option<&Path>) -> ExtractWizardSetup {
+    /// What the window opens with: the Desktop (`desktop`, if there is one), else the
+    /// folder used last; the recent folders are offered beside it.
+    pub fn setup(&self, desktop: Option<&Path>, open_folder: bool) -> ExtractWizardSetup {
         let recent = self.existing();
-        let destination = recent
-            .first()
-            .cloned()
-            .or_else(|| fallback.and_then(|p| p.to_str()).map(str::to_owned))
+        let destination = desktop
+            .and_then(|p| p.to_str())
+            .map(str::to_owned)
+            .or_else(|| recent.first().cloned())
             .unwrap_or_default();
         ExtractWizardSetup {
             destination,
             recent,
+            open_folder,
         }
     }
 
@@ -229,30 +311,82 @@ mod tests {
     }
 
     #[test]
-    fn folders_that_are_gone_are_not_offered_and_the_default_follows_the_list() {
+    fn the_desktop_comes_first_then_the_folder_used_last_and_gone_folders_are_not_offered() {
         let dir = tempfile::tempdir().unwrap();
         let desktop = folder(&dir, "Desktop");
         let a = folder(&dir, "a");
         let b = folder(&dir, "b");
         let h = FolderHistory::default();
         // No history: the Desktop.
-        let s = h.setup(Some(&desktop));
+        let s = h.setup(Some(&desktop), true);
         assert_eq!(s.destination, desktop.to_str().unwrap());
         assert!(s.recent.is_empty());
-        // History: the most recent one.
+        assert!(s.open_folder);
+        // History: still the Desktop first (owner request 2026-11-10); the recent
+        // folders are offered beside it, newest first.
         h.record(&a);
         h.record(&b);
-        let s = h.setup(Some(&desktop));
-        assert_eq!(s.destination, b.to_str().unwrap());
+        let s = h.setup(Some(&desktop), false);
+        assert_eq!(s.destination, desktop.to_str().unwrap());
         assert_eq!(s.recent, [b.to_str().unwrap(), a.to_str().unwrap()]);
+        assert!(!s.open_folder);
+        // No Desktop on this computer: the folder used last.
+        assert_eq!(h.setup(None, true).destination, b.to_str().unwrap());
         // The newest is gone: it is not offered, and the next one leads.
         std::fs::remove_dir(&b).unwrap();
-        let s = h.setup(Some(&desktop));
+        let s = h.setup(None, true);
         assert_eq!(s.destination, a.to_str().unwrap());
         assert_eq!(s.recent, [a.to_str().unwrap()]);
         // Nothing at all.
         std::fs::remove_dir(&a).unwrap();
-        assert_eq!(h.setup(None).destination, "");
+        assert_eq!(h.setup(None, true).destination, "");
+    }
+
+    /// Owner request 2026-11-10: what "Extract to..." will do, shown as the folder is typed.
+    #[test]
+    fn the_preview_says_whether_the_folder_exists_and_names_the_new_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let desk = folder(&dir, "Desk");
+        let text = |p: &Path| p.to_str().unwrap().to_owned();
+        let ready = |creates: bool, target: &Path, taken: Option<&str>| ExtractToPreview::Ready {
+            creates,
+            target: crate::help::for_shell(target)
+                .to_string_lossy()
+                .into_owned(),
+            taken: taken.map(str::to_owned),
+        };
+        // An existing folder, as it is.
+        assert_eq!(
+            preview(&text(&desk), false, None),
+            ready(false, &desk, None)
+        );
+        // A folder that does not exist yet: it will be created.
+        let new = desk.join("new");
+        assert_eq!(preview(&text(&new), false, None), ready(true, &new, None));
+        // With a new folder named after the archive: its name, numbered when taken.
+        assert_eq!(
+            preview(&text(&desk), true, Some("photos.tar.gz")),
+            ready(false, &desk.join("photos"), None)
+        );
+        std::fs::create_dir(desk.join("photos")).unwrap();
+        assert_eq!(
+            preview(&text(&desk), true, Some("photos.tar.gz")),
+            ready(false, &desk.join("photos (2)"), Some("photos"))
+        );
+        // Inside a folder that does not exist yet, nothing can be taken.
+        assert_eq!(
+            preview(&text(&new), true, Some("photos.zip")),
+            ready(true, &new.join("photos"), None)
+        );
+        // Text that cannot be used, and a file in the way, say why; nothing was created.
+        std::fs::write(desk.join("file"), b"x").unwrap();
+        for bad in ["", "relative/path", &text(&desk.join("file"))] {
+            assert!(
+                matches!(preview(bad, false, None), ExtractToPreview::Invalid { .. }),
+                "{bad}"
+            );
+        }
+        assert!(!new.exists());
     }
 
     #[test]

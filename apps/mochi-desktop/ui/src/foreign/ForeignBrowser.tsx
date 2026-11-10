@@ -561,7 +561,12 @@ export function ForeignBrowser() {
         </button>
       </div>
       {open && wizard && plan === null && (
-        <ExtractToDialog count={selectedCount} onSubmit={submitTo} onClose={() => setWizard(false)} />
+        <ExtractToDialog
+          count={selectedCount}
+          archive={{ kind: "foreign", handle: open.handle }}
+          onSubmit={submitTo}
+          onClose={() => setWizard(false)}
+        />
       )}
       {plan && (
         <Panel

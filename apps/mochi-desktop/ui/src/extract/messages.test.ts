@@ -20,6 +20,7 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     durability_note: null,
     files_not_flushed: false,
     case_insensitive: false,
+    opened_folder: false,
     ...extra,
   };
 }

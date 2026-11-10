@@ -1312,6 +1312,15 @@ button.selection-action:disabled {
   align-items: center;
   gap: 0.4rem;
 }
+/* What OK will do with the folder typed (owner request 2026-11-10). It keeps its height
+   while the folder is looked at again, so the window does not jump as the user types. */
+.extract-to .extract-to-preview {
+  min-height: 1.4em;
+  overflow-wrap: anywhere;
+}
+.extract-to-preview[data-state="invalid"] {
+  color: var(--fg);
+}
 /* The tools of the More menu: one at a time, in a larger window with a close
    button and its own scrolling. */
 .tool-sheet {

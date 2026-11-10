@@ -410,6 +410,7 @@ export function Extractor({
       {wizard !== null && plan === null && (
         <ExtractToDialog
           count={wizard.kind === "all" ? 0 : wizard.entries.length}
+          archive={handle === null ? null : { kind: "mochi", handle }}
           onSubmit={(folder, newFolder) => submitTo(wizard, folder, newFolder)}
           onClose={() => setWizard(null)}
         />

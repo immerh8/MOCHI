@@ -34,7 +34,11 @@ and gets a number if the name is taken. When an extraction is done, the folder i
 opens in a new file-manager window; untick **Open the folder when done** in that small window
 to stop this (the choice is remembered). After "Extract to a new folder", type a new name and
 press **Rename**, or press **Move to…** to put the folder somewhere else on the same drive; a
-name that already exists is refused, never replaced. The command-line equivalents are `mochi get`
+name that already exists is refused, never replaced. In the main window, **Extract to…** starts
+on the Desktop; a folder you type that does not exist yet is created, and a line under the field
+says what will happen before you press OK (for example that a folder named after the archive
+already exists there, so a new one is made with a number). The same **Open the folder when done**
+choice applies there. The command-line equivalents are `mochi get`
 and `mochi create` and `mochi append`. A new archive is a local file, not a backup.
 
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04

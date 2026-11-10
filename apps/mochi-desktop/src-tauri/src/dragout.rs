@@ -1213,6 +1213,7 @@ mod tests {
             durability_note: None,
             files_not_flushed: false,
             case_insensitive: false,
+            opened_folder: false,
         };
         assert!(require_complete(Some(&report(&[], 0)), false).is_ok());
         let e =

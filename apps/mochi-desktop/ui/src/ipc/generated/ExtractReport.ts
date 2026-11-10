@@ -29,4 +29,9 @@ durability_note: string | null,
  * Fast extract was on: files were not flushed one by one, so a power
  * failure soon after could leave some incomplete.
  */
-files_not_flushed: boolean, case_insensitive: boolean, };
+files_not_flushed: boolean, case_insensitive: boolean, 
+/**
+ * The folder was opened in the file manager when the job ended ("Open the folder when
+ * done", owner request 2026-11-10).
+ */
+opened_folder: boolean, };

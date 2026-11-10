@@ -515,6 +515,9 @@ pub struct Services {
     pub checks: Arc<crate::check::Checks>,
     /// The in-app updater (T13).
     pub updates: Arc<crate::update::Updates>,
+    /// "Open the folder when done" (owner request 2026-11-10), shared with the compact
+    /// window. `None` opens nothing (the services of tests that do not need it).
+    pub after_extract: Option<Arc<crate::afterextract::AfterExtract>>,
 }
 
 /// What a create asks for, gathered from the request.
@@ -654,11 +657,14 @@ impl Services {
                         export: None,
                     })
             }
-            JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
-                self.foreign.run(&self.destination, request, ctx)
-            }
+            JobRequest::TestForeign { .. } => self.foreign.run(&self.destination, request, ctx),
+            JobRequest::ExtractForeign { .. } => self
+                .foreign
+                .run(&self.destination, request, ctx)
+                .map(|done| self.extracted(done)),
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::run(&self.archives, &self.destination, request, ctx)
+                    .map(|done| self.extracted(done))
             }
             JobRequest::TestArchive { .. }
             | JobRequest::PlanRepair { .. }
@@ -687,6 +693,20 @@ impl Services {
             JobRequest::AddToArchive { handle } => self.add(*handle, ctx),
             JobRequest::DeleteFromArchive { handle, keys } => self.delete(*handle, keys, ctx),
         })
+    }
+
+    /// An extraction in an archive window ended without an error: open the folder it went
+    /// into when the user wants that, and say so in its report. (The compact window's quick
+    /// verbs do the same through their own host, `quick.rs`.)
+    fn extracted(&self, mut done: JobDone) -> JobDone {
+        if let (Some(after), Some(report), Some(folder)) = (
+            self.after_extract.as_ref(),
+            done.extract.as_mut(),
+            self.destination.get(),
+        ) {
+            report.opened_folder = after.done(&folder);
+        }
+        done
     }
 
     fn create(&self, choices: CreateChoices<'_>, ctx: &JobContext<'_>) -> Result<JobDone> {

@@ -61,7 +61,8 @@ export function describe(outcome: JobOutcome): Described {
       }
       return {
         headline: extractedLine(r),
-        notes: [],
+        // "Open the folder when done" (owner request 2026-11-10).
+        notes: r.opened_folder ? [t("extract.openedFolder")] : [],
         completed: true,
         details: reportDetails(r),
         warn: r.not_extracted_total > 0,

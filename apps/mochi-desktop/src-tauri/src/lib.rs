@@ -6,6 +6,7 @@
 //! generated into `ui/src/ipc/generated/` by `ts-rs` when the tests run;
 //! CI fails if the checked-in copies are stale.
 
+pub mod afterextract;
 mod automation;
 pub mod browse;
 pub mod check;
@@ -51,10 +52,17 @@ pub fn run() -> Result<(), tauri::Error> {
     // The shared services. What belongs to one window (its staged sources,
     // extract folder, Test and Repair tool) is made per window and handed to
     // each job when it starts (`windows::WindowState`, `JobRegistry::services_for`).
+    // "Open the folder when done": one choice for the compact window and the archive windows.
+    let quick = quick::Quick::new();
+    let after_extract = quick.after_extract();
+    after_extract.set_opener(Arc::new(|folder: &std::path::Path| {
+        help::open_folder(folder).map_err(|e| std::io::Error::other(e.message))
+    }));
     let jobs = Arc::new(jobs::JobRegistry::with_services(write::Services {
         archives: Arc::clone(&archives),
         foreign: Arc::clone(&foreign),
         updates: Arc::clone(&updates),
+        after_extract: Some(Arc::clone(&after_extract)),
         ..write::Services::default()
     }));
     let windows = Arc::new(windows::WindowStates::new(
@@ -62,7 +70,6 @@ pub fn run() -> Result<(), tauri::Error> {
         Arc::clone(&foreign),
         Arc::clone(&jobs),
     ));
-    let quick = quick::Quick::new();
     let launches = Arc::new(launch::Launches::new(
         Arc::clone(&windows),
         Arc::clone(&quick),
@@ -169,6 +176,8 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::browse_extract_folder,
             commands::plan_extract_to,
             commands::plan_extract_foreign_to,
+            commands::preview_extract_to,
+            commands::set_open_folder_when_done,
             commands::discard_extract_folder,
             commands::recent_archives,
             commands::forget_recent_archives,

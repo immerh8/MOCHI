@@ -6,25 +6,38 @@ import { Hint } from "../a11y/Hint";
 import { errorText } from "../browser/format";
 import { formatNumber, t } from "../i18n";
 import { extractFolderDialog } from "../ipc/dialogs";
-import { browseExtractFolder, extractWizardSetup } from "../ipc/start";
+import { browseExtractFolder, extractWizardSetup, previewExtractTo, setOpenFolderWhenDone } from "../ipc/start";
+import type { ExtractToPreview, PreviewArchive } from "../ipc/start";
+
+/** How long typing pauses before the folder is looked at again. */
+const PREVIEW_DELAY_MS = 180;
 
 /**
  * WinRAR's "Extract to..." window: an editable destination folder with
  * Browse..., the folders used lately (newest first), and a choice to extract
  * into a new folder named after the archive (on by default). Enter confirms.
  *
- * The folder text is the user's; Rust validates it (`folders::existing_folder`)
+ * Owner request 2026-11-10: the folder starts at the Desktop; one that does not exist yet
+ * is created on OK; a line under the field says, as the folder is typed, what will happen
+ * (the folder exists, it will be created, or the new folder gets a number because the
+ * archive's name is taken there); and "Open the folder when done" (the choice the compact
+ * window shares) opens the folder in the file manager once the extraction ends.
+ *
+ * The folder text is the user's; Rust validates it (`folders::folder_to_extract_into`)
  * and `onSubmit` rejects with Rust's message if it will not do, which is shown
  * here and keeps the window open. The same window serves MOCHI and foreign
  * archives: the caller plans and extracts.
  */
 export function ExtractToDialog({
   count,
+  archive,
   onSubmit,
   onClose,
 }: {
   /** Entries selected; 0 extracts everything. */
   count: number;
+  /** The archive being extracted, for the preview (its name names the new folder). */
+  archive: PreviewArchive | null;
   /** Plan and start with these choices; reject to keep the window open with the error. */
   onSubmit: (folder: string, newFolder: boolean) => Promise<void>;
   onClose: () => void;
@@ -35,9 +48,11 @@ export function ExtractToDialog({
   const [ready, setReady] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openFolder, setOpenFolder] = useState(true);
+  const [preview, setPreview] = useState<ExtractToPreview | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // The folder field starts with the folder used last, else the Desktop.
+  // The folder field starts with the Desktop, else the folder used last.
   useEffect(() => {
     let live = true;
     extractWizardSetup().then(
@@ -45,6 +60,7 @@ export function ExtractToDialog({
         if (!live) return;
         setFolder(s.destination);
         setRecent(s.recent);
+        setOpenFolder(s.open_folder);
         setReady(true);
       },
       (e: unknown) => {
@@ -64,6 +80,39 @@ export function ExtractToDialog({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [ready]);
+
+  // What the folder would do, looked at again a moment after typing pauses. An answer
+  // that comes back after the text changed again is dropped.
+  // The archive is named by its kind and handle, not by the object the caller passes
+  // (a new one on every render).
+  const kind = archive?.kind ?? null;
+  const handle = archive?.handle ?? null;
+  useEffect(() => {
+    if (!ready || kind === null || handle === null) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      previewExtractTo(folder, newFolder, { kind, handle }).then(
+        (p) => {
+          if (live) setPreview(p);
+        },
+        () => {
+          if (live) setPreview(null);
+        },
+      );
+    }, PREVIEW_DELAY_MS);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [ready, folder, newFolder, kind, handle]);
+
+  const toggleOpenFolder = (open: boolean) => {
+    setOpenFolder(open);
+    setOpenFolderWhenDone(open).catch((e: unknown) => {
+      setOpenFolder(!open);
+      setError(errorText(t("extract.toFailed"), e));
+    });
+  };
 
   const browse = () => {
     setError(null);
@@ -122,6 +171,15 @@ export function ExtractToDialog({
             {t("extract.toBrowse")}
           </button>
         </div>
+        <p
+          className="note extract-to-preview"
+          aria-live="polite"
+          data-testid="extract-to-preview"
+          data-state={preview?.state ?? "none"}
+          title={preview?.state === "ready" ? preview.target : undefined}
+        >
+          {previewText(preview, newFolder)}
+        </p>
         {recent.length > 0 && (
           <div className="extract-to-recent">
             <span id="extract-to-recent-label" className="meta">
@@ -158,6 +216,16 @@ export function ExtractToDialog({
           />
           {t("extract.toNewFolder")}
         </label>
+        <label className="extract-to-check">
+          <input
+            type="checkbox"
+            checked={openFolder}
+            data-testid="extract-to-open-folder"
+            disabled={working}
+            onChange={(e) => toggleOpenFolder(e.target.checked)}
+          />
+          {t("extract.toOpenFolder")}
+        </label>
         {error && (
           <p role="alert" className="error" data-testid="extract-to-error">
             {error}
@@ -175,4 +243,23 @@ export function ExtractToDialog({
       </form>
     </Panel>
   );
+}
+
+/** The last part of a folder path as shown (either separator). */
+function lastPart(path: string): string {
+  const parts = path.split(/[\\/]/).filter((p) => p !== "");
+  return parts.at(-1) ?? path;
+}
+
+/**
+ * The line under the folder field: what OK will do with the folder typed. The field already
+ * shows the path, so the line names only the folder that matters; the whole path is its tooltip.
+ */
+function previewText(p: ExtractToPreview | null, newFolder: boolean): string {
+  if (p === null) return "";
+  if (p.state === "invalid") return p.reason;
+  const name = lastPart(p.target);
+  if (p.taken !== null) return t("extract.toPreviewTaken", { name: p.taken, target: name });
+  if (p.creates) return newFolder ? t("extract.toPreviewCreateWith", { target: name }) : t("extract.toPreviewCreate");
+  return newFolder ? t("extract.toPreviewNew", { target: name }) : t("extract.toPreviewInto");
 }

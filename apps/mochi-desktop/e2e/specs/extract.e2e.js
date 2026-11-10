@@ -241,6 +241,57 @@ describe("extract", () => {
     expect(toolbar?.fits).toBe(true);
   });
 
+  // Owner request 2026-11-10: "Extract to..." creates a folder that does not exist yet, says
+  // what OK will do before it is pressed, numbers a new folder whose name is taken, and opens
+  // the folder when done. Its own parents, so the names the later tests expect stay free.
+  async function extractToWindow() {
+    await press("extract-to");
+    await $('[data-testid="extract-to-dialog"]').waitForExist({ timeout: 30_000 });
+    const open = await $('[data-testid="extract-to-open-folder"]');
+    if (!(await open.isSelected())) await open.click();
+  }
+  const previewSays = (text) =>
+    browser.waitUntil(async () => (await $('[data-testid="extract-to-preview"]').getText()).includes(text), {
+      timeout: 30_000,
+      timeoutMsg: `the window never said "${text}"`,
+    });
+  const folderLog = () => readFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "utf8").split("\n");
+
+  it("Extract to... creates a folder that does not exist yet, says so first, and opens it when done", async () => {
+    await selectEntry("docs");
+    const target = path.join(root, "made", "here");
+    await extractToWindow();
+    await $('[data-testid="extract-to-folder"]').setValue(target);
+    await $('[data-testid="extract-to-new-folder"]').click();
+    await previewSays("doesn't exist yet");
+    // Saying so creates nothing.
+    expect(existsSync(path.join(root, "made"))).toBe(false);
+    await $('[data-testid="extract-to-ok"]').click();
+    await waitForState("completed");
+    expect(readdirSync(target)).toEqual(["docs"]);
+    expect(size(target, "docs", "a.txt")).toBe(130);
+    await browser.waitUntil(() => folderLog().includes(target), { timeoutMsg: `${target} was not opened` });
+    await expect($('[data-testid="extract-status"]')).toHaveText(
+      expect.stringContaining("The folder was opened in the file manager."),
+    );
+  });
+
+  it("Extract to... into a folder that already has the archive's name makes a numbered new folder and replaces nothing", async () => {
+    await selectEntry("docs");
+    const parent = dir("taken");
+    mkdirSync(path.join(parent, "browse"));
+    writeFileSync(path.join(parent, "browse", "mine.txt"), "mine");
+    await extractToWindow();
+    await $('[data-testid="extract-to-folder"]').setValue(parent);
+    await previewSays("“browse” already exists here");
+    await previewSays("“browse (2)”");
+    await $('[data-testid="extract-to-ok"]').click();
+    await waitForState("completed");
+    expect(readdirSync(path.join(parent, "browse (2)"))).toEqual(["docs"]);
+    expect(readdirSync(path.join(parent, "browse"))).toEqual(["mine.txt"]);
+    expect(readFileSync(path.join(parent, "browse", "mine.txt"), "utf8")).toBe("mine");
+  });
+
   it("lists collisions before writing, skips them on request, and overwrites nothing", async () => {
     // Nothing selected, so Extract takes the whole version: Escape in the list drops the selection.
     await browser.execute(() => document.querySelector('[data-testid="entry"]')?.focus());
