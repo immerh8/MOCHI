@@ -90,6 +90,8 @@ interface Opts {
   commits?: number;
   /** What the window opens with. */
   setup?: { destination: string; recent: string[]; open_folder?: boolean };
+  /** Holds the window's starting folder back until it resolves (a slow answer). */
+  setupLate?: Promise<unknown>;
   /** What Rust says the typed folder would do; by default it exists. */
   preview?: (folder: string, newFolder: boolean) => unknown;
   /** The folder dialog's answers, one per Browse click. */
@@ -146,6 +148,7 @@ function backend(opts: Opts = {}) {
           attributes: { state: "recorded", posix: null, windows: null, mtime: null },
         };
       case "extract_wizard_setup":
+        if (opts.setupLate) return opts.setupLate;
         return { open_folder: true, ...(opts.setup ?? { destination: "/home/me/Desktop", recent: ["/home/me/Desktop"] }) };
       case "preview_extract_to":
         return opts.preview
@@ -710,4 +713,20 @@ test("a foreign archive's preview names that archive", async () => {
   await user.click(screen.getByTestId("foreign-extract-to"));
   await screen.findByTestId("extract-to-dialog");
   await waitFor(() => expect(b.args("preview_extract_to")).toMatchObject({ archive: { kind: "foreign", handle: 9 } }));
+});
+
+test("a folder typed before the starting folder arrives is kept, not replaced", async () => {
+  let release: (v: unknown) => void = () => undefined;
+  const late = new Promise((r) => {
+    release = r;
+  });
+  const { user } = await openMochi({ setupLate: late });
+  await user.click(screen.getByTestId("extract-to"));
+  await screen.findByTestId("extract-to-dialog");
+  await user.type(field(), "/srv/mine");
+  await act(async () => {
+    release({ destination: "/home/me/Desktop", recent: [], open_folder: true });
+    await late;
+  });
+  expect(field()).toHaveValue("/srv/mine");
 });

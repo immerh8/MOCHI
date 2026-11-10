@@ -51,6 +51,13 @@ export function ExtractToDialog({
   const [openFolder, setOpenFolder] = useState(true);
   const [preview, setPreview] = useState<ExtractToPreview | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Set once the user has typed, chosen, or picked a folder: the starting folder, which may
+  // arrive after that, never replaces what they put there.
+  const editedRef = useRef(false);
+  const choose = (value: string) => {
+    editedRef.current = true;
+    setFolder(value);
+  };
 
   // The folder field starts with the Desktop, else the folder used last.
   useEffect(() => {
@@ -58,7 +65,7 @@ export function ExtractToDialog({
     extractWizardSetup().then(
       (s) => {
         if (!live) return;
-        setFolder(s.destination);
+        if (!editedRef.current) setFolder(s.destination);
         setRecent(s.recent);
         setOpenFolder(s.open_folder);
         setReady(true);
@@ -118,7 +125,7 @@ export function ExtractToDialog({
     setError(null);
     browseExtractFolder(folder, extractFolderDialog()).then(
       (picked) => {
-        if (picked !== null) setFolder(picked);
+        if (picked !== null) choose(picked);
       },
       (e: unknown) => setError(errorText(t("extract.toBrowseFailed"), e)),
     );
@@ -165,7 +172,7 @@ export function ExtractToDialog({
             spellCheck={false}
             autoComplete="off"
             disabled={working}
-            onChange={(e) => setFolder(e.target.value)}
+            onChange={(e) => choose(e.target.value)}
           />
           <button type="button" data-testid="extract-to-browse" onClick={browse} disabled={working}>
             {t("extract.toBrowse")}
@@ -195,7 +202,7 @@ export function ExtractToDialog({
                     title={r}
                     disabled={working}
                     onClick={() => {
-                      setFolder(r);
+                      choose(r);
                       inputRef.current?.focus();
                     }}
                   >

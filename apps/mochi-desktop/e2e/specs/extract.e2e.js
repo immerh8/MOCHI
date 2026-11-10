@@ -247,21 +247,46 @@ describe("extract", () => {
   async function extractToWindow() {
     await press("extract-to");
     await $('[data-testid="extract-to-dialog"]').waitForExist({ timeout: 30_000 });
+    // Ready: the starting folder has arrived and been looked at (the line under the field says something).
+    await browser.waitUntil(async () => (await previewText()) !== "", {
+      timeout: 30_000,
+      timeoutMsg: "the window never said what OK would do",
+    });
     const open = await $('[data-testid="extract-to-open-folder"]');
     if (!(await open.isSelected())) await open.click();
   }
-  const previewSays = (text) =>
-    browser.waitUntil(async () => (await $('[data-testid="extract-to-preview"]').getText()).includes(text), {
-      timeout: 30_000,
-      timeoutMsg: `the window never said "${text}"`,
+  const previewText = async () => {
+    const el = await $('[data-testid="extract-to-preview"]');
+    return (await el.isExisting()) ? await el.getText() : "";
+  };
+  /** Type `folder` into the field and wait until the field holds exactly that. */
+  async function typeFolder(folder) {
+    const input = await $('[data-testid="extract-to-folder"]');
+    await input.setValue(folder);
+    await browser.waitUntil(async () => (await input.getValue()) === folder, {
+      timeout: 10_000,
+      timeoutMsg: `the folder field does not hold ${folder}`,
     });
+  }
+  async function previewSays(text) {
+    let last = "";
+    await browser.waitUntil(
+      async () => {
+        last = await previewText();
+        return last.includes(text);
+      },
+      { timeout: 30_000, timeoutMsg: `the window never said "${text}"` },
+    ).catch((e) => {
+      throw new Error(`${e.message}; it said "${last}"`);
+    });
+  }
   const folderLog = () => readFileSync(process.env.MOCHI_E2E_FOLDER_LOG, "utf8").split("\n");
 
   it("Extract to... creates a folder that does not exist yet, says so first, and opens it when done", async () => {
     await selectEntry("docs");
     const target = path.join(root, "made", "here");
     await extractToWindow();
-    await $('[data-testid="extract-to-folder"]').setValue(target);
+    await typeFolder(target);
     await $('[data-testid="extract-to-new-folder"]').click();
     await previewSays("doesn't exist yet");
     // Saying so creates nothing.
@@ -285,7 +310,7 @@ describe("extract", () => {
     mkdirSync(path.join(parent, "browse"));
     writeFileSync(path.join(parent, "browse", "mine.txt"), "mine");
     await extractToWindow();
-    await $('[data-testid="extract-to-folder"]').setValue(parent);
+    await typeFolder(parent);
     await previewSays("“browse” already exists here");
     await previewSays("“browse (2)”");
     await $('[data-testid="extract-to-ok"]').click();
