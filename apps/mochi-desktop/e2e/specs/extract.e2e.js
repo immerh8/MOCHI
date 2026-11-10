@@ -271,7 +271,10 @@ describe("extract", () => {
     expect(readdirSync(target)).toEqual(["docs"]);
     expect(size(target, "docs", "a.txt")).toBe(130);
     await browser.waitUntil(() => folderLog().includes(target), { timeoutMsg: `${target} was not opened` });
-    await expect($('[data-testid="extract-status"]')).toHaveText(
+    // The status bar shows one line; the rest is its tooltip and is read out: read the text,
+    // not what is drawn.
+    await expect($('[data-testid="extract-status"]')).toHaveElementProperty(
+      "textContent",
       expect.stringContaining("The folder was opened in the file manager."),
     );
   });
