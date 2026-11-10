@@ -83,4 +83,8 @@ export const browser = {
   "menu.add": "Add files...",
   "menu.delete": "Delete",
   "browser.copyFailed": "Could not copy the names",
+  "selection.label": "Selected items",
+  "selection.extractTip": "Extract the selected items to a folder you choose",
+  "selection.removeTip": "Remove the selected items from this version (earlier versions keep them)",
+  "selection.clear": "Clear the selection (Esc)",
 } as const;

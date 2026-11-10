@@ -125,7 +125,7 @@ describe("extract", () => {
     queuePicks(browseCopy);
     await $('[data-testid="open-archive"]').click();
     await $('[data-testid="archive-meta"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="archive-meta"]')).toHaveText(expect.stringContaining("browse.mochi"));
+    await expect($('[data-testid="crumb-root"]')).toHaveText(expect.stringContaining("browse.mochi"));
   });
 
   it("extracts everything into a new folder next to the archive, with no folder dialog", async () => {
@@ -214,6 +214,31 @@ describe("extract", () => {
     expect(size(selectedDir, "docs", "a.txt")).toBe(130);
     expect(readdirSync(path.join(selectedDir, "docs")).sort()).toEqual(["a.txt", "empty"]);
     await expect($('[data-testid="extract-status"]')).toHaveAttribute("data-complete", "true");
+  });
+
+  // Owner request 2026-11-10: the selection's actions beside "N selected", and words beside the
+  // toolbar's icons only when they fit, measured on the real layout.
+  it("shows the selection's actions in the status bar, and the toolbar never overflows", async () => {
+    await selectEntry("docs");
+    const bar = await $('[data-testid="selection-bar"]');
+    await bar.waitForExist({ timeout: 30_000 });
+    await expect($('[data-testid="selection-extract"]')).toBeEnabled();
+    await expect($('[data-testid="selection-remove"]')).toBeEnabled();
+    const info = await $('[data-testid="selection-info"]');
+    await info.click();
+    await expect($('[data-testid="info-panel"]')).toBeDisplayed();
+    await info.click();
+    await expect($('[data-testid="info-panel"]')).not.toBeDisplayed();
+    await $('[data-testid="selection-clear"]').click();
+    await bar.waitForExist({ reverse: true, timeout: 30_000 });
+    await expect($('[data-testid="entry-count"]')).not.toHaveText(expect.stringContaining("selected"));
+
+    const toolbar = await browser.execute(() => {
+      const el = document.querySelector('[role="group"].toolbar');
+      return el ? { labels: el.getAttribute("data-labels"), fits: el.scrollWidth <= el.clientWidth + 1 } : null;
+    });
+    expect(toolbar?.labels === "on" || toolbar?.labels === "off").toBe(true);
+    expect(toolbar?.fits).toBe(true);
   });
 
   it("lists collisions before writing, skips them on request, and overwrites nothing", async () => {
@@ -326,7 +351,7 @@ describe("extract", () => {
     // An archive is open: the toolbar's Open opens another, in a window of its own.
     await inNewWindow(() => $('[data-testid="toolbar-open"]').click());
     await browser.waitUntil(
-      async () => (await $('[data-testid="archive-meta"]').getText()).includes("large.mochi"),
+      async () => (await $('[data-testid="crumb-root"]').getText()).includes("large.mochi"),
       { timeout: 60_000 },
     );
     await press("extract-all");

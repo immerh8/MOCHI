@@ -540,11 +540,24 @@ in and out, and a search bar in place of the result banners; explanations belong
 not on screen. The window is one fixed frame that never scrolls (only the file list and a
 dialog's own body do, with thin scroll bars):
 
-- **Toolbar** (`role="group"`): icons only, each with its name as hidden text and as the
-  tooltip: Open (Ctrl+O), New archive, then Add, Extract, Test, Remove; at the right the
+- **Toolbar** (`role="group"`): each button's word beside its icon whenever every word fits
+  (owner request 2026-11-10; `shell/useToolbarLabels.ts` tries the words on and takes them off
+  again if the bar would overflow, re-measuring when the window or the bar's contents change, so
+  it holds in every language), icons only otherwise; the word is the accessible name either way,
+  and the tooltip: Open (Ctrl+O), New archive, then Add, Extract, Test, Remove; at the right the
   **search field** (Ctrl+F), Info, More and Help. A button is disabled when it does not apply;
   its tooltip says why. **More** holds Open and extract, Other formats, Passphrases, Repair,
   Settings.
+- **Selection bar** (owner request 2026-11-10): while entries are selected, the status bar shows
+  Extract to…, Remove and Info beside "N selected", plus a button that clears the selection
+  (`data-testid="selection-bar"`, a labelled `role="group"`). They are the same actions as the
+  More menu, the list's menu and their keys, with the same availability (`shell/availability.ts`):
+  a button that cannot act is disabled with its reason as the tooltip, never hidden, so nothing
+  shifts under the pointer. In a narrow window they keep their icons and drop their words.
+- **Path bar**: back, forward, up, then the crumbs from the archive's name (the root crumb) down
+  to the current folder; the lock badge and the version button sit at its right end, before
+  Close. The archive's name is not repeated beside the crumbs (it is still read out, once, for
+  assistive technology).
 - **Tools open in a window over the list** (`shell/ToolSheet.tsx`, `data-testid="tool-sheet"`),
   one at a time, with a close button and Escape. Every tool stays mounted, so a running test or
   an open report is still there when the user comes back. There is no Advanced drawer any more.

@@ -124,8 +124,9 @@ export function SlotHost({ name, className }: { name: SlotName; className?: stri
 }
 
 /**
- * One toolbar button: an icon only, as in a desktop archiver. The label is the
- * accessible name (kept as hidden text) and the tooltip unless `title` holds a
+ * One toolbar button: an icon and its word, the word shown whenever the bar has
+ * room for every word (owner request 2026-11-10, `useToolbarLabels`). The label
+ * is the accessible name either way, and the tooltip unless `title` holds a
  * longer one (or why the button is off). Drawn into a menu slot (`MENU_SLOTS`)
  * it is a menu item instead: icon, label and its key, with the same test id,
  * state and action, so the owning component does not need to know where it is.
@@ -184,7 +185,9 @@ export function ToolButton({
       onClick={onClick}
     >
       {icon}
-      <span className="sr-only">{label}</span>
+      {/* Beside the icon when the bar has room, visually hidden when it does not
+          (`useToolbarLabels`); the accessible name either way. */}
+      <span className="tool-label">{label}</span>
     </button>
   );
 }
