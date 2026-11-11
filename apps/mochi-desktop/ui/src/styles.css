@@ -2253,8 +2253,9 @@ button.transfer-retry {
 }
 
 /* "Files already exist" (owner decision 2026-11-11): one question, its names, its choices. */
+/* Wide enough for its five buttons on one row in a default-sized window; they wrap below that. */
 .dialog:has(.choices) {
-  width: min(40rem, 100%);
+  width: min(46rem, 100%);
 }
 .choices {
   display: flex;
@@ -2313,8 +2314,18 @@ button.transfer-retry {
 .choices-actions {
   flex-wrap: wrap;
 }
-.choices-actions .choices-left {
+.choices-actions > :first-child {
   margin-right: auto;
+}
+.choices-elsewhere {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+.choices-dot {
+  color: var(--muted);
 }
 /* The choice that moves the user's files away: red text, never the default. */
 button.destructive {

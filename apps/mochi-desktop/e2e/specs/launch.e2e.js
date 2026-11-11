@@ -275,7 +275,9 @@ describe("a second launch", () => {
     await switchToWindowWith("extract-panel");
     expect(await browser.getWindowHandle()).not.toBe(mainWindow);
     archiveWindows.add(await browser.getWindowHandle());
-    await expect($('[data-testid="extract-destination"]')).toHaveText(expect.stringContaining(dir));
+    // The panel asks (a file is where the archive has a folder): the folder is named in the
+    // question, and its whole path is the question's tooltip.
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", dir);
     expect(readdirSync(dir).sort()).toEqual(["again.mochi", "docs"]);
     expect(readFileSync(path.join(dir, "docs"), "utf8")).toBe("mine");
     await $('[data-testid="extract-close"]').click();

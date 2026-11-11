@@ -125,23 +125,32 @@ export function ExtractChoices({
         </span>
       )}
 
+      {/* Going elsewhere instead: quiet links, so the buttons stay three on one row. */}
+      {((existing > 0 && onNewFolder) || onChangeFolder) && (
+        <p className="choices-elsewhere">
+          {existing > 0 && onNewFolder && (
+            <button type="button" className="link" data-testid={id("new-folder")} onClick={onNewFolder} disabled={busy}>
+              {t("choice.newFolder")}
+            </button>
+          )}
+          {existing > 0 && onNewFolder && onChangeFolder && (
+            <span className="choices-dot" aria-hidden="true">
+              ·
+            </span>
+          )}
+          {onChangeFolder && (
+            <button type="button" className="link" data-testid={id("change-folder")} onClick={onChangeFolder} disabled={busy}>
+              {t("extract.changeFolder")}
+            </button>
+          )}
+        </p>
+      )}
+
       <div className="actions dialog-actions choices-actions">
         {hint}
-        {/* When files would be replaced, "Extract to a new folder" is the way elsewhere: four
-            choices, one row. */}
-        {onChangeFolder && existing === 0 && (
-          <button type="button" className="choices-left" data-testid={id("change-folder")} onClick={onChangeFolder} disabled={busy}>
-            {t("extract.changeFolder")}
-          </button>
-        )}
         <button type="button" data-testid={closeId} onClick={onCancel} disabled={busy}>
           {t("common.cancel")}
         </button>
-        {existing > 0 && onNewFolder && (
-          <button type="button" data-testid={id("new-folder")} onClick={onNewFolder} disabled={busy}>
-            {t("choice.newFolder")}
-          </button>
-        )}
         {existing > 0 && (
           <button
             type="button"
