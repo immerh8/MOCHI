@@ -334,8 +334,9 @@ export function Extractor({
   // Memoised: the Details panel belongs to one result and is told apart by identity.
   const described = useMemo(() => (job.state === "done" ? describe(job.outcome) : null), [job]);
   const report = job.state === "done" && job.outcome.status === "completed" ? job.outcome.extract : undefined;
-  // The panel asks a question (rather than confirming) when something is in the way.
-  const asks = plan !== null && (plan.existing_total > 0 || plan.conflicts_total > 0);
+  // Where the files go and what goes there: shown unless the folder already has some of the
+  // names, when the question and its list take the room (the title's tooltip names the folder).
+  const showsWhere = plan !== null && plan.existing_total === 0;
 
   // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
   const progressLine = busy && (
@@ -425,7 +426,7 @@ export function Extractor({
           fallbackId="extract-heading"
           onClose={busy ? undefined : close}
         >
-          {!asks && (
+          {showsWhere && (
             <dl>
               <dt>{t("extract.folder")}</dt>
               <dd data-testid="extract-destination" title={plan.destination}>
