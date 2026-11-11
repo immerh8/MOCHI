@@ -112,8 +112,8 @@ function openUp(folder) {
 const planShows = (folder) =>
   browser.waitUntil(
     async () => {
-      const el = await $('[data-testid="extract-destination"]');
-      return (await el.isExisting()) && (await el.getText()) === folder;
+      const el = await $('[data-testid="extract-choices-title"]');
+      return (await el.isExisting()) && (await el.getAttribute("title")) === folder;
     },
     { timeout: 60_000, timeoutMsg: `the plan never named ${folder}` },
   );
@@ -133,7 +133,7 @@ describe("extract", () => {
     expect(existsSync(allDir)).toBe(false);
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(allDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", allDir);
     expect(existsSync(allDir)).toBe(true);
     await expect($('[data-testid="extract-scope"]')).toHaveText(
       expect.stringContaining("Everything in version 3"),
@@ -206,7 +206,7 @@ describe("extract", () => {
     // With a selection, the toolbar's Extract takes the selection.
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(selectedDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", selectedDir);
     await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs ("));
     await press("extract-confirm");
     await waitForState("completed");
@@ -363,8 +363,8 @@ describe("extract", () => {
     queuePicks(emptyDir);
     await press("extract-change-folder");
     await browser.waitUntil(
-      async () => (await $('[data-testid="extract-destination"]').isExisting()) &&
-        (await $('[data-testid="extract-destination"]').getText()) === emptyDir,
+      async () => (await $('[data-testid="extract-choices-title"]').isExisting()) &&
+        (await $('[data-testid="extract-choices-title"]').getAttribute("title")) === emptyDir,
       { timeout: 60_000, timeoutMsg: `the panel never showed ${emptyDir}` },
     );
     queuePicks(crowdedDir);
@@ -445,7 +445,7 @@ describe("extract", () => {
     );
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 120_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(cancelDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", cancelDir);
     await press("extract-confirm");
 
     // 100,000 entries at MOCHI_E2E_PACE_MS each: ample time to cancel.
