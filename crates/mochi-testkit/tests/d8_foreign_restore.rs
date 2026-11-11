@@ -5,7 +5,7 @@
 
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::job::JobContext;
-use mochi_core::restore::{ExceptionKind, RestoreReport};
+use mochi_core::restore::{ExceptionKind, OnExisting, RestoreReport};
 use mochi_core::restore_foreign::*;
 use mochi_core::storage::{CaseBehavior, NameIssue, RestoreDir};
 use mochi_core::ErrorCode;
@@ -484,7 +484,7 @@ fn the_plan_shows_conflicts_and_refusals_without_writing() {
         e(3, "l", ForeignKind::Symlink),
     ];
     let mut root = tree.clone();
-    let plan = plan_foreign(&entries, &[], &mut root).unwrap();
+    let plan = plan_foreign(&entries, &[], &mut root, OnExisting::Keep).unwrap();
     assert_eq!(plan.items, 2);
     assert_eq!(plan.refusals.len(), 2);
     assert_eq!(plan.preflight.case_behavior, CaseBehavior::Insensitive);
@@ -640,5 +640,76 @@ fn fast_extract_skips_only_the_file_flush() {
         exception(&r.report, "bad.txt"),
         Some(ExceptionKind::Integrity { .. })
     ));
+    assert!(tree.paths().iter().all(|p| !p.contains(".mochi-restore")));
+}
+
+/// Owner decision 2026-11-11: a ZIP or 7z extracted into a folder that
+/// already has some of its names, with "Add only new files" (Merge) and
+/// "Replace existing files" (Replace), as for a MOCHI archive. Replace moves
+/// the existing file to the Bin only once the new one has passed its checks.
+#[test]
+fn merge_and_replace_into_an_existing_folder() {
+    let entries = [
+        file(0, "docs/a.txt"),
+        file(1, "docs/new.txt"),
+        file(2, "docs/bad.txt"),
+    ];
+    let crowded = || {
+        let tree = SimTree::new();
+        tree.insert_file("docs/a.txt", b"mine a");
+        tree.insert_file("docs/bad.txt", b"mine bad");
+        tree
+    };
+    let options = |on_existing| ForeignRestoreOptions {
+        on_existing,
+        ..ForeignRestoreOptions::default()
+    };
+    let bad = |i| (i == 2).then(|| FileFailure::CheckFailed("CRC32 did not match".into()));
+
+    let tree = crowded();
+    let mut root = tree.clone();
+    let plan = plan_foreign(&entries, &[], &mut root, OnExisting::Replace).unwrap();
+    assert_eq!(plan.preflight.merged.len(), 1);
+    assert_eq!(plan.preflight.replaced.len(), 2);
+
+    let r = run_with(
+        &entries,
+        &[],
+        tree.clone(),
+        bad,
+        options(OnExisting::Merge),
+        &Job::new().ctx(),
+    )
+    .unwrap();
+    assert_eq!(tree.file(b"docs/new.txt").unwrap(), body(1));
+    assert_eq!(tree.file(b"docs/a.txt").unwrap(), b"mine a");
+    assert_eq!(
+        exception(&r.report, "docs/a.txt"),
+        Some(&ExceptionKind::Collision)
+    );
+    assert_eq!((r.report.merged_directories, r.report.replaced), (1, 0));
+    assert!(tree.set_aside_files().is_empty());
+
+    let tree = crowded();
+    let r = run_with(
+        &entries,
+        &[],
+        tree.clone(),
+        bad,
+        options(OnExisting::Replace),
+        &Job::new().ctx(),
+    )
+    .unwrap();
+    assert_eq!(tree.file(b"docs/a.txt").unwrap(), body(0));
+    assert_eq!(
+        tree.file(b"docs/bad.txt").unwrap(),
+        b"mine bad",
+        "a failed check costs nothing"
+    );
+    assert_eq!(
+        tree.set_aside_files(),
+        [("docs/a.txt".to_owned(), b"mine a".to_vec())]
+    );
+    assert_eq!(r.report.replaced, 1);
     assert!(tree.paths().iter().all(|p| !p.contains(".mochi-restore")));
 }

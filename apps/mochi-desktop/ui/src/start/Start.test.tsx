@@ -81,7 +81,7 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
       case "list_children":
         return { total: 0, offset: 0, entries: [] };
       case "plan_extract_default":
-        return { destination: "/home/me/photos", entries: 3, conflicts: [], conflicts_total: 0, case_insensitive: false };
+        return { destination: "/home/me/photos", entries: 3, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
       case "close_archive":
         return true;
     }

@@ -11,7 +11,7 @@
 // `"`, `:` or control characters in a name, so there the same entries are
 // reported NAME_UNSUPPORTED instead of being extracted. Either way the name is
 // shown as text and the app never writes outside the chosen folder.
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $, $$, expect } from "@wdio/globals";
@@ -112,8 +112,8 @@ function openUp(folder) {
 const planShows = (folder) =>
   browser.waitUntil(
     async () => {
-      const el = await $('[data-testid="extract-destination"]');
-      return (await el.isExisting()) && (await el.getText()) === folder;
+      const el = await $('[data-testid="extract-choices-title"]');
+      return (await el.isExisting()) && (await el.getAttribute("title")) === folder;
     },
     { timeout: 60_000, timeoutMsg: `the plan never named ${folder}` },
   );
@@ -133,7 +133,7 @@ describe("extract", () => {
     expect(existsSync(allDir)).toBe(false);
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(allDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", allDir);
     expect(existsSync(allDir)).toBe(true);
     await expect($('[data-testid="extract-scope"]')).toHaveText(
       expect.stringContaining("Everything in version 3"),
@@ -206,7 +206,7 @@ describe("extract", () => {
     // With a selection, the toolbar's Extract takes the selection.
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 60_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(selectedDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", selectedDir);
     await expect($('[data-testid="extract-scope"]')).toHaveText(expect.stringContaining("docs ("));
     await press("extract-confirm");
     await waitForState("completed");
@@ -320,7 +320,11 @@ describe("extract", () => {
     expect(readFileSync(path.join(parent, "browse", "mine.txt"), "utf8")).toBe("mine");
   });
 
-  it("lists collisions before writing, skips them on request, and overwrites nothing", async () => {
+  // Owner decision 2026-11-11: a folder that already has some of the names asks what to do,
+  // with the names as a plain list. "Add only new files" adds into the folders that are there
+  // and keeps every existing file; "Replace" moves existing files to the Bin (a stand-in folder
+  // in e2e builds); nothing is written before a choice.
+  it("asks before writing into a folder that has some of the names; Add only new files keeps them", async () => {
     // Nothing selected, so Extract takes the whole version: Escape in the list drops the selection.
     await browser.execute(() => document.querySelector('[data-testid="entry"]')?.focus());
     await browser.keys(["Escape"]);
@@ -334,64 +338,46 @@ describe("extract", () => {
     const before = readdirSync(crowdedDir).sort();
 
     // Version 3 again from the top: the snapshot on screen is unchanged. The
-    // default is a new folder, so it is the user's own pick that collides.
+    // default is a new folder, so it is the user's own pick that has the names.
     await press("extract-all");
     const made = path.join(root, "browse (3)");
     await planShows(made);
     expect(existsSync(made)).toBe(true);
     queuePicks(crowdedDir);
     await press("extract-change-folder");
-    await $('[data-testid="extract-conflicts"]').waitForExist({ timeout: 60_000 });
+    await $('[data-testid="extract-existing"]').waitForExist({ timeout: 60_000 });
     // The unused new folder was tidied away when another one was chosen.
     expect(existsSync(made)).toBe(false);
-    const conflicts = await listed("extract-conflict");
-    const has = (name, code) => conflicts.some((t) => t.includes(name) && t.includes(code));
-    expect(has("big", "NAME_COLLISION")).toBe(true);
-    expect(has("docs", "NAME_COLLISION")).toBe(true);
-    expect(has(HOSTILE_ROOT, windows ? "NAME_UNSUPPORTED" : "NAME_COLLISION")).toBe(true);
-    await expect($('[data-testid="extract-conflict-note"]')).toHaveElementProperty(
-      "textContent",
-      expect.stringContaining("Nothing is overwritten and no name is changed"),
-    );
-    await expect($('[data-testid="extract-conflict-note"]')).toHaveElementProperty(
-      "textContent",
-      expect.stringContaining("keeping both under a new name, is not available yet"),
-    );
-    // Listing the conflicts wrote nothing.
+    const existing = await listed("extract-existing-item");
+    expect(existing).toContain("big");
+    if (!windows) expect(existing).toContain(HOSTILE_ROOT);
+    await expect($('[data-testid="extract-merged-note"]')).toBeExisting();
+    await expect($('[data-testid="extract-choices-title"]')).toHaveText(expect.stringContaining("already exist"));
+    // On Windows the markup name cannot be held anywhere: it is under the closed disclosure.
+    if (windows) await expect($('[data-testid="extract-conflicts"]')).toBeExisting();
+    // Looking wrote nothing, and archive text stayed text.
     expect(readdirSync(crowdedDir).sort()).toEqual(before);
     expect(await countElements("img")).toBe(0);
 
-    // A different folder has none of these conflicts; going back has them again.
-    // (On Windows the markup names are unsupported in any folder, so the panel
-    // can still list conflicts: look at which ones, not whether there are any.)
-    const destinationIs = (folder) =>
-      browser.waitUntil(
-        async () => (await $('[data-testid="extract-destination"]').getText()) === folder,
-        { timeout: 60_000, timeoutMsg: `the panel never showed ${folder}` },
-      );
+    // A different folder has none of these names: a plain confirmation; going back asks again.
     queuePicks(emptyDir);
     await press("extract-change-folder");
-    await destinationIs(emptyDir);
-    if (windows) {
-      const there = await listed("extract-conflict");
-      expect(there.some((t) => t.startsWith("big") || t.startsWith("docs"))).toBe(false);
-    } else {
-      await $('[data-testid="extract-no-conflicts"]').waitForExist({ timeout: 60_000 });
-    }
+    await browser.waitUntil(
+      async () => (await $('[data-testid="extract-choices-title"]').isExisting()) &&
+        (await $('[data-testid="extract-choices-title"]').getAttribute("title")) === emptyDir,
+      { timeout: 60_000, timeoutMsg: `the panel never showed ${emptyDir}` },
+    );
     queuePicks(crowdedDir);
     await press("extract-change-folder");
-    await destinationIs(crowdedDir);
-    await $('[data-testid="extract-conflicts"]').waitForExist({ timeout: 60_000 });
-    expect((await listed("extract-conflict")).some((t) => t.startsWith("big"))).toBe(true);
+    await $('[data-testid="extract-existing"]').waitForExist({ timeout: 60_000 });
 
-    await expect($('[data-testid="extract-confirm"]')).toHaveText("Extract the rest, skipping these");
-    await press("extract-confirm");
+    await press("extract-add-new");
     await waitForState("completed");
 
-    // Existing bytes are untouched; the skipped folder's subtree is absent.
+    // Existing bytes are untouched; the folder that was there was added to.
     expect(readFileSync(path.join(crowdedDir, "big"), "utf8")).toBe("mine");
     expect(readFileSync(path.join(crowdedDir, "docs", "keep.txt"), "utf8")).toBe("keep");
-    expect(existsSync(path.join(crowdedDir, "docs", "a.txt"))).toBe(false);
+    expect(size(crowdedDir, "docs", "a.txt")).toBe(130);
     if (!windows) {
       expect(readFileSync(path.join(crowdedDir, HOSTILE_ROOT), "utf8")).toBe("mine too");
     }
@@ -403,7 +389,7 @@ describe("extract", () => {
     await expect(status).toHaveAttribute("data-complete", "false");
     const items = await listed("extract-not-extracted-item");
     expect(items.some((t) => t.startsWith("big") && t.includes("NAME_COLLISION"))).toBe(true);
-    expect(items.some((t) => t.startsWith("docs/a.txt") || t.includes("docs/a.txt"))).toBe(true);
+    expect(items.some((t) => t.includes("docs/a.txt"))).toBe(false);
     expect(items.some((t) => t.includes(HOSTILE_ROOT))).toBe(true);
     await assertNoBannedWording();
     expect(await countElements("img")).toBe(0);
@@ -412,6 +398,30 @@ describe("extract", () => {
     expect(await countElements('svg:not([aria-hidden="true"][focusable="false"])')).toBe(0);
     expect(await countElements("[onload], [onerror], [onmouseover], [onclick]")).toBe(0);
   });
+
+  it("Replace moves each existing file to the Bin and puts the archive's in its place", async () => {
+    const bin = process.env.MOCHI_E2E_TRASH_DIR;
+    rmSync(bin, { recursive: true, force: true });
+    // The same crowded folder again: big is still the user's "mine".
+    await press("extract-all");
+    await planShows(path.join(root, "browse (3)"));
+    queuePicks(crowdedDir);
+    await press("extract-change-folder");
+    await $('[data-testid="extract-existing"]').waitForExist({ timeout: 60_000 });
+    await press("extract-replace");
+    await waitForState("completed");
+    // The archive's bytes are in place; the user's are in the Bin, under their own name.
+    expect(size(crowdedDir, "big")).toBe(1000);
+    expect(readFileSync(path.join(bin, "big"), "utf8")).toBe("mine");
+    // A file the archive does not have is never touched.
+    expect(readFileSync(path.join(crowdedDir, "docs", "keep.txt"), "utf8")).toBe("keep");
+    await expect($('[data-testid="extract-headline"]')).toHaveText(expect.stringContaining("replaced"));
+    await expect($('[data-testid="extract-status"]')).toHaveElementProperty(
+      "textContent",
+      expect.stringMatching(/The files that were replaced are in the (Trash|Recycle Bin)\./),
+    );
+  });
+
 
   it("closing the plan of a new folder removes it again, and never a folder with files in it", async () => {
     await press("extract-all");
@@ -435,7 +445,7 @@ describe("extract", () => {
     );
     await press("extract-all");
     await $('[data-testid="extract-panel"]').waitForExist({ timeout: 120_000 });
-    await expect($('[data-testid="extract-destination"]')).toHaveText(cancelDir);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", cancelDir);
     await press("extract-confirm");
 
     // 100,000 entries at MOCHI_E2E_PACE_MS each: ample time to cancel.

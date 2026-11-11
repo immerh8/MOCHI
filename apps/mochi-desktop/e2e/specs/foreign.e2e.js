@@ -208,7 +208,7 @@ describe("foreign archives (ZIP and 7z, read-only)", () => {
     await press("foreign-extract-all");
     await $('[data-testid="foreign-plan"]').waitForExist({ timeout: 60_000 });
     await expect($('[data-testid="foreign-conflicts"]')).toBeExisting();
-    await press("foreign-extract-confirm"); // "Extract the rest, skipping these"
+    await press("foreign-extract-confirm"); // "Extract the rest": what cannot be extracted is skipped
     await waitForStatus("completed");
     expect(readdirSync(parent)).toEqual(before);
     await openResultDetails("foreign");

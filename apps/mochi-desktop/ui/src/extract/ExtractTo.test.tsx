@@ -66,6 +66,9 @@ const FOREIGN_ROWS: ForeignRow[] = ["x.txt", "y.txt"].map((n) => ({ ...row(n), e
 const PLAN: ExtractPlan = {
   destination: "/home/me/Desktop/tools",
   entries: 3,
+  existing: [],
+  existing_total: 0,
+  merged_folders: 0,
   conflicts: [],
   conflicts_total: 0,
   case_insensitive: false,
@@ -84,6 +87,8 @@ const REPORT: ExtractReport = {
   files_not_flushed: false,
   case_insensitive: false,
   opened_folder: false,
+  replaced: 0,
+  merged_folders: 0,
 };
 
 interface Opts {
@@ -357,27 +362,38 @@ test("a folder Rust refuses is explained in the window, which stays open; nothin
   expect(screen.getByTestId("extract-to-ok")).toBeEnabled();
 });
 
-test("entries that collide are listed in the plan panel first, and the rest is extracted only on confirm", async () => {
+test("files that already exist are listed first; Add only new files extracts the rest and keeps them", async () => {
   const { user, b } = await openMochi({
-    toPlan: {
-      ...PLAN,
-      conflicts_total: 1,
-      conflicts: [{ path: { text: "a.txt", verbatim: true }, code: "PATH_COLLISION", reason: "already in the folder" }],
-    },
+    toPlan: { ...PLAN, existing_total: 1, existing: [{ text: "a.txt", verbatim: true }] },
   });
   await openWizard(user);
   await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
   await user.click(screen.getByTestId("extract-to-new-folder"));
   await user.keyboard("{Enter}");
   await screen.findByTestId("extract-panel");
-  expect(screen.getByTestId("extract-conflicts")).toHaveTextContent("a.txt");
-  expect(screen.getByTestId("extract-conflict-note")).toBeInTheDocument();
+  expect(screen.getByTestId("extract-choices-title")).toHaveTextContent("“a.txt” already exists in “tools”");
+  expect(screen.getByTestId("extract-existing")).toHaveTextContent("a.txt");
   expect(b.cmds()).not.toContain("start_job");
-  await user.click(screen.getByTestId("extract-confirm"));
+  await user.click(screen.getByTestId("extract-add-new"));
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.request()).toMatchObject({ on_conflict: "skip_conflicts" });
+  expect(b.request()).toMatchObject({ on_conflict: "add_new" });
 });
 
+test("Extract to a new folder instead plans a new folder named after the archive inside the same one", async () => {
+  const { user, b } = await openMochi({
+    toPlan: { ...PLAN, existing_total: 1, existing: [{ text: "a.txt", verbatim: true }] },
+  });
+  await openWizard(user);
+  await waitFor(() => expect(field()).toHaveValue("/home/me/Desktop"));
+  await user.click(screen.getByTestId("extract-to-new-folder"));
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByTestId("extract-new-folder"));
+  await waitFor(() => expect(b.calls.filter((c) => c.cmd === "plan_extract_to")).toHaveLength(2));
+  expect(b.calls.filter((c) => c.cmd === "plan_extract_to").at(-1)?.args).toMatchObject({
+    folder: "/home/me/Desktop/tools",
+    newFolder: true,
+  });
+});
 test("the normal result follows, with a way to open the folder (which names no path)", async () => {
   const { user, b } = await openMochi();
   await openWizard(user);
@@ -481,13 +497,13 @@ test("a foreign archive extracts through the same window and its own plan, and s
   expect(b.args("show_in_folder")).toEqual({ what: { kind: "extract_destination" } });
 });
 
-test("a foreign archive's collisions are listed before anything is written", async () => {
+test("a foreign archive's existing files are listed before anything is written, and Replace is offered", async () => {
   const { user, b } = await openForeign({
     foreignPlan: {
       plan: {
         ...PLAN,
-        conflicts_total: 1,
-        conflicts: [{ path: { text: "x.txt", verbatim: true }, code: "PATH_COLLISION", reason: "already in the folder" }],
+        existing_total: 1,
+        existing: [{ text: "x.txt", verbatim: true }],
       },
       skipped_kinds: 0,
     },
@@ -498,10 +514,11 @@ test("a foreign archive's collisions are listed before anything is written", asy
   await user.click(screen.getByTestId("extract-to-new-folder"));
   await user.keyboard("{Enter}");
   await screen.findByTestId("foreign-plan");
+  expect(screen.getByTestId("foreign-existing")).toHaveTextContent("x.txt");
   expect(b.cmds()).not.toContain("start_job");
-  await user.click(screen.getByTestId("foreign-extract-confirm"));
+  await user.click(screen.getByTestId("foreign-replace"));
   await waitFor(() => expect(b.cmds()).toContain("start_job"));
-  expect(b.request()).toMatchObject({ kind: "extract_foreign", on_conflict: "skip_conflicts" });
+  expect(b.request()).toMatchObject({ kind: "extract_foreign", on_conflict: "replace" });
 });
 
 test("a foreign archive's list menu: Extract to... is on, Add files and Delete are off and say why", async () => {

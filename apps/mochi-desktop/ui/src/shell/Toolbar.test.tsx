@@ -108,7 +108,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
           attributes: { state: "recorded", posix: null, windows: null, mtime: null },
         };
       case "plan_extract_default":
-        return { destination: "/home/me/tools", entries: 3, conflicts: [], conflicts_total: 0, case_insensitive: false };
+        return { destination: "/home/me/tools", entries: 3, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
       case "choose_check_subject":
         return { id: 5, file_name: "tools.mochi", encrypted: false, unlocked: false };
       case "start_job":
@@ -118,7 +118,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
       case "foreign_children":
         return { total: FOREIGN_ROWS.length, offset: a.offset, entries: FOREIGN_ROWS };
       case "plan_extract_foreign":
-        return { plan: { destination: "/home/me/zip", entries: 2, conflicts: [], conflicts_total: 0, case_insensitive: false }, skipped_kinds: 0 };
+        return { plan: { destination: "/home/me/zip", entries: 2, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false }, skipped_kinds: 0 };
       case "close_archive":
       case "close_foreign_archive":
         return true;

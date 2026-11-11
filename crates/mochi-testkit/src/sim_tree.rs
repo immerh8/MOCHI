@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use mochi_core::catalog::namespace::EntryKind;
 use mochi_core::manifest::Attributes;
 use mochi_core::storage::{
-    windows_name_issue, AttributeIssue, AttributeKind, CaseBehavior, DirectoryDurability,
+    windows_name_issue, AttributeIssue, AttributeKind, CaseBehavior, DirectoryDurability, Existing,
     NameIssue, RestoreDir, StorageError,
 };
 
@@ -19,6 +19,8 @@ use crate::SimStorage;
 enum Node {
     Dir,
     File(SimStorage),
+    /// Neither: a symbolic link, a device (`Existing::Other`).
+    Other,
 }
 
 #[derive(Debug, Default)]
@@ -32,6 +34,13 @@ struct Tree {
     case_insensitive: bool,
     windows_rules: bool,
     unprivileged: bool,
+    /// Files moved aside (`RestoreDir::set_aside`): their path and bytes.
+    set_aside: Vec<(String, Vec<u8>)>,
+    /// Moving aside fails (the Recycle Bin is unavailable).
+    set_aside_fails: bool,
+    /// Existing directories that may not be entered (as Linux refuses one
+    /// other users can modify).
+    closed_dirs: Vec<Vec<Vec<u8>>>,
 }
 
 impl Tree {
@@ -128,6 +137,43 @@ impl SimTree {
         }
         t.nodes
             .insert(p, Node::File(SimStorage::from_bytes(bytes.to_vec())));
+    }
+
+    /// Pre-existing destination content: an empty directory at `path` (its
+    /// parents too).
+    pub fn insert_dir(&self, path: &str) {
+        let p = split(path);
+        let mut t = self.tree.lock().unwrap();
+        for i in 1..=p.len() {
+            t.nodes.entry(p[..i].to_vec()).or_insert(Node::Dir);
+        }
+    }
+
+    /// Pre-existing destination content that is neither a file nor a
+    /// directory (a symbolic link, a device) at `path`.
+    pub fn insert_other(&self, path: &str) {
+        let p = split(path);
+        let mut t = self.tree.lock().unwrap();
+        for i in 1..p.len() {
+            t.nodes.entry(p[..i].to_vec()).or_insert(Node::Dir);
+        }
+        t.nodes.insert(p, Node::Other);
+    }
+
+    /// The existing directory at `path` may not be entered
+    /// (`open_existing_dir` answers `None`).
+    pub fn close_dir(&self, path: &str) {
+        self.tree.lock().unwrap().closed_dirs.push(split(path));
+    }
+
+    /// Moving an existing file aside fails from now on.
+    pub fn fail_set_aside(&self) {
+        self.tree.lock().unwrap().set_aside_fails = true;
+    }
+
+    /// The files moved aside so far, as `(path, bytes)`, in order.
+    pub fn set_aside_files(&self) -> Vec<(String, Vec<u8>)> {
+        self.tree.lock().unwrap().set_aside.clone()
     }
 
     /// Every entry, as `/`-joined paths (lossy), files and directories.
@@ -244,6 +290,57 @@ impl RestoreDir for SimTree {
 
     fn entry_exists(&mut self, name: &[u8]) -> Result<bool, StorageError> {
         Ok(self.tree.lock().unwrap().existing(&self.at, name).is_some())
+    }
+
+    fn existing(&mut self, name: &[u8]) -> Result<Existing, StorageError> {
+        let t = self.tree.lock().unwrap();
+        Ok(
+            match t.existing(&self.at, name).and_then(|p| t.nodes.get(&p)) {
+                None => Existing::None,
+                Some(Node::Dir) => Existing::Directory,
+                Some(Node::File(_)) => Existing::File,
+                Some(Node::Other) => Existing::Other,
+            },
+        )
+    }
+
+    fn open_existing_dir(&mut self, name: &[u8]) -> Result<Option<Self>, StorageError> {
+        let t = self.tree.lock().unwrap();
+        let Some(p) = t.existing(&self.at, name) else {
+            return Ok(None);
+        };
+        if !matches!(t.nodes.get(&p), Some(Node::Dir)) || t.closed_dirs.contains(&p) {
+            return Ok(None);
+        }
+        Ok(Some(SimTree {
+            tree: self.tree.clone(),
+            at: p,
+        }))
+    }
+
+    fn set_aside(&mut self, name: &[u8]) -> Result<(), StorageError> {
+        let mut t = self.tree.lock().unwrap();
+        if t.set_aside_fails {
+            return Err(StorageError::Io(std::io::Error::other(
+                "the Recycle Bin is not available",
+            )));
+        }
+        let Some(p) = t.existing(&self.at, name) else {
+            return Err(StorageError::Unsupported("nothing to move aside"));
+        };
+        let Some(Node::File(bytes)) = t.nodes.get(&p).cloned() else {
+            return Err(StorageError::Unsupported(
+                "only a regular file is moved aside, never a folder or a link",
+            ));
+        };
+        t.nodes.remove(&p);
+        let shown = p
+            .iter()
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        t.set_aside.push((shown, bytes.contents()));
+        Ok(())
     }
 
     fn apply_attributes(

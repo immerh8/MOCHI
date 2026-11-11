@@ -4,12 +4,25 @@
 //!
 //! # Rules
 //!
-//! * **Nothing is ever overwritten or merged.** Every directory is created
-//!   exclusively and every file is published without replacing. An entry
-//!   that already exists at the destination, or that the destination
-//!   filesystem folds onto another entry's name (case, normalization), is
-//!   a `NAME_COLLISION` exception. The earlier entry keeps its bytes, and a
-//!   colliding directory's subtree is not restored.
+//! * **Nothing is overwritten or merged unless the caller asks**
+//!   ([`RestoreOptions::on_existing`], owner decision 2026-11-11; spec
+//!   §10.4 forbids only *silent* overwriting). By default ([`OnExisting::Keep`])
+//!   every directory is created exclusively and every file is published
+//!   without replacing: an entry that already exists at the destination, or
+//!   that the destination filesystem folds onto another entry's name (case,
+//!   normalization), is a `NAME_COLLISION` exception, the earlier entry keeps
+//!   its bytes, and a colliding directory's subtree is not restored.
+//!   [`OnExisting::Merge`] enters a directory that already exists (only a
+//!   plain one the backend allows, [`RestoreDir::open_existing_dir`]) and
+//!   restores what it lacks; an existing file still keeps its bytes.
+//!   [`OnExisting::Replace`] also moves an existing regular file to where the
+//!   user can get it back ([`RestoreDir::set_aside`]: the Recycle Bin or the
+//!   Trash) once the restored file has been verified, just before it is
+//!   published, still without replacing. Nothing else is ever replaced: a
+//!   file where the archive has a directory (or the reverse), a link, or a
+//!   special file stays a `NAME_COLLISION`. A directory that was entered is
+//!   not counted as restored and gets none of the archive's attributes; it
+//!   was the user's.
 //! * **Names are never altered.** A name the destination cannot hold
 //!   ([`RestoreDir::name_issue`]) is a `NAME_UNSUPPORTED` exception, and
 //!   the entry and its subtree are skipped.
@@ -59,8 +72,8 @@ use crate::publish::{promised_attributes, OpenedHead, ReadOptions};
 use crate::read::read_entry;
 use crate::report::{Finding, Severity};
 use crate::storage::{
-    case_fold_key, AttributeIssue, AttributeKind, CaseBehavior, DirectoryDurability, NameIssue,
-    RestoreDir, Storage, StorageError,
+    case_fold_key, AttributeIssue, AttributeKind, CaseBehavior, DirectoryDurability, Existing,
+    NameIssue, RestoreDir, Storage, StorageError,
 };
 
 /// Progress phase of [`restore`]: `completed` is entries handled.
@@ -88,6 +101,29 @@ pub struct RestoreOptions {
     /// cancellation is unaffected. The report says which way it ran
     /// ([`RestoreReport::file_data_synced`]).
     pub skip_file_sync: bool,
+    /// What to do with a name that already exists at the destination
+    /// ([`OnExisting`]). `Keep` by default.
+    pub on_existing: OnExisting,
+}
+
+/// What a restoration does with a name that already exists at the
+/// destination (owner decision 2026-11-11). Names the archive itself holds
+/// twice (or that the destination folds together), names the destination
+/// cannot hold, and an existing entry of the other kind are exceptions in
+/// every mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OnExisting {
+    /// Leave it alone: the entry, and a directory's subtree, is a
+    /// `NAME_COLLISION` and is not restored.
+    #[default]
+    Keep,
+    /// Restore into a directory that already exists, adding what it lacks.
+    /// An existing file keeps its bytes (`NAME_COLLISION`).
+    Merge,
+    /// As `Merge`, and an existing regular file is moved to the Recycle Bin
+    /// or the Trash ([`RestoreDir::set_aside`]) once the restored file has
+    /// been verified, which then takes its name.
+    Replace,
 }
 
 /// The setuid and setgid bits.
@@ -157,9 +193,33 @@ pub struct RestoreReport {
     pub attribute_exceptions: Vec<AttributeException>,
     /// The destination's case behaviour, detected before writing.
     pub case_behavior: CaseBehavior,
+    /// Directories that already existed and were restored into
+    /// ([`OnExisting::Merge`] and `Replace`); not in `directories`.
+    pub merged_directories: u64,
+    /// Existing files moved to the Recycle Bin or the Trash and replaced by
+    /// the restored file ([`OnExisting::Replace`]); counted in `files` too.
+    pub replaced: u64,
 }
 
 impl RestoreReport {
+    /// An empty report for a restoration into a destination of
+    /// `case_behavior`.
+    pub(crate) fn empty(case_behavior: CaseBehavior, file_data_synced: bool) -> Self {
+        RestoreReport {
+            files: 0,
+            directories: 0,
+            bytes: 0,
+            exceptions: Vec::new(),
+            directory_durability: DirectoryDurability::Confirmed,
+            file_data_synced,
+            attributes_unavailable: None,
+            attribute_exceptions: Vec::new(),
+            case_behavior,
+            merged_directories: 0,
+            replaced: 0,
+        }
+    }
+
     /// Every selected entry was restored and verified, with no exception.
     /// Attributes are reported separately ([`Self::attributes_complete`]).
     pub fn complete(&self) -> bool {
@@ -281,18 +341,46 @@ pub struct Preflight {
     /// Entries that will not be restored, and why. Their subtrees are
     /// skipped too (reported as `ParentNotRestored` during the restore).
     pub exceptions: BTreeMap<ArchivePath, ExceptionKind>,
+    /// Directories that already exist and will be restored into
+    /// ([`OnExisting::Merge`] and `Replace`).
+    pub merged: std::collections::BTreeSet<ArchivePath>,
+    /// Files that already exist as regular files: with
+    /// [`OnExisting::Replace`] they will be moved to the Recycle Bin or the
+    /// Trash and replaced. (With `Keep` and `Merge` they are collisions in
+    /// `exceptions` instead.)
+    pub replaced: std::collections::BTreeSet<ArchivePath>,
+    /// Of the `exceptions`: directories that exist but that the backend will
+    /// not enter ([`RestoreDir::open_existing_dir`] said no: a link, or on
+    /// Linux one that other users can modify), so a caller can say why.
+    pub not_entered: std::collections::BTreeSet<ArchivePath>,
+    /// Of the `exceptions`: entries the destination would treat as having the
+    /// same name as another of the archive's own (case, normalization).
+    pub same_name_in_archive: std::collections::BTreeSet<ArchivePath>,
 }
 
 /// The restore preflight (plan C6): detect the destination's case
 /// behaviour, then find the collisions and unsupported names among
-/// `selected` (in path order) before anything is written. Only the case
-/// probe touches the destination, and it removes what it creates.
-pub fn preflight<D: RestoreDir>(root: &mut D, selected: &[Selected]) -> Result<Preflight> {
+/// `selected` (in path order) before anything is written. With
+/// [`OnExisting::Merge`] or `Replace` it looks inside the directories that
+/// already exist (opened as [`RestoreDir::open_existing_dir`] allows, never
+/// through a link) for the names that are there. Only the case probe writes
+/// to the destination, and it removes what it creates.
+pub fn preflight<D: RestoreDir>(
+    root: &mut D,
+    selected: &[Selected],
+    on_existing: OnExisting,
+) -> Result<Preflight> {
     let case_behavior = root.case_behavior()?;
     let mut exceptions = BTreeMap::new();
+    let mut merged = std::collections::BTreeSet::new();
+    let mut replaced = std::collections::BTreeSet::new();
+    let mut not_entered = std::collections::BTreeSet::new();
+    let mut same_name_in_archive = std::collections::BTreeSet::new();
+    // Existing directories opened to look inside, by archive path.
+    let mut open: std::collections::HashMap<ArchivePath, D> = std::collections::HashMap::new();
     let mut taken: std::collections::HashSet<(Option<ArchivePath>, Vec<u8>)> =
         std::collections::HashSet::new();
-    for (path, _, _) in selected {
+    for (path, kind, _) in selected {
         let name = last_component(path);
         if let Some(issue) = root.name_issue(name) {
             exceptions.insert(path.clone(), ExceptionKind::UnsupportedName(issue));
@@ -303,14 +391,49 @@ pub fn preflight<D: RestoreDir>(root: &mut D, selected: &[Selected]) -> Result<P
             CaseBehavior::Insensitive => case_fold_key(name),
         };
         let parent = path.parent();
-        let top_level = parent.is_none();
-        if !taken.insert((parent, key)) || (top_level && root.entry_exists(name)?) {
+        if !taken.insert((parent.clone(), key)) {
             exceptions.insert(path.clone(), ExceptionKind::Collision);
+            same_name_in_archive.insert(path.clone());
+            continue;
+        }
+        // The destination is looked at only where the parent exists there:
+        // the root, or a directory that will be entered.
+        let dir: Option<&mut D> = match &parent {
+            None => Some(&mut *root),
+            Some(p) if merged.contains(p) => open.get_mut(p),
+            Some(_) => None,
+        };
+        let Some(dir) = dir else { continue };
+        let is_dir = *kind == EntryKind::Directory;
+        match (dir.existing(name)?, is_dir, on_existing) {
+            (Existing::None, _, _) => {}
+            (Existing::Directory, true, OnExisting::Merge | OnExisting::Replace) => {
+                match dir.open_existing_dir(name)? {
+                    Some(d) => {
+                        merged.insert(path.clone());
+                        open.insert(path.clone(), d);
+                    }
+                    None => {
+                        exceptions.insert(path.clone(), ExceptionKind::Collision);
+                        not_entered.insert(path.clone());
+                    }
+                }
+            }
+            (Existing::File, false, OnExisting::Replace) => {
+                replaced.insert(path.clone());
+            }
+            _ => {
+                exceptions.insert(path.clone(), ExceptionKind::Collision);
+            }
         }
     }
     Ok(Preflight {
         case_behavior,
         exceptions,
+        merged,
+        replaced,
+        not_entered,
+        same_name_in_archive,
     })
 }
 
@@ -354,10 +477,11 @@ pub fn preflight_selected<D: RestoreDir>(
     head: &OpenedHead,
     selection: &[ArchivePath],
     root: &mut D,
+    on_existing: OnExisting,
 ) -> Result<(Preflight, u64)> {
     let selected = select(head, selection)?;
     let total = selected.len() as u64;
-    Ok((preflight(root, &selected)?, total))
+    Ok((preflight(root, &selected, on_existing)?, total))
 }
 
 /// Restore the opened commit's entries, or only `under` and its subtree
@@ -401,7 +525,7 @@ pub fn restore_selected<D: RestoreDir>(
     let total = selected.len() as u64;
 
     ctx.check_cancelled()?;
-    let pre = preflight(&mut root, &selected)?;
+    let pre = preflight(&mut root, &selected, options.on_existing)?;
     if options.refuse_on_preflight_exceptions {
         if let Some((p, kind)) = pre.exceptions.iter().next() {
             return Err(MochiError::new(
@@ -421,17 +545,7 @@ pub fn restore_selected<D: RestoreDir>(
         }
     }
 
-    let mut report = RestoreReport {
-        files: 0,
-        directories: 0,
-        bytes: 0,
-        exceptions: Vec::new(),
-        directory_durability: DirectoryDurability::Confirmed,
-        file_data_synced: !options.skip_file_sync,
-        attributes_unavailable: None,
-        attribute_exceptions: Vec::new(),
-        case_behavior: pre.case_behavior,
-    };
+    let mut report = RestoreReport::empty(pre.case_behavior, !options.skip_file_sync);
     let attributes: Option<BTreeMap<FileVersionId, Attributes>> =
         match promised_attributes(src, head, opts) {
             Ok(a) => Some(a),
@@ -514,6 +628,25 @@ pub fn restore_selected<D: RestoreDir>(
             continue;
         }
         match kind {
+            // An existing directory the preflight chose to enter: opened again
+            // now (never through a link); if it is no longer one this
+            // restoration may enter, it is a collision as before.
+            EntryKind::Directory if pre.merged.contains(path) => {
+                match parent.open_existing_dir(name) {
+                    Ok(Some(child)) => {
+                        report.merged_directories += 1;
+                        dirs.insert(Some(path.clone()), child);
+                    }
+                    Ok(None) => except(ExceptionKind::Collision),
+                    Err(e) => {
+                        let e = MochiError::from(e);
+                        except(ExceptionKind::Failed {
+                            code: e.code,
+                            message: e.message,
+                        })
+                    }
+                }
+            }
             EntryKind::Directory => match parent.create_dir(name) {
                 Ok(child) => {
                     report.directories += 1;
@@ -569,12 +702,38 @@ pub fn restore_selected<D: RestoreDir>(
                     }
                     file.sync_data().map(|()| r).map_err(MochiError::from)
                 });
+                // Replace: the restored file is verified; only now is the
+                // existing one moved to the Recycle Bin or the Trash. If that
+                // fails it keeps its name and its bytes, and this file is not
+                // published.
+                let read = match read {
+                    Ok(r) if pre.replaced.contains(path) => match parent.set_aside(name) {
+                        Ok(()) => Ok((r, true)),
+                        Err(e) => {
+                            parent.discard(file, &temp)?;
+                            except(ExceptionKind::Failed {
+                                code: ErrorCode::IoError,
+                                message: format!(
+                                    "the existing file could not be moved to the Recycle Bin or \
+                                     the Trash, so it was kept: {e}"
+                                ),
+                            });
+                            ctx.report(RESTORE_PHASE, done as u64 + 1, Some(total));
+                            continue;
+                        }
+                    },
+                    Ok(r) => Ok((r, false)),
+                    Err(e) => Err(e),
+                };
                 match read {
-                    Ok(r) => match parent.publish_no_replace(&temp, name) {
+                    Ok((r, set_aside)) => match parent.publish_no_replace(&temp, name) {
                         Ok(()) => {
                             drop(file);
                             report.files += 1;
                             report.bytes += r.logical_len;
+                            if set_aside {
+                                report.replaced += 1;
+                            }
                             if let Some((a, setid)) = effective(version, path) {
                                 report.attribute_exceptions.extend(setid);
                                 let issues = parent.apply_attributes(name, EntryKind::File, &a);

@@ -73,6 +73,9 @@ process.env.MOCHI_E2E_GUIDE_DIR = guideDir;
 process.env.MOCHI_E2E_OPEN_LOG = path.join(os.tmpdir(), "mochi-e2e-opened.txt");
 // "Show in folder" records the folder it was asked to show here (src/help.rs `open_folder`).
 process.env.MOCHI_E2E_FOLDER_LOG = path.join(os.tmpdir(), "mochi-e2e-folders.txt");
+// "Replace existing files" (owner decision 2026-11-11) moves replaced files here in an e2e
+// build, never into the runner's real Recycle Bin or Trash (src-tauri/src/trashbin.rs).
+process.env.MOCHI_E2E_TRASH_DIR = path.join(os.tmpdir(), "mochi-e2e-bin");
 
 // The cold-start spec (specs/add-cold.e2e.js) needs the app started WITH arguments, as Explorer
 // starts it for "Add to archive...": a second session whose capabilities carry them. Each

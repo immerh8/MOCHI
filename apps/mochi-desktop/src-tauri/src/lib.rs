@@ -33,6 +33,7 @@ pub mod route;
 pub mod search;
 pub mod self_test;
 pub mod speed;
+pub mod trashbin;
 pub mod update;
 pub mod windows;
 #[cfg(test)]

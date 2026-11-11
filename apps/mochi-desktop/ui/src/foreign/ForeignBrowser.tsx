@@ -7,6 +7,7 @@ import { ProgressMeter } from "../a11y/ProgressMeter";
 import { errorText, formatSize, shortSize } from "../browser/format";
 import { EntryCells, ListHead } from "../browser/ListHead";
 import { CheckIcon, CloseIcon, ExtractIcon, ExtractToIcon, KeyIcon } from "../icons";
+import { ExtractChoices } from "../extract/ExtractChoices";
 import { ExtractToDialog } from "../extract/ExtractToDialog";
 import { useNewFolderRun } from "../extract/useNewFolderRun";
 import { availableActions, tipFor } from "../shell/availability";
@@ -379,14 +380,15 @@ export function ForeignBrowser() {
     setError(null);
     setJob({ state: "idle" });
     setWizard(false);
-    if (p.plan.conflicts_total > 0) {
+    if (p.plan.existing_total > 0 || p.plan.conflicts_total > 0) {
       const only = selectedRows.length === 1 ? (selectedRows[0]?.name ?? null) : null;
       setPlan({ plan: p, keys, what: only, n: keys.length });
       setMadeFolder(newFolder);
       return;
     }
     if (newFolder) newFolderRun.set();
-    begin({ kind: "extract_foreign", handle, keys, on_conflict: "stop" });
+    // Nothing in the way: folders that are there are added to.
+    begin({ kind: "extract_foreign", handle, keys, on_conflict: p.plan.merged_folders > 0 ? "add_new" : "stop" });
   };
 
   /** Close the plan panel; a new folder nobody extracted into is tidied up (Rust only removes an empty one). */
@@ -473,7 +475,6 @@ export function ForeignBrowser() {
   };
 
   const described = job.state === "done" ? describeOutcome(job.outcome) : null;
-  const hasConflicts = plan !== null && plan.plan.plan.conflicts_total > 0;
   const selectedCount = selectedRows.length;
 
   // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
@@ -576,81 +577,65 @@ export function ForeignBrowser() {
           fallbackId="foreign-heading"
           onClose={jobBusy ? undefined : closePlan}
         >
-          <dl>
-            <dt>{t("foreign.folder")}</dt>
-            <dd data-testid="foreign-destination" title={plan.plan.plan.destination}>
-              {plan.plan.plan.destination}
-            </dd>
-            <dt>{t("foreign.what2")}</dt>
-            <dd>
-              {plan.what ? (
-                <Name name={plan.what} />
-              ) : plan.n > 0 ? (
-                tc(plan.n, "common.itemOne", "common.itemMany")
-              ) : (
-                t("foreign.everything")
-              )}{" "}
-              (
-              {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
-                n: formatNumber(plan.plan.plan.entries),
-              })}
-              )
-            </dd>
-          </dl>
+          {!(plan.plan.plan.existing_total > 0 || plan.plan.plan.conflicts_total > 0) && (
+            <dl>
+              <dt>{t("foreign.folder")}</dt>
+              <dd data-testid="foreign-destination" title={plan.plan.plan.destination}>
+                {plan.plan.plan.destination}
+              </dd>
+              <dt>{t("foreign.what2")}</dt>
+              <dd>
+                {plan.what ? (
+                  <Name name={plan.what} />
+                ) : plan.n > 0 ? (
+                  tc(plan.n, "common.itemOne", "common.itemMany")
+                ) : (
+                  t("foreign.everything")
+                )}{" "}
+                (
+                {t(plan.plan.plan.entries === 1 ? "foreign.itemsOne" : "foreign.itemsMany", {
+                  n: formatNumber(plan.plan.plan.entries),
+                })}
+                )
+              </dd>
+            </dl>
+          )}
           {plan.plan.skipped_kinds > 0 && (
-            <p role="note" className="warning" data-testid="foreign-skipped-kinds">
+            <p role="note" className="note" data-testid="foreign-skipped-kinds">
               {t(plan.plan.skipped_kinds === 1 ? "foreign.skippedKindsOne" : "foreign.skippedKindsMany", {
                 n: formatNumber(plan.plan.skipped_kinds),
               })}
             </p>
           )}
-          {hasConflicts && (
-            <div data-testid="foreign-conflicts">
-              <p role="note" className="warning">
-                {t(plan.plan.plan.conflicts_total === 1 ? "foreign.cannotOne" : "foreign.cannotMany", {
-                  n: formatNumber(plan.plan.plan.conflicts_total),
-                })}
-              </p>
-              <ul className="staged" aria-label={t("foreign.cannotList")}>
-                {plan.plan.plan.conflicts.map((c) => (
-                  <li key={`${c.code}:${c.path.text}`} data-testid="foreign-conflict">
-                    <Name name={c.path} /> <span className="meta">({c.code})</span> {c.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
           {progressLine}
-          <div className="actions dialog-actions">
-            <Hint text={extractNote()} />
-            <button
-              type="button"
-              className="primary"
-              data-testid="foreign-extract-confirm"
-              disabled={jobBusy}
-              onClick={() =>
-                begin({
-                  kind: "extract_foreign",
-                  handle: open.handle,
-                  keys: plan.keys,
-                  on_conflict: hasConflicts ? "skip_conflicts" : "stop",
-                })
-              }
-            >
-              {hasConflicts ? t("foreign.confirmSkip") : t("foreign.confirm")}
-            </button>
-            <button
-              type="button"
-              data-testid="foreign-change-folder"
-              disabled={jobBusy}
-              onClick={() => planFor(plan.keys, plan.what, plan.n, true)}
-            >
-              {t("foreign.changeFolder")}
-            </button>
-            <button type="button" data-testid="foreign-plan-close" disabled={jobBusy} onClick={closePlan}>
-              {t("common.close")}
-            </button>
-          </div>
+          <ExtractChoices
+            plan={plan.plan.plan}
+            busy={jobBusy}
+            testIdPrefix="foreign"
+            onChoose={(on_conflict) =>
+              begin({ kind: "extract_foreign", handle: open.handle, keys: plan.keys, on_conflict })
+            }
+            onNewFolder={() => {
+              const { keys } = plan;
+              const folder = plan.plan.plan.destination;
+              closePlan();
+              planExtractForeignTo(open.handle, keys, folder, true).then(
+                (p) => {
+                  if (p.plan.existing_total > 0 || p.plan.conflicts_total > 0) {
+                    setPlan({ plan: p, keys, what: null, n: keys.length });
+                    setMadeFolder(true);
+                    return;
+                  }
+                  newFolderRun.set();
+                  begin({ kind: "extract_foreign", handle: open.handle, keys, on_conflict: "stop" });
+                },
+                (e: unknown) => setError(errorText(t("foreign.folderFailed"), e)),
+              );
+            }}
+            onChangeFolder={() => planFor(plan.keys, plan.what, plan.n, true)}
+            onCancel={closePlan}
+            hint={<Hint text={extractNote()} />}
+          />
         </Panel>
       )}
 

@@ -41,6 +41,9 @@ function plan(extra: Partial<ExtractPlan> = {}): ExtractPlan {
   return {
     destination: "/home/me/out",
     entries: 5,
+    existing: [],
+    existing_total: 0,
+    merged_folders: 0,
     conflicts: [],
     conflicts_total: 0,
     case_insensitive: false,
@@ -63,6 +66,8 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     files_not_flushed: false,
     case_insensitive: false,
     opened_folder: false,
+    replaced: 0,
+    merged_folders: 0,
     ...extra,
   };
 }
@@ -203,44 +208,103 @@ const CONFLICTS = plan({
       path: { text: HOSTILE, verbatim: true },
       code: "NAME_COLLISION",
       reason: "an entry with this name is already in the folder",
+      why: "other_kind",
     },
     {
       path: { text: "rtl\\u{202e}gpj.exe", verbatim: false },
       code: "NAME_UNSUPPORTED",
       reason: "this folder's file system cannot hold the name",
+      why: "name_not_allowed",
     },
   ],
 });
 
-test("conflicts are listed as text before anything is written; the choice is skip, another folder, or close", async () => {
-  const user = userEvent.setup();
-  const b = backend([CONFLICTS]);
-  const { container } = renderExtractor();
-  await user.click(screen.getByTestId("extract-all"));
-  const list = await screen.findByTestId("extract-conflicts");
-  const items = within(list).getAllByTestId("extract-conflict");
-  expect(items).toHaveLength(2);
-  expect(items[0]).toHaveTextContent(`${HOSTILE} (NAME_COLLISION)`);
-  expect(items[1]).toHaveTextContent("rtl\\u{202e}gpj.exe (escaped) (NAME_UNSUPPORTED)");
-  expect(list).toHaveTextContent("202 entries cannot be extracted into this folder");
-  expect(list).toHaveTextContent("…and 200 more.");
-  expect(screen.getByTestId("extract-conflict-note")).toHaveTextContent("Nothing is overwritten and no name is changed");
-  expect(screen.getByTestId("extract-conflict-note")).toHaveTextContent(
-    "Replacing existing items, or keeping both under a new name, is not available yet",
-  );
-  // Archive text stays inert.
-  expect(container.querySelector("img")).toBeNull();
-  expect(container.querySelector("a[href], [src]")).toBeNull();
-
-  expect(screen.getByTestId("extract-confirm")).toHaveTextContent("Extract the rest, skipping these");
-  await user.click(screen.getByTestId("extract-confirm"));
-  await screen.findByTestId("extract-running");
-  expect(b.request()).toMatchObject({ on_conflict: "skip_conflicts" });
+// Owner decision 2026-11-11: when the folder already has some of the names, a short title, the
+// names as a plain list, and three choices; what cannot be extracted at all is behind a closed
+// disclosure, in plain words. Nothing is written before a choice.
+const EXISTING = plan({
+  destination: "/home/me/Desktop/out",
+  existing_total: 3,
+  existing: [
+    { text: "docs/a.txt", verbatim: true },
+    { text: HOSTILE, verbatim: true },
+  ],
+  merged_folders: 1,
 });
 
-test("choose a different folder asks Rust to pick again; check again re-plans the same folder", async () => {
+test("files that already exist: a short title, their names, and Add only new files as the safe default", async () => {
   const user = userEvent.setup();
-  const b = backend([CONFLICTS, plan({ destination: "/home/me/other" }), plan({ destination: "/home/me/other" })]);
+  const b = backend([EXISTING]);
+  const { container } = renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  expect(await screen.findByTestId("extract-choices-title")).toHaveTextContent(
+    "3 files already exist in “out”",
+  );
+  const items = screen.getAllByTestId("extract-existing-item");
+  expect(items.map((i) => i.textContent)).toEqual(["docs/a.txt", HOSTILE]);
+  // The folder part is quieter than the name; no error codes, no repeated sentence.
+  expect(items[0]?.querySelector(".choices-dir")).toHaveTextContent("docs/");
+  expect(screen.getByTestId("extract-existing")).toHaveTextContent("…and 1 more.");
+  expect(screen.getByTestId("extract-existing")).not.toHaveTextContent("NAME_COLLISION");
+  expect(screen.getByTestId("extract-merged-note")).toHaveTextContent(
+    "New files are added to the folder that is already there.",
+  );
+  expect(screen.getByTestId("extract-choices")).toHaveTextContent("so you can get them back");
+  // Archive text stays inert.
+  expect(container.querySelector("img")).toBeNull();
+  // The safe choice is the default one and has the focus.
+  expect(screen.getByTestId("extract-add-new")).toHaveTextContent("Add only new files");
+  expect(screen.getByTestId("extract-add-new")).toHaveClass("primary");
+  expect(screen.getByTestId("extract-replace")).toHaveClass("destructive");
+  expect(b.cmds()).not.toContain("start_job");
+  await user.click(screen.getByTestId("extract-add-new"));
+  await screen.findByTestId("extract-running");
+  expect(b.request()).toMatchObject({ on_conflict: "add_new" });
+});
+
+test("Replace sends replace; the result says how many and where the old files went", async () => {
+  const user = userEvent.setup();
+  const b = backend([EXISTING]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  await user.click(await screen.findByTestId("extract-replace"));
+  await screen.findByTestId("extract-running");
+  expect(b.request()).toMatchObject({ on_conflict: "replace" });
+  b.job({ event: "started", job_id: 7 });
+  b.job({
+    event: "finished",
+    job_id: 7,
+    outcome: { status: "completed", summary: "s", extract: report({ replaced: 2 }) },
+  });
+  expect(await screen.findByTestId("extract-headline")).toHaveTextContent("2 replaced");
+  expect(screen.getByTestId("extract-status")).toHaveTextContent(/The files that were replaced are in the (Trash|Recycle Bin)\./);
+});
+
+test("what cannot be extracted at all is behind a closed disclosure, in plain words, with the full reason as a tooltip", async () => {
+  const user = userEvent.setup();
+  const b = backend([CONFLICTS]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  const box = await screen.findByTestId("extract-conflicts");
+  expect(box.tagName).toBe("DETAILS");
+  expect(box).not.toHaveAttribute("open");
+  expect(box.querySelector("summary")).toHaveTextContent("202 items can't be extracted here");
+  const items = within(box).getAllByTestId("extract-conflict");
+  expect(items[0]).toHaveTextContent("Something of another kind is in the way");
+  expect(items[1]).toHaveTextContent("This computer doesn't allow this name");
+  expect(items[1]).toHaveAttribute("title", "this folder's file system cannot hold the name");
+  expect(box).toHaveTextContent("…and 200 more.");
+  // No files exist, so the only question is whether to extract the rest.
+  expect(screen.queryByTestId("extract-replace")).toBeNull();
+  expect(screen.getByTestId("extract-confirm")).toHaveTextContent("Extract the rest");
+  await user.click(screen.getByTestId("extract-confirm"));
+  await screen.findByTestId("extract-running");
+  expect(b.request()).toMatchObject({ on_conflict: "add_new" });
+});
+
+test("choose a different folder asks Rust to pick again, with the same selection", async () => {
+  const user = userEvent.setup();
+  const b = backend([CONFLICTS, plan({ destination: "/home/me/other" })]);
   renderExtractor({ selected: [SELECTED] });
   await user.click(screen.getByTestId("extract-all"));
   await screen.findByTestId("extract-conflicts");
@@ -251,13 +315,9 @@ test("choose a different folder asks Rust to pick again; check again re-plans th
   expect(screen.getByTestId("extract-notes")).not.toHaveTextContent("A new folder was made");
   expect(screen.getByTestId("extract-destination")).toHaveTextContent("/home/me/other");
   expect(screen.getByTestId("extract-confirm")).toHaveTextContent(/^Extract$/);
-
-  await user.click(screen.getByTestId("extract-recheck"));
-  await act(async () => undefined);
   expect(b.defaultCalls()).toHaveLength(1);
-  expect(b.planCalls().map((c) => c.pick)).toEqual([true, false]);
-  // The same selection each time.
-  expect(b.planCalls().map((c) => c.keys)).toEqual([["6162"], ["6162"]]);
+  expect(b.planCalls().map((c) => c.pick)).toEqual([true]);
+  expect(b.planCalls().map((c) => c.keys)).toEqual([["6162"]]);
 
   await user.click(screen.getByTestId("extract-close"));
   expect(screen.queryByTestId("extract-panel")).toBeNull();
@@ -561,4 +621,22 @@ test("pausing an extraction sends pause_job by id, shows Paused, and Resume send
   await user.click(screen.getByTestId("extract-pause"));
   expect(b.calls.at(-1)).toEqual({ cmd: "pause_job", args: { jobId: 7, paused: false } });
   expect(screen.getByTestId("extract-running")).toHaveAttribute("data-state", "running");
+});
+
+test("a folder MOCHI will not add to says so, not that something else is in the way", async () => {
+  const user = userEvent.setup();
+  backend([
+    plan({
+      conflicts_total: 2,
+      conflicts: [
+        { path: { text: "docs", verbatim: true }, code: "NAME_COLLISION", reason: "r1", why: "folder_not_entered" },
+        { path: { text: "X", verbatim: true }, code: "NAME_COLLISION", reason: "r2", why: "same_name_in_archive" },
+      ],
+    }),
+  ]);
+  renderExtractor();
+  await user.click(screen.getByTestId("extract-all"));
+  const items = await screen.findAllByTestId("extract-conflict");
+  expect(items[0]).toHaveTextContent("A folder MOCHI won't add to");
+  expect(items[1]).toHaveTextContent("The archive has another item with this name");
 });

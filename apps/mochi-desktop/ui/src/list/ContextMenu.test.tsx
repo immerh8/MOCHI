@@ -64,7 +64,7 @@ function backend() {
       case "extract_wizard_setup":
         return { destination: "/home/me/Desktop", recent: [] };
       case "plan_extract":
-        return { destination: "/home/me/out", entries: 2, conflicts: [], conflicts_total: 0, case_insensitive: false };
+        return { destination: "/home/me/out", entries: 2, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
       case "open_foreign_archive":
         return {
           handle: 5,

@@ -720,8 +720,30 @@ pub enum ConflictChoice {
     /// extracted (what the plan showed was none).
     Stop,
     /// Skip those entries (and what is under a skipped folder), extract the
-    /// rest, and report each one.
+    /// rest, and report each one. An existing folder is one of them.
     SkipConflicts,
+    /// "Add only new files" (owner decision 2026-11-11): enter folders that
+    /// already exist and add what they lack; an existing file keeps its name
+    /// and its bytes and is skipped. Entries that cannot be extracted at all
+    /// are skipped and reported, as with `SkipConflicts`.
+    AddNew,
+    /// "Replace existing files" (owner decision 2026-11-11): as `AddNew`, and
+    /// an existing file is moved to the Recycle Bin / Trash, once the
+    /// extracted file has been checked, and replaced by it. Never a folder,
+    /// never a link.
+    Replace,
+}
+
+impl ConflictChoice {
+    /// What the restore engine does with a name that already exists.
+    pub fn on_existing(self) -> mochi_core::restore::OnExisting {
+        use mochi_core::restore::OnExisting;
+        match self {
+            Self::Stop | Self::SkipConflicts => OnExisting::Keep,
+            Self::AddNew => OnExisting::Merge,
+            Self::Replace => OnExisting::Replace,
+        }
+    }
 }
 
 /// One entry that cannot be extracted into the chosen folder.
@@ -733,6 +755,28 @@ pub struct ConflictView {
     pub code: String,
     /// Why, as one sentence.
     pub reason: String,
+    /// Why, as one of a few kinds the window words in the user's language.
+    pub why: ConflictWhy,
+}
+
+/// Why an entry cannot be extracted into the chosen folder, whatever is chosen
+/// (owner decision 2026-11-11: the window says it in a few plain words).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ConflictWhy {
+    /// The folder's file system cannot hold the name.
+    NameNotAllowed,
+    /// Something of the other kind is there: a file where the archive has a
+    /// folder or the reverse, a link, a device.
+    OtherKind,
+    /// A folder is there that MOCHI does not add to: a link, or (Linux) one
+    /// that other users can change.
+    FolderNotEntered,
+    /// The archive holds another entry the folder would treat as the same name.
+    SameNameInArchive,
+    /// Anything else; `reason` says what.
+    Other,
 }
 
 /// What extracting would meet in the chosen folder, found before anything is
@@ -745,7 +789,17 @@ pub struct ExtractPlan {
     /// Entries the extraction handles: the selection, what is under it, and
     /// the folders above it.
     pub entries: u32,
-    /// The first conflicts, in path order (at most 200).
+    /// Files that already exist in the folder (owner decision 2026-11-11):
+    /// "Add only new files" keeps them, "Replace existing files" moves them to
+    /// the Recycle Bin / Trash. The first ones in path order (at most 200),
+    /// as archive paths.
+    pub existing: Vec<NameText>,
+    pub existing_total: u32,
+    /// Folders that already exist and that the extraction adds to.
+    pub merged_folders: u32,
+    /// Entries that cannot be extracted here whatever is chosen (a name this
+    /// folder cannot hold, a file where the archive has a folder or the
+    /// reverse, a link): the first ones, in path order (at most 200).
     pub conflicts: Vec<ConflictView>,
     pub conflicts_total: u32,
     /// Whether the folder treats names that differ only in case as one.
@@ -808,6 +862,15 @@ pub struct ExtractReport {
     /// done", owner request 2026-11-10).
     #[serde(default)]
     pub opened_folder: bool,
+    /// Existing files that were moved to the Recycle Bin / Trash and replaced
+    /// ("Replace existing files", owner decision 2026-11-11); counted in `files`.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub replaced: u64,
+    /// Folders that already existed and were added to.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub merged_folders: u64,
 }
 
 // ---- D4: test, health, and repair -------------------------------------------

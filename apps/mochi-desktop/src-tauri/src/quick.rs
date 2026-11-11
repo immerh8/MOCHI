@@ -1065,7 +1065,10 @@ impl Quick {
         // by the engine and listed in the result.
         let (_src, head, _opts) = archives.open_for_read(summary.handle, u64::from(seq))?;
         let mut root = OsRestoreDir::open(&folder)?;
-        let (pre, _entries) = preflight_selected(&head, &[], &mut root)?;
+        // Keep: a quick verb never adds to or replaces what is there; any
+        // name in the way sends the user to the plan, which offers the choices.
+        let (pre, _entries) =
+            preflight_selected(&head, &[], &mut root, mochi_core::restore::OnExisting::Keep)?;
         let collisions = pre
             .exceptions
             .iter()

@@ -73,7 +73,7 @@ describe("the start screen", () => {
     const panel = await $('[data-testid="extract-panel"]');
     await panel.waitForExist({ timeout: 60_000 });
     const made = path.join(root, "trip");
-    await expect($('[data-testid="extract-destination"]')).toHaveText(made);
+    await expect($('[data-testid="extract-choices-title"]')).toHaveAttribute("title", made);
     expect(existsSync(made)).toBe(true);
     // Nothing is extracted until the user says so; closing tidies the empty folder.
     await $('[data-testid="extract-close"]').click();

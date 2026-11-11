@@ -93,7 +93,7 @@ function backend() {
       case "cancel_unlock":
         return true;
       case "plan_extract":
-        return { destination: "/home/me/photos", entries: 4, conflicts: [], conflicts_total: 0, case_insensitive: false };
+        return { destination: "/home/me/photos", entries: 4, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
     }
     throw new Error(`unexpected command ${cmd}`);
   });

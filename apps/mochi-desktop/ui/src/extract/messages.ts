@@ -12,12 +12,6 @@ import type { DetailRow, ResultDetails } from "../result/details";
 /** Shown with every extraction: what the engine checked, and what it did not. */
 export const checkNote = () => t("extract.checkNote");
 
-/** The rule every collision follows (plan C6): shown with the conflict list. */
-export const conflictNote = () => t("extract.conflictNote");
-
-/** The options the extraction engine does not have (plan D3 "Gap"). */
-export const notOfferedNote = () => t("extract.notOffered");
-
 /** Restores into a folder others can change are refused or limited (C6). */
 export const folderNote = () => t("extract.folderNote");
 
@@ -62,7 +56,10 @@ export function describe(outcome: JobOutcome): Described {
       return {
         headline: extractedLine(r),
         // "Open the folder when done" (owner request 2026-11-10).
-        notes: r.opened_folder ? [t("extract.openedFolder")] : [],
+        notes: [
+          ...(r.replaced > 0 ? [replacedNote()] : []),
+          ...(r.opened_folder ? [t("extract.openedFolder")] : []),
+        ],
         completed: true,
         details: reportDetails(r),
         warn: r.not_extracted_total > 0,
@@ -107,10 +104,20 @@ export function describe(outcome: JobOutcome): Described {
  * "Show in folder" button.
  */
 function extractedLine(r: ExtractReport): string {
-  const line = t("extract.line", { parts: joinParts(countParts(r.files, r.directories, r.bytes)) });
+  let line = t("extract.line", { parts: joinParts(countParts(r.files, r.directories, r.bytes)) });
+  // "Replace existing files" (owner decision 2026-11-11): how many, said on the line itself.
+  if (r.replaced > 0) {
+    line += t("common.statusSeparator") + tc(r.replaced, "extract.lineReplacedOne", "extract.lineReplacedMany");
+  }
   if (r.not_extracted_total === 0) return line;
   const n = tc(r.not_extracted_total, "extract.lineNotExtractedOne", "extract.lineNotExtractedMany");
   return `${line}${t("common.statusSeparator")}${n}`;
+}
+
+/** Where replaced files went: the Recycle Bin on Windows, the Trash on Ubuntu. */
+function replacedNote(): string {
+  const windows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  return windows ? t("extract.replacedNoteRecycleBin") : t("extract.replacedNoteTrash");
 }
 
 function reportDetails(r: ExtractReport): ResultDetails {

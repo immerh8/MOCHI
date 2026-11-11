@@ -4,7 +4,7 @@ import { useJobFocus } from "../a11y/focus";
 import { Hint } from "../a11y/Hint";
 import { Panel } from "../a11y/Panel";
 import { errorText } from "../browser/format";
-import { ExtractIcon, ExtractToIcon, RefreshIcon } from "../icons";
+import { ExtractIcon, ExtractToIcon } from "../icons";
 import { availableActions, tipFor } from "../shell/availability";
 import { ToolButton, ToolSlot } from "../shell/Shell";
 import { formatNumber, t, tc } from "../i18n";
@@ -13,6 +13,7 @@ import { useTransferRate } from "../progress/useTransferRate";
 import { logRecord } from "../result/details";
 import { ResultBar } from "../result/Result";
 import { Name } from "../browser/Name";
+import { ExtractChoices } from "./ExtractChoices";
 import { ExtractToDialog } from "./ExtractToDialog";
 import { useNewFolderRun } from "./useNewFolderRun";
 import { planExtract } from "../ipc/extract";
@@ -22,10 +23,8 @@ import type { ArchiveSummary, NameText } from "../ipc/browse";
 import { cancelJob, pauseJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import {
-  conflictNote,
   describe,
   folderNote,
-  notOfferedNote,
   progressText,
 } from "./messages";
 
@@ -282,14 +281,15 @@ export function Extractor({
       setError(null);
       setJob({ state: "idle" });
       setWizard(null);
-      if (p.conflicts_total > 0) {
+      if (p.existing_total > 0 || p.conflicts_total > 0) {
         setScope(s);
         setPlan(p);
         setMadeFolder(newFolder);
         return;
       }
       if (newFolder) newFolderRun.set();
-      startForRef.current?.(s, "stop");
+      // Nothing in the way: folders that are there are added to.
+      startForRef.current?.(s, p.merged_folders > 0 ? "add_new" : "stop");
     },
     [handle, seq, newFolderRun],
   );
@@ -334,7 +334,9 @@ export function Extractor({
   // Memoised: the Details panel belongs to one result and is told apart by identity.
   const described = useMemo(() => (job.state === "done" ? describe(job.outcome) : null), [job]);
   const report = job.state === "done" && job.outcome.status === "completed" ? job.outcome.extract : undefined;
-  const hasConflicts = plan !== null && plan.conflicts_total > 0;
+  // Where the files go and what goes there: shown unless the folder already has some of the
+  // names, when the question and its list take the room (the title's tooltip names the folder).
+  const showsWhere = plan !== null && plan.existing_total === 0;
 
   // What a running job is doing: in the open dialog (which covers the window), else in the status bar.
   const progressLine = busy && (
@@ -424,50 +426,26 @@ export function Extractor({
           fallbackId="extract-heading"
           onClose={busy ? undefined : close}
         >
-          <dl>
-            <dt>{t("extract.folder")}</dt>
-            <dd data-testid="extract-destination" title={plan.destination}>
-              {plan.destination}
-            </dd>
-            <dt>{t("extract.what")}</dt>
-            <dd data-testid="extract-scope">
-              {scope.kind === "all" ? (
-                t("extract.wholeCommit", { seq: seq ?? "" })
-              ) : scope.entries.length === 1 && scope.entries[0] ? (
-                <Name name={scope.entries[0].name} />
-              ) : (
-                tc(scope.entries.length, "common.itemOne", "common.itemMany")
-              )}
-              {t("extract.entriesCount", {
-                count: tc(plan.entries, "count.entryOne", "count.entryMany"),
-              })}
-            </dd>
-          </dl>
-          {hasConflicts ? (
-            <div data-testid="extract-conflicts">
-              <p role="note" className="warning">
-                {t(plan.conflicts_total === 1 ? "extract.cannotOne" : "extract.cannotMany", {
-                  n: formatNumber(plan.conflicts_total),
+          {showsWhere && (
+            <dl>
+              <dt>{t("extract.folder")}</dt>
+              <dd data-testid="extract-destination" title={plan.destination}>
+                {plan.destination}
+              </dd>
+              <dt>{t("extract.what")}</dt>
+              <dd data-testid="extract-scope">
+                {scope.kind === "all" ? (
+                  t("extract.wholeCommit", { seq: seq ?? "" })
+                ) : scope.entries.length === 1 && scope.entries[0] ? (
+                  <Name name={scope.entries[0].name} />
+                ) : (
+                  tc(scope.entries.length, "common.itemOne", "common.itemMany")
+                )}
+                {t("extract.entriesCount", {
+                  count: tc(plan.entries, "count.entryOne", "count.entryMany"),
                 })}
-              </p>
-              <ul className="staged" aria-label={t("extract.cannotList")}>
-                {plan.conflicts.map((c) => (
-                  <li key={`${c.code}:${c.path.text}`} data-testid="extract-conflict">
-                    <Name name={c.path} /> <span className="meta">({c.code})</span> {c.reason}
-                  </li>
-                ))}
-              </ul>
-              {plan.conflicts_total > plan.conflicts.length && (
-                <p className="note">
-                  {t("common.andMore", { n: formatNumber(plan.conflicts_total - plan.conflicts.length) })}
-                </p>
-              )}
-              <Hint testId="extract-conflict-note" text={[conflictNote(), notOfferedNote()]} />
-            </div>
-          ) : (
-            <span className="sr-only" data-testid="extract-no-conflicts">
-              {t("extract.noConflicts")}
-            </span>
+              </dd>
+            </dl>
           )}
           {error && (
             <p role="alert" className="error" data-testid="extract-error">
@@ -475,48 +453,33 @@ export function Extractor({
             </p>
           )}
           {progressLine}
-          <div className="actions dialog-actions">
-            <Hint
-              testId="extract-notes"
-              text={[
-                ...(scope.kind === "selected" ? [t("extract.parentsNote")] : []),
-                ...(madeFolder ? [t("extract.newFolderNote")] : []),
-                folderNote(),
-                ...(plan.case_insensitive ? [t("extract.caseInsensitive")] : []),
-              ]}
-            />
-            <button
-              type="button"
-              className="primary"
-              data-testid="extract-confirm"
-              onClick={() => start(hasConflicts ? "skip_conflicts" : "stop")}
-              disabled={busy}
-            >
-              {hasConflicts ? t("extract.confirmSkip") : t("extract.confirm")}
-            </button>
-            <button
-              type="button"
-              data-testid="extract-change-folder"
-              onClick={() => planFor(scope, "pick")}
-              disabled={busy}
-            >
-              {t("extract.changeFolder")}
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              data-testid="extract-recheck"
-              aria-label={t("extract.recheck")}
-              title={t("extract.recheck")}
-              onClick={() => planFor(scope, "again")}
-              disabled={busy}
-            >
-              <RefreshIcon />
-            </button>
-            <button type="button" data-testid="extract-close" onClick={close} disabled={busy}>
-              {t("common.cancel")}
-            </button>
-          </div>
+          <ExtractChoices
+            plan={plan}
+            busy={busy}
+            testIdPrefix="extract"
+            onChoose={start}
+            onNewFolder={() => {
+              const s = scope;
+              const folder = plan.destination;
+              close();
+              void submitTo(s, folder, true).catch((e: unknown) =>
+                setError(errorText(t("extract.toFailed"), e)),
+              );
+            }}
+            onChangeFolder={() => planFor(scope, "pick")}
+            onCancel={close}
+            hint={
+              <Hint
+                testId="extract-notes"
+                text={[
+                  ...(scope.kind === "selected" ? [t("extract.parentsNote")] : []),
+                  ...(madeFolder ? [t("extract.newFolderNote")] : []),
+                  folderNote(),
+                  ...(plan.case_insensitive ? [t("extract.caseInsensitive")] : []),
+                ]}
+              />
+            }
+          />
         </Panel>
       )}
 

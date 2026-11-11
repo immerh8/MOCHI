@@ -34,4 +34,13 @@ files_not_flushed: boolean, case_insensitive: boolean,
  * The folder was opened in the file manager when the job ended ("Open the folder when
  * done", owner request 2026-11-10).
  */
-opened_folder: boolean, };
+opened_folder: boolean, 
+/**
+ * Existing files that were moved to the Recycle Bin / Trash and replaced
+ * ("Replace existing files", owner decision 2026-11-11); counted in `files`.
+ */
+replaced: number, 
+/**
+ * Folders that already existed and were added to.
+ */
+merged_folders: number, };

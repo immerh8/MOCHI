@@ -53,10 +53,11 @@ use mochi_foreign::{
 use crate::browse::parse_key;
 use crate::extract::{Destination, MAX_CONFLICTS_SHOWN, MAX_NOT_EXTRACTED_SHOWN};
 use crate::ipc::{
-    AttributeNote, CheckCount, ConflictChoice, ConflictView, ExtractPlan, ExtractReport,
-    ForeignArchiveSummary, ForeignChildrenPage, ForeignDimensionsView, ForeignExtractPlan,
-    ForeignHit, ForeignKindView, ForeignProblem, ForeignRow, ForeignSearchResult,
-    ForeignTestReport, IpcError, JobRequest, NameText, NotExtractedView, PathKey,
+    AttributeNote, CheckCount, ConflictChoice, ConflictView, ConflictWhy, ExtractPlan,
+    ExtractReport, ForeignArchiveSummary, ForeignChildrenPage, ForeignDimensionsView,
+    ForeignExtractPlan, ForeignHit, ForeignKindView, ForeignProblem, ForeignRow,
+    ForeignSearchResult, ForeignTestReport, IpcError, JobRequest, NameText, NotExtractedView,
+    PathKey,
 };
 use crate::write::JobDone;
 
@@ -536,16 +537,23 @@ impl Foreign {
         };
         let wanted = selection(keys)?;
         let mut root = OsRestoreDir::open(&folder)?;
-        let plan = plan_foreign(&core_entries(&s.entries), &wanted, &mut root)?;
+        // Looked at as "Replace" would (see `extract::plan`). Nothing is written.
+        let plan = plan_foreign(
+            &core_entries(&s.entries),
+            &wanted,
+            &mut root,
+            mochi_core::restore::OnExisting::Replace,
+        )?;
         if let Some(p) = picked {
             destination.set(p);
         }
         let mut conflicts: Vec<ConflictView> = Vec::new();
-        let mut push = |path: NameText, code: ErrorCode, reason: String| {
+        let mut push = |path: NameText, code: ErrorCode, reason: String, why: ConflictWhy| {
             conflicts.push(ConflictView {
                 path,
                 code: code.as_str().to_owned(),
                 reason,
+                why,
             });
         };
         for r in plan
@@ -553,13 +561,19 @@ impl Foreign {
             .iter()
             .filter(|r| r.reason.code() == ErrorCode::NameUnsupported)
         {
-            push(NameText::of(&r.name), r.reason.code(), r.reason.describe());
+            push(
+                NameText::of(&r.name),
+                r.reason.code(),
+                r.reason.describe(),
+                ConflictWhy::NameNotAllowed,
+            );
         }
         for (path, kind) in &plan.preflight.exceptions {
             push(
                 NameText::of(path.as_stored()),
                 kind.code(),
                 reason(kind).text,
+                crate::extract::conflict_why(&plan.preflight, path, kind),
             );
         }
         for d in &plan.duplicates {
@@ -568,6 +582,7 @@ impl Foreign {
                 ErrorCode::NameCollision,
                 "the archive holds this path more than once; only the first is extracted"
                     .to_owned(),
+                ConflictWhy::SameNameInArchive,
             );
         }
         let total = conflicts.len();
@@ -581,6 +596,15 @@ impl Foreign {
             plan: ExtractPlan {
                 destination: folder.display().to_string(),
                 entries: u32::try_from(plan.items).unwrap_or(u32::MAX),
+                existing: plan
+                    .preflight
+                    .replaced
+                    .iter()
+                    .take(MAX_CONFLICTS_SHOWN)
+                    .map(|p| NameText::of(p.as_stored()))
+                    .collect(),
+                existing_total: u32::try_from(plan.preflight.replaced.len()).unwrap_or(u32::MAX),
+                merged_folders: u32::try_from(plan.preflight.merged.len()).unwrap_or(u32::MAX),
                 conflicts,
                 conflicts_total: u32::try_from(total).unwrap_or(u32::MAX),
                 case_insensitive: plan.preflight.case_behavior == CaseBehavior::Insensitive,
@@ -744,11 +768,12 @@ impl Foreign {
         let folder = destination
             .get()
             .ok_or_else(|| invalid("choose the folder to extract into first"))?;
-        let root = OsRestoreDir::open(&folder)?;
+        let root = OsRestoreDir::open(&folder)?.with_set_aside(crate::trashbin::set_aside());
         let entries = core_entries(&s.entries);
         let options = ForeignRestoreOptions {
             refuse_on_exceptions: on_conflict == ConflictChoice::Stop,
             skip_file_sync: crate::speed::skip_file_sync(),
+            on_existing: on_conflict.on_existing(),
         };
         let mut restorer = ForeignRestorer::new(&entries, &wanted, root, options, ctx)?;
         let indices = restorer.wanted();
@@ -1000,6 +1025,8 @@ fn report_view(report: &mochi_core::restore::RestoreReport, folder: &Path) -> Ex
         files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
         opened_folder: false,
+        replaced: report.replaced,
+        merged_folders: report.merged_directories,
     }
 }
 
