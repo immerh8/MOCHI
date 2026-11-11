@@ -21,6 +21,11 @@ impl OsRestoreDir {
     }
 
     /// Unreachable: no value of this type exists.
+    pub fn with_set_aside(self, _set_aside: std::sync::Arc<SetAside>) -> Self {
+        match self.never {}
+    }
+
+    /// Unreachable: no value of this type exists.
     pub fn path(&self) -> &Path {
         match self.never {}
     }

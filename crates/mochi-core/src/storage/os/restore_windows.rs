@@ -64,12 +64,23 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 /// Names are the archive's WTF-8 bytes decoded to UTF-16 without loss
 /// (plan O24); a name Windows cannot hold is reported by
 /// [`windows_name_issue`], never altered.
-#[derive(Debug)]
 pub struct OsRestoreDir {
     path: PathBuf,
     /// Held without `FILE_SHARE_DELETE`: while it is open, this directory
     /// cannot be renamed or deleted.
     _pin: File,
+    /// Where an existing file goes before a restored one takes its name
+    /// ([`RestoreDir::set_aside`]); inherited by every directory below.
+    set_aside: Option<std::sync::Arc<SetAside>>,
+}
+
+impl std::fmt::Debug for OsRestoreDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OsRestoreDir")
+            .field("path", &self.path)
+            .field("set_aside", &self.set_aside.is_some())
+            .finish()
+    }
 }
 
 fn os_name(name: &[u8]) -> Result<OsString, StorageError> {
@@ -105,7 +116,19 @@ impl OsRestoreDir {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         let pinned = pin(&path)?;
-        Ok(Self { path, _pin: pinned })
+        Ok(Self {
+            path,
+            _pin: pinned,
+            set_aside: None,
+        })
+    }
+
+    /// Move an existing file with `set_aside` (its full path) before a
+    /// restored file takes its name (`OnExisting::Replace`). Without it, this
+    /// directory and those below it refuse to replace.
+    pub fn with_set_aside(mut self, set_aside: std::sync::Arc<SetAside>) -> Self {
+        self.set_aside = Some(set_aside);
+        self
     }
 
     /// Where this directory is.
@@ -145,7 +168,11 @@ impl RestoreDir for OsRestoreDir {
         let lossy = String::from_utf8_lossy(name);
         std::fs::create_dir(&path).map_err(exists_as(&lossy))?;
         let pinned = pin(&path)?;
-        Ok(Self { path, _pin: pinned })
+        Ok(Self {
+            path,
+            _pin: pinned,
+            set_aside: self.set_aside.clone(),
+        })
     }
 
     fn create_file(&mut self, name: &[u8]) -> Result<OsStorage, StorageError> {
@@ -207,6 +234,66 @@ impl RestoreDir for OsRestoreDir {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Without following a reparse point: a reparse point (a link, a
+    /// junction, a cloud placeholder) is [`Existing::Other`], never entered
+    /// or replaced.
+    fn existing(&mut self, name: &[u8]) -> Result<Existing, StorageError> {
+        match std::fs::symlink_metadata(self.entry(name)?) {
+            Ok(m) => {
+                let attributes = m.file_attributes();
+                Ok(if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    Existing::Other
+                } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                    Existing::Directory
+                } else if m.is_file() {
+                    Existing::File
+                } else {
+                    Existing::Other
+                })
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Existing::None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Pinned as the root is ([`pin`]: opened without following a reparse
+    /// point, refused if it is one or not a directory), so it cannot be
+    /// renamed or removed while entries are restored into it.
+    fn open_existing_dir(&mut self, name: &[u8]) -> Result<Option<Self>, StorageError> {
+        let path = self.entry(name)?;
+        match pin(&path) {
+            Ok(pinned) => Ok(Some(Self {
+                path,
+                _pin: pinned,
+                set_aside: self.set_aside.clone(),
+            })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Only a regular file (not a reparse point), and only with the app's
+    /// place for it (the Recycle Bin). This directory is pinned, so it cannot
+    /// be renamed while the file is moved; afterwards the name must be free.
+    fn set_aside(&mut self, name: &[u8]) -> Result<(), StorageError> {
+        let Some(set_aside) = self.set_aside.clone() else {
+            return Err(StorageError::Unsupported(
+                "no place to move the existing file to was given",
+            ));
+        };
+        if self.existing(name)? != Existing::File {
+            return Err(StorageError::Unsupported(
+                "only a regular file is moved aside, never a folder or a link",
+            ));
+        }
+        set_aside(&self.entry(name)?)?;
+        if self.existing(name)? != Existing::None {
+            return Err(StorageError::Io(io::Error::other(
+                "the existing file is still there after it was moved aside",
+            )));
+        }
+        Ok(())
     }
 
     fn apply_attributes(

@@ -79,7 +79,7 @@ function backend() {
       case "drag_out_foreign":
         return null;
       case "plan_extract_default":
-        return { destination: "/home/me/music", entries: 2, conflicts: [], conflicts_total: 0, case_insensitive: false };
+        return { destination: "/home/me/music", entries: 2, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
       case "open_foreign_archive":
         return {
           handle: 5,

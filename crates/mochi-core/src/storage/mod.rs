@@ -383,6 +383,40 @@ pub trait RestoreDir: Sized {
     /// here, without following a symbolic link.
     fn entry_exists(&mut self, name: &[u8]) -> Result<bool, StorageError>;
 
+    /// What is at `name` (or a name the destination treats as the same)
+    /// here, looked at without following a symbolic link. A backend that
+    /// cannot tell the kinds apart reports anything it finds as
+    /// [`Existing::Other`], which nothing ever merges into or replaces.
+    fn existing(&mut self, name: &[u8]) -> Result<Existing, StorageError> {
+        Ok(if self.entry_exists(name)? {
+            Existing::Other
+        } else {
+            Existing::None
+        })
+    }
+
+    /// Open the existing directory `name` to restore into it, alongside what
+    /// it already holds (owner decision 2026-11-11, `OnExisting::Merge`).
+    /// `None` when it is not a directory this restoration may enter: not a
+    /// plain directory (a symbolic link, a reparse point, a file), or one that
+    /// the backend's own rules refuse (on Linux, one that other users can
+    /// modify, as for the root). Never follows a link to get there.
+    fn open_existing_dir(&mut self, _name: &[u8]) -> Result<Option<Self>, StorageError> {
+        Ok(None)
+    }
+
+    /// Move the existing regular file `name` out of the way, to where the
+    /// user can get it back (the Recycle Bin or the Trash), so that a
+    /// restored file can take its name (owner decision 2026-11-11,
+    /// `OnExisting::Replace`). Anything that is not a regular file is
+    /// refused. A backend without such a place refuses (`Unsupported`): the
+    /// existing file then keeps its name and its bytes.
+    fn set_aside(&mut self, _name: &[u8]) -> Result<(), StorageError> {
+        Err(StorageError::Unsupported(
+            "this destination has no place to move an existing file to",
+        ))
+    }
+
     /// Apply promised attributes (plan O6) to the entry `name`, which this
     /// restoration created. Returns what could not be applied; never fails
     /// the restoration. The engine has already removed setuid and setgid
@@ -393,6 +427,20 @@ pub trait RestoreDir: Sized {
         kind: crate::catalog::namespace::EntryKind,
         attributes: &crate::manifest::Attributes,
     ) -> Vec<AttributeIssue>;
+}
+
+/// What is already at a name in a restore destination
+/// ([`RestoreDir::existing`]), looked at without following a symbolic link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Existing {
+    /// Nothing.
+    None,
+    /// A plain directory.
+    Directory,
+    /// A regular file.
+    File,
+    /// Anything else: a symbolic link, a reparse point, a device, a socket.
+    Other,
 }
 
 /// An attribute restoration could not apply (spec §10.4.1: "Restoration

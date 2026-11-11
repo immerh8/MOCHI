@@ -38,7 +38,13 @@ name that already exists is refused, never replaced. In the main window, **Extra
 on the Desktop; a folder you type that does not exist yet is created, and a line under the field
 says what will happen before you press OK (for example that a folder named after the archive
 already exists there, so a new one is made with a number). The same **Open the folder when done**
-choice applies there. The command-line equivalents are `mochi get`
+choice applies there. If the folder you extract into already has some of the same files, MOCHI
+asks first and lists them: **Add only new files** (the default) adds what is missing, also into
+folders that are already there, and keeps your files as they are; **Replace** puts the archive's
+files in their place and moves yours to the Recycle Bin (Windows) or the Trash (Ubuntu), so you
+can get them back; **Extract to a new folder** leaves the folder alone. A folder is never
+replaced by a file or the other way round, and the command line never replaces anything. The
+command-line equivalents are `mochi get`
 and `mochi create` and `mochi append`. A new archive is a local file, not a backup.
 
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04

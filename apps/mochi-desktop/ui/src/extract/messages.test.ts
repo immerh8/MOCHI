@@ -21,6 +21,8 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     files_not_flushed: false,
     case_insensitive: false,
     opened_folder: false,
+    replaced: 0,
+    merged_folders: 0,
     ...extra,
   };
 }

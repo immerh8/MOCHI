@@ -155,8 +155,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::{
-    check_file_name, AttributeIssue, AttributeKind, DirectoryDurability, NameIssue, ReadStorage,
-    RemoveOutcome, RestoreDir, Storage, StorageDir, StorageError,
+    check_file_name, AttributeIssue, AttributeKind, DirectoryDurability, Existing, NameIssue,
+    ReadStorage, RemoveOutcome, RestoreDir, Storage, StorageDir, StorageError,
 };
 use crate::catalog::namespace::EntryKind;
 use crate::manifest::{Attributes, Mtime, WINDOWS_HIDDEN, WINDOWS_READONLY, WINDOWS_SYSTEM};
@@ -1028,6 +1028,13 @@ impl StorageDir for OsDir {
 // One implementation per supported platform, each in its own module so it
 // can be worked on separately (docs/c6-restore-platforms.md). All three
 // export `OsRestoreDir`, which implements `RestoreDir`.
+
+/// How an [`OsRestoreDir`] moves an existing file out of the way so a
+/// restored file can take its name (`OnExisting::Replace`, owner decision
+/// 2026-11-11): given the file's full path, move it to where the user can get
+/// it back (the app passes the Recycle Bin / Trash). Core has no such place of
+/// its own, so a restore directory opened without one refuses to replace.
+pub type SetAside = dyn Fn(&Path) -> io::Result<()> + Send + Sync;
 
 #[cfg(target_os = "linux")]
 mod restore_linux;

@@ -10,4 +10,4 @@
  * under a new name and replacing need engine support that does not exist
  * (plan D3 status, "Gap").
  */
-export type ConflictChoice = "stop" | "skip_conflicts";
+export type ConflictChoice = "stop" | "skip_conflicts" | "add_new" | "replace";

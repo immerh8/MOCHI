@@ -40,7 +40,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use mochi_core::catalog::path::ArchivePath;
 use mochi_core::job::JobContext;
 use mochi_core::restore::{
-    preflight_selected, restore_selected, ExceptionKind, Preflight, RestoreOptions, RestoreReport,
+    preflight_selected, restore_selected, ExceptionKind, OnExisting, Preflight, RestoreOptions,
+    RestoreReport,
 };
 use mochi_core::storage::os::OsRestoreDir;
 use mochi_core::storage::{AttributeKind, CaseBehavior, DirectoryDurability};
@@ -48,8 +49,8 @@ use mochi_core::{ErrorCode, MochiError, Result};
 
 use crate::browse::{parse_key, Archives};
 use crate::ipc::{
-    AttributeNote, ConflictChoice, ConflictView, ExtractPlan, ExtractReport, JobRequest, NameText,
-    NotExtractedView, PathKey,
+    AttributeNote, ConflictChoice, ConflictView, ConflictWhy, ExtractPlan, ExtractReport,
+    JobRequest, NameText, NotExtractedView, PathKey,
 };
 use crate::write::JobDone;
 
@@ -468,7 +469,10 @@ pub fn plan(
     let wanted = selection(keys)?;
     let (_src, head, _opts) = archives.open_for_read(handle, u64::from(seq))?;
     let mut root = OsRestoreDir::open(&folder)?;
-    let (pre, entries) = preflight_selected(&head, &wanted, &mut root)?;
+    // Looked at as "Replace" would: which folders exist and would be added to,
+    // which files exist (what each choice keeps or replaces), and what cannot
+    // be extracted here whatever is chosen. Nothing is written.
+    let (pre, entries) = preflight_selected(&head, &wanted, &mut root, OnExisting::Replace)?;
     if let Some(p) = picked {
         destination.set(p);
     }
@@ -486,14 +490,41 @@ fn plan_view(folder: &Path, pre: &Preflight, entries: u64) -> ExtractPlan {
             path: NameText::of(path.as_stored()),
             code: kind.code().as_str().to_owned(),
             reason: reason(kind).text,
+            why: conflict_why(pre, path, kind),
         })
         .collect();
     ExtractPlan {
         destination: folder.display().to_string(),
         entries: u32::try_from(entries).unwrap_or(u32::MAX),
+        existing: pre
+            .replaced
+            .iter()
+            .take(MAX_CONFLICTS_SHOWN)
+            .map(|p| NameText::of(p.as_stored()))
+            .collect(),
+        existing_total: count(pre.replaced.len()),
+        merged_folders: count(pre.merged.len()),
         conflicts,
         conflicts_total: count(pre.exceptions.len()),
         case_insensitive: pre.case_behavior == CaseBehavior::Insensitive,
+    }
+}
+
+/// Why an entry the preflight refused cannot be extracted, as a kind the window
+/// words (owner decision 2026-11-11). Shared with foreign archives.
+pub(crate) fn conflict_why(
+    pre: &Preflight,
+    path: &mochi_core::catalog::path::ArchivePath,
+    kind: &ExceptionKind,
+) -> ConflictWhy {
+    match kind {
+        ExceptionKind::UnsupportedName(_) => ConflictWhy::NameNotAllowed,
+        ExceptionKind::Collision if pre.not_entered.contains(path) => ConflictWhy::FolderNotEntered,
+        ExceptionKind::Collision if pre.same_name_in_archive.contains(path) => {
+            ConflictWhy::SameNameInArchive
+        }
+        ExceptionKind::Collision => ConflictWhy::OtherKind,
+        _ => ConflictWhy::Other,
     }
 }
 
@@ -550,11 +581,12 @@ fn run_job(
         .get()
         .ok_or_else(|| invalid("choose the folder to extract into first"))?;
     let (src, head, opts) = archives.open_for_read(*handle, u64::from(*seq))?;
-    let root = OsRestoreDir::open(&folder)?;
+    let root = OsRestoreDir::open(&folder)?.with_set_aside(crate::trashbin::set_aside());
     let options = RestoreOptions {
         restore_setid: false,
         refuse_on_preflight_exceptions: *on_conflict == ConflictChoice::Stop,
         skip_file_sync: crate::speed::skip_file_sync(),
+        on_existing: on_conflict.on_existing(),
     };
     #[cfg(feature = "e2e")]
     let paced = Paced(ctx.progress);
@@ -633,6 +665,8 @@ pub fn report_view(report: &RestoreReport, folder: &Path, seq: u32) -> ExtractRe
         files_not_flushed: !report.file_data_synced,
         case_insensitive: report.case_behavior == CaseBehavior::Insensitive,
         opened_folder: false,
+        replaced: report.replaced,
+        merged_folders: report.merged_directories,
     }
 }
 
@@ -966,35 +1000,82 @@ mod tests {
         std::fs::write(f.dest.join(BIDI), b"mine too").unwrap();
     }
 
+    /// Owner decision 2026-11-11: the plan says which files already exist
+    /// (kept by "Add only new files", moved to the Bin by "Replace existing
+    /// files"), which folders would be added to, and what cannot be extracted
+    /// here whatever is chosen. Planning writes nothing.
     #[test]
-    fn the_plan_lists_what_would_collide_and_writes_nothing() {
+    fn the_plan_lists_existing_files_merged_folders_and_conflicts_and_writes_nothing() {
         let f = fx();
         crowded(&f);
         let before = tree(&f.dest);
         let plan = plan(&f.archives, &f.destination, None, f.handle, 1, &[]).unwrap();
         assert_eq!(tree(&f.dest), before, "the plan wrote nothing");
-        assert_eq!(plan.conflicts_total, 3 + u32::from(cfg!(windows)));
-        let mut codes: Vec<(String, String)> = plan
-            .conflicts
-            .iter()
-            .map(|c| (c.path.text.clone(), c.code.clone()))
-            .collect();
-        codes.sort();
-        let mut want = vec![
-            ("docs".to_owned(), "NAME_COLLISION".to_owned()),
-            (
-                "rtl\\u{202e}gpj.exe".to_owned(),
-                "NAME_COLLISION".to_owned(),
-            ),
-            ("top.txt".to_owned(), "NAME_COLLISION".to_owned()),
-        ];
+        let existing: Vec<&str> = plan.existing.iter().map(|n| n.text.as_str()).collect();
+        assert_eq!(existing, ["rtl\\u{202e}gpj.exe", "top.txt"]);
+        assert_eq!((plan.existing_total, plan.merged_folders), (2, 1));
+        // Only Windows has something that cannot be extracted at all.
+        assert_eq!(plan.conflicts_total, u32::from(cfg!(windows)));
         if cfg!(windows) {
-            want.push((HOSTILE.to_owned(), "NAME_UNSUPPORTED".to_owned()));
+            assert_eq!(plan.conflicts[0].path.text, HOSTILE);
+            assert_eq!(plan.conflicts[0].code, "NAME_UNSUPPORTED");
+            assert_eq!(plan.conflicts[0].why, ConflictWhy::NameNotAllowed);
         }
-        want.sort();
-        assert_eq!(codes, want);
         assert_eq!(plan.entries, 8);
         assert_eq!(plan.destination, f.dest.display().to_string());
+    }
+
+    /// "Add only new files": the existing folder is added to, every existing
+    /// file keeps its bytes, and nothing goes to the Bin.
+    #[test]
+    fn add_new_merges_into_existing_folders_and_keeps_existing_files() {
+        let f = fx();
+        crowded(&f);
+        let done = report(go(&f, &request(&f, 1, &[], ConflictChoice::AddNew)).unwrap());
+        assert_eq!(std::fs::read(f.dest.join("top.txt")).unwrap(), b"mine");
+        assert_eq!(
+            std::fs::read(f.dest.join("docs/keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            std::fs::read(f.dest.join("docs/a.txt")).unwrap(),
+            b"alpha v2"
+        );
+        assert_eq!(
+            std::fs::read(f.dest.join("docs/deep/b.txt")).unwrap(),
+            b"bravo"
+        );
+        assert_eq!((done.replaced, done.merged_folders), (0, 1));
+        assert_eq!(done.not_extracted_total, 2 + u64::from(cfg!(windows)));
+        no_temporaries(&tree(&f.dest));
+    }
+
+    /// "Replace existing files": each existing file goes to the Bin (the test
+    /// stand-in) with its bytes, the archive's takes its name, and a file the
+    /// archive does not have is never touched.
+    #[test]
+    fn replace_moves_existing_files_to_the_bin() {
+        let f = fx();
+        crowded(&f);
+        let bin = crate::trashbin::test_bin();
+        let done = report(go(&f, &request(&f, 1, &[], ConflictChoice::Replace)).unwrap());
+        assert_eq!(std::fs::read(f.dest.join("top.txt")).unwrap(), b"top");
+        assert_eq!(std::fs::read(f.dest.join(BIDI)).unwrap(), b"bidi");
+        assert_eq!(
+            std::fs::read(f.dest.join("docs/keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!((done.replaced, done.merged_folders), (2, 1));
+        assert_eq!(done.not_extracted_total, u64::from(cfg!(windows)));
+        // The old files are in the bin, under their own names (other tests
+        // may have put theirs there too: look for this test's bytes).
+        let binned: Vec<Vec<u8>> = std::fs::read_dir(&bin)
+            .unwrap()
+            .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+            .collect();
+        assert!(binned.contains(&b"mine".to_vec()));
+        assert!(binned.contains(&b"mine too".to_vec()));
+        no_temporaries(&tree(&f.dest));
     }
 
     #[test]
@@ -1490,6 +1571,8 @@ mod tests {
             attributes_unavailable: Some("bad\u{1b}[31m manifest".into()),
             attribute_exceptions: Vec::new(),
             case_behavior: CaseBehavior::Insensitive,
+            merged_directories: 0,
+            replaced: 0,
         };
         for i in 0..MAX_NOT_EXTRACTED_SHOWN + 5 {
             r.exceptions.push(RestoreException {
@@ -1531,6 +1614,10 @@ mod tests {
         let mut pre = Preflight {
             case_behavior: CaseBehavior::Insensitive,
             exceptions: BTreeMap::new(),
+            merged: Default::default(),
+            replaced: Default::default(),
+            not_entered: Default::default(),
+            same_name_in_archive: Default::default(),
         };
         pre.exceptions.insert(p("Readme"), ExceptionKind::Collision);
         let v = plan_view(Path::new("/x"), &pre, 7);
@@ -1566,10 +1653,13 @@ mod tests {
         let d = Destination::default();
         d.set(dest);
         let plan = plan(&archives, &d, None, handle, 0, &[]).unwrap();
-        assert_eq!(plan.conflicts.len(), MAX_CONFLICTS_SHOWN);
-        assert_eq!(plan.conflicts_total as usize, n);
+        // Every name exists as a file: listed as existing (at most the cap),
+        // counted in full.
+        assert_eq!(plan.existing.len(), MAX_CONFLICTS_SHOWN);
+        assert_eq!(plan.existing_total as usize, n);
+        assert_eq!(plan.conflicts_total, 0);
         assert_eq!(plan.entries as usize, n);
-        assert_eq!(plan.conflicts[0].path.text, "f0000", "in path order");
+        assert_eq!(plan.existing[0].text, "f0000", "in path order");
     }
     #[test]
     fn the_default_folder_is_new_next_to_the_archive_and_tidied_when_unused() {
@@ -1745,8 +1835,8 @@ mod tests {
         let first = tree(&f.dest);
         std::fs::write(f.dest.join("top.txt"), b"edited since").unwrap();
         let again = plan(&f.archives, &f.destination, None, f.handle, 1, &[]).unwrap();
-        assert!(again.conflicts_total > 0);
-        assert!(again.conflicts.iter().any(|c| c.path.text == "top.txt"));
+        assert!(again.existing_total > 0);
+        assert!(again.existing.iter().any(|n| n.text == "top.txt"));
         let r = report(go(&f, &request(&f, 1, &[], ConflictChoice::SkipConflicts)).unwrap());
         assert!(r.not_extracted_total > 0);
         assert_eq!(

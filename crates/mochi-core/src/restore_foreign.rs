@@ -56,8 +56,8 @@ use crate::error::{ErrorCode, MochiError, Result};
 use crate::job::JobContext;
 use crate::manifest::{Attributes, Mtime};
 use crate::restore::{
-    preflight, AttributeException, ExceptionKind, Preflight, RestoreException, RestoreReport,
-    RESTORE_PHASE,
+    preflight, AttributeException, ExceptionKind, OnExisting, Preflight, RestoreException,
+    RestoreReport, RESTORE_PHASE,
 };
 use crate::storage::{AttributeIssue, DirectoryDurability, RestoreDir, Storage, StorageError};
 
@@ -363,9 +363,10 @@ pub fn plan_foreign<D: RestoreDir>(
     entries: &[ForeignEntry],
     selection: &[ArchivePath],
     root: &mut D,
+    on_existing: OnExisting,
 ) -> Result<ForeignPlan> {
     let prepared = prepare(entries, selection);
-    let pre = preflight(root, &tuple(&prepared.items))?;
+    let pre = preflight(root, &tuple(&prepared.items), on_existing)?;
     Ok(ForeignPlan {
         items: (prepared.items.len() + prepared.duplicates.len()) as u64,
         refusals: prepared.refusals,
@@ -383,6 +384,9 @@ pub struct ForeignRestoreOptions {
     /// Publish each checked file without first flushing its data ("fast
     /// extract"); as [`crate::restore::RestoreOptions::skip_file_sync`].
     pub skip_file_sync: bool,
+    /// What to do with a name that already exists at the destination; as
+    /// [`crate::restore::RestoreOptions::on_existing`].
+    pub on_existing: OnExisting,
 }
 
 /// The result: the shared restore report, plus the entries refused outright.
@@ -427,6 +431,9 @@ pub struct ForeignRestorer<'c, 'j, D: RestoreDir> {
     refusals: Vec<ForeignRefusal>,
     /// Directories created, with the mtime to set once their children exist.
     restored_dirs: Vec<(ArchivePath, Option<i64>)>,
+    /// Existing files to move to the Recycle Bin or the Trash before the
+    /// restored file takes the name (`OnExisting::Replace`).
+    replaced: std::collections::BTreeSet<ArchivePath>,
     temp_seq: u64,
     total: u64,
     done: u64,
@@ -463,7 +470,7 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
     ) -> Result<Self> {
         ctx.check_cancelled()?;
         let prepared = prepare(entries, selection);
-        let pre = preflight(&mut root, &tuple(&prepared.items))?;
+        let pre = preflight(&mut root, &tuple(&prepared.items), options.on_existing)?;
         if options.refuse_on_exceptions {
             let first = pre
                 .exceptions
@@ -517,19 +524,10 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
             dirs: HashMap::new(),
             pending: HashMap::new(),
             current: None,
-            report: RestoreReport {
-                files: 0,
-                directories: 0,
-                bytes: 0,
-                exceptions: Vec::new(),
-                directory_durability: DirectoryDurability::Confirmed,
-                file_data_synced: !options.skip_file_sync,
-                attributes_unavailable: None,
-                attribute_exceptions: Vec::new(),
-                case_behavior: pre.case_behavior,
-            },
+            report: RestoreReport::empty(pre.case_behavior, !options.skip_file_sync),
             refusals: prepared.refusals,
             restored_dirs: Vec::new(),
+            replaced: pre.replaced.clone(),
             temp_seq: 0,
             total: prepared.items.len() as u64,
             done: 0,
@@ -583,7 +581,28 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
                 except(&mut me, ExceptionKind::UnsupportedName(issue));
                 continue;
             }
-            if it.dir {
+            if it.dir && pre.merged.contains(&it.path) {
+                // An existing directory the preflight chose to enter, opened
+                // again now; no longer enterable is a collision as before.
+                let opened = me
+                    .dirs
+                    .get_mut(&parent_path)
+                    .map(|p| p.open_existing_dir(&name))
+                    .unwrap_or(Err(StorageError::Unsupported("parent vanished")));
+                match opened {
+                    Ok(Some(child)) => {
+                        me.report.merged_directories += 1;
+                        me.dirs.insert(Some(it.path.clone()), child);
+                        me.done += 1;
+                        ctx.report(RESTORE_PHASE, me.done, Some(me.total));
+                    }
+                    Ok(None) => except(&mut me, ExceptionKind::Collision),
+                    Err(e) => {
+                        let e = MochiError::from(e);
+                        except(&mut me, failed(e.code, e.message));
+                    }
+                }
+            } else if it.dir {
                 let made = me
                     .dirs
                     .get_mut(&parent_path)
@@ -740,11 +759,38 @@ impl<'c, 'j, D: RestoreDir> ForeignRestorer<'c, 'j, D> {
             self.step();
             return Ok(());
         }
+        // Replace: the file passed its checks; only now is the existing one
+        // moved to the Recycle Bin or the Trash. If that fails it keeps its
+        // name and its bytes, and this file is not published.
+        let set_aside = self.replaced.contains(&slot.path);
+        if set_aside {
+            if let Err(e) = parent.set_aside(&name) {
+                parent.discard(file, &temp)?;
+                self.except(
+                    &slot.path,
+                    failed(
+                        ErrorCode::IoError,
+                        format!(
+                            "the existing file could not be moved to the Recycle Bin or the \
+                             Trash, so it was kept: {e}"
+                        ),
+                    ),
+                );
+                self.step();
+                return Ok(());
+            }
+        }
+        let Some(parent) = self.dirs.get_mut(&slot.parent) else {
+            return Ok(());
+        };
         match parent.publish_no_replace(&temp, &name) {
             Ok(()) => {
                 drop(file);
                 self.report.files += 1;
                 self.report.bytes += bytes;
+                if set_aside {
+                    self.report.replaced += 1;
+                }
                 if slot.mtime.is_some() {
                     let issues =
                         parent.apply_attributes(&name, EntryKind::File, &mtime_of(slot.mtime));

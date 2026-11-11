@@ -77,6 +77,8 @@ function report(extra: Partial<ExtractReport> = {}): ExtractReport {
     files_not_flushed: false,
     case_insensitive: false,
     opened_folder: false,
+    replaced: 0,
+    merged_folders: 0,
     ...extra,
   };
 }
@@ -297,8 +299,11 @@ test("extraction shows what cannot be extracted first, then skips it and lists w
       plan: {
         destination: "/home/me/out",
         entries: 3,
+        existing: [],
+        existing_total: 0,
+        merged_folders: 0,
         conflicts: [
-          { path: { text: "../evil", verbatim: true }, code: "NAME_UNSUPPORTED", reason: "the name contains \"..\"" },
+          { path: { text: "../evil", verbatim: true }, code: "NAME_UNSUPPORTED", reason: "the name contains \"..\"", why: "name_not_allowed" },
         ],
         conflicts_total: 1,
         case_insensitive: false,
@@ -309,13 +314,15 @@ test("extraction shows what cannot be extracted first, then skips it and lists w
   const user = await openIt();
   await user.click(screen.getByTestId("foreign-extract-all"));
   await screen.findByTestId("foreign-plan");
-  expect(screen.getByTestId("foreign-destination")).toHaveTextContent("/home/me/out");
+  // The folder is named in the question; its whole path is the tooltip.
+  expect(screen.getByTestId("foreign-choices-title")).toHaveTextContent("Some items can't be extracted to “out”");
+  expect(screen.getByTestId("foreign-choices-title")).toHaveAttribute("title", "/home/me/out");
   expect(screen.getByTestId("foreign-skipped-kinds")).toHaveTextContent("2 entries are a link or special file");
-  expect(screen.getByTestId("foreign-conflict")).toHaveTextContent("NAME_UNSUPPORTED");
+  expect(screen.getByTestId("foreign-conflict")).toHaveTextContent("This computer doesn't allow this name");
   expect(screen.getByTestId("foreign-plan")).toHaveTextContent("Nothing is overwritten");
   await user.click(screen.getByTestId("foreign-extract-confirm"));
   await waitFor(() =>
-    expect(b.request()).toEqual({ kind: "extract_foreign", handle: 5, keys: [], on_conflict: "skip_conflicts" }),
+    expect(b.request()).toEqual({ kind: "extract_foreign", handle: 5, keys: [], on_conflict: "add_new" }),
   );
   b.job({ event: "started", job_id: 9 });
   b.job({
@@ -341,7 +348,7 @@ test("extraction shows what cannot be extracted first, then skips it and lists w
 test("extracting the selected entry sends its key; cancelling is offered while it runs", async () => {
   const b = backend({
     plan: {
-      plan: { destination: "/o", entries: 1, conflicts: [], conflicts_total: 0, case_insensitive: false },
+      plan: { destination: "/o", entries: 1, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false },
       skipped_kinds: 0,
     },
   });

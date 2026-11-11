@@ -8,7 +8,7 @@ use mochi_core::manifest::Attributes;
 use mochi_core::publish::{open_head, ArchiveWriter, ReadOptions, Transaction};
 use mochi_core::report::Severity;
 use mochi_core::restore::{
-    preflight_selected, restore, ExceptionKind, RestoreOptions, RestoreReport,
+    preflight_selected, restore, ExceptionKind, OnExisting, RestoreOptions, RestoreReport,
 };
 use mochi_core::storage::os::OsRestoreDir;
 use mochi_core::storage::{CaseBehavior, DirectoryDurability, NameIssue, RestoreDir};
@@ -497,7 +497,7 @@ fn c6_preflight_selected_reports_without_writing() {
     tree.insert_file("B", b"already here");
     let before = tree.paths();
     let mut root = tree.clone();
-    let (pre, total) = preflight_selected(&head, &[], &mut root).unwrap();
+    let (pre, total) = preflight_selected(&head, &[], &mut root, OnExisting::Keep).unwrap();
     assert_eq!(total, 5);
     assert_eq!(tree.paths(), before, "nothing written");
     assert_eq!(pre.case_behavior, CaseBehavior::Insensitive);
@@ -529,9 +529,10 @@ fn c6_preflight_selected_reports_without_writing() {
     }
     // A selection counts the entry, its descendants, and the directories above.
     let mut root = SimTree::new();
-    let (_, total) = preflight_selected(&head, &[path("a/x")], &mut root).unwrap();
+    let (_, total) =
+        preflight_selected(&head, &[path("a/x")], &mut root, OnExisting::Keep).unwrap();
     assert_eq!(total, 2, "a and a/x");
-    let e = preflight_selected(&head, &[path("missing")], &mut root).unwrap_err();
+    let e = preflight_selected(&head, &[path("missing")], &mut root, OnExisting::Keep).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidArgument);
 }
 

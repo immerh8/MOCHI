@@ -1362,6 +1362,8 @@ pub fn get(env: &mut Env<'_>, a: &GetArgs) -> Result<u8> {
         restore_setid: a.restore_setid,
         refuse_on_preflight_exceptions: a.refuse_on_conflict,
         skip_file_sync: false,
+        // The CLI never merges into or replaces what is there (spec §10.4).
+        on_existing: mochi_core::restore::OnExisting::Keep,
     };
     let r = restore_selected(&src, &head, &paths, root, &options, &env.read, &ctx)?;
     Ok(emit_restore(env, "get", &head, &dest, &r))
@@ -3195,6 +3197,8 @@ mod tests {
             attributes_unavailable: None,
             attribute_exceptions: Vec::new(),
             case_behavior: mochi_core::storage::CaseBehavior::Sensitive,
+            merged_directories: 0,
+            replaced: 0,
         }
     }
 

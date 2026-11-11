@@ -49,7 +49,7 @@ function fake() {
     calls.push({ cmd, args: a });
     if (cmd === "extract_wizard_setup") return { destination: "/home/me/Desktop", recent: ["/home/me/Desktop"] };
     if (cmd === "plan_extract_to")
-      return { destination: "/home/me/Desktop", entries: 3, conflicts: [], conflicts_total: 0, case_insensitive: false };
+      return { destination: "/home/me/Desktop", entries: 3, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false };
     if (cmd === "start_job") return 7;
     if (cmd === "staged_sources") return { items: [], destination: null, default_destination: null, format: "mochi" };
     if (cmd === "watch_drops" || cmd === "watch_launches") return null;

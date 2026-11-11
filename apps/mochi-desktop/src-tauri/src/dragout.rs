@@ -1214,6 +1214,8 @@ mod tests {
             files_not_flushed: false,
             case_insensitive: false,
             opened_folder: false,
+            replaced: 0,
+            merged_folders: 0,
         };
         assert!(require_complete(Some(&report(&[], 0)), false).is_ok());
         let e =

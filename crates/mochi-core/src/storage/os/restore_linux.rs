@@ -58,10 +58,31 @@ fn exists_or_io(name: &[u8], e: Errno) -> StorageError {
 ///   owner and mode only its owner or root can change.
 ///
 /// Names are the archive's bytes, unaltered (plan O24).
-#[derive(Debug)]
 pub struct OsRestoreDir {
     path: PathBuf,
     fd: OwnedFd,
+    /// Where an existing file goes before a restored one takes its name
+    /// ([`RestoreDir::set_aside`]); inherited by every directory below.
+    set_aside: Option<std::sync::Arc<SetAside>>,
+}
+
+impl std::fmt::Debug for OsRestoreDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OsRestoreDir")
+            .field("path", &self.path)
+            .field("set_aside", &self.set_aside.is_some())
+            .finish()
+    }
+}
+
+/// Whether a directory, by its held descriptor, is one that only its owner
+/// (the restoring user or root) can change: the rule for the root, and for
+/// an existing directory that is entered (`OnExisting::Merge`).
+fn private_enough(st: &rustix::fs::Stat) -> bool {
+    let owner_ok = st.st_uid == euid() || st.st_uid == 0;
+    let shared = st.st_mode & 0o022 != 0;
+    let sticky = st.st_mode & 0o1000 != 0;
+    owner_ok && (!shared || sticky)
 }
 
 /// Why restoring into a directory other users can modify is refused.
@@ -92,6 +113,14 @@ impl OsRestoreDir {
         Self::open_root(path.as_ref())
     }
 
+    /// Move an existing file with `set_aside` (its full path) before a
+    /// restored file takes its name (`OnExisting::Replace`). Without it, this
+    /// directory and those below it refuse to replace.
+    pub fn with_set_aside(mut self, set_aside: std::sync::Arc<SetAside>) -> Self {
+        self.set_aside = Some(set_aside);
+        self
+    }
+
     /// Where this directory is (for messages; operations never use it).
     pub fn path(&self) -> &Path {
         &self.path
@@ -105,15 +134,13 @@ impl OsRestoreDir {
         )
         .map_err(io)?;
         let st = rustix::fs::fstat(&fd).map_err(io)?;
-        let owner_ok = st.st_uid == euid() || st.st_uid == 0;
-        let shared = st.st_mode & 0o022 != 0;
-        let sticky = st.st_mode & 0o1000 != 0;
-        if !owner_ok || (shared && !sticky) {
+        if !private_enough(&st) {
             return Err(StorageError::Unsupported(UNSAFE_ROOT));
         }
         Ok(Self {
             path: path.to_path_buf(),
             fd,
+            set_aside: None,
         })
     }
 
@@ -150,6 +177,7 @@ impl RestoreDir for OsRestoreDir {
         Ok(Self {
             path: self.path.join(os(name)),
             fd,
+            set_aside: self.set_aside.clone(),
         })
     }
 
@@ -224,6 +252,68 @@ impl RestoreDir for OsRestoreDir {
             Err(Errno::NOENT) => Ok(false),
             Err(e) => Err(io(e)),
         }
+    }
+
+    fn existing(&mut self, name: &[u8]) -> Result<Existing, StorageError> {
+        match rustix::fs::statat(&self.fd, os(name), AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(st) => Ok(match rustix::fs::FileType::from_raw_mode(st.st_mode) {
+                rustix::fs::FileType::Directory => Existing::Directory,
+                rustix::fs::FileType::RegularFile => Existing::File,
+                _ => Existing::Other,
+            }),
+            Err(Errno::NOENT) => Ok(Existing::None),
+            Err(e) => Err(io(e)),
+        }
+    }
+
+    /// Opened relative to the held descriptor with `O_DIRECTORY |
+    /// O_NOFOLLOW`, so a symbolic link (or something swapped in for one) is
+    /// never entered; and only if, by the descriptor now held, it meets the
+    /// root's rule: its owner is the restoring user or root, and other users
+    /// cannot modify it (see the type's docs).
+    fn open_existing_dir(&mut self, name: &[u8]) -> Result<Option<Self>, StorageError> {
+        let fd = match rustix::fs::openat(&self.fd, os(name), OPEN_DIR, Mode::empty()) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT | Errno::LOOP | Errno::NOTDIR | Errno::ACCESS | Errno::PERM) => {
+                return Ok(None)
+            }
+            Err(e) => return Err(io(e)),
+        };
+        if !private_enough(&rustix::fs::fstat(&fd).map_err(io)?) {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            path: self.path.join(os(name)),
+            fd,
+            set_aside: self.set_aside.clone(),
+        }))
+    }
+
+    /// Only a regular file, looked at through the held descriptor without
+    /// following a link, and only with the app's place for it (the Recycle
+    /// Bin / Trash). The move itself goes by path (the Trash is elsewhere on
+    /// the filesystem); this directory is one other users cannot modify (the
+    /// root's rule, or a directory this restoration created or entered under
+    /// the same rule), so only the user or root could swap the name in
+    /// between. Afterwards the name must be free.
+    fn set_aside(&mut self, name: &[u8]) -> Result<(), StorageError> {
+        let Some(set_aside) = self.set_aside.clone() else {
+            return Err(StorageError::Unsupported(
+                "no place to move the existing file to was given",
+            ));
+        };
+        if self.existing(name)? != Existing::File {
+            return Err(StorageError::Unsupported(
+                "only a regular file is moved aside, never a folder or a link",
+            ));
+        }
+        set_aside(&self.path.join(os(name)))?;
+        if self.existing(name)? != Existing::None {
+            return Err(StorageError::Io(io::Error::other(
+                "the existing file is still there after it was moved aside",
+            )));
+        }
+        Ok(())
     }
 
     fn apply_attributes(
