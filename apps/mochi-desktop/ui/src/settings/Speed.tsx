@@ -4,6 +4,7 @@ import { errorText } from "../browser/format";
 import { t } from "../i18n";
 import { getSpeedSettings, setSpeedSettings } from "../ipc/speed";
 import type { SpeedSettingsView } from "../ipc/speed";
+import { SettingGroup, SettingRow } from "./Row";
 
 /**
  * Release 0.9.11: whether writes compress on every processor core (the
@@ -18,6 +19,8 @@ export function Speed() {
   const [busy, setBusy] = useState(false);
   const noteId = useId();
   const fastNoteId = useId();
+  const coresId = useId();
+  const fastId = useId();
 
   useEffect(() => {
     let live = true;
@@ -47,41 +50,48 @@ export function Speed() {
   };
 
   return (
-    <>
-      <h3>{t("settings.speedHeading")}</h3>
-      <p>
-        <label>
-          <input
-            type="checkbox"
-            data-testid="speed-all-cores"
-            aria-describedby={noteId}
-            checked={state?.all_cores ?? true}
-            disabled={state === null || busy}
-            onChange={(e) => void change(e.target.checked, state?.fast_extract ?? false)}
-          />{" "}
-          {t("settings.speedAllCores", { n: state?.cores ?? "…" })}
-        </label>
-      </p>
-      <p id={noteId} className="note">
-        {t("settings.speedNote")}
-      </p>
-      <p>
-        <label>
-          <input
-            type="checkbox"
-            data-testid="speed-fast-extract"
-            aria-describedby={fastNoteId}
-            checked={state?.fast_extract ?? false}
-            disabled={state === null || busy}
-            onChange={(e) => void change(state?.all_cores ?? true, e.target.checked)}
-          />{" "}
-          {t("settings.fastExtract")}
-        </label>
-      </p>
-      <p id={fastNoteId} className="note">
-        {t("settings.fastExtractNote")}
-      </p>
-      {error !== null && <p role="alert">{error}</p>}
-    </>
+    <SettingGroup>
+      <SettingRow
+        title={t("settings.speedAllCoresTitle", { n: state?.cores ?? "…" })}
+        titleFor={coresId}
+        description={t("settings.speedAllCoresShort")}
+        descriptionId={noteId}
+        more={t("settings.speedNote")}
+      >
+        <input
+          id={coresId}
+          type="checkbox"
+          className="switch"
+          data-testid="speed-all-cores"
+          aria-describedby={noteId}
+          checked={state?.all_cores ?? true}
+          disabled={state === null || busy}
+          onChange={(e) => void change(e.target.checked, state?.fast_extract ?? false)}
+        />
+      </SettingRow>
+      <SettingRow
+        title={t("settings.fastExtractTitle")}
+        titleFor={fastId}
+        description={t("settings.fastExtractShort")}
+        descriptionId={fastNoteId}
+        more={t("settings.fastExtractNote")}
+      >
+        <input
+          id={fastId}
+          type="checkbox"
+          className="switch"
+          data-testid="speed-fast-extract"
+          aria-describedby={fastNoteId}
+          checked={state?.fast_extract ?? false}
+          disabled={state === null || busy}
+          onChange={(e) => void change(state?.all_cores ?? true, e.target.checked)}
+        />
+      </SettingRow>
+      {error !== null && (
+        <p role="alert" className="setting-error">
+          {error}
+        </p>
+      )}
+    </SettingGroup>
   );
 }

@@ -206,6 +206,40 @@ function Details({ details }: { details: EntryDetails }) {
 
 type Open = { archive: ArchiveSummary; snapshot: SnapshotView };
 
+/**
+ * Covers the window below the title bar while an archive is read (owner report
+ * 2026-11-12): it says which file, takes the pointer and the keyboard so nothing behind it
+ * can be started meanwhile, and leaves the window's own buttons (minimize, close) usable.
+ * It fades in after a moment, so a quick local open does not flash. The name is the user's
+ * own file name, shown as text.
+ */
+function OpeningNotice({ fileName }: { fileName: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  return (
+    <div
+      className="opening-layer"
+      data-testid="opening-notice"
+      // Keys stay here: focus does not leave for the window behind, and no shortcut of
+      // the window runs while the archive is read.
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Tab") e.preventDefault();
+      }}
+    >
+      <div className="opening-card" role="status" aria-live="polite" ref={ref} tabIndex={-1} data-testid="opening-card">
+        <span className="spinner" aria-hidden="true" />
+        <div>
+          <p className="opening-title">{t("browser.openingFile", { name: fileName })}</p>
+          <p className="note">{t("browser.openingNote")}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** An entry the list can select: a folder row or a search hit. */
 export type Picked = { key: string; name: NameText };
 
@@ -229,6 +263,10 @@ export function Browser({
 }) {
   const [open, setOpen] = useState<Open | null>(null);
   const [busy, setBusy] = useState(false);
+  // The file Rust is reading for this window now (owner report 2026-11-12: on a network
+  // drive, or for a very large archive, the window seemed to do nothing). While it is set the
+  // window says so and takes no other action.
+  const [opening, setOpening] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const folder = useFolderPath();
   const { path, focusList, reveal } = folder;
@@ -516,7 +554,9 @@ export function Browser({
   useEffect(
     () =>
       subscribeLaunches((event) => {
-        if (event.event === "problem") setError(event.message);
+        if (event.event === "opening") setOpening(event.file_name);
+        else if (event.event === "opening_ended") setOpening(null);
+        else if (event.event === "problem") setError(event.message);
         else if (event.event === "opened") void launchedRef.current?.(event.archive, event.extract);
         else if (event.event === "find") {
           setMoreOpen(false);
@@ -834,7 +874,7 @@ export function Browser({
     <ShellContext value={shell}>
       <section aria-labelledby="browser-heading" className="browser">
         <TitleBar name={titleName} heading>
-          <div className="toolbar" ref={toolbarRef} role="group" aria-label={t("toolbar.label")}>
+          <div className="toolbar" ref={toolbarRef} role="group" aria-label={t("toolbar.label")} inert={opening !== null}>
             {/* The primary actions stay on the bar; the rest are in More, each with its key. */}
             <span className="tool-cell">
               <ToolButton
@@ -1381,6 +1421,7 @@ export function Browser({
           )}
         </div>
         {foreign}
+        {opening !== null && <OpeningNotice fileName={opening} />}
         <ToolSheet tool={tool} onClose={() => setTool(null)} returnFocus={moreButtonRef}>
           {{
             help,

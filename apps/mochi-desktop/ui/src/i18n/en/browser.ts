@@ -8,6 +8,8 @@ export const browser = {
   "browser.open": "Open",
   "browser.close": "Close",
     "browser.openFailed": "Could not open the archive",
+    "browser.openingFile": "Opening {name}…",
+    "browser.openingNote": "Reading the archive. On a network drive, or for a very large archive, this can take a while.",
   "browser.listFailed": "Could not list",
   "browser.detailsFailed": "Could not read details",
   "browser.openCommitFailed": "Could not open version {seq}",

@@ -50,14 +50,23 @@
 //!   not a verification. A cancelled extraction leaves the files already
 //!   written, each complete; a cancelled creation leaves no archive.
 //!
-//! One job runs at a time, in arrival order, on its own worker thread
-//! (`launch.rs`), so a long extraction never blocks the shell's other verbs.
+//! **Several at once (owner report 2026-11-12).** Like WinRAR, each quick
+//! job gets a compact window of its own ([`QuickPool`]): a second "Add to
+//! archive" while the first is still compressing opens a second window and
+//! runs beside it, instead of waiting unseen behind it. Each job runs on a
+//! thread of its own; at most [`MAX_RUNNING`] run at once and any more wait
+//! for one of them to end (in arrival order). The windows are labelled
+//! `quick`, then `quick-2`, `quick-3`, ... (`capabilities/quick.json` grants
+//! `quick` and `quick-*`); a command from one acts on that window's own job
+//! only (Tauri hands the command its caller's label). Closing a window
+//! cancels its job and no other.
 
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 
 use mochi_core::job::{CancellationToken, JobContext, ProgressEvent, ProgressSink};
 use mochi_core::keys::KeySession;
@@ -82,6 +91,24 @@ const MAX_PENDING: usize = 64;
 
 /// Names tried before giving up (`name`, `name (2)`, …).
 const MAX_NAME_TRIES: u32 = 1000;
+
+/// Quick jobs that run at once; any more wait for one to end. Each has a window of its
+/// own, and every job reads and writes the disk, so a bound keeps the computer usable.
+pub const MAX_RUNNING: usize = 4;
+
+/// The first compact window's label; later ones are `quick-2`, `quick-3`, ...
+pub const QUICK_LABEL: &str = "quick";
+
+/// The prefix of every compact window after the first.
+pub const QUICK_PREFIX: &str = "quick-";
+
+/// Whether `label` names a compact window.
+pub fn is_quick_label(label: &str) -> bool {
+    label == QUICK_LABEL
+        || label
+            .strip_prefix(QUICK_PREFIX)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
 
 /// What a quick job does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -198,10 +225,10 @@ pub trait QuickSink: Send + Sync + 'static {
 /// The windows and the file manager, so that this module is tested without
 /// a display. Called from worker threads only (never the event loop).
 pub trait WindowHost: Send + Sync + 'static {
-    /// Show the compact window (create it if it is not open) at `size`.
-    fn show_quick(&self, size: QuickSize);
-    /// Close the compact window.
-    fn close_quick(&self);
+    /// Show the compact window `label` (create it if it is not open) at `size`.
+    fn show_quick(&self, label: &str, size: QuickSize);
+    /// Close the compact window `label`.
+    fn close_quick(&self, label: &str);
     /// Show the main window (create it if it is not open): the launch needs
     /// the full window.
     fn show_main(&self);
@@ -331,12 +358,19 @@ struct Control {
     made: Option<PathBuf>,
 }
 
-/// The compact window's state: its event stream and the running job.
+/// What every compact window shares: the windows and the saved choice.
 #[derive(Default)]
-pub struct Quick {
+struct Shared {
     host: OnceLock<Arc<dyn WindowHost>>,
     /// "Open the folder when done", shared with the archive windows (`afterextract.rs`).
     after: Arc<AfterExtract>,
+}
+
+/// One compact window's state: its event stream and its job.
+pub struct Quick {
+    /// The window's label (`quick`, `quick-2`, ...).
+    label: String,
+    shared: Arc<Shared>,
     delivery: Mutex<Delivery>,
     control: Mutex<Control>,
 }
@@ -489,39 +523,60 @@ impl ProgressSink for Forward<'_> {
 }
 
 impl Quick {
+    /// A lone compact window (`quick`) with its own host and settings (tests and tools;
+    /// the app makes them through a [`QuickPool`]).
     pub fn new() -> Arc<Quick> {
-        Arc::new(Quick::default())
+        Self::with_shared(QUICK_LABEL.to_owned(), Arc::default())
+    }
+
+    fn with_shared(label: String, shared: Arc<Shared>) -> Arc<Quick> {
+        Arc::new(Quick {
+            label,
+            shared,
+            delivery: Mutex::default(),
+            control: Mutex::default(),
+        })
+    }
+
+    /// The window's label.
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     /// Give it the windows (once, at start-up).
     pub fn set_host(&self, host: Arc<dyn WindowHost>) {
-        let _ = self.host.set(host);
+        let _ = self.shared.host.set(host);
     }
 
     pub fn host(&self) -> Option<Arc<dyn WindowHost>> {
-        self.host.get().cloned()
+        self.shared.host.get().cloned()
     }
 
     /// Read the saved choice from `dir` (a missing or damaged file means on) and save there
     /// from now on. Once, at start-up.
     pub fn load_settings(&self, dir: PathBuf) {
-        self.after.load(dir);
+        self.shared.after.load(dir);
     }
 
     /// The "Open the folder when done" choice, to share with the archive windows.
     pub fn after_extract(&self) -> Arc<AfterExtract> {
-        Arc::clone(&self.after)
+        Arc::clone(&self.shared.after)
     }
 
     /// Whether the folder extracted into opens when the job is done.
     pub fn open_folder_when_done(&self) -> bool {
-        self.after.open_when_done()
+        self.shared.after.open_when_done()
     }
 
     /// Turn "Open the folder when done" on or off, and save it. It applies
     /// to the running job too, if that has not finished yet.
     pub fn set_open_folder_when_done(&self, open: bool) -> Result<bool> {
-        self.after.set(open)
+        self.shared.after.set(open)
+    }
+
+    /// Whether the Add form is open, waiting for OK.
+    fn has_prompt(&self) -> bool {
+        lock(&self.control).prompt.is_some()
     }
 
     /// Rename the folder the last "Extract to new folder" made to `name`, in
@@ -711,7 +766,7 @@ impl Quick {
     /// Show the compact window and tell it a job began.
     fn begin(&self, action: QuickAction, subject: NameText, items: u32) {
         if let Some(host) = self.host() {
-            host.show_quick(QuickSize::Compact);
+            host.show_quick(&self.label, QuickSize::Compact);
         }
         self.emit(QuickEvent::Started {
             action,
@@ -849,7 +904,7 @@ impl Quick {
             tx,
         });
         if let Some(host) = self.host() {
-            host.show_quick(QuickSize::Form);
+            host.show_quick(&self.label, QuickSize::Form);
         }
         self.emit(event);
         Ok(rx.recv().ok().flatten())
@@ -1279,6 +1334,205 @@ impl Quick {
     }
 }
 
+/// Every compact window: one [`Quick`] per job, each in a window of its own (owner report
+/// 2026-11-12: a second "Add to archive" must not wait unseen behind the first).
+pub struct QuickPool {
+    shared: Arc<Shared>,
+    windows: Mutex<PoolWindows>,
+    /// Jobs running now, against [`MAX_RUNNING`].
+    running: Mutex<usize>,
+    freed: Condvar,
+    /// Sinks every new window's job also reports to (tests).
+    #[cfg(test)]
+    watchers: Mutex<Vec<Arc<dyn QuickSink>>>,
+}
+
+#[derive(Default)]
+struct PoolWindows {
+    by_label: HashMap<String, Arc<Quick>>,
+    /// The number of the last `quick-N` (not reused within a run).
+    last: u32,
+    /// Labels in the order their jobs began, oldest first.
+    order: Vec<String>,
+}
+
+impl QuickPool {
+    pub fn new() -> Arc<QuickPool> {
+        Arc::new(QuickPool {
+            shared: Arc::default(),
+            windows: Mutex::default(),
+            running: Mutex::new(0),
+            freed: Condvar::new(),
+            #[cfg(test)]
+            watchers: Mutex::default(),
+        })
+    }
+
+    /// Give it the windows (once, at start-up).
+    pub fn set_host(&self, host: Arc<dyn WindowHost>) {
+        let _ = self.shared.host.set(host);
+    }
+
+    pub fn host(&self) -> Option<Arc<dyn WindowHost>> {
+        self.shared.host.get().cloned()
+    }
+
+    /// Read the saved choice from `dir` and save there from now on. Once, at start-up.
+    pub fn load_settings(&self, dir: PathBuf) {
+        self.shared.after.load(dir);
+    }
+
+    /// The "Open the folder when done" choice, to share with the archive windows.
+    pub fn after_extract(&self) -> Arc<AfterExtract> {
+        Arc::clone(&self.shared.after)
+    }
+
+    pub fn open_folder_when_done(&self) -> bool {
+        self.shared.after.open_when_done()
+    }
+
+    pub fn set_open_folder_when_done(&self, open: bool) -> Result<bool> {
+        self.shared.after.set(open)
+    }
+
+    /// The compact window `label`'s state, if it has one.
+    pub fn get(&self, label: &str) -> Option<Arc<Quick>> {
+        lock(&self.windows).by_label.get(label).cloned()
+    }
+
+    /// [`QuickPool::get`], or an error a command can return.
+    pub fn of(&self, label: &str) -> Result<Arc<Quick>> {
+        self.get(label)
+            .ok_or_else(|| invalid("this window has no job"))
+    }
+
+    /// A new compact window's state, under the first free label.
+    fn create(&self) -> Arc<Quick> {
+        let quick = {
+            let mut w = lock(&self.windows);
+            let label = if w.by_label.contains_key(QUICK_LABEL) {
+                w.last = w.last.saturating_add(1).max(2);
+                format!("{QUICK_PREFIX}{}", w.last)
+            } else {
+                QUICK_LABEL.to_owned()
+            };
+            let quick = Quick::with_shared(label.clone(), Arc::clone(&self.shared));
+            w.by_label.insert(label.clone(), Arc::clone(&quick));
+            w.order.retain(|l| l != &label);
+            w.order.push(label);
+            quick
+        };
+        #[cfg(test)]
+        for sink in lock(&self.watchers).iter() {
+            quick.watch(Arc::clone(sink));
+        }
+        quick
+    }
+
+    /// The window `label` went away: cancel its job and forget it. Nothing of
+    /// any other window is touched.
+    pub fn closed(&self, label: &str) {
+        let quick = {
+            let mut w = lock(&self.windows);
+            w.order.retain(|l| l != label);
+            w.by_label.remove(label)
+        };
+        if let Some(q) = quick {
+            q.closed();
+        }
+    }
+
+    /// Another `--add` arrived while an Add form is open: its items join the
+    /// newest open form. `false` when no form is open.
+    pub fn extend_prompt(&self, more: &[PathBuf]) -> bool {
+        let open: Vec<Arc<Quick>> = {
+            let w = lock(&self.windows);
+            w.order
+                .iter()
+                .rev()
+                .filter_map(|l| w.by_label.get(l).cloned())
+                .collect()
+        };
+        open.iter().any(|q| q.has_prompt() && q.extend_prompt(more))
+    }
+
+    /// Wait for a free place among the [`MAX_RUNNING`] jobs.
+    fn acquire(&self) {
+        let mut n = lock(&self.running);
+        while *n >= MAX_RUNNING {
+            n = self.freed.wait(n).unwrap_or_else(|p| p.into_inner());
+        }
+        *n += 1;
+    }
+
+    fn release(&self) {
+        let mut n = lock(&self.running);
+        *n = n.saturating_sub(1);
+        self.freed.notify_one();
+    }
+
+    /// Run `job` in a new compact window, on a thread of its own, beside any
+    /// that are running. It starts once fewer than [`MAX_RUNNING`] run.
+    pub fn spawn(self: &Arc<Self>, job: QuickJob, main: Arc<dyn MainPort + Send + Sync>) {
+        let pool = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("mochi-quick".to_owned())
+            .spawn(move || {
+                pool.acquire();
+                let quick = pool.create();
+                quick.run(&job, &*main);
+                pool.release();
+            });
+        if spawned.is_err() {
+            // No thread to be had: say so in the main window rather than lose the job.
+            if let Some(host) = self.host() {
+                host.show_main();
+            }
+        }
+    }
+
+    /// Run `job` to its end on the calling thread (tests).
+    #[cfg(test)]
+    pub fn run_now(&self, job: &QuickJob, main: &dyn MainPort) {
+        self.acquire();
+        let quick = self.create();
+        quick.run(job, main);
+        self.release();
+    }
+
+    /// Every new window's job also reports to `sink` (tests).
+    #[cfg(test)]
+    pub fn watch(&self, sink: Arc<dyn QuickSink>) {
+        lock(&self.watchers).push(sink);
+    }
+
+    /// OK on whichever window has its Add form open (tests).
+    #[cfg(test)]
+    pub fn submit_add(&self, request: QuickAddRequest) -> Result<()> {
+        let open = {
+            let w = lock(&self.windows);
+            w.by_label.values().find(|q| q.has_prompt()).cloned()
+        };
+        open.ok_or_else(|| invalid("no archive is waiting to be named"))?
+            .submit_add(request)
+    }
+
+    /// Close every compact window (tests).
+    #[cfg(test)]
+    pub fn close_all(&self) {
+        let labels: Vec<String> = lock(&self.windows).by_label.keys().cloned().collect();
+        for l in labels {
+            self.closed(&l);
+        }
+    }
+
+    /// The labels of the compact windows, oldest job first (tests).
+    #[cfg(test)]
+    pub fn labels(&self) -> Vec<String> {
+        lock(&self.windows).order.clone()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -1327,13 +1581,13 @@ mod tests {
     }
 
     impl WindowHost for Host {
-        fn show_quick(&self, size: QuickSize) {
+        fn show_quick(&self, _label: &str, size: QuickSize) {
             self.calls
                 .lock()
                 .unwrap()
                 .push(format!("show_quick {size:?}"));
         }
-        fn close_quick(&self) {
+        fn close_quick(&self, _label: &str) {
             self.calls.lock().unwrap().push("close_quick".into());
         }
         fn show_main(&self) {
@@ -2313,5 +2567,135 @@ mod tests {
             QuickEvent::Done { .. } => assert!(dir.path().join("big.tar.gz").is_file()),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn compact_window_labels_are_quick_then_numbered() {
+        assert!(is_quick_label("quick"));
+        assert!(is_quick_label("quick-2") && is_quick_label("quick-17"));
+        for no in [
+            "main", "win-1", "quick-", "quick-x", "quickly", "quick-2a", "",
+        ] {
+            assert!(!is_quick_label(no), "{no}");
+        }
+    }
+
+    /// Wait until `done` holds (at most 30 s).
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// Owner report 2026-11-12: a second "Add to archive" waited, unseen, behind the
+    /// first. Each job now has a window of its own and they run side by side; closing one
+    /// window stops its job and no other.
+    #[test]
+    fn two_quick_jobs_run_at_once_each_in_its_own_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        let two = dir.path().join("two.txt");
+        std::fs::write(&one, b"1").unwrap();
+        std::fs::write(&two, b"22").unwrap();
+        let pool = QuickPool::new();
+        let host = Arc::new(Host::default());
+        pool.set_host(host.clone());
+        let main: Arc<dyn MainPort + Send + Sync> = Arc::new(Main::default());
+        // Two Add forms: each waits for its own OK, so the second can only show while
+        // the first is still waiting if they run at once.
+        pool.spawn(
+            QuickJob::AddDialog {
+                paths: vec![one.clone()],
+            },
+            Arc::clone(&main),
+        );
+        wait_until("the first form", || {
+            pool.get(QUICK_LABEL).is_some_and(|q| q.has_prompt())
+        });
+        pool.spawn(
+            QuickJob::AddDialog {
+                paths: vec![two.clone()],
+            },
+            Arc::clone(&main),
+        );
+        wait_until("the second form", || {
+            pool.get("quick-2").is_some_and(|q| q.has_prompt())
+        });
+        assert_eq!(pool.labels(), ["quick", "quick-2"]);
+        // Each window hears its own job only.
+        let first = Sink::live();
+        pool.get(QUICK_LABEL).unwrap().watch(first.clone());
+        let second = Sink::live();
+        pool.get("quick-2").unwrap().watch(second.clone());
+        let subject = |sink: &Sink| {
+            sink.events().iter().find_map(|e| match e {
+                QuickEvent::AddPrompt { subject, .. } => Some(subject.text.clone()),
+                _ => None,
+            })
+        };
+        assert_eq!(subject(&first).as_deref(), Some("one.txt"));
+        assert_eq!(subject(&second).as_deref(), Some("two.txt"));
+        // OK in the second window makes its archive while the first still waits.
+        pool.get("quick-2")
+            .unwrap()
+            .submit_add(QuickAddRequest {
+                name: "two".to_owned(),
+                format: ArchiveFormat::Zip,
+                level: CompressionPreset::Balanced,
+                passphrase: None,
+                recovery_percent: None,
+            })
+            .unwrap();
+        wait_until("the second archive", || {
+            second
+                .events()
+                .iter()
+                .any(|e| matches!(e, QuickEvent::Done { .. }))
+        });
+        assert!(dir.path().join("two.zip").is_file());
+        assert!(pool.get(QUICK_LABEL).unwrap().has_prompt());
+        // Closing the first window cancels its form: nothing is written for it, and the
+        // second window keeps its result.
+        pool.closed(QUICK_LABEL);
+        assert!(pool.get(QUICK_LABEL).is_none());
+        assert!(pool.get("quick-2").is_some());
+        assert!(!dir.path().join("one.mochi").exists() && !dir.path().join("one.zip").exists());
+        // The next job takes the free label again.
+        assert!(!host.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_later_add_joins_the_newest_open_form_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        std::fs::write(&one, b"1").unwrap();
+        let pool = QuickPool::new();
+        // No form open: nothing to join.
+        assert!(!pool.extend_prompt(std::slice::from_ref(&one)));
+        let main: Arc<dyn MainPort + Send + Sync> = Arc::new(Main::default());
+        pool.spawn(
+            QuickJob::AddDialog {
+                paths: vec![one.clone()],
+            },
+            main,
+        );
+        wait_until("the form", || {
+            pool.get(QUICK_LABEL).is_some_and(|q| q.has_prompt())
+        });
+        let two = dir.path().join("two.txt");
+        std::fs::write(&two, b"2").unwrap();
+        assert!(pool.extend_prompt(std::slice::from_ref(&two)));
+        let sink = Sink::live();
+        pool.get(QUICK_LABEL).unwrap().watch(sink.clone());
+        assert!(sink
+            .events()
+            .iter()
+            .any(|e| matches!(e, QuickEvent::AddPrompt { items: 2, .. })));
+        pool.close_all();
     }
 }

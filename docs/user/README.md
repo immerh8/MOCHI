@@ -28,14 +28,16 @@ On Windows, right-clicking a file or folder offers a **MOCHI** submenu (under "S
 options" on Windows 11). On a `.mochi` file it has "Open with MOCHI", "Extract here" and
 "Extract to a new folder"; on any file or folder, "Add to archive" and "Add to
 archive...". "Extract here", "Extract to a new folder" and "Add to archive" work at once in
-a small window and never overwrite: if a name in the way exists, nothing is written and the
+a small window (each job in a window of its own, so several can run side by side; closing
+one stops only its job) and never overwrite: if a name in the way exists, nothing is written and the
 extract plan opens in the main window; a new archive is named for the item (or the folder)
 and gets a number if the name is taken. When an extraction is done, the folder it went into
 opens in a new file-manager window; untick **Open the folder when done** in that small window
 to stop this (the choice is remembered). After "Extract to a new folder", type a new name and
 press **Rename**, or press **Move to…** to put the folder somewhere else on the same drive; a
 name that already exists is refused, never replaced. In the main window, **Extract to…** starts
-on the Desktop; a folder you type that does not exist yet is created, and a line under the field
+on the Desktop (in **Settings → Extraction** you can make it start in the folder used last, or in
+a folder you choose); a folder you type that does not exist yet is created, and a line under the field
 says what will happen before you press OK (for example that a folder named after the archive
 already exists there, so a new one is made with a number). The same **Open the folder when done**
 choice applies there. If the folder you extract into already has some of the same files, MOCHI

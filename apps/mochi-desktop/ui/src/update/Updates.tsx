@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Hint } from "../a11y/Hint";
 
 import { formatSize } from "../browser/format";
 import { cancelJob, isIpcError, startJob } from "../ipc/jobs";
@@ -8,6 +7,7 @@ import { checkForUpdate, getUpdateSettings, setUpdateSettings } from "../ipc/upd
 import type { UpdateOffer, UpdateSettingsView } from "../ipc/update";
 import { t } from "../i18n";
 import type { UpdateFailureKind } from "../ipc/update";
+import { SettingGroup, SettingRow } from "../settings/Row";
 
 /** One sentence per kind of failure; the network's own words go in as a parameter, as text. */
 export function failureText(kind: UpdateFailureKind, detail: string): string {
@@ -50,7 +50,8 @@ export function Updates() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const askedRef = useRef(false);
-  const headingId = useId();
+  const startupId = useId();
+  const startupNoteId = useId();
   const notesId = useId();
 
   const runCheck = useCallback(async (automatic: boolean) => {
@@ -153,28 +154,34 @@ export function Updates() {
   const busy = view.state === "checking" || view.state === "installing";
 
   return (
-    <div role="group" aria-labelledby={headingId} data-testid="updates">
-      <h3 id={headingId}>{t("update.heading")}</h3>
-      <Hint text={[t("update.intro"), t("update.signing")]} />
-      {settings && <p data-testid="update-version">{t("update.version", { current: settings.current_version })}</p>}
-      <div className="actions">
-        <button type="button" data-testid="update-check" onClick={() => void runCheck(false)} disabled={busy}>
-          {t("update.check")}
-        </button>
-      </div>
-      <p>
-        <label>
+    <div role="group" aria-label={t("update.heading")} data-testid="updates">
+      <SettingGroup>
+        <SettingRow
+          title={settings ? <span data-testid="update-version">{t("update.version", { current: settings.current_version })}</span> : "…"}
+          more={[t("update.intro"), t("update.signing")]}
+        >
+          <button type="button" data-testid="update-check" onClick={() => void runCheck(false)} disabled={busy}>
+            {t("update.check")}
+          </button>
+        </SettingRow>
+        <SettingRow
+          title={t("update.startup")}
+          titleFor={startupId}
+          description={settings ? (settings.check_on_start ? t("update.startupOn") : t("update.startupOff")) : undefined}
+          descriptionId={startupNoteId}
+        >
           <input
+            id={startupId}
             type="checkbox"
+            className="switch"
             data-testid="update-startup"
+            aria-describedby={settings ? startupNoteId : undefined}
             checked={settings?.check_on_start ?? false}
             disabled={settings === null || saving}
             onChange={(e) => void toggle(e.target.checked)}
-          />{" "}
-          {t("update.startup")}
-        </label>
-      </p>
-      {settings && <p>{settings.check_on_start ? t("update.startupOn") : t("update.startupOff")}</p>}
+          />
+        </SettingRow>
+      </SettingGroup>
       {error && <p role="alert">{error}</p>}
       <p role="status" data-testid="update-status" data-state={view.state}>
         {view.state === "checking" && t("update.checking")}

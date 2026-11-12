@@ -37,7 +37,8 @@ describe("crash reports (opt-in, local)", () => {
     await browser.refresh();
     // A reload starts with the tool window closed: open Settings again.
     await openTool("start-settings");
-    await $('[data-testid="crash-state"]').waitForExist();
+    await $('[data-testid="settings-tab-privacy"]').click();
+    await $('[data-testid="crash-state"]').waitForDisplayed();
     await browser.waitUntil(async () => enabled().isSelected(), { timeoutMsg: "the choice was not kept" });
     expect(await details().isSelected()).toBe(true);
   });

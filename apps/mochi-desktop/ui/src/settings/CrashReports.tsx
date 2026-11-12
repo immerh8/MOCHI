@@ -1,6 +1,5 @@
 import { useEffect, useId, useState } from "react";
 import { Hint } from "../a11y/Hint";
-import type { ReactNode } from "react";
 
 import { Live } from "../a11y/Live";
 import { errorText, formatSize } from "../browser/format";
@@ -13,19 +12,22 @@ import {
   setCrashSettings,
 } from "../ipc/crash";
 import type { CrashLogView, CrashSettingsView } from "../ipc/crash";
+import { SettingGroup, SettingRow } from "./Row";
 
 /**
  * Plan D7 crash-report policy: opt-in, local, never sent. Both switches start
  * off (the state comes from Rust, which persists them). The log text is shown
  * as text only; saving a copy goes through a native dialog shown by Rust.
  */
-export function CrashReports({ children }: { children?: ReactNode }) {
+export function CrashReports() {
   const [state, setState] = useState<CrashSettingsView | null>(null);
   const [log, setLog] = useState<CrashLogView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const detailsHintId = useId();
+  const enableId = useId();
+  const detailsId = useId();
 
   useEffect(() => {
     let live = true;
@@ -85,76 +87,79 @@ export function CrashReports({ children }: { children?: ReactNode }) {
   const entries = state?.entries ?? 0;
 
   return (
-    <section aria-labelledby="settings-heading" className="settings" data-testid="settings">
-      <h2 id="settings-heading" tabIndex={-1}>
-        {t("settings.heading")}
-      </h2>
-      {children}
-      <h3>{t("settings.crashHeading")}</h3>
-      <p data-testid="crash-policy">{t("settings.crashPolicy")}</p>
-      <Hint text={[t("settings.crashCollected"), t("settings.crashLimits")]} />
-      <div>
-        <label>
+    <>
+      <p className="setting-intro" data-testid="crash-policy">
+        {t("settings.crashPolicy")} <Hint text={[t("settings.crashCollected"), t("settings.crashLimits")]} />
+      </p>
+      <SettingGroup>
+        <SettingRow title={t("settings.enable")} titleFor={enableId}>
           <input
+            id={enableId}
             type="checkbox"
+            className="switch"
             data-testid="crash-enabled"
             checked={enabled}
             disabled={state === null || busy}
             onChange={(e) => void change(e.target.checked, e.target.checked && (state?.include_details ?? false))}
-          />{" "}
-          {t("settings.enable")}
-        </label>
-      </div>
-      <div>
-        <label>
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.details")} titleFor={detailsId}>
           <input
+            id={detailsId}
             type="checkbox"
+            className="switch"
             data-testid="crash-details"
             checked={state?.include_details ?? false}
             disabled={!enabled || busy}
-            aria-describedby={detailsHintId}
+            aria-describedby={enabled ? detailsHintId : undefined}
             onChange={(e) => void change(true, e.target.checked)}
-          />{" "}
-          {t("settings.details")}
-        </label>
-        <p className="warning" id={detailsHintId} data-testid="crash-details-warning">
-          {t("settings.detailsWarning")}
-        </p>
-      </div>
-      {state && (
-        <p data-testid="crash-state">
-          {t("settings.state", {
-            entries: tc(entries, "settings.entryOne", "settings.entryMany"),
-            size: formatSize(String(state.bytes)),
-          })}
-        </p>
-      )}
-      <div className="actions">
-        <button
-          type="button"
-          data-testid="crash-show"
-          disabled={busy || state === null || entries === 0}
-          onClick={() => (log === null ? void show() : setLog(null))}
-        >
-          {t(log === null ? "settings.show" : "settings.hide")}
-        </button>
-        <button
-          type="button"
-          data-testid="crash-export"
-          disabled={busy || state === null || entries === 0}
-          onClick={() => void save()}
-        >
-          {t("settings.export")}
-        </button>
-        <button
-          type="button"
-          data-testid="crash-clear"
-          disabled={busy || state === null || entries === 0}
-          onClick={() => void clear()}
-        >
-          {t("settings.clear")}
-        </button>
-      </div>
+          />
+        </SettingRow>
+        {/* What the message can hold matters once it can be turned on. */}
+        {enabled && (
+          <p className="setting-warning" id={detailsHintId} data-testid="crash-details-warning">
+            {t("settings.detailsWarning")}
+          </p>
+        )}
+        <div className="setting-row setting-stack">
+          <div className="setting-text">
+            {state && (
+              <p className="setting-description" data-testid="crash-state">
+                {t("settings.state", {
+                  entries: tc(entries, "settings.entryOne", "settings.entryMany"),
+                  size: formatSize(String(state.bytes)),
+                })}
+              </p>
+            )}
+          </div>
+          <div className="setting-control actions">
+            <button
+              type="button"
+              data-testid="crash-show"
+              disabled={busy || state === null || entries === 0}
+              onClick={() => (log === null ? void show() : setLog(null))}
+            >
+              {t(log === null ? "settings.show" : "settings.hide")}
+            </button>
+            <button
+              type="button"
+              data-testid="crash-export"
+              disabled={busy || state === null || entries === 0}
+              onClick={() => void save()}
+            >
+              {t("settings.export")}
+            </button>
+            <button
+              type="button"
+              data-testid="crash-clear"
+              disabled={busy || state === null || entries === 0}
+              onClick={() => void clear()}
+            >
+              {t("settings.clear")}
+            </button>
+          </div>
+        </div>
+      </SettingGroup>
       {error && (
         <p role="alert" className="error" data-testid="crash-error">
           {error}
@@ -171,6 +176,6 @@ export function CrashReports({ children }: { children?: ReactNode }) {
           </pre>
         </div>
       )}
-    </section>
+    </>
   );
 }

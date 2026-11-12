@@ -259,3 +259,33 @@ test("an encrypted archive handed to a new window asks for its passphrase there,
   expect(unlocks.map((c) => c.args)).toEqual([{ pending: 5, passphrase: "SECRET" }]);
   expect(JSON.stringify(b.calls.filter((c) => c.cmd !== "unlock_archive"))).not.toContain("SECRET");
 });
+
+// Owner report 2026-11-12: opening an archive on a network drive showed nothing, and
+// the menus stayed live. While Rust reads one, the window says which file and takes no
+// other action; the window's own buttons stay usable.
+test("while an archive is read the window says so and blocks its toolbar, then lets go", async () => {
+  const b = backend();
+  const user = userEvent.setup();
+  render(<Browser />);
+  await screen.findByTestId("start-screen");
+  b.launch({ event: "opening", file_name: '<b>slow</b>.zip' });
+  const notice = await screen.findByTestId("opening-notice");
+  // The file name is text, never markup.
+  expect(notice).toHaveTextContent("Opening <b>slow</b>.zip…");
+  expect(notice.querySelector("b")).toBeNull();
+  expect(notice.querySelector('[role="status"]')).toHaveTextContent("Opening");
+  // The toolbar takes no clicks or keys meanwhile; focus is on the notice.
+  const toolbar = () => screen.getByTestId("toolbar-open").closest(".toolbar");
+  expect(toolbar()).toHaveAttribute("inert");
+  const card = screen.getByTestId("opening-card");
+  expect(document.activeElement).toBe(card);
+  await user.keyboard("{Tab}");
+  expect(document.activeElement).toBe(card);
+  // The window buttons are outside it.
+  expect(screen.getByTestId("window-title").closest("[inert]")).toBeNull();
+  b.launch({ event: "opening_ended" });
+  await waitFor(() => expect(screen.queryByTestId("opening-notice")).toBeNull());
+  expect(toolbar()).not.toHaveAttribute("inert");
+  b.launch({ event: "opened", archive: summary(7, "slow.mochi"), extract: false });
+  expect((await screen.findAllByText("slow.mochi"))[0]).toBeInTheDocument();
+});

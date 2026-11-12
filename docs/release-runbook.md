@@ -257,6 +257,17 @@ Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** 
 4. Delete the edited asset, upload the original, confirm `releases/latest/download/latest.json` carries the original signature, **then** do X-6.
 
 
+### W-09g. A slow drive, and side-by-side quick jobs (release 0.9.19)
+
+WebDriver cannot double-click in Explorer, use the shell's right-click menu, or make a network drive slow, so this one is yours. You need a network share (a NAS, or another computer's shared folder) with a large archive on it (a ZIP or `.mochi` of a few hundred MB), and on Windows a way to make it slow or unreachable (unplug its network cable, or put the NAS to sleep).
+
+1. Double-click the large archive on the share. **Pass:** a window appears at once and says **Opening <name>…** with a spinner; the toolbar is dimmed and its buttons and the More menu do nothing; the window's minimize and close still work. When it is read, the archive shows and the toolbar comes back. Do the same with **Open** in a window: **Pass:** the same notice in that window.
+2. While a slow archive is still opening, double-click a small archive on the local disk. **Pass:** it opens in its own window straight away, without waiting for the first.
+3. Extract once into a folder on the share (so it is in the recent folders), then make the share unreachable. Open a local archive and press **Extract to…**. **Pass:** the window opens at once (on the Desktop), the unreachable folder is not in the recent list, and other MOCHI windows keep responding meanwhile.
+4. **Settings → Extraction**: choose **The folder used last**, then **A folder of my choice** and pick a folder. **Pass:** **Extract to…** starts there each time; after closing and starting MOCHI again it still does. Choose **Desktop** again: **Pass:** back to the Desktop.
+5. Right-click a large folder → **MOCHI → Add to archive**. While it compresses, right-click another folder → **Add to archive**. **Pass:** a second small window opens beside the first (a little down and to the right) and both make progress at once. Do the same with **Add to archive...** (the form) and with **Extract here** on two archives. Close one of the windows while it runs: **Pass:** only that job stops (no half-written archive is left for it), the other finishes.
+6. **Settings**: **Pass:** the sections General, Extraction, Performance, Updates and Crash reports are on the left; each shows one card of settings, one line each, with switches; the arrow keys move between sections. Check it in Thai and Chinese too.
+
 ### W-09d. Compressing on every core (release 0.9.11)
 
 1. Make a 2 GB file in the scratch folder (PowerShell: `fsutil file createnew big.bin 0` does not do, it is all zeros; copy a large video or ISO instead, or several large files into one folder). Open Task Manager → Performance → CPU.

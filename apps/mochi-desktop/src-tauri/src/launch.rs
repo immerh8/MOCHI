@@ -75,7 +75,7 @@ use crate::find::FoundEntry;
 use crate::ipc::{
     ArchiveSummary, EntryKindView, ForeignArchiveSummary, IpcError, NameText, OpenOutcome,
 };
-use crate::quick::{MainPort, Quick, QuickAction, QuickJob};
+use crate::quick::{MainPort, QuickAction, QuickJob, QuickPool};
 use crate::windows::{Placement, WindowStates, MAIN_LABEL};
 use crate::write::MAX_STAGED;
 
@@ -301,7 +301,19 @@ pub enum LaunchEvent {
     Find { folders: u32 },
     /// The launch could not be carried out, in one sentence.
     Problem { message: String },
+    /// An archive is being read for this window (or for a new window this one
+    /// asked for), which can take a while on a network drive or for a very
+    /// large archive: the window says so and takes no other action until
+    /// `OpeningEnded`. `file_name` is the file's name on this computer.
+    Opening { file_name: String },
+    /// The read `Opening` announced ended, whatever its outcome (which comes
+    /// separately, or as the answer to the window's own request).
+    OpeningEnded,
 }
+
+/// The code of an error the shell's open already told a window about (no
+/// second notice is needed).
+const SAID: &str = "ALREADY_SAID";
 
 /// Where launch events go (a Tauri `Channel` in the app).
 pub trait LaunchSink: Send + Sync + 'static {
@@ -319,9 +331,13 @@ struct Delivery {
 struct Inner {
     /// The windows, and through them the archives each one owns.
     windows: Arc<WindowStates>,
-    quick: Arc<Quick>,
+    quick: Arc<QuickPool>,
     /// Where each archive window's launch events go, by label.
     delivery: Mutex<HashMap<String, Delivery>>,
+    /// Held while an open decides which window it goes to (see `open_routed`).
+    placing: Mutex<()>,
+    /// The windows reading an archive now, and the file each is reading.
+    opening: Mutex<HashMap<String, PathBuf>>,
 }
 
 /// Where an archive was opened (see [`Inner::open_routed`]).
@@ -364,37 +380,38 @@ enum Item {
 /// Handles launches in the order they arrive, on one worker thread, so that
 /// opening an archive never blocks the async runtime or the single-instance
 /// callback, and two quick launches cannot overtake each other. Quick jobs
-/// (extract, add now) run on a second worker, one at a time, so that a long
-/// extraction never holds up the shell's other verbs.
+/// (extract, add now, the Add form) each run in a compact window of their own,
+/// beside each other ([`QuickPool`]), and an archive the shell asked to open is
+/// read on a thread of its own: a slow one (on a network drive, or very large)
+/// holds up neither the next launch nor any window (owner report 2026-11-12).
 pub struct Launches {
     inner: Arc<Inner>,
     queue: Mutex<Sender<Item>>,
 }
 
 impl Launches {
-    pub fn new(windows: Arc<WindowStates>, quick: Arc<Quick>) -> Launches {
+    pub fn new(windows: Arc<WindowStates>, quick: Arc<QuickPool>) -> Launches {
         Self::with_batch_window(windows, quick, ADD_BATCH_WINDOW)
     }
 
     /// [`Launches::new`] with another collection window for `--add-now` and `--add`.
     pub fn with_batch_window(
         windows: Arc<WindowStates>,
-        quick: Arc<Quick>,
+        quick: Arc<QuickPool>,
         batch_window: Duration,
     ) -> Launches {
         let inner = Arc::new(Inner {
             windows,
             quick,
             delivery: Mutex::default(),
+            placing: Mutex::default(),
+            opening: Mutex::default(),
         });
-        let (quick_tx, quick_rx) = channel::<QuickJob>();
         let quick_worker = Arc::clone(&inner);
-        // Both threads end when `Launches` (the only sender) is dropped.
-        std::thread::spawn(move || {
-            for job in quick_rx {
-                quick_worker.quick.run(&job, &*quick_worker);
-            }
-        });
+        let run_quick = move |job: QuickJob| {
+            let main: Arc<dyn MainPort + Send + Sync> = Arc::clone(&quick_worker) as _;
+            quick_worker.quick.spawn(job, main);
+        };
         let (tx, rx) = channel::<Item>();
         let worker = Arc::clone(&inner);
         std::thread::spawn(move || {
@@ -432,9 +449,9 @@ impl Launches {
                                 }
                             }
                         }
-                        worker.handle(Ok(launch), &quick_tx);
+                        worker.handle(Ok(launch), &run_quick, true);
                     }
-                    Item::Launch(launch) => worker.handle(launch, &quick_tx),
+                    Item::Launch(launch) => worker.handle(launch, &run_quick, true),
                 }
             }
         });
@@ -533,6 +550,17 @@ impl Launches {
         Ok(shown)
     }
 
+    /// Run `read`, an open of `path` for the window `label` that does not go
+    /// through [`Launches::open_in_window`] (a foreign archive chosen in the
+    /// foreign browser, or its password retry), with the window told it is busy
+    /// meanwhile.
+    pub fn while_opening<T>(&self, label: &str, path: &Path, read: impl FnOnce() -> T) -> T {
+        self.inner.announce_opening(label, path);
+        let out = read();
+        self.inner.emit_quiet(label, LaunchEvent::OpeningEnded);
+        out
+    }
+
     /// Set the title of one window to the archive it shows.
     pub fn refresh_title(&self, label: &str) {
         self.inner.windows_titled(label);
@@ -542,11 +570,10 @@ impl Launches {
     /// to their end here too.
     #[cfg(test)]
     fn handle_now(&self, item: Result<Launch, LaunchError>) {
-        let (tx, rx) = channel::<QuickJob>();
-        self.inner.handle(item, &tx);
-        drop(tx);
-        for job in rx {
-            self.inner.quick.run(&job, &*self.inner);
+        let jobs = Mutex::new(Vec::new());
+        self.inner.handle(item, &|job| lock(&jobs).push(job), false);
+        for job in lock(&jobs).drain(..) {
+            self.inner.quick.run_now(&job, &*self.inner);
         }
     }
 }
@@ -645,13 +672,67 @@ impl Inner {
         }
     }
 
+    /// Run `open` for a launch: on a thread of its own with `concurrent`, so that
+    /// a slow archive holds up no other launch, else here.
+    fn run_open(self: &Arc<Self>, concurrent: bool, open: impl FnOnce(&Inner) + Send + 'static) {
+        if !concurrent {
+            return open(self);
+        }
+        let inner = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("mochi-open".to_owned())
+            .spawn(move || open(&inner));
+        if spawned.is_err() {
+            self.problem("MOCHI could not start opening the archive; try again.");
+        }
+    }
+
+    /// The window that is opening `path` now, if one is.
+    fn opening_window(&self, path: &Path) -> Option<String> {
+        lock(&self.opening)
+            .iter()
+            .find(|(_, p)| crate::windows::same_file(p, path))
+            .map(|(l, _)| l.clone())
+    }
+
+    /// Say in `window` that `path` is being read (and, after, that it no longer
+    /// is), so the window shows that it is busy and takes no other action while
+    /// a slow archive is read (owner report 2026-11-12: on a network drive the
+    /// window seemed to do nothing).
+    fn announce_opening(&self, window: &str, path: &Path) {
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.emit(window, LaunchEvent::Opening { file_name });
+    }
+
     /// Open `path` where it belongs ([`WindowStates::decide`]), making a new
     /// window when needed. `requester` is the window the user acted in, or
     /// `None` for the shell. Delivery of the outcome is the caller's.
+    ///
+    /// Opens may run at once (the shell's each on a thread of its own, and the
+    /// windows' own on the blocking pool): where each goes is decided one at a
+    /// time (`placing`), and a window that is reading an archive (`opening`) is
+    /// not empty, so two archives never land in one window and one file being
+    /// read is not read again beside itself. The read itself runs unlocked.
     fn open_routed(&self, requester: Option<&str>, path: &Path) -> Result<Landing, IpcError> {
         let archives = self.windows.archives();
         let foreign = self.windows.foreign();
-        match self.windows.decide(path, requester) {
+        let placing = lock(&self.placing);
+        // The same file is being read for a window already: that window will show it.
+        if let Some(window) = self.opening_window(path) {
+            return Ok(Landing {
+                window,
+                outcome: None,
+                in_place: false,
+            });
+        }
+        let placement = match self.windows.decide(path, requester) {
+            Placement::Reuse(w) if lock(&self.opening).contains_key(&w) => Placement::New,
+            other => other,
+        };
+        match placement {
             // Already open there: read it again under the same handle and tell
             // that window to show it. The window's page may no longer show it
             // (it went back to the start screen, or reloaded), and bringing the
@@ -665,8 +746,10 @@ impl Inner {
                     && self.quick.host().is_some_and(|h| !h.window_exists(&window))
                 {
                     self.windows.release(&window);
+                    drop(placing);
                     return self.open_routed(requester, path);
                 }
+                drop(placing);
                 let outcome = archives
                     .handle_of_file(path)
                     .filter(|&h| archives.owner_of(h).as_deref() == Some(window.as_str()))
@@ -680,11 +763,17 @@ impl Inner {
                 })
             }
             Placement::Reuse(window) => {
-                let outcome = crate::route::open_path_as(archives, foreign, &window, path)?;
+                lock(&self.opening).insert(window.clone(), path.to_path_buf());
+                drop(placing);
+                let told = requester.unwrap_or(&window).to_owned();
+                self.announce_opening(&told, path);
+                let outcome = crate::route::open_path_as(archives, foreign, &window, path);
+                lock(&self.opening).remove(&window);
+                self.emit_quiet(&told, LaunchEvent::OpeningEnded);
                 let in_place = requester == Some(window.as_str());
                 Ok(Landing {
                     window,
-                    outcome: Some(outcome),
+                    outcome: Some(outcome?),
                     in_place,
                 })
             }
@@ -702,14 +791,63 @@ impl Inner {
                     .map(str::to_owned)
                     .or_else(|| self.windows.labels().into_iter().next());
                 let window = self.windows.next_label();
-                // Open first: a file that cannot be opened makes no window.
-                let outcome = crate::route::open_path_as(archives, foreign, &window, path)?;
+                // The label is taken now, under `placing`, so a second open
+                // decided meanwhile gets another.
                 self.windows.register(&window);
-                let made = self
-                    .quick
-                    .host()
-                    .is_some_and(|h| h.create_window(&window, opener.as_deref()));
-                if !made {
+                lock(&self.opening).insert(window.clone(), path.to_path_buf());
+                drop(placing);
+                let host = self.quick.host();
+                let made_first = requester.is_none();
+                if made_first {
+                    // The shell: the window comes first and says it is reading the
+                    // file, which may take a while; a file that cannot be opened is
+                    // then said there.
+                    if !host
+                        .as_ref()
+                        .is_some_and(|h| h.create_window(&window, opener.as_deref()))
+                    {
+                        lock(&self.opening).remove(&window);
+                        self.windows.release(&window);
+                        return Err(IpcError {
+                            code: mochi_core::ErrorCode::IoError.as_str().to_owned(),
+                            message: "a new window could not be opened".to_owned(),
+                        });
+                    }
+                }
+                // A window's own open: it says it is busy itself, and the new
+                // window is made only for a file that opened.
+                let told = requester.unwrap_or(&window).to_owned();
+                self.announce_opening(&told, path);
+                let outcome = crate::route::open_path_as(archives, foreign, &window, path);
+                lock(&self.opening).remove(&window);
+                self.emit_quiet(&told, LaunchEvent::OpeningEnded);
+                let outcome = match outcome {
+                    Ok(o) => o,
+                    Err(e) if made_first => {
+                        // The window stays, empty, and says why.
+                        self.emit(
+                            &window,
+                            LaunchEvent::Problem {
+                                message: format!(
+                                    "{} could not be opened ({}): {}",
+                                    path.display(),
+                                    e.code,
+                                    e.message
+                                ),
+                            },
+                        );
+                        return Err(IpcError {
+                            code: SAID.to_owned(),
+                            message: e.message,
+                        });
+                    }
+                    Err(e) => {
+                        self.windows.release(&window);
+                        return Err(e);
+                    }
+                };
+                if !made_first && !host.is_some_and(|h| h.create_window(&window, opener.as_deref()))
+                {
                     self.windows.release(&window);
                     return Err(IpcError {
                         code: mochi_core::ErrorCode::IoError.as_str().to_owned(),
@@ -737,6 +875,12 @@ impl Inner {
     /// Queue an event for the window `label` and bring it forward: whatever
     /// reached here needs the full window.
     fn emit(&self, label: &str, event: LaunchEvent) {
+        self.emit_quiet(label, event);
+        self.show(label);
+    }
+
+    /// Queue an event for the window `label`, leaving the focus where it is.
+    fn emit_quiet(&self, label: &str, event: LaunchEvent) {
         {
             let mut all = lock(&self.delivery);
             let d = all.entry(label.to_owned()).or_default();
@@ -755,7 +899,6 @@ impl Inner {
                 d.pending.push_back(event);
             }
         }
-        self.show(label);
     }
 
     fn problem(&self, message: impl Into<String>) {
@@ -768,7 +911,14 @@ impl Inner {
         );
     }
 
-    fn handle(&self, item: Result<Launch, LaunchError>, quick: &Sender<QuickJob>) {
+    /// Carry out one launch. Quick jobs go to `quick`; with `concurrent`, an
+    /// archive to open is read on a thread of its own (the tests read it here).
+    fn handle(
+        self: &Arc<Self>,
+        item: Result<Launch, LaunchError>,
+        quick: &dyn Fn(QuickJob),
+        concurrent: bool,
+    ) {
         let launch = match item {
             Ok(l) => l,
             Err(e) => {
@@ -783,23 +933,21 @@ impl Inner {
                 // of its own is queued behind whatever the quick worker is
                 // doing.
                 if !self.quick.extend_prompt(&launch.paths) {
-                    // A send fails only if the quick worker is gone (a panic).
-                    let _ = quick.send(QuickJob::AddDialog {
+                    quick(QuickJob::AddDialog {
                         paths: launch.paths,
                     });
                 }
             }
             Verb::AddNow => {
-                // A send fails only if the quick worker is gone (a panic).
-                let _ = quick.send(QuickJob::Add {
+                quick(QuickJob::Add {
                     paths: launch.paths,
                 });
             }
             Verb::Find => self.find(&launch.paths),
             Verb::Open => {
                 // `parse` guarantees exactly one path for these verbs.
-                if let Some(path) = launch.paths.first() {
-                    self.open(path);
+                if let Some(path) = launch.paths.first().cloned() {
+                    self.run_open(concurrent, move |inner| inner.open(&path));
                 }
             }
             Verb::ExtractHere | Verb::ExtractToFolder => {
@@ -807,14 +955,15 @@ impl Inner {
                     return;
                 };
                 if crate::route::route(path) == crate::route::Route::Foreign {
-                    return self.open_foreign(true, path);
+                    let path = path.clone();
+                    return self.run_open(concurrent, move |inner| inner.open_foreign(true, &path));
                 }
                 let action = if launch.verb == Verb::ExtractHere {
                     QuickAction::ExtractHere
                 } else {
                     QuickAction::ExtractToFolder
                 };
-                let _ = quick.send(QuickJob::Extract {
+                quick(QuickJob::Extract {
                     action,
                     path: path.clone(),
                 });
@@ -868,6 +1017,7 @@ impl Inner {
         }
         match self.open_routed(None, path) {
             Ok(landing) => self.deliver(landing, false),
+            Err(e) if e.code == SAID => {}
             Err(e) => self.problem(format!(
                 "{shown} could not be opened ({}): {}",
                 e.code, e.message
@@ -902,6 +1052,7 @@ impl Inner {
                 }
                 self.deliver(landing, false);
             }
+            Err(e) if e.code == SAID => {}
             Err(e) => self.problem(format!(
                 "{shown} could not be opened ({}): {}",
                 e.code, e.message
@@ -1179,7 +1330,18 @@ mod tests {
         fn live() -> Arc<Sink> {
             Arc::new(Sink(Mutex::default(), AtomicBool::new(true)))
         }
+        /// What the window was told, without the busy notices around a read
+        /// (`opening_is_announced_around_the_read` checks those).
         fn events(&self) -> Vec<LaunchEvent> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| !matches!(e, LaunchEvent::Opening { .. } | LaunchEvent::OpeningEnded))
+                .cloned()
+                .collect()
+        }
+        fn all_events(&self) -> Vec<LaunchEvent> {
             self.0.lock().unwrap().clone()
         }
     }
@@ -1258,7 +1420,7 @@ mod tests {
         foreign.set_helper(helper());
         let windows = windows_for(Arc::new(Archives::default()), Arc::clone(&foreign));
         let destination = Arc::clone(&windows.state(MAIN_LABEL).destination);
-        let l = Launches::new(windows, Quick::new());
+        let l = Launches::new(windows, crate::quick::QuickPool::new());
         (l, foreign, destination)
     }
 
@@ -1275,8 +1437,8 @@ mod tests {
     }
 
     impl crate::quick::WindowHost for FakeHost {
-        fn show_quick(&self, _: crate::quick::QuickSize) {}
-        fn close_quick(&self) {}
+        fn show_quick(&self, _: &str, _: crate::quick::QuickSize) {}
+        fn close_quick(&self, _: &str) {}
         fn show_main(&self) {}
         fn open_folder(&self, _: &Path) -> std::io::Result<()> {
             Ok(())
@@ -1883,7 +2045,7 @@ mod tests {
             .collect();
         let l = Launches::with_batch_window(
             windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
-            Quick::new(),
+            crate::quick::QuickPool::new(),
             Duration::from_millis(300),
         );
         let compact = QSink::live();
@@ -1934,7 +2096,7 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let l = Launches::with_batch_window(
             windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
-            Quick::new(),
+            crate::quick::QuickPool::new(),
             Duration::from_millis(200),
         );
         let main = Sink::live();
@@ -1957,8 +2119,11 @@ mod tests {
         assert!(dir.path().join("note.mochi").is_file());
     }
 
+    /// Opens from the shell run beside each other (owner report 2026-11-12: a slow
+    /// archive held up the next), so which one takes the empty window is not fixed; each
+    /// still gets a window of its own, and neither is opened twice.
     #[test]
-    fn a_second_launch_is_handled_in_order_by_the_worker() {
+    fn two_launches_each_get_a_window_of_their_own() {
         let dir = tempfile::tempdir().unwrap();
         let a = write_archive(dir.path(), "a.mochi");
         let b = write_archive(dir.path(), "b.mochi");
@@ -1978,8 +2143,8 @@ mod tests {
         {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        // In order: the first archive takes the empty window, the second a new one.
-        let names: Vec<String> = first
+        // One takes the empty window, the other a new one.
+        let mut names: Vec<String> = first
             .events()
             .into_iter()
             .chain(second.events())
@@ -1988,6 +2153,7 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect();
+        names.sort();
         assert_eq!(names, ["a.mochi", "b.mochi"]);
     }
 
@@ -2009,7 +2175,7 @@ mod tests {
     fn add_form_launches(batch: Duration) -> (Launches, Arc<QSink>) {
         let l = Launches::with_batch_window(
             windows_for(Arc::new(Archives::default()), Arc::new(Foreign::default())),
-            Quick::new(),
+            crate::quick::QuickPool::new(),
             batch,
         );
         let compact = QSink::live();
@@ -2151,7 +2317,7 @@ mod tests {
         };
         assert_eq!(items, 1);
         assert_eq!(subject.text, "two.txt");
-        l.inner.quick.closed();
+        l.inner.quick.close_all();
         assert!(dir.path().join("first.zip").is_file());
         assert!(!dir.path().join("two.mochi").exists() && !dir.path().join("two.zip").exists());
     }
@@ -2165,7 +2331,7 @@ mod tests {
         let (l, compact) = add_form_launches(Duration::from_millis(50));
         l.submit(parse(&[OsStr::new("--add"), one.as_os_str()], &cwd()));
         wait_quick(&compact, |e| matches!(e, QuickEvent::AddPrompt { .. }));
-        l.inner.quick.closed();
+        l.inner.quick.close_all();
         // The worker ends the cancelled job (its event has no window to go to).
         std::thread::sleep(Duration::from_millis(150));
         let second = QSink::live();
@@ -2178,7 +2344,7 @@ mod tests {
             "{:?}",
             second.events()
         );
-        l.inner.quick.closed();
+        l.inner.quick.close_all();
         assert_eq!(
             std::fs::read_dir(dir.path()).unwrap().count(),
             1,
@@ -2516,5 +2682,88 @@ mod tests {
                 .as_deref(),
             Some("win-1")
         );
+    }
+
+    /// Owner report 2026-11-12: opening an archive on a network drive showed nothing at
+    /// all. The window is told the read began and ended, around the outcome.
+    #[test]
+    fn opening_is_announced_around_the_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = write_archive(dir.path(), "slow.mochi");
+        let l = launches();
+        with_host(&l);
+        let main = Sink::live();
+        l.watch(MAIN_LABEL, main.clone());
+        l.handle_now(parse(&[archive.as_os_str()], &cwd()).map(Option::unwrap));
+        let all = main.all_events();
+        assert!(
+            matches!(
+                all.as_slice(),
+                [
+                    LaunchEvent::Opening { file_name },
+                    LaunchEvent::OpeningEnded,
+                    LaunchEvent::Opened { .. }
+                ] if file_name == "slow.mochi"
+            ),
+            "{all:?}"
+        );
+        // A window's own open is announced to that window too, whatever the outcome.
+        let other = write_archive(dir.path(), "other.mochi");
+        let asked = Sink::live();
+        l.watch("win-9", asked.clone());
+        l.inner.windows.register("win-9");
+        let outcome = l.open_in_window("win-9", &other).unwrap();
+        assert!(matches!(outcome, OpenOutcome::Opened { .. }));
+        assert!(matches!(
+            asked.all_events().as_slice(),
+            [LaunchEvent::Opening { .. }, LaunchEvent::OpeningEnded]
+        ));
+        let missing = dir.path().join("missing.mochi");
+        assert!(l.open_in_window("win-9", &missing).is_err());
+        assert_eq!(
+            asked
+                .all_events()
+                .iter()
+                .filter(|e| matches!(e, LaunchEvent::OpeningEnded))
+                .count(),
+            2,
+            "a failed read ends its notice too"
+        );
+    }
+
+    /// Opens run at once now: a window that is reading an archive is not empty, so a
+    /// second open goes to a new window; and a file already being read for a window is
+    /// not read again beside itself.
+    #[test]
+    fn a_window_that_is_reading_an_archive_is_not_reused_and_the_file_is_not_read_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let slow = write_archive(dir.path(), "slow.mochi");
+        let next = write_archive(dir.path(), "next.mochi");
+        let l = launches();
+        let host = with_host(&l);
+        // `main` is empty, but reading `slow`.
+        lock(&l.inner.opening).insert(MAIN_LABEL.to_owned(), slow.clone());
+        l.handle_now(parse(&[next.as_os_str()], &cwd()).map(Option::unwrap));
+        assert!(
+            heard(&l, MAIN_LABEL).is_empty(),
+            "the busy window was not given the second archive"
+        );
+        let created: Vec<String> = host
+            .created
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(label, _)| label.clone())
+            .collect();
+        assert_eq!(created, ["win-1"]);
+        assert!(matches!(
+            heard(&l, "win-1").as_slice(),
+            [LaunchEvent::Opened { archive, .. }] if archive.file_name == "next.mochi"
+        ));
+        // The same file again while `main` still reads it: no second read, no new window.
+        l.handle_now(parse(&[slow.as_os_str()], &cwd()).map(Option::unwrap));
+        assert_eq!(host.created.lock().unwrap().len(), 1);
+        assert!(l.inner.windows.archives().handle_of_file(&slow).is_none());
+        assert!(host.focused.lock().unwrap().iter().any(|w| w == MAIN_LABEL));
     }
 }

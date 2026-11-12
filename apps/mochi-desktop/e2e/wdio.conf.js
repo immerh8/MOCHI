@@ -95,10 +95,14 @@ const isWindows = process.platform === "win32";
 
 let tauriDriver;
 
-/** The spec files that are about one tool, and the More menu item that opens it. */
+/**
+ * The spec files that are about one tool, the More menu item that opens it, and for
+ * Settings the section the spec is about (Settings shows one section at a time).
+ */
 const TOOL_OF_SPEC = [
   [/check\.e2e\.js$/, "menu-repair"],
-  [/(crash|updates)\.e2e\.js$/, "start-settings"],
+  [/crash\.e2e\.js$/, "start-settings", "settings-tab-privacy"],
+  [/updates\.e2e\.js$/, "start-settings", "settings-tab-updates"],
 ];
 
 export const config = {
@@ -155,14 +159,16 @@ export const config = {
   // the list, from the toolbar's More menu. Specs that are only about one tool just need it open;
   // the other specs open and close tools themselves, as a person would.
   beforeTest: async (test) => {
-    const tool = TOOL_OF_SPEC.find(([re]) => re.test(test.file ?? ""))?.[1];
+    const [, tool, tab] = TOOL_OF_SPEC.find(([re]) => re.test(test.file ?? "")) ?? [];
     if (tool === undefined) return;
     // The first test of a file can start before the page has rendered.
     await $('[data-testid="toolbar-more"]').waitForExist({ timeout: 60_000 });
-    if (await $('[data-testid="tool-sheet"]').isDisplayed()) return;
-    await $('[data-testid="toolbar-more"]').click();
-    await $(`[data-testid="${tool}"]`).click();
-    await $('[data-testid="tool-sheet"]').waitForDisplayed();
+    if (!(await $('[data-testid="tool-sheet"]').isDisplayed())) {
+      await $('[data-testid="toolbar-more"]').click();
+      await $(`[data-testid="${tool}"]`).click();
+      await $('[data-testid="tool-sheet"]').waitForDisplayed();
+    }
+    if (tab !== undefined) await $(`[data-testid="${tab}"]`).click();
   },
   onComplete: () => {
     tauriDriver?.kill();
