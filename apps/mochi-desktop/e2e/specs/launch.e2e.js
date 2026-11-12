@@ -70,16 +70,21 @@ async function switchToWindowWith(testid, timeout = 60_000, text = "") {
 }
 
 /**
- * Close the compact window with its Close button, then talk to the main window again.
- * The button makes Rust destroy the window, which can happen before WebDriver answers
- * the click; WebKitWebDriver then reports "no such window" for a click that worked.
- * Only that error is ignored: the window count below is what the test checks.
+ * Close every compact window with its Close button (each quick job has a window of its own since
+ * 0.9.19, owner report 2026-11-12), then talk to the main window again. The button makes Rust destroy
+ * the window, which can happen before WebDriver answers the click; WebKitWebDriver then reports
+ * "no such window" for a click that worked. Only that error is ignored: the window count below is
+ * what the test checks.
  */
 async function closeQuickWindow(mainWindow) {
-  try {
-    await $('[data-testid="quick-close"]').click();
-  } catch (err) {
-    if (!/no such window/i.test(String(err?.message ?? err))) throw err;
+  for (const handle of await browser.getWindowHandles()) {
+    if (archiveWindows.has(handle)) continue;
+    try {
+      await browser.switchToWindow(handle);
+      if (await $('[data-testid="quick-close"]').isExisting()) await $('[data-testid="quick-close"]').click();
+    } catch (err) {
+      if (!/no such window/i.test(String(err?.message ?? err))) throw err;
+    }
   }
   await browser.waitUntil(async () => (await browser.getWindowHandles()).length === archiveWindows.size, {
     timeoutMsg: "the compact window did not close",
@@ -201,11 +206,9 @@ describe("a second launch", () => {
     await browser.waitUntil(() => readdirSync(work).includes("photos (2)"), {
       timeoutMsg: "no second, new folder was made",
     });
-    await switchToWindowWith("quick-result");
-    await browser.waitUntil(
-      async () => (await $('[data-testid="quick-result"]').getText()).includes("photos (2)"),
-      { timeoutMsg: "the second result was not shown" },
-    );
+    // The second run has a compact window of its own, beside the first one's.
+    await switchToWindowWith("quick-result", 60_000, "photos (2)");
+    expect((await browser.getWindowHandles()).length).toBe(archiveWindows.size + 2);
     await closeQuickWindow(mainWindow);
   });
 
