@@ -50,6 +50,10 @@ const ALLOWED_ROLES = new Set([
   "menu",
   "menuitem",
   "none",
+  // Settings' sections (settings/Settings.tsx): the ARIA tabs pattern, with arrow keys.
+  "tablist",
+  "tab",
+  "tabpanel",
 ]);
 
 const FOCUSABLE = "button,a[href],input:not([type=hidden]),select,textarea,summary,[tabindex]";

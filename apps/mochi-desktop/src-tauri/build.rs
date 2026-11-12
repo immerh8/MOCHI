@@ -68,6 +68,8 @@ fn main() {
         "open_user_guide",
         "plan_extract_default",
         "extract_wizard_setup",
+        "get_extract_settings",
+        "set_extract_settings",
         "browse_extract_folder",
         "plan_extract_to",
         "plan_extract_foreign_to",

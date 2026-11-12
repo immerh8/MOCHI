@@ -4,6 +4,8 @@
 // Rust, and "Show in folder" asks Rust to show a folder it resolved itself.
 import { invoke } from "@tauri-apps/api/core";
 
+import type { ExtractSettingsView } from "./generated/ExtractSettingsView";
+import type { ExtractStart } from "./generated/ExtractStart";
 import type { DialogText } from "./generated/DialogText";
 import type { ExtractPlan } from "./generated/ExtractPlan";
 import type { ExtractToPreview } from "./generated/ExtractToPreview";
@@ -55,11 +57,26 @@ export function planExtractDefault(handle: number, seq: number, keys: string[]):
 }
 
 /**
- * What the "Extract to..." window opens with: the folder used last (else the
- * Desktop) and the recent folders that still exist, newest first.
+ * What the "Extract to..." window opens with: the folder Settings chose (the
+ * Desktop by default) and the recent folders that still exist, newest first.
  */
 export function extractWizardSetup(): Promise<ExtractWizardSetup> {
   return invoke<ExtractWizardSetup>("extract_wizard_setup");
+}
+
+export type { ExtractSettingsView, ExtractStart };
+
+/** Settings, Extraction: where "Extract to..." starts, and "Open the folder when done". */
+export function getExtractSettings(): Promise<ExtractSettingsView> {
+  return invoke<ExtractSettingsView>("get_extract_settings");
+}
+
+/**
+ * Choose where "Extract to..." starts. `custom` is the folder text for `custom`
+ * (Rust validates it; it need not exist yet), `null` to keep the folder chosen before.
+ */
+export function setExtractSettings(start: ExtractStart, custom: string | null): Promise<ExtractSettingsView> {
+  return invoke<ExtractSettingsView>("set_extract_settings", { start, custom });
 }
 
 /**

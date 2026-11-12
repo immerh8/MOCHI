@@ -58,6 +58,8 @@ function backend(opts: { recents?: RecentView[]; open?: () => unknown } = {}) {
         return { maximized: false, focused: true };
       case "get_speed_settings":
         return { all_cores: true, cores: 4 };
+      case "get_extract_settings":
+        return { start: "desktop", custom: "", open_folder: true };
       case "get_update_settings":
         return {
           check_on_start: false,

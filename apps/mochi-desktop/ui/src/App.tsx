@@ -1,10 +1,7 @@
 import { Browser } from "./browser/Browser";
 import { ForeignBrowser } from "./foreign/ForeignBrowser";
 import { Help } from "./help/Help";
-import { Updates } from "./update/Updates";
-import { CrashReports } from "./settings/CrashReports";
-import { Language } from "./settings/Language";
-import { Speed } from "./settings/Speed";
+import { Settings } from "./settings/Settings";
 import { useLocale } from "./i18n";
 
 export function App() {
@@ -16,13 +13,7 @@ export function App() {
         help={<Help />}
         foreign={<ForeignBrowser />}
         tools={{
-          settings: (
-            <CrashReports>
-              <Language />
-              <Speed />
-              <Updates />
-            </CrashReports>
-          ),
+          settings: <Settings />,
         }}
       />
     </main>

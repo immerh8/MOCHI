@@ -10,6 +10,8 @@ export const browser = {
   "browser.open": "เปิด",
   "browser.close": "ปิด",
   "browser.openFailed": "เปิดไฟล์บีบอัดไม่สำเร็จ",
+  "browser.openingFile": "กำลังเปิด {name}…",
+  "browser.openingNote": "กำลังอ่านไฟล์บีบอัด หากอยู่บนไดรฟ์เครือข่ายหรือมีขนาดใหญ่มาก อาจใช้เวลาสักครู่",
   "browser.listFailed": "แสดงรายการไม่สำเร็จ",
   "browser.detailsFailed": "อ่านรายละเอียดไม่สำเร็จ",
   "browser.openCommitFailed": "เปิดเวอร์ชัน {seq} ไม่สำเร็จ",

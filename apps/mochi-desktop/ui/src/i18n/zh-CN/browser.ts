@@ -10,6 +10,8 @@ export const browser = {
   "browser.open": "打开",
   "browser.close": "关闭",
   "browser.openFailed": "无法打开该压缩文件",
+  "browser.openingFile": "正在打开 {name}…",
+  "browser.openingNote": "正在读取压缩文件。若文件位于网络驱动器上或非常大，可能需要一些时间。",
   "browser.listFailed": "无法列出内容",
   "browser.detailsFailed": "无法读取详细信息",
   "browser.openCommitFailed": "无法打开版本 {seq}",

@@ -21,13 +21,24 @@
 //! gone is not offered.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::channel;
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use mochi_core::{ErrorCode, MochiError, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 const FILE: &str = "recent-extract-folders.json";
+
+/// Where "Extract to..." starts (Settings, owner request 2026-11-12).
+const SETTINGS_FILE: &str = "extract-settings.json";
+
+/// How long "Extract to..." waits for the recent folders to answer whether they still
+/// exist. A folder on a network drive that is asleep or gone can take tens of seconds to
+/// answer; one that has not answered by then is left out of the list this time, so the
+/// window never waits on it (owner report 2026-11-12: a NAS made every window stall).
+pub const EXISTS_DEADLINE: Duration = Duration::from_millis(400);
 
 /// Folders kept, newest first.
 pub const MAX_FOLDERS: usize = 8;
@@ -45,6 +56,32 @@ pub struct ExtractWizardSetup {
     pub destination: String,
     /// Recent folders that still exist, newest first, at most [`MAX_FOLDERS`].
     pub recent: Vec<String>,
+    /// "Open the folder when done", the choice shared with the compact window.
+    pub open_folder: bool,
+}
+
+/// Which folder "Extract to..." starts in (Settings, owner request 2026-11-12).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub enum ExtractStart {
+    /// The user's Desktop (the default).
+    #[default]
+    Desktop,
+    /// The folder extracted into last, else the Desktop.
+    LastUsed,
+    /// A folder the user chose in Settings.
+    Custom,
+}
+
+/// The extraction settings, as Settings shows them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ExtractSettingsView {
+    pub start: ExtractStart,
+    /// The folder chosen for [`ExtractStart::Custom`] (kept when another choice is
+    /// made, so switching back finds it); empty when none was chosen.
+    pub custom: String,
     /// "Open the folder when done", the choice shared with the compact window.
     pub open_folder: bool,
 }
@@ -170,10 +207,61 @@ struct Stored {
     folders: Vec<String>,
 }
 
+#[derive(Default, Clone, Serialize, Deserialize)]
+struct StoredStart {
+    #[serde(default)]
+    start: ExtractStart,
+    #[serde(default)]
+    custom: String,
+}
+
+/// Which of `folders` are folders, asked all at once and waiting at most `deadline`:
+/// those that answered "a folder" in time, in their order. Each is asked on a thread of its
+/// own, so a network folder that never answers holds up nothing (its thread ends whenever
+/// the system gives up on it, and its answer is then ignored).
+pub fn folders_that_exist(folders: &[String], deadline: Duration) -> Vec<String> {
+    let (tx, rx) = channel::<(usize, bool)>();
+    let mut asked = 0;
+    for (i, f) in folders.iter().enumerate() {
+        let tx = tx.clone();
+        let path = PathBuf::from(f);
+        let spawned = std::thread::Builder::new()
+            .name("mochi-folder-exists".to_owned())
+            .spawn(move || {
+                let _ = tx.send((i, path.is_dir()));
+            });
+        if spawned.is_ok() {
+            asked += 1;
+        }
+    }
+    drop(tx);
+    let mut found = vec![false; folders.len()];
+    let until = Instant::now() + deadline;
+    for _ in 0..asked {
+        let left = until.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((i, yes)) => {
+                if let Some(slot) = found.get_mut(i) {
+                    *slot = yes;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    folders
+        .iter()
+        .zip(found)
+        .filter(|(_, yes)| *yes)
+        .map(|(f, _)| f.clone())
+        .collect()
+}
+
 #[derive(Default, Debug)]
 pub struct FolderHistory {
     file: Mutex<Option<PathBuf>>,
     list: Mutex<Vec<String>>,
+    settings_file: Mutex<Option<PathBuf>>,
+    start: Mutex<(ExtractStart, String)>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -200,6 +288,85 @@ impl FolderHistory {
         }
         *lock(&self.list) = list;
         *lock(&self.file) = Some(file);
+
+        let settings_file = dir.join(SETTINGS_FILE);
+        let stored: StoredStart = std::fs::read(&settings_file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        // A hand-edited folder that is not acceptable is dropped (and a custom start
+        // without a folder is the Desktop).
+        let custom = if validate_folder(&stored.custom).is_ok() {
+            stored.custom.trim().to_owned()
+        } else {
+            String::new()
+        };
+        let start = match stored.start {
+            ExtractStart::Custom if custom.is_empty() => ExtractStart::Desktop,
+            other => other,
+        };
+        *lock(&self.start) = (start, custom);
+        *lock(&self.settings_file) = Some(settings_file);
+    }
+
+    /// Where "Extract to..." starts, and the custom folder.
+    pub fn start(&self) -> (ExtractStart, String) {
+        lock(&self.start).clone()
+    }
+
+    /// Choose where "Extract to..." starts. `custom` is the folder for
+    /// [`ExtractStart::Custom`] (validated as any folder text is; it need not exist yet,
+    /// and it is not looked at here, so a network folder costs nothing); `None` keeps the
+    /// folder chosen before.
+    pub fn set_start(
+        &self,
+        start: ExtractStart,
+        custom: Option<&str>,
+    ) -> Result<(ExtractStart, String)> {
+        let custom = match custom {
+            Some(text) => {
+                validate_folder(text)?;
+                Some(text.trim().to_owned())
+            }
+            None => None,
+        };
+        let next = {
+            let mut g = lock(&self.start);
+            if let Some(c) = custom {
+                g.1 = c;
+            }
+            if start == ExtractStart::Custom && g.1.is_empty() {
+                return Err(MochiError::new(
+                    ErrorCode::InvalidArgument,
+                    "choose the folder to extract into first",
+                ));
+            }
+            g.0 = start;
+            g.clone()
+        };
+        self.save_start(&next);
+        Ok(next)
+    }
+
+    /// Best effort, as the list: a choice that cannot be saved is still right for this run.
+    fn save_start(&self, (start, custom): &(ExtractStart, String)) {
+        let Some(file) = lock(&self.settings_file).clone() else {
+            return;
+        };
+        let stored = StoredStart {
+            start: *start,
+            custom: custom.clone(),
+        };
+        let Ok(json) = serde_json::to_vec(&stored) else {
+            return;
+        };
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = file.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &file);
+        }
     }
 
     /// Note that `folder` was extracted into: it moves to the front. A path
@@ -220,22 +387,29 @@ impl FolderHistory {
         self.save();
     }
 
-    /// The recent folders that still exist, newest first.
+    /// The recent folders that still exist, newest first. A folder that does not answer
+    /// within [`EXISTS_DEADLINE`] (a network drive asleep or gone) is left out.
     pub fn existing(&self) -> Vec<String> {
-        lock(&self.list)
-            .iter()
-            .filter(|f| Path::new(f.as_str()).is_dir())
-            .cloned()
-            .collect()
+        let list = lock(&self.list).clone();
+        folders_that_exist(&list, EXISTS_DEADLINE)
     }
 
-    /// What the window opens with: the Desktop (`desktop`, if there is one), else the
-    /// folder used last; the recent folders are offered beside it.
+    /// What the window opens with: the folder Settings chose (the Desktop, `desktop`, by
+    /// default; the folder used last; or a folder of the user's), falling back to the
+    /// Desktop, then the folder used last. The recent folders are offered beside it.
     pub fn setup(&self, desktop: Option<&Path>, open_folder: bool) -> ExtractWizardSetup {
         let recent = self.existing();
-        let destination = desktop
-            .and_then(|p| p.to_str())
-            .map(str::to_owned)
+        let desktop = desktop.and_then(|p| p.to_str()).map(str::to_owned);
+        let (start, custom) = self.start();
+        let chosen = match start {
+            ExtractStart::Desktop => None,
+            ExtractStart::LastUsed => recent.first().cloned(),
+            // Not looked at: it is created on OK if it is missing, and a network folder
+            // must not hold the window up.
+            ExtractStart::Custom => Some(custom).filter(|c| !c.is_empty()),
+        };
+        let destination = chosen
+            .or(desktop)
             .or_else(|| recent.first().cloned())
             .unwrap_or_default();
         ExtractWizardSetup {
@@ -421,5 +595,77 @@ mod tests {
         let edited = FolderHistory::default();
         edited.configure(config.path());
         assert_eq!(edited.existing(), [a.to_str().unwrap()]);
+    }
+
+    /// Settings, Extraction (owner request 2026-11-12): where "Extract to..." starts.
+    #[test]
+    fn extract_to_starts_where_settings_say_and_the_choice_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let desktop = folder(&dir, "Desktop");
+        let last = folder(&dir, "last");
+        let mine = dir.path().join("mine");
+        let text = |p: &Path| p.to_str().unwrap().to_owned();
+        let h = FolderHistory::default();
+        h.configure(config.path());
+        h.record(&last);
+        // The default: the Desktop.
+        assert_eq!(h.start(), (ExtractStart::Desktop, String::new()));
+        assert_eq!(h.setup(Some(&desktop), true).destination, text(&desktop));
+        // The folder used last.
+        h.set_start(ExtractStart::LastUsed, None).unwrap();
+        assert_eq!(h.setup(Some(&desktop), true).destination, text(&last));
+        // A folder of the user's: not looked at (it need not exist yet; a network folder
+        // must not hold the window up), only validated.
+        assert!(
+            h.set_start(ExtractStart::Custom, None).is_err(),
+            "no folder yet"
+        );
+        assert!(h
+            .set_start(ExtractStart::Custom, Some("relative/dir"))
+            .is_err());
+        h.set_start(ExtractStart::Custom, Some(&text(&mine)))
+            .unwrap();
+        assert_eq!(h.setup(Some(&desktop), true).destination, text(&mine));
+        assert!(!mine.exists(), "nothing was created");
+        // Another choice keeps the folder for later.
+        h.set_start(ExtractStart::Desktop, None).unwrap();
+        assert_eq!(h.start(), (ExtractStart::Desktop, text(&mine)));
+        h.set_start(ExtractStart::Custom, None).unwrap();
+        // Saved: a restart starts in the same place.
+        let again = FolderHistory::default();
+        again.configure(config.path());
+        assert_eq!(again.start(), (ExtractStart::Custom, text(&mine)));
+        // A damaged or hand-edited file means the Desktop.
+        std::fs::write(
+            config.path().join(SETTINGS_FILE),
+            br#"{"start":"custom","custom":"relative"}"#,
+        )
+        .unwrap();
+        let edited = FolderHistory::default();
+        edited.configure(config.path());
+        assert_eq!(edited.start(), (ExtractStart::Desktop, String::new()));
+        std::fs::write(config.path().join(SETTINGS_FILE), b"{ nope").unwrap();
+        let damaged = FolderHistory::default();
+        damaged.configure(config.path());
+        assert_eq!(damaged.start().0, ExtractStart::Desktop);
+    }
+
+    #[test]
+    fn folders_are_asked_at_once_and_keep_their_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = folder(&dir, "a");
+        let b = folder(&dir, "b");
+        let list: Vec<String> = [&a, &dir.path().join("gone"), &b]
+            .iter()
+            .map(|p| p.to_str().unwrap().to_owned())
+            .collect();
+        let started = Instant::now();
+        let found = folders_that_exist(&list, EXISTS_DEADLINE);
+        assert_eq!(found, [list[0].clone(), list[2].clone()]);
+        assert!(started.elapsed() < EXISTS_DEADLINE * 10);
+        // A folder that has not answered by the deadline is left out, not waited for.
+        assert!(folders_that_exist(&list, Duration::ZERO).len() <= 2);
+        assert!(folders_that_exist(&[], EXISTS_DEADLINE).is_empty());
     }
 }

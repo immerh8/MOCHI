@@ -54,7 +54,7 @@ pub fn run() -> Result<(), tauri::Error> {
     // extract folder, Test and Repair tool) is made per window and handed to
     // each job when it starts (`windows::WindowState`, `JobRegistry::services_for`).
     // "Open the folder when done": one choice for the compact window and the archive windows.
-    let quick = quick::Quick::new();
+    let quick = quick::QuickPool::new();
     let after_extract = quick.after_extract();
     after_extract.set_opener(Arc::new(|folder: &std::path::Path| {
         help::open_folder(folder).map_err(|e| std::io::Error::other(e.message))
@@ -138,9 +138,9 @@ pub fn run() -> Result<(), tauri::Error> {
                     window_states.touch(label);
                 }
                 tauri::WindowEvent::Destroyed => {
-                    if label == QUICK_LABEL {
-                        // Closing the compact window stops its job.
-                        event_quick.closed();
+                    if quick::is_quick_label(label) {
+                        // Closing a compact window stops its job, and no other.
+                        event_quick.closed(label);
                     } else if windows::is_archive_label(label) {
                         // Closing an archive window closes its archives
                         // (releasing their readers), cancels its jobs and
@@ -174,6 +174,8 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::plan_extract,
             commands::plan_extract_default,
             commands::extract_wizard_setup,
+            commands::get_extract_settings,
+            commands::set_extract_settings,
             commands::browse_extract_folder,
             commands::plan_extract_to,
             commands::plan_extract_foreign_to,
@@ -281,7 +283,7 @@ pub fn run() -> Result<(), tauri::Error> {
     Ok(())
 }
 
-use windows::{MAIN_LABEL, QUICK_LABEL};
+use windows::MAIN_LABEL;
 
 /// How far a new archive window sits from the one it was opened from, in
 /// logical pixels.
@@ -365,7 +367,7 @@ impl Windows {
 }
 
 impl quick::WindowHost for Windows {
-    fn show_quick(&self, size: quick::QuickSize) {
+    fn show_quick(&self, label: &str, size: quick::QuickSize) {
         use tauri::Manager;
         // The Add form is taller than a job's progress and result.
         let (width, height) = match size {
@@ -373,16 +375,24 @@ impl quick::WindowHost for Windows {
             quick::QuickSize::Compact => (460.0, 340.0),
             quick::QuickSize::Form => (480.0, 470.0),
         };
-        if let Some(window) = self.app.get_webview_window(QUICK_LABEL) {
+        if let Some(window) = self.app.get_webview_window(label) {
             let _ = window.set_size(tauri::LogicalSize::new(width, height));
         }
-        if self.bring_forward(QUICK_LABEL) {
+        if self.bring_forward(label) {
             return;
         }
+        // Several compact windows may be open at once (one per job): each new one sits down
+        // and to the right of the centre, by how many are open already, so none hides another.
+        let open = self
+            .app
+            .webview_windows()
+            .keys()
+            .filter(|l| quick::is_quick_label(l))
+            .count();
         // The same page as the main window, told apart by the fragment.
         let builder = tauri::WebviewWindowBuilder::new(
             &self.app,
-            QUICK_LABEL,
+            label,
             tauri::WebviewUrl::App("index.html#quick".into()),
         )
         .title("MOCHI")
@@ -396,12 +406,21 @@ impl quick::WindowHost for Windows {
         .focused(true);
         // If it cannot be made the job still runs; its result is kept for a
         // window that opens later.
-        let _ = automation::configure(builder).build();
+        if let Ok(window) = automation::configure(builder).build() {
+            if open > 0 {
+                let step = i32::try_from(open.min(8)).unwrap_or(8) * CASCADE_STEP as i32;
+                let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+                if let Ok(at) = window.outer_position() {
+                    let px = (f64::from(step) * scale).round() as i32;
+                    let _ = window.set_position(tauri::PhysicalPosition::new(at.x + px, at.y + px));
+                }
+            }
+        }
     }
 
-    fn close_quick(&self) {
+    fn close_quick(&self, label: &str) {
         use tauri::Manager;
-        if let Some(window) = self.app.get_webview_window(QUICK_LABEL) {
+        if let Some(window) = self.app.get_webview_window(label) {
             let _ = window.destroy();
         }
     }

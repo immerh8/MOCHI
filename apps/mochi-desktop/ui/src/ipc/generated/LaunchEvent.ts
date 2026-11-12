@@ -11,4 +11,4 @@ export type LaunchEvent = { "event": "opened", archive: ArchiveSummary, extract:
 /**
  * The file's name on this computer.
  */
-file_name: string, } | { "event": "foreign_password", wrong: boolean, } | { "event": "reveal", handle: number, key: string, path: NameText, kind: EntryKindView, } | { "event": "find", folders: number, } | { "event": "problem", message: string, };
+file_name: string, } | { "event": "foreign_password", wrong: boolean, } | { "event": "reveal", handle: number, key: string, path: NameText, kind: EntryKindView, } | { "event": "find", folders: number, } | { "event": "problem", message: string, } | { "event": "opening", file_name: string, } | { "event": "opening_ended" };

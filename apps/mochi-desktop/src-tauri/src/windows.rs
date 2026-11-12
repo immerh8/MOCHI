@@ -42,8 +42,9 @@ use crate::write::{DropWatch, Staging};
 /// The first archive window's label, which `capabilities/main.json` grants.
 pub const MAIN_LABEL: &str = "main";
 
-/// The compact window's label, which `capabilities/quick.json` grants.
-pub const QUICK_LABEL: &str = "quick";
+/// The first compact window's label (`capabilities/quick.json` grants it and
+/// `quick-*`; `quick::QuickPool` names them).
+pub use crate::quick::QUICK_LABEL;
 
 /// The prefix of every archive window after the first
 /// (`capabilities/main.json` grants `win-*`).

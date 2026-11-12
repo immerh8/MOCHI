@@ -2335,3 +2335,319 @@ button.destructive:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 10%, transparent);
   border-color: var(--error);
 }
+
+/* ---- Reading an archive (owner report 2026-11-12) ---------------------------
+   While Rust reads an archive (slow on a network drive, or for a very large one)
+   the window below the title bar is covered: the pointer and the keyboard stop
+   here, and the title bar's own buttons stay usable. The notice fades in after a
+   moment, so a quick open does not flash; the cover itself is there at once. */
+.opening-layer {
+  position: fixed;
+  inset: 2.9rem 0 0 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  cursor: progress;
+  animation: opening-in 160ms ease-out 250ms both;
+}
+.opening-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  max-width: min(28rem, 100%);
+  padding: 0.85rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.opening-card p {
+  margin: 0;
+}
+.opening-card:focus-visible {
+  outline-offset: 3px;
+}
+/* The toolbar takes nothing meanwhile (it is inert), and looks it. */
+.toolbar[inert] {
+  opacity: 0.45;
+}
+.opening-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes opening-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+  .opening-layer {
+    animation: none;
+  }
+}
+
+/* ---- Settings (owner request 2026-11-12) ------------------------------------
+   One section at a time: a list of sections on the left, the section on the
+   right. Each setting is a row of a card: its name and a one-line description,
+   its control on the right; longer words are behind the "i". A check box that
+   turns something on or off is drawn as a switch (still a check box). */
+.tool-sheet:has([data-tool="settings"]:not([hidden])) {
+  width: min(50rem, 100%);
+  height: min(36rem, calc(100vh - 2rem));
+}
+.settings h2 {
+  margin: 0 2.5rem 0.6rem 0;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+.settings-tabs {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 2.1rem;
+  padding: 0.25rem 0.6rem;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.settings-tab .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+.settings-tab[aria-selected="true"] {
+  font-weight: 600;
+  background: var(--accent-bg);
+  border-color: var(--border);
+}
+.settings-tab[aria-selected="true"] .icon {
+  color: var(--accent);
+}
+.settings-panel-title {
+  margin: 0.15rem 0 0.65rem;
+  font-size: 1.05rem;
+}
+.setting-group + .setting-group {
+  margin-top: 0.9rem;
+}
+.setting-group-heading {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.setting-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.setting-card > * + * {
+  border-top: 1px solid var(--border);
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 2.6rem;
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+}
+.setting-text {
+  flex: 1;
+  min-width: 0;
+}
+.setting-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+.setting-title label {
+  cursor: default;
+}
+.setting-description {
+  margin: 0.15rem 0 0;
+  font-size: 0.92em;
+  color: var(--muted);
+}
+.setting-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.setting-control.actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* A row whose actions are wider than its words: the actions go below. */
+.setting-row.setting-stack {
+  flex-wrap: wrap;
+}
+.setting-row.setting-stack .setting-text {
+  flex-basis: 100%;
+}
+.setting-row.setting-stack .setting-control {
+  flex: 1;
+  justify-content: flex-start;
+}
+/* A fieldset row (radio buttons): the floated legend is laid out like a title. */
+.setting-fieldset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1rem;
+  border: none;
+  border-radius: 0;
+  min-width: 0;
+}
+.setting-fieldset > legend {
+  float: left;
+  grid-column: 1;
+  padding: 0;
+}
+.setting-fieldset > .setting-description {
+  grid-column: 1;
+}
+.setting-fieldset > .setting-control {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.setting-choices {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}
+.setting-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.setting-folder {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--bg);
+}
+.setting-folder[data-active="false"] .setting-folder-path {
+  color: var(--muted);
+}
+.setting-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+  user-select: text;
+}
+.setting-warning {
+  margin: 0;
+  padding: 0.45rem 0.85rem 0.6rem;
+  font-size: 0.92em;
+  color: var(--warning);
+}
+.setting-intro {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+}
+.setting-error {
+  margin: 0;
+  padding: 0.5rem 0.85rem;
+  color: var(--error);
+}
+/* On or off: a check box drawn as a switch. The ring is the control's border
+   (3:1 on every surface), the knob moves right and fills when on. */
+input[type="checkbox"].switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 2.35rem;
+  height: 1.3rem;
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  transition: background-color 120ms ease;
+}
+input[type="checkbox"].switch::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.18rem;
+  width: 0.82rem;
+  height: 0.82rem;
+  background: var(--border-strong);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  transition: left 120ms ease, background-color 120ms ease;
+}
+input[type="checkbox"].switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"].switch:checked::before {
+  left: calc(100% - 0.82rem - 0.18rem);
+  background: var(--on-strong);
+}
+input[type="checkbox"].switch:disabled {
+  opacity: 0.55;
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"].switch,
+  input[type="checkbox"].switch::before {
+    transition: none;
+  }
+}
+@media (max-width: 40rem) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-tabs {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .settings-tab {
+    width: auto;
+  }
+}

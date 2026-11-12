@@ -1,6 +1,7 @@
 import { useId } from "react";
 
 import { isLocale, LOCALES, setLocale, t, useLocale } from "../i18n";
+import { SettingGroup, SettingRow } from "./Row";
 
 /**
  * The display-language selector. Each language is shown in its own name (not
@@ -12,10 +13,14 @@ export function Language() {
   const id = useId();
   const noteId = useId();
   return (
-    <>
-      <h3>{t("settings.languageHeading")}</h3>
-      <p>
-        <label htmlFor={id}>{t("settings.languageLabel")}</label>{" "}
+    <SettingGroup>
+      <SettingRow
+        title={t("settings.languageLabel")}
+        titleFor={id}
+        description={t("settings.languageShort")}
+        descriptionId={noteId}
+        more={t("settings.languageNote")}
+      >
         <select
           id={id}
           data-testid="language-select"
@@ -31,10 +36,7 @@ export function Language() {
             </option>
           ))}
         </select>
-      </p>
-      <p id={noteId} className="note">
-        {t("settings.languageNote")}
-      </p>
-    </>
+      </SettingRow>
+    </SettingGroup>
   );
 }

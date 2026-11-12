@@ -25,7 +25,9 @@ use crate::ipc::{
 };
 use crate::jobs::{EventSink, JobRegistry};
 use crate::launch::{LaunchEvent, LaunchSink, Launches};
-use crate::quick::{Quick, QuickAddRequest, QuickEvent, QuickFolder, QuickLocation, QuickSink};
+use crate::quick::{
+    Quick, QuickAddRequest, QuickEvent, QuickFolder, QuickLocation, QuickPool, QuickSink,
+};
 use crate::recent::{RecentView, Recents};
 use crate::update::{UpdateCheckView, UpdateSettingsView, Updates};
 use crate::windows::{WindowState, WindowStates};
@@ -347,17 +349,23 @@ pub async fn unlock_check_subject(
     blocking(move || checks.unlock_subject(subject, &passphrase)).await
 }
 
-/// Close an archive. `false` if it was not open.
+/// Close an archive. `false` if it was not open. On the blocking pool:
+/// closing a file on a network drive can take a moment.
 #[tauri::command]
-pub fn close_archive(
+pub async fn close_archive(
     handle: ArchiveHandle,
     archives: State<'_, Arc<Archives>>,
     launches: State<'_, Arc<Launches>>,
     win: Win,
-) -> bool {
-    let closed = archives.close(handle);
-    launches.refresh_title(&win.label);
-    closed
+) -> Result<bool, IpcError> {
+    let archives = Arc::clone(&archives);
+    let launches = Arc::clone(&launches);
+    blocking(move || {
+        let closed = archives.close(handle);
+        launches.refresh_title(&win.label);
+        Ok(closed)
+    })
+    .await
 }
 
 /// Open (or reuse) one snapshot of an open archive.
@@ -429,71 +437,98 @@ pub fn watch_launches(
     launches.watch(&win.label, Arc::new(on_launch));
 }
 
+/// The compact window a command was called from (`quick`, `quick-2`, ...;
+/// one per job, `quick::QuickPool`). The label comes from Tauri, not from the
+/// page, so a compact window reaches its own job only.
+pub struct QuickWin {
+    label: String,
+    pool: Arc<QuickPool>,
+}
+
+impl QuickWin {
+    fn quick(&self) -> Result<Arc<Quick>, IpcError> {
+        self.pool.of(&self.label).map_err(IpcError::from)
+    }
+}
+
+impl<'de, R: Runtime> CommandArg<'de, R> for QuickWin {
+    fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        let webview = command.message.webview();
+        Ok(QuickWin {
+            label: webview.label().to_owned(),
+            pool: Arc::clone(&webview.state::<Arc<QuickPool>>()),
+        })
+    }
+}
+
 /// Listen for the compact window's job (D6 quick verbs): progress, a request
 /// for a passphrase, and the result. Anything that arrived before this call
-/// is delivered now. Only the `quick` window may call it.
+/// is delivered now. Only a compact window may call it, and it hears its own job.
 #[tauri::command]
-pub fn watch_quick(on_event: Channel<QuickEvent>, quick: State<'_, Arc<Quick>>) {
-    quick.watch(Arc::new(on_event));
+pub fn watch_quick(on_event: Channel<QuickEvent>, win: QuickWin) -> Result<(), IpcError> {
+    win.quick()?.watch(Arc::new(on_event));
+    Ok(())
 }
 
 /// The passphrase the compact window asked for. It goes straight to the
 /// waiting job and is not kept.
 #[tauri::command]
-pub fn quick_passphrase(passphrase: Secret, quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
-    quick.passphrase(passphrase).map_err(IpcError::from)
+pub fn quick_passphrase(passphrase: Secret, win: QuickWin) -> Result<(), IpcError> {
+    win.quick()?.passphrase(passphrase).map_err(IpcError::from)
 }
 
 /// Stop the compact window's job.
 #[tauri::command]
-pub fn quick_cancel(quick: State<'_, Arc<Quick>>) {
-    quick.cancel();
+pub fn quick_cancel(win: QuickWin) {
+    if let Ok(q) = win.quick() {
+        q.cancel();
+    }
 }
 
 /// Pause (`paused: true`) or resume the compact window's job.
 #[tauri::command]
-pub fn quick_pause(paused: bool, quick: State<'_, Arc<Quick>>) -> bool {
-    quick.set_paused(paused)
+pub fn quick_pause(paused: bool, win: QuickWin) -> bool {
+    win.quick().is_ok_and(|q| q.set_paused(paused))
 }
 
 /// Open the folder the compact window's job wrote into, in the file manager.
 /// The webview names no path: Rust remembers it.
 #[tauri::command]
-pub fn quick_show_folder(quick: State<'_, Arc<Quick>>) -> Result<(), IpcError> {
-    quick.show_folder().map_err(IpcError::from)
+pub async fn quick_show_folder(win: QuickWin) -> Result<(), IpcError> {
+    let quick = win.quick()?;
+    blocking(move || quick.show_folder()).await
 }
 
 /// The compact window's "Open the folder when done" check box: on or off,
 /// saved for the next extraction (and the running one, if it has not finished).
-/// Only the `quick` window may call it.
+/// Only a compact window may call it.
 #[tauri::command]
-pub fn quick_set_open_folder(open: bool, quick: State<'_, Arc<Quick>>) -> Result<bool, IpcError> {
-    quick
+pub fn quick_set_open_folder(open: bool, win: QuickWin) -> Result<bool, IpcError> {
+    win.pool
         .set_open_folder_when_done(open)
         .map_err(IpcError::from)
 }
 
 /// Rename the folder the last "Extract to new folder" made. The webview
 /// sends one folder name, never a path; Rust renames in the same parent and
-/// never replaces a name that exists. Only the `quick` window may call it.
+/// never replaces a name that exists. Only a compact window may call it. On
+/// the blocking pool: the folder may be on a slow drive.
 #[tauri::command]
-pub fn quick_rename_folder(
-    name: String,
-    quick: State<'_, Arc<Quick>>,
-) -> Result<QuickFolder, IpcError> {
-    quick.rename_folder(&name).map_err(IpcError::from)
+pub async fn quick_rename_folder(name: String, win: QuickWin) -> Result<QuickFolder, IpcError> {
+    let quick = win.quick()?;
+    blocking(move || quick.rename_folder(&name)).await
 }
 
 /// Move the folder the last "Extract to new folder" made: the folder dialog
 /// is shown from Rust and the folder keeps its name there. `null` if the user
-/// cancelled. Only the `quick` window may call it.
+/// cancelled. Only a compact window may call it.
 #[tauri::command]
 pub async fn quick_move_folder(
     app: AppHandle,
     text: Option<DialogText>,
-    quick: State<'_, Arc<Quick>>,
+    win: QuickWin,
 ) -> Result<Option<QuickFolder>, IpcError> {
-    let quick = Arc::clone(&quick);
+    let quick = win.quick()?;
     let text = text.unwrap_or_default();
     blocking(
         move || match crate::picker::pick_extract_folder(&app, &text) {
@@ -507,16 +542,16 @@ pub async fn quick_move_folder(
 /// The Add form's Browse…: show the save dialog (in Rust) for the format the
 /// form is set to, and keep the folder it returns. The webview learns only the
 /// folder's display text and the file name. `null` if the user cancelled.
-/// Only the `quick` window may call it.
+/// Only a compact window may call it.
 #[tauri::command]
 pub async fn quick_choose_location(
     app: AppHandle,
     name: String,
     format: ArchiveFormat,
     text: Option<DialogText>,
-    quick: State<'_, Arc<Quick>>,
+    win: QuickWin,
 ) -> Result<Option<QuickLocation>, IpcError> {
-    let quick = Arc::clone(&quick);
+    let quick = win.quick()?;
     let text = text.unwrap_or_default();
     blocking(move || {
         let suggested = quick.suggested_location(&name, format)?;
@@ -530,21 +565,20 @@ pub async fn quick_choose_location(
 
 /// OK on the Add form. The request is checked in Rust; a refusal (a name that
 /// exists, a bad name, options the format does not have) is returned and the
-/// form stays open. The passphrase, if any, crosses IPC here, once. Only the
-/// `quick` window may call it.
+/// form stays open. The passphrase, if any, crosses IPC here, once. Only a
+/// compact window may call it. On the blocking pool: it looks whether the name
+/// exists, and the folder may be on a slow drive.
 #[tauri::command]
-pub fn quick_add_submit(
-    request: QuickAddRequest,
-    quick: State<'_, Arc<Quick>>,
-) -> Result<(), IpcError> {
-    quick.submit_add(request).map_err(IpcError::from)
+pub async fn quick_add_submit(request: QuickAddRequest, win: QuickWin) -> Result<(), IpcError> {
+    let quick = win.quick()?;
+    blocking(move || quick.submit_add(request)).await
 }
 
-/// Close the compact window.
+/// Close the compact window that asks.
 #[tauri::command]
-pub fn quick_close(quick: State<'_, Arc<Quick>>) {
-    if let Some(host) = quick.host() {
-        host.close_quick();
+pub fn quick_close(win: QuickWin) {
+    if let Some(host) = win.pool.host() {
+        host.close_quick(&win.label);
     }
 }
 
@@ -676,20 +710,70 @@ pub async fn plan_extract_default(
         .await
 }
 
-/// What the "Extract to..." window opens with: the folder used last (one that
-/// still exists), else the user's Desktop from Tauri's path resolver, and the
-/// recent folders that still exist.
+/// What the "Extract to..." window opens with: the folder Settings chose (the
+/// user's Desktop from Tauri's path resolver by default), and the recent folders
+/// that still exist. Async, on the blocking pool: the recent folders are looked
+/// at, and one on a network drive can be slow to answer (each gets
+/// `folders::EXISTS_DEADLINE`); a synchronous command would run on the event
+/// loop and stall every window meanwhile (owner report 2026-11-12).
 #[tauri::command]
-pub fn extract_wizard_setup(
+pub async fn extract_wizard_setup(
     app: AppHandle,
     win: Win,
-    quick: State<'_, Arc<Quick>>,
-) -> ExtractWizardSetup {
-    let desktop = app.path().desktop_dir().ok().filter(|d| d.is_dir());
-    win.state
-        .destination
-        .history
-        .setup(desktop.as_deref(), quick.open_folder_when_done())
+    quick: State<'_, Arc<QuickPool>>,
+) -> Result<ExtractWizardSetup, IpcError> {
+    let open_folder = quick.open_folder_when_done();
+    blocking(move || {
+        let desktop = app.path().desktop_dir().ok().filter(|d| d.is_dir());
+        Ok(win
+            .state
+            .destination
+            .history
+            .setup(desktop.as_deref(), open_folder))
+    })
+    .await
+}
+
+/// Settings, Extraction: where "Extract to..." starts and "Open the folder
+/// when done". Nothing is looked at on disk.
+#[tauri::command]
+pub fn get_extract_settings(
+    win: Win,
+    quick: State<'_, Arc<QuickPool>>,
+) -> crate::folders::ExtractSettingsView {
+    let (start, custom) = win.state.destination.history.start();
+    crate::folders::ExtractSettingsView {
+        start,
+        custom,
+        open_folder: quick.open_folder_when_done(),
+    }
+}
+
+/// Settings, Extraction: choose where "Extract to..." starts. `custom` is the
+/// folder text for `custom` (validated in Rust as any folder text is; it need
+/// not exist yet), `null` to keep the folder chosen before. Saved in the app's
+/// config folder; async because it writes that small file.
+#[tauri::command]
+pub async fn set_extract_settings(
+    start: crate::folders::ExtractStart,
+    custom: Option<String>,
+    win: Win,
+    quick: State<'_, Arc<QuickPool>>,
+) -> Result<crate::folders::ExtractSettingsView, IpcError> {
+    let open_folder = quick.open_folder_when_done();
+    blocking(move || {
+        let (start, custom) = win
+            .state
+            .destination
+            .history
+            .set_start(start, custom.as_deref())?;
+        Ok(crate::folders::ExtractSettingsView {
+            start,
+            custom,
+            open_folder,
+        })
+    })
+    .await
 }
 
 /// "Open the folder when done" from an archive window's "Extract to..." (owner
@@ -697,7 +781,7 @@ pub fn extract_wizard_setup(
 #[tauri::command]
 pub fn set_open_folder_when_done(
     open: bool,
-    quick: State<'_, Arc<Quick>>,
+    quick: State<'_, Arc<QuickPool>>,
 ) -> Result<bool, IpcError> {
     quick
         .set_open_folder_when_done(open)
@@ -841,9 +925,14 @@ pub async fn plan_extract_foreign_to(
 }
 
 /// Remove the new folder a default plan made, if nothing was extracted into it.
+/// On the blocking pool: the folder may be on a slow drive.
 #[tauri::command]
-pub fn discard_extract_folder(win: Win) {
-    win.state.destination.discard_made();
+pub async fn discard_extract_folder(win: Win) -> Result<(), IpcError> {
+    blocking(move || {
+        win.state.destination.discard_made();
+        Ok(())
+    })
+    .await
 }
 
 /// Choose the archive to test, check, or repair (D4): the native open dialog
@@ -963,9 +1052,11 @@ pub async fn open_foreign_archive(
                 None => return Ok(None),
             }
         };
-        let opened = foreign
-            .open_as(&win.label, &path, password.map(String::into_bytes))
-            .map(Some);
+        let opened = launches.while_opening(&win.label, &path, || {
+            foreign
+                .open_as(&win.label, &path, password.map(String::into_bytes))
+                .map(Some)
+        });
         launches.refresh_title(&win.label);
         opened
     })
@@ -978,15 +1069,21 @@ pub async fn open_foreign_archive(
 
 /// Close a foreign archive (and forget its password). `false` if not open.
 #[tauri::command]
-pub fn close_foreign_archive(
+pub async fn close_foreign_archive(
     handle: ArchiveHandle,
     foreign: State<'_, Arc<Foreign>>,
     launches: State<'_, Arc<Launches>>,
     win: Win,
-) -> bool {
-    let closed = foreign.close(handle);
-    launches.refresh_title(&win.label);
-    closed
+) -> Result<bool, IpcError> {
+    // On the blocking pool, as every other archive call: never the event loop.
+    let foreign = Arc::clone(&foreign);
+    let launches = Arc::clone(&launches);
+    blocking(move || {
+        let closed = foreign.close(handle);
+        launches.refresh_title(&win.label);
+        Ok(closed)
+    })
+    .await
 }
 
 /// One page of a foreign archive's directory (`dir` null for the root).
