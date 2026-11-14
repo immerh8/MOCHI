@@ -20,7 +20,7 @@ import {
   TrashIcon,
   WrenchIcon,
 } from "../icons";
-import { formatNumber, t, tc, tn } from "../i18n";
+import { formatNumber, formatTime, t, tc, tn } from "../i18n";
 
 import { closeArchive, entryDetails, listChildren, openArchive, openSnapshot } from "../ipc/browse";
 import type {
@@ -107,31 +107,47 @@ function Timeline({
 }) {
   const head = commits.length - 1;
   return (
-    <ol className="timeline" aria-label={t("browser.timeline")} data-testid="timeline" reversed>
-      {[...commits].reverse().map((c) => (
-        <li key={c.seq}>
-          <button
-            type="button"
-            aria-current={c.seq === selected ? "true" : undefined}
-            className={c.seq === selected ? "commit current" : "commit"}
-            data-testid={`commit-${c.seq}`}
-            onClick={() => onSelect(c.seq)}
-          >
-            <span className="seq">
-              {t(c.seq === head ? "browser.commitHead" : "browser.commit", { seq: c.seq })}
-            </span>
-            <span className="meta">{c.time ?? t("browser.noTime")}</span>
-            {retentionText(c) && <span className="meta">{retentionText(c)}</span>}
-            {c.holds.map((h) => (
-              <span className="meta" key={h.text}>
-                {t("browser.hold")}
-                <Name name={h} />
-              </span>
-            ))}
-          </button>
-        </li>
-      ))}
-    </ol>
+    <>
+      <div className="popover-head" aria-hidden="true">
+        <span>{t("browser.timeline")}</span>
+        <span className="popover-count">{formatNumber(commits.length)}</span>
+      </div>
+      <ol className="timeline" aria-label={t("browser.timeline")} data-testid="timeline" reversed>
+        {[...commits].reverse().map((c) => {
+          const current = c.seq === selected;
+          return (
+            <li key={c.seq}>
+              <button
+                type="button"
+                aria-current={current ? "true" : undefined}
+                className={current ? "commit current" : "commit"}
+                data-testid={`commit-${c.seq}`}
+                onClick={() => onSelect(c.seq)}
+              >
+                <span className="commit-mark" aria-hidden="true">
+                  {current && <CheckIcon />}
+                </span>
+                <span className="commit-text">
+                  <span className="seq">
+                    {t(c.seq === head ? "browser.commitHead" : "browser.commit", { seq: c.seq })}
+                  </span>
+                  <span className="meta" title={c.time ?? undefined}>
+                    {c.time === null ? t("browser.noTime") : formatTime(c.time)}
+                  </span>
+                  {retentionText(c) && <span className="meta commit-note">{retentionText(c)}</span>}
+                  {c.holds.map((h) => (
+                    <span className="meta commit-note" key={h.text}>
+                      {t("browser.hold")}
+                      <Name name={h} />
+                    </span>
+                  ))}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
 
