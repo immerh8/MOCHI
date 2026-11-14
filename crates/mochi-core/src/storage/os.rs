@@ -219,15 +219,89 @@ fn parent_dir(path: &Path) -> &Path {
     }
 }
 
+/// What a successful directory flush counts as on Windows (spec Annex B.2.20,
+/// D30; plan O12). Microsoft documents no call that makes a new name in a
+/// directory durable, so by default ([`Self::Unconfirmed`], the G6 policy B of
+/// 2026-10-15) the flush runs and the result is reported as unconfirmed. A
+/// user may choose [`Self::TrustLocalNtfs`]: then a flush that succeeded on a
+/// local NTFS volume counts as confirmed, which is what the G6 crash replays
+/// observed (a flushed new name survived 3 of 3, an unflushed one 0 of 3) but
+/// not a documented guarantee. Network locations and every other filesystem
+/// stay unconfirmed either way. Unix ignores the setting: `fsync` on a
+/// directory is the documented call there.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WindowsDirectoryFlush {
+    /// Policy B: never confirmed on Windows (the default).
+    #[default]
+    Unconfirmed,
+    /// A successful flush on a local NTFS volume counts as confirmed.
+    TrustLocalNtfs,
+}
+
+/// The verdict on a Windows directory flush (D30), kept apart from the Win32
+/// calls so every platform tests it: `filesystem` is the volume's filesystem
+/// name, `network` whether the directory is on a network location.
+pub fn windows_flush_verdict(
+    flushed: &io::Result<()>,
+    policy: WindowsDirectoryFlush,
+    filesystem: Option<&str>,
+    network: bool,
+) -> DirectoryDurability {
+    match flushed {
+        Err(e) => {
+            DirectoryDurability::Unconfirmed(format!("best-effort directory flush failed: {e}"))
+        }
+        Ok(()) => match policy {
+            WindowsDirectoryFlush::Unconfirmed => DirectoryDurability::Unconfirmed(
+                "directory flush ran, but Windows does not document it as durable".into(),
+            ),
+            WindowsDirectoryFlush::TrustLocalNtfs
+                if !network && filesystem.is_some_and(|f| f.eq_ignore_ascii_case("NTFS")) =>
+            {
+                DirectoryDurability::Confirmed
+            }
+            WindowsDirectoryFlush::TrustLocalNtfs => DirectoryDurability::Unconfirmed(format!(
+                "directory flush ran; it is trusted only on a local NTFS volume, and this is {}",
+                if network {
+                    "a network location"
+                } else {
+                    filesystem.unwrap_or("an unknown filesystem")
+                }
+            )),
+        },
+    }
+}
+
+/// Whether `dir` is on a network location: a UNC path, or (after
+/// canonicalization, which resolves a mapped drive letter to its share) a
+/// `\\?\UNC\` path.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_network_path(dir: &Path) -> bool {
+    let resolved = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    is_network_text(&resolved.to_string_lossy())
+}
+
+/// [`is_network_path`] on the path's text.
+fn is_network_text(path: &str) -> bool {
+    let text = path.replace('/', "\\");
+    text.starts_with("\\\\?\\UNC\\")
+        || (text.starts_with("\\\\")
+            && !text.starts_with("\\\\?\\")
+            && !text.starts_with("\\\\.\\"))
+}
+
 #[cfg(unix)]
-fn sync_dir(dir: &Path) -> Result<DirectoryDurability, StorageError> {
+fn sync_dir(dir: &Path, _: WindowsDirectoryFlush) -> Result<DirectoryDurability, StorageError> {
     File::open(dir)?.sync_all()?;
     Ok(DirectoryDurability::Confirmed)
 }
 
 #[cfg(windows)]
-fn sync_dir(dir: &Path) -> Result<DirectoryDurability, StorageError> {
-    // Best effort only (module docs, plan O12): never Confirmed.
+fn sync_dir(
+    dir: &Path,
+    policy: WindowsDirectoryFlush,
+) -> Result<DirectoryDurability, StorageError> {
+    // Best effort; confirmed only as `policy` allows (D30, plan O12).
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     let flushed = OpenOptions::new()
@@ -236,10 +310,18 @@ fn sync_dir(dir: &Path) -> Result<DirectoryDurability, StorageError> {
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(dir)
         .and_then(|d| d.sync_all());
-    Ok(DirectoryDurability::Unconfirmed(match flushed {
-        Ok(()) => "directory flush ran, but Windows does not document it as durable".into(),
-        Err(e) => format!("best-effort directory flush failed: {e}"),
-    }))
+    let (filesystem, network) = match policy {
+        WindowsDirectoryFlush::Unconfirmed => (None, false),
+        WindowsDirectoryFlush::TrustLocalNtfs => {
+            (volume_filesystem_name(dir), is_network_path(dir))
+        }
+    };
+    Ok(windows_flush_verdict(
+        &flushed,
+        policy,
+        filesystem.as_deref(),
+        network,
+    ))
 }
 
 /// Read-only handle. There is no write API on this type, and the file is opened
@@ -524,6 +606,8 @@ pub struct OsStorage {
     /// kept here rather than asked of the OS (found by T22 on
     /// `windows-latest`).
     locked: bool,
+    /// What a directory flush counts as on Windows (D30).
+    flush: WindowsDirectoryFlush,
 }
 
 impl Drop for OsStorage {
@@ -559,7 +643,15 @@ impl OsStorage {
             path,
             role,
             locked: false,
+            flush: WindowsDirectoryFlush::default(),
         }
+    }
+
+    /// What a directory flush of this file's directory counts as on Windows
+    /// (D30). The default is policy B, never confirmed.
+    pub fn with_windows_flush(mut self, flush: WindowsDirectoryFlush) -> Self {
+        self.flush = flush;
+        self
     }
 
     /// A temporary or sidecar file, locked on itself and nothing more.
@@ -645,7 +737,7 @@ impl Storage for OsStorage {
     }
 
     fn sync_directory(&mut self) -> Result<DirectoryDurability, StorageError> {
-        sync_dir(parent_dir(&self.path))
+        sync_dir(parent_dir(&self.path), self.flush)
     }
 
     fn try_lock_exclusive(&mut self) -> Result<(), StorageError> {
@@ -700,6 +792,9 @@ pub struct OsDir {
     /// Whether the last publication was a [`PublishMechanism::MoveWriteThrough`]
     /// on a volume whose filesystem is NTFS (see [`is_ntfs_write_through`]).
     last_publish_ntfs_write_through: bool,
+    /// What a directory flush counts as on Windows (D30), for this directory
+    /// and every file it opens or creates.
+    flush: WindowsDirectoryFlush,
 }
 
 /// How the last [`StorageDir::publish_no_replace`] was carried out.
@@ -910,7 +1005,15 @@ impl OsDir {
             path,
             last_publish: None,
             last_publish_ntfs_write_through: false,
+            flush: WindowsDirectoryFlush::default(),
         })
+    }
+
+    /// What a directory flush counts as on Windows for this directory and the
+    /// files it opens or creates (D30). The default is policy B.
+    pub fn with_windows_flush(mut self, flush: WindowsDirectoryFlush) -> Self {
+        self.flush = flush;
+        self
     }
 
     /// The directory that contains `file`.
@@ -940,7 +1043,7 @@ impl StorageDir for OsDir {
     type File = OsStorage;
 
     fn open(&mut self, name: &str) -> Result<OsStorage, StorageError> {
-        OsStorage::open_existing(self.entry(name)?)
+        Ok(OsStorage::open_existing(self.entry(name)?)?.with_windows_flush(self.flush))
     }
 
     fn create_exclusive(&mut self, name: &str) -> Result<OsStorage, StorageError> {
@@ -951,7 +1054,7 @@ impl StorageDir for OsDir {
             .create_new(true)
             .open(&path)
             .map_err(exists_as(name))?;
-        let mut s = OsStorage::itself(file, path);
+        let mut s = OsStorage::itself(file, path).with_windows_flush(self.flush);
         s.try_lock_exclusive()?;
         Ok(s)
     }
@@ -1019,7 +1122,7 @@ impl StorageDir for OsDir {
     }
 
     fn sync_directory(&mut self) -> Result<DirectoryDurability, StorageError> {
-        sync_dir(&self.path)
+        sync_dir(&self.path, self.flush)
     }
 }
 
@@ -1112,6 +1215,70 @@ mod tests {
         let mut buf = [0u8; 11];
         s.read_exact_at(0, &mut buf).unwrap();
         assert_eq!(&buf, b"hello world");
+    }
+
+    #[test]
+    fn a_windows_flush_counts_only_as_the_user_chose_and_only_on_local_ntfs() {
+        use WindowsDirectoryFlush::{TrustLocalNtfs, Unconfirmed};
+        let ok: io::Result<()> = Ok(());
+        let failed: io::Result<()> = Err(io::Error::other("no"));
+        let confirmed = |d: DirectoryDurability| matches!(d, DirectoryDurability::Confirmed);
+        // Policy B, the default: never confirmed, whatever the volume.
+        assert_eq!(WindowsDirectoryFlush::default(), Unconfirmed);
+        assert!(!confirmed(windows_flush_verdict(
+            &ok,
+            Unconfirmed,
+            Some("NTFS"),
+            false
+        )));
+        // Trusted: confirmed on local NTFS (any letter case) only.
+        assert!(confirmed(windows_flush_verdict(
+            &ok,
+            TrustLocalNtfs,
+            Some("NTFS"),
+            false
+        )));
+        assert!(confirmed(windows_flush_verdict(
+            &ok,
+            TrustLocalNtfs,
+            Some("ntfs"),
+            false
+        )));
+        for (fs, network) in [
+            (Some("NTFS"), true),
+            (Some("FAT32"), false),
+            (Some("exFAT"), false),
+            (Some("ReFS"), false),
+            (None, false),
+        ] {
+            let d = windows_flush_verdict(&ok, TrustLocalNtfs, fs, network);
+            assert!(!confirmed(d.clone()), "{fs:?} network={network}");
+            let DirectoryDurability::Unconfirmed(why) = d else {
+                unreachable!()
+            };
+            assert!(why.contains("local NTFS"), "{why}");
+        }
+        // A flush that failed is never confirmed.
+        assert!(!confirmed(windows_flush_verdict(
+            &failed,
+            TrustLocalNtfs,
+            Some("NTFS"),
+            false
+        )));
+    }
+
+    #[test]
+    fn network_locations_are_recognized_by_their_path() {
+        for p in [
+            r"\\server\share\dir",
+            r"\\?\UNC\server\share\dir",
+            "//server/share",
+        ] {
+            assert!(is_network_text(p), "{p}");
+        }
+        for p in [r"C:\Users\me", r"\\?\C:\Users\me", r"\\.\C:", "/home/me"] {
+            assert!(!is_network_text(p), "{p}");
+        }
     }
 
     #[test]

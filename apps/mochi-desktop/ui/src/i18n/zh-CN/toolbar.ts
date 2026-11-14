@@ -7,7 +7,7 @@ export const toolbar = {
   "toolbar.test": "测试",
   "toolbar.testTip": "测试此压缩文件",
   "toolbar.readOnly": "其他格式的压缩文件为只读",
-  "toolbar.info": "信息",
+  "toolbar.info": "详细信息",
   "toolbar.infoTip": "显示或隐藏详细信息（Alt+Enter）",
   "toolbar.openFirst": "请先打开压缩文件",
   "toolbar.openTip": "打开压缩文件（Ctrl+O）",

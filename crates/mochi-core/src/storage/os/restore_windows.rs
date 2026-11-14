@@ -195,7 +195,8 @@ impl RestoreDir for OsRestoreDir {
     }
 
     fn sync_directory(&mut self) -> Result<DirectoryDurability, StorageError> {
-        sync_dir(&self.path)
+        // Restored files are not archives: D30 does not apply, policy B stays.
+        sync_dir(&self.path, super::WindowsDirectoryFlush::Unconfirmed)
     }
 
     /// Creates a probe file of its own, looks it up under its upper-case

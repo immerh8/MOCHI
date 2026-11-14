@@ -5,7 +5,7 @@ export const toolbar = {
   "toolbar.test": "Test",
   "toolbar.testTip": "Test this archive",
   "toolbar.readOnly": "Archives in other formats are read-only",
-  "toolbar.info": "Info",
+  "toolbar.info": "Details",
   "toolbar.infoTip": "Show or hide details (Alt+Enter)",
   "toolbar.openFirst": "Open an archive first",
   "toolbar.openTip": "Open an archive (Ctrl+O)",

@@ -32,6 +32,20 @@ pub const COMPRESSION_DICTIONARY: u32 = 0x184D_2A5D;
 pub const FOOTER_HISTORY: u32 = 0x184D_2A5E;
 pub const PARITY_OBJECT: u32 = 0x184D_2A5F;
 
+/// Required-feature identifier 3: the archive comment (spec Annex B.2.19,
+/// D29; `docs/schemas/commit-record-v4.cddl`). Listed by exactly the commit
+/// records that carry a comment (schema 4, key 13); a reader that does not
+/// know it refuses the commit (`UNSUPPORTED_FEATURE`, exit 4). Identifier 1,
+/// the Encrypted profile, is `seal::FEATURE_ENCRYPTED`. Identifier 2 stays
+/// unassigned: the frozen golden vectors use it as the feature no build
+/// defines.
+pub const FEATURE_COMMENT: u64 = 3;
+
+/// Longest archive comment, in UTF-8 bytes (Annex B.2.19 item 3). It is
+/// repeated in every later commit, so it is kept well inside the 64 KiB
+/// commit-frame limit (B.2.3).
+pub const MAX_COMMENT_BYTES: usize = 16 * 1024;
+
 /// Footer geometry (spec §8.4): 8-byte skippable header + 64-byte payload.
 pub const SKIPPABLE_HEADER_LEN: usize = 8;
 pub const FOOTER_PAYLOAD_LEN: usize = 64;

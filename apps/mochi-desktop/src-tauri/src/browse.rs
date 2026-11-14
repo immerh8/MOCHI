@@ -19,17 +19,17 @@ use mochi_core::manifest::{
     Attributes, WINDOWS_ARCHIVE, WINDOWS_HIDDEN, WINDOWS_READONLY, WINDOWS_SYSTEM,
 };
 use mochi_core::publish::{
-    commit_history, open_at_footer, open_head, promised_attributes, segment_state, CatalogSource,
-    HistoryEntry, OpenedHead, ReadOptions,
+    commit_history, open_at_footer, open_head, promised_attributes, recorded_writer_parameters,
+    segment_state, CatalogSource, HistoryEntry, OpenedHead, ReadOptions,
 };
 use mochi_core::storage::os::OsReadStorage;
 use mochi_core::timestamp::Timestamp;
 use mochi_core::{ErrorCode, MochiError, Result};
 
 use crate::ipc::{
-    ArchiveHandle, ArchiveSummary, AttributesView, CatalogSourceView, ChildrenPage, CommitView,
-    EntryDetails, EntryKindView, EntryRow, IpcError, NameText, OpenOutcome, PathKey, PendingId,
-    PosixView, ProfileView, Secret, SnapshotView,
+    ArchiveHandle, ArchiveInfoView, ArchiveSummary, AttributesView, CatalogSourceView,
+    ChildrenPage, CommitView, EntryDetails, EntryKindView, EntryRow, IpcError, NameText,
+    OpenOutcome, PathKey, PendingId, PosixView, ProfileView, Secret, SnapshotView,
 };
 use mochi_core::keys::KeySession;
 use mochi_core::publish::{locate_head, read_commit};
@@ -652,6 +652,33 @@ impl Archives {
         })
     }
 
+    /// The Info window's facts for snapshot `seq`: its totals
+    /// ([`SnapshotIndex::totals`]) and the writer's recorded parameters, read
+    /// from the snapshot's catalog; and the archive file's size on disk.
+    pub fn info(&self, handle: ArchiveHandle, seq: u64) -> Result<ArchiveInfoView> {
+        let session = self.session(handle)?;
+        let mut s = lock(&session);
+        let path = s.path.clone();
+        let (v, _, _) = s.view(seq)?;
+        let totals = v.index.totals(&v.head.catalog)?;
+        let params = recorded_writer_parameters(&v.head.catalog)?;
+        let seq = v.seq;
+        let comment = v.head.commit.comment.clone();
+        drop(s);
+        Ok(ArchiveInfoView {
+            seq,
+            folders: totals.folders.to_string(),
+            files: totals.files.to_string(),
+            total_size: totals.logical_bytes.to_string(),
+            packed_size: totals.stored_bytes.to_string(),
+            chunks: totals.chunks.to_string(),
+            file_size: std::fs::metadata(&path).ok().map(|m| m.len().to_string()),
+            chunk_size: params.map(|(size, _)| size.to_string()),
+            zstd_level: params.map(|(_, level)| level),
+            comment,
+        })
+    }
+
     /// Children `offset .. offset + limit` of `dir` (the root for `None`) in
     /// snapshot `seq`; subdirectories only with `directories_only`.
     pub fn children(
@@ -801,6 +828,17 @@ mod tests {
         assert_eq!(got, expected_root);
         assert_eq!(root.entries[0].kind, EntryKindView::Directory, "dirs first");
         assert_eq!(root.total as usize, expected_root.len());
+
+        // Info: every entry is a folder or a file; the chunks fit in the file,
+        // and the writer's chunk size and level were recorded.
+        let info = archives.info(s.handle, 2).unwrap();
+        let n = |v: &str| v.parse::<u64>().unwrap();
+        assert_eq!(info.seq, 2);
+        assert_eq!(n(&info.folders) + n(&info.files), u64::from(snap.entries));
+        assert!(n(&info.packed_size) > 0);
+        assert!(n(&info.packed_size) < n(info.file_size.as_deref().unwrap()));
+        assert!(info.chunk_size.is_some() && info.zstd_level.is_some());
+        assert!(archives.info(s.handle + 99, 2).is_err(), "a closed handle");
     }
 
     #[test]

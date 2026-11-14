@@ -231,6 +231,28 @@ export function CheckIcon() {
   );
 }
 
+/** A plain tick: "this one" in a list (the version on screen). Not the Test shield, so it
+    never reads as a verification. */
+export function TickIcon() {
+  return (
+    <Icon>
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
+/** A bug under a lens: the virus scan. */
+export function ScanIcon() {
+  return (
+    <Icon>
+      <rect x="7" y="8" width="8" height="10" rx="4" />
+      <path d="M11 8v10M7 12H4.5M7 15.5l-2.5 1.5M15 12h2.5M9 8.2 7.5 6M13 8.2 14.5 6" />
+      <circle cx="17.5" cy="17.5" r="2.5" />
+      <path d="m19.3 19.3 1.7 1.7" />
+    </Icon>
+  );
+}
+
 export function MinusIcon() {
   return (
     <Icon>

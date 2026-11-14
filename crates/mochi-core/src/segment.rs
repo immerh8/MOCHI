@@ -349,6 +349,7 @@ mod tests {
             descriptor: r(0, 56, 6),
             key_envelopes: Vec::new(),
             data_region: None,
+            comment: None,
         };
         let commit_id = commit.commit_id().unwrap();
         HistoryEntry {

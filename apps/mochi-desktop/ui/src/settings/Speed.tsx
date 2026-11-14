@@ -21,6 +21,8 @@ export function Speed() {
   const fastNoteId = useId();
   const coresId = useId();
   const fastId = useId();
+  const flushId = useId();
+  const flushNoteId = useId();
 
   useEffect(() => {
     let live = true;
@@ -37,11 +39,11 @@ export function Speed() {
     };
   }, []);
 
-  const change = async (allCores: boolean, fastExtract: boolean) => {
+  const change = async (allCores: boolean, fastExtract: boolean, trustNtfsFlush?: boolean) => {
     setError(null);
     setBusy(true);
     try {
-      setState(await setSpeedSettings(allCores, fastExtract));
+      setState(await setSpeedSettings(allCores, fastExtract, trustNtfsFlush));
     } catch (e) {
       setError(errorText(t("settings.speedSaveFailed"), e));
     } finally {
@@ -87,6 +89,27 @@ export function Speed() {
           onChange={(e) => void change(state?.all_cores ?? true, e.target.checked)}
         />
       </SettingRow>
+      {state?.windows === true && (
+        // Spec Annex B.2.20 (D30): off by default, which is the documented-only policy B.
+        <SettingRow
+          title={t("settings.ntfsFlushTitle")}
+          titleFor={flushId}
+          description={t("settings.ntfsFlushShort")}
+          descriptionId={flushNoteId}
+          more={t("settings.ntfsFlushNote")}
+        >
+          <input
+            id={flushId}
+            type="checkbox"
+            className="switch"
+            data-testid="speed-ntfs-flush"
+            aria-describedby={flushNoteId}
+            checked={state.trust_ntfs_flush}
+            disabled={busy}
+            onChange={(e) => void change(state.all_cores, state.fast_extract, e.target.checked)}
+          />
+        </SettingRow>
+      )}
       {error !== null && (
         <p role="alert" className="setting-error">
           {error}

@@ -125,7 +125,13 @@ fn private_dir_builder() -> std::fs::DirBuilder {
 /// `<cache>/drag-out`, made (owner-only on Unix) if it is not there. It must
 /// be a real directory, not a link.
 pub fn ensure_base(cache: &Path) -> Result<PathBuf> {
-    let base = cache.join(FOLDER);
+    ensure_named_base(cache, FOLDER)
+}
+
+/// [`ensure_base`] for another folder of temporary folders under the cache
+/// (the virus scan's, `scan`).
+pub fn ensure_named_base(cache: &Path, folder: &str) -> Result<PathBuf> {
+    let base = cache.join(folder);
     std::fs::create_dir_all(cache)
         .map_err(|e| io_error("could not prepare the cache folder", &e))?;
     match private_dir_builder().create(&base) {
@@ -178,7 +184,7 @@ impl DragFolder {
     /// A new folder with a random name directly inside `base`, with its
     /// `stage` and `items` folders. `create_dir` semantics: a name that
     /// exists is never reused, and nothing is created through a link.
-    fn create(base: &Path) -> Result<Self> {
+    pub fn create(base: &Path) -> Result<Self> {
         for _ in 0..8 {
             let root = base.join(random_name()?);
             match private_dir_builder().create(&root) {
@@ -201,7 +207,7 @@ impl DragFolder {
         ))
     }
 
-    fn stage(&self) -> PathBuf {
+    pub fn stage(&self) -> PathBuf {
         self.root.join(STAGE)
     }
 
@@ -211,8 +217,15 @@ impl DragFolder {
 
     /// Stop the drop-time deletion; the folder is now owned by the drag and
     /// the sweep.
-    fn keep(&mut self) {
+    pub fn keep(&mut self) {
         self.keep = true;
+    }
+}
+
+impl DragFolder {
+    /// The folder itself.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 }
 

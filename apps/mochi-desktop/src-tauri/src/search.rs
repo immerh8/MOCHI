@@ -110,6 +110,7 @@ pub fn run(archives: &Archives, request: &JobRequest, ctx: &JobContext<'_>) -> R
         search: Some(Box::new(view)),
         rekey: None,
         export: None,
+        scan: None,
         foreign_test: None,
     })
 }

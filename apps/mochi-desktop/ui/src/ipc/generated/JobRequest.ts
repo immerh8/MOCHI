@@ -33,7 +33,7 @@ recovery_percent?: number, } | { "kind": "export_archive", format: ArchiveFormat
 /**
  * Entries of the head snapshot, as the listing returned them.
  */
-keys: Array<string>, } | { "kind": "extract_archive", handle: number, 
+keys: Array<string>, } | { "kind": "set_archive_comment", handle: number, comment: string | null, } | { "kind": "extract_archive", handle: number, 
 /**
  * The snapshot on screen.
  */
@@ -78,4 +78,8 @@ envelope_id: string, } | { "kind": "reencrypt", handle: number, passphrase: Secr
  * Entries (and what is under them) as the listing returned them;
  * empty extracts everything.
  */
-keys: Array<string>, on_conflict: ConflictChoice, };
+keys: Array<string>, on_conflict: ConflictChoice, } | { "kind": "scan_archive", handle: number, seq: number, 
+/**
+ * The scanner's full path, as the user chose or typed it.
+ */
+program: string, arguments: string, };

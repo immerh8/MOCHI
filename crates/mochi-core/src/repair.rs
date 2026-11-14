@@ -420,6 +420,9 @@ struct Survey {
     /// Recovered sequence → index into `opened`.
     assigned: BTreeMap<u64, usize>,
     times: BTreeMap<u64, Mtime>,
+    /// The archive comment at each recovered version (D29); a version that
+    /// had none is absent, and the rewrite clears the comment there.
+    comments: BTreeMap<u64, String>,
     bad: BTreeMap<FileVersionId, Problem>,
     attributes: BTreeMap<FileVersionId, Attributes>,
     /// The retention state the new archive must end with, and the
@@ -556,6 +559,7 @@ fn nothing(source_len: u64, ladder: Vec<LadderStep>, head: Option<SourceHead>) -
         opened: Vec::new(),
         assigned: BTreeMap::new(),
         times: BTreeMap::new(),
+        comments: BTreeMap::new(),
         bad: BTreeMap::new(),
         attributes: BTreeMap::new(),
         new_retention: RetentionState::default(),
@@ -1136,6 +1140,15 @@ fn survey_chains(
                 .map(|t| (s.seq, t))
         })
         .collect();
+    let comments = snapshots
+        .iter()
+        .filter_map(|s| {
+            by_seq
+                .get(&s.seq)
+                .and_then(|e| e.commit.comment.clone())
+                .map(|c| (s.seq, c))
+        })
+        .collect();
     let attributes = attrs.found;
     Ok(Survey {
         plan: RepairPlan {
@@ -1163,6 +1176,7 @@ fn survey_chains(
         opened,
         assigned,
         times,
+        comments,
         bad,
         attributes,
         new_retention,
@@ -1885,6 +1899,10 @@ where
                         if let Some(t) = s.times.get(&seq) {
                             tx.at(*t);
                         }
+                        tx.change_comment(s.comments.get(&seq).cloned().map_or(
+                            crate::publish::CommentChange::Clear,
+                            crate::publish::CommentChange::Set,
+                        ));
                     })?;
                 if outcome.seq != i {
                     return Err(MochiError::new(

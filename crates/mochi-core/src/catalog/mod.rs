@@ -894,6 +894,40 @@ impl Catalog {
         Ok(out)
     }
 
+    /// Every (file version, chunk, stored length) that an extent names, each
+    /// pair once, in one query: what the chunks of a set of file versions
+    /// occupy in the archive (browsing's totals, plan D1). Holes name no chunk
+    /// and are not listed.
+    pub fn chunk_refs(&self) -> Result<Vec<(FileVersionId, ObjectId, u64)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT e.file_version_id, e.chunk_id, o.stored_len
+                 FROM file_extents e JOIN objects o ON o.object_id = e.chunk_id
+                 WHERE e.chunk_id IS NOT NULL",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(sql)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (version, chunk, len) = row.map_err(sql)?;
+            out.push((
+                FileVersionId::from_bytes(id32(version, "file version id")?),
+                ObjectId::from_bytes(id32(chunk, "chunk id")?),
+                to_u64(len, "stored length")?,
+            ));
+        }
+        Ok(out)
+    }
+
     /// Every file-version ID in the catalog, sorted: every version of the
     /// retained history, reachable at the head or not. Verification's
     /// restoration level (C7) reassembles each one.

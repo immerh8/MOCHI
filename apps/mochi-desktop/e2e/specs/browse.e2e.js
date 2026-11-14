@@ -43,6 +43,36 @@ describe("archive browser", () => {
     await expect($('[data-testid="commit-3"]')).toHaveText(expect.stringContaining("(latest)"));
     await closeVersions();
 
+    // Info (owner request 2026-11-14): the version's totals from Rust, over real IPC.
+    await $('[data-testid="toolbar-archive-info"]').click();
+    await $('[data-testid="info-files"]').waitForDisplayed({ timeout: 30_000 });
+    expect(Number((await $('[data-testid="info-files"]').getText()).replace(/\D/g, ""))).toBeGreaterThan(0);
+    await expect($('[data-testid="info-ratio"]')).toHaveText(/^(\d+%|—)$/);
+    // The fixture records its writer's chunk size (small, so a test archive has many chunks).
+    await expect($('[data-testid="info-dictionary"]')).toHaveText(/^Up to \d/);
+    // No comment on the fixture; the latest version offers to edit one (B.2.19).
+    await expect($('[data-testid="info-comment-text"]')).toHaveText("No comment");
+    await expect($('[data-testid="info-comment-edit"]')).toBeDisplayed();
+    await $('[data-testid="archive-info-ok"]').click();
+    await $('[data-testid="archive-info"]').waitForExist({ reverse: true });
+
+    // Scan for viruses: the window opens; on Ubuntu a real job runs `/usr/bin/true` on the
+    // extracted folder, so the extract, the run, the report and the clean-up all happen for real.
+    await $('[data-testid="toolbar-scan"]').click();
+    await $('[data-testid="scan-program"]').waitForDisplayed({ timeout: 30_000 });
+    if (process.platform === "linux") {
+      await $('[data-testid="scan-program"]').setValue("/usr/bin/true");
+      await $('[data-testid="scan-arguments"]').setValue('"%f"');
+      await $('[data-testid="scan-start"]').click();
+      await $('[data-testid="scan-verdict"]').waitForDisplayed({ timeout: 120_000 });
+      await expect($('[data-testid="scan-verdict"]')).toHaveText("true finished with exit code 0. Read its output to see what it found.");
+      await expect($('[data-testid="scan-scope"]')).toHaveText(expect.stringContaining("of version 3"));
+      await $('[data-testid="scan-close"]').click();
+    } else {
+      await browser.keys("Escape");
+    }
+    await $('[data-testid="scan-archive"]').waitForExist({ reverse: true });
+
     // Root of the head: the scripted history's hostile name, inert.
     await browser.waitUntil(async () => (await entryNames()).includes("<img src=x onerror=alert(1)>"), {
       timeoutMsg: "the hostile name is not listed as text",

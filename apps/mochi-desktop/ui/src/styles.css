@@ -40,6 +40,16 @@
   --icon-code: #3d6b2f;
   --icon-sheet: #2b7a78;
   --icon-pdf: #b03a2e;
+  /* Motion (owner request 2026-11-14): short, eased, and off when Settings or the system
+     says so (the end of this file). Durations only; no colour here. */
+  --dur-1: 90ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease-1: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Elevation: a hairline shadow for controls, a soft one for menus, a deep one for windows. */
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--fg) 12%, transparent);
+  --shadow-2: 0 1px 2px color-mix(in srgb, var(--fg) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--fg) 14%, transparent);
+  --shadow-3: 0 2px 6px color-mix(in srgb, var(--fg) 10%, transparent), 0 18px 48px color-mix(in srgb, var(--fg) 24%, transparent);
   /* Latin first; Thai and Chinese glyphs fall through to the system fonts named
      after it. No remote fonts (the CSP is strict). */
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", "Leelawadee UI",
@@ -2745,5 +2755,374 @@ input[type="checkbox"].switch:disabled {
   }
   .settings-tab {
     width: auto;
+  }
+}
+
+/* ---- The archive Info window (owner request 2026-11-14) ------------------------------
+   A tall bar for the ratio beside the facts, as in WinRAR's Info tab. The bar is the accent,
+   never a status colour: a ratio is a fact, not a result. */
+.info-dialog {
+  width: min(30rem, 100%);
+}
+.info-body {
+  display: flex;
+  gap: 1.15rem;
+  margin-top: 0.35rem;
+}
+.info-meter {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  width: 3.2rem;
+}
+.info-meter-track {
+  position: relative;
+  flex: 1;
+  width: 1.5rem;
+  min-height: 12rem;
+  overflow: hidden;
+  background: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.info-meter-fill {
+  position: absolute;
+  inset: auto 0 0;
+  background: linear-gradient(to top, var(--accent), color-mix(in srgb, var(--accent) 65%, var(--surface)));
+  border-radius: 999px;
+  transform-origin: bottom;
+  animation: mochi-grow calc(var(--dur-3) * 3) var(--ease-1) both;
+}
+.info-meter-label {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.info-facts {
+  flex: 1;
+  min-width: 0;
+}
+.info-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0 0 0.6rem;
+}
+.info-kind strong {
+  font-size: 1rem;
+}
+.info-name {
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.dialog dl.info-list {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.32rem 1rem;
+  margin: 0;
+}
+.dialog .info-list dt {
+  color: var(--muted);
+}
+.dialog .info-list dd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+.info-facts hr,
+.scan-result hr {
+  margin: 0.6rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* The archive comment (spec Annex B.2.19): archive text, shown as written. */
+.info-comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.info-comment-head h4 {
+  margin: 0;
+  font-size: 0.92em;
+  color: var(--muted);
+}
+.info-comment-text {
+  max-height: 9rem;
+  margin: 0.35rem 0 0;
+  padding: 0.45rem 0.6rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.info-comment-editor textarea {
+  width: 100%;
+  margin-top: 0.35rem;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+.info-comment-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.85em;
+}
+.info-comment-meta .note {
+  margin: 0;
+}
+
+/* ---- Scan for viruses (owner request 2026-11-14) -------------------------------------
+   Labels above full-width fields, as in WinRAR's window. The scanner's report is neutral:
+   no success styling for "no threats reported" (spec §23.3); a report that needs reading
+   gets the warning edge. */
+.scan-dialog {
+  width: min(34rem, 100%);
+}
+.scan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.scan-form > label,
+.scan-row-head label {
+  margin-top: 0.5rem;
+  font-weight: 500;
+}
+.scan-form select,
+.scan-form input {
+  width: 100%;
+}
+.scan-form input {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+.scan-row-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.scan-form .note {
+  margin: 0.35rem 0 0;
+}
+.scan-running progress {
+  width: 100%;
+  margin: 0.4rem 0 0.2rem;
+}
+.scan-verdict {
+  margin: 0.2rem 0 0.5rem;
+  padding: 0.6rem 0.8rem;
+  font-weight: 600;
+  background: var(--accent-bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+.scan-verdict.scan-attention {
+  border-left-color: var(--warning);
+}
+.scan-partial {
+  padding-left: 0.6rem;
+  border-left: 3px dashed var(--warning);
+}
+.scan-output {
+  margin: 0.5rem 0;
+}
+.scan-output summary {
+  cursor: default;
+  font-weight: 500;
+}
+.scan-output pre {
+  max-height: 12rem;
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.65rem;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ---- Refinement (owner request 2026-11-14) -------------------------------------------
+   One layer over the rules above: softer corners, real elevation for menus and windows,
+   eased hover and press feedback, and short entrance animations. Every animation here is
+   an entrance (nothing waits for one to finish), so turning motion off loses nothing. */
+button,
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  border-radius: 6px;
+  transition:
+    background-color var(--dur-1) var(--ease-1),
+    border-color var(--dur-1) var(--ease-1),
+    color var(--dur-1) var(--ease-1),
+    box-shadow var(--dur-2) var(--ease-1),
+    opacity var(--dur-2) var(--ease-1),
+    transform var(--dur-1) var(--ease-1);
+}
+input:not([type="checkbox"]):not([type="radio"]):hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--fg);
+}
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+fieldset {
+  border-radius: 8px;
+}
+button.primary:not(:disabled) {
+  box-shadow: var(--shadow-1);
+}
+/* Words beside the toolbar's icons at the default window width with Info and Scan added:
+   a little less padding per button, and a search field that may narrow a little more. */
+.toolbar:not([data-labels="off"]) button.tool:has(.tool-label) {
+  gap: 0.35rem;
+  padding: 0 0.5rem 0 0.42rem;
+}
+.toolbar:not([data-labels="off"]) .searchbox {
+  min-width: 9rem;
+}
+/* A press sinks a little: the buttons a person aims at, not the rows of a list. */
+button.primary:active:not(:disabled),
+button.big:active:not(:disabled),
+.actions button:active:not(:disabled),
+button.tool:active:not(:disabled),
+button.icon-button:active:not(:disabled),
+button.selection-action:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.dialog-actions {
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+.dialog-actions button {
+  min-width: 5.5rem;
+}
+.dialog {
+  padding: 0.9rem 1.15rem 1rem;
+  border-color: var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-3);
+}
+.dialog-head {
+  margin-bottom: 0.6rem;
+}
+.dialog-head h3 {
+  font-size: 1.08rem;
+  letter-spacing: -0.005em;
+}
+.menu,
+.popover {
+  border-color: var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-2);
+}
+button.menu-item {
+  border-radius: 5px;
+}
+.entry,
+button.crumb,
+button.recent-item,
+.tree-label,
+.timeline .commit {
+  transition: background-color var(--dur-1) var(--ease-1);
+}
+button.recent-item {
+  border-radius: 6px;
+}
+.drop-zone {
+  transition:
+    border-color var(--dur-2) var(--ease-1),
+    background-color var(--dur-2) var(--ease-1);
+}
+.drop-zone:hover {
+  border-color: var(--border-strong);
+}
+
+/* Entrances. */
+@keyframes mochi-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes mochi-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@keyframes mochi-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@keyframes mochi-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes mochi-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+.dialog-layer {
+  animation: mochi-fade var(--dur-2) var(--ease-1);
+}
+.dialog-layer > .dialog,
+.dialog-layer > .tool-sheet {
+  animation: mochi-pop var(--dur-3) var(--ease-1);
+}
+.tool-pane .dialog-layer,
+.tool-pane .dialog-layer > .dialog {
+  animation: none;
+}
+.menu,
+.popover {
+  transform-origin: top right;
+  animation: mochi-drop var(--dur-2) var(--ease-1);
+}
+.settings-panel,
+.start {
+  animation: mochi-rise var(--dur-3) var(--ease-1);
+}
+.settings-panel {
+  animation-name: mochi-fade;
+}
+.selection-bar {
+  animation: mochi-fade var(--dur-2) var(--ease-1);
+}
+
+/* Motion off: by the user's choice (Settings, General), or by the system's reduce-motion
+   setting while the choice is "As the system". "On" keeps motion whatever the system says. */
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="on"]) *,
+  :root:not([data-motion="on"]) *::before,
+  :root:not([data-motion="on"]) *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }

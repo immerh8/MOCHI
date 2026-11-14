@@ -411,6 +411,9 @@ where
         head.catalog.replay_each(|seq, snapshot| {
             ctx.check_cancelled()?;
             let time = source_commit(seq)?.commit.time;
+            // A draft-2 source has no comment (D29 came after it); copied all
+            // the same, so the rule is the rewrites' one.
+            let comment = source_commit(seq)?.commit.comment.clone();
             #[cfg_attr(not(any(test, feature = "test-controls")), allow(unused_mut))]
             let mut written_ns = namespace(snapshot);
             #[cfg(any(test, feature = "test-controls"))]
@@ -440,6 +443,10 @@ where
                     if let Some(t) = time {
                         tx.at(t);
                     }
+                    tx.change_comment(comment.clone().map_or(
+                        crate::publish::CommentChange::Clear,
+                        crate::publish::CommentChange::Set,
+                    ));
                 },
             )?;
             if outcome.seq != seq {

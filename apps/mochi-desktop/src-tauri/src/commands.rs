@@ -379,6 +379,40 @@ pub async fn open_snapshot(
     blocking(move || archives.snapshot(handle, u64::from(seq))).await
 }
 
+/// The archive Info window: snapshot `seq`'s totals and recorded settings.
+#[tauri::command]
+pub async fn archive_info(
+    handle: ArchiveHandle,
+    seq: u32,
+    archives: State<'_, Arc<Archives>>,
+) -> Result<crate::ipc::ArchiveInfoView, IpcError> {
+    let archives = Arc::clone(&archives);
+    blocking(move || archives.info(handle, u64::from(seq))).await
+}
+
+/// The virus scan window's starting point: the scanners found on this
+/// computer and the choice used last.
+#[tauri::command]
+pub async fn scan_setup() -> Result<crate::scan::ScanSetup, IpcError> {
+    blocking(|| Ok(crate::scan::setup())).await
+}
+
+/// The virus scan window's Browse: the native open dialog, shown by Rust.
+/// Returns the chosen program's path as text for the window's field, or
+/// `null` if the user cancelled.
+#[tauri::command]
+pub async fn pick_scanner_program(
+    app: AppHandle,
+    text: Option<DialogText>,
+) -> Result<Option<String>, IpcError> {
+    let text = text.unwrap_or_default();
+    blocking(move || {
+        Ok(crate::picker::pick_scanner_program(&app, &text)
+            .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
 /// One page of a directory's children (`dir` null for the root).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1226,6 +1260,8 @@ fn speed_view() -> SpeedSettingsView {
         all_cores: crate::speed::settings().all_cores,
         fast_extract: crate::speed::settings().fast_extract,
         cores: u32::try_from(crate::speed::cores()).unwrap_or(u32::MAX),
+        trust_ntfs_flush: crate::speed::settings().trust_ntfs_flush,
+        windows: cfg!(windows),
     }
 }
 
@@ -1242,11 +1278,16 @@ pub async fn get_speed_settings() -> Result<SpeedSettingsView, IpcError> {
 pub async fn set_speed_settings(
     all_cores: bool,
     fast_extract: bool,
+    trust_ntfs_flush: Option<bool>,
 ) -> Result<SpeedSettingsView, IpcError> {
     blocking(move || {
+        // Absent keeps the saved choice (D30, Windows only in effect).
+        let trust_ntfs_flush =
+            trust_ntfs_flush.unwrap_or(crate::speed::settings().trust_ntfs_flush);
         crate::speed::set(crate::speed::Settings {
             all_cores,
             fast_extract,
+            trust_ntfs_flush,
         })?;
         Ok(speed_view())
     })

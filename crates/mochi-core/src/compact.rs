@@ -561,6 +561,8 @@ where
             };
             ctx.check_cancelled()?;
             let time = source_commit(seq)?.commit.time;
+            // The comment is copied as it was at each version (D29).
+            let comment = source_commit(seq)?.commit.comment.clone();
             let outcome = copier.commit(
                 w,
                 src,
@@ -581,6 +583,10 @@ where
                     if let Some(t) = time {
                         tx.at(t);
                     }
+                    tx.change_comment(comment.clone().map_or(
+                        crate::publish::CommentChange::Clear,
+                        crate::publish::CommentChange::Set,
+                    ));
                 },
             )?;
             if outcome.seq != i {

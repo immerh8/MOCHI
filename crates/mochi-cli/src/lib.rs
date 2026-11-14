@@ -192,6 +192,11 @@ where
         state::HeadStore::locate(cli.state_dir.as_deref())
     };
     let mut env = commands::Env {
+        flush: if cli.trust_ntfs_directory_flush {
+            mochi_core::storage::os::WindowsDirectoryFlush::TrustLocalNtfs
+        } else {
+            mochi_core::storage::os::WindowsDirectoryFlush::Unconfirmed
+        },
         json,
         out,
         err: errw,
@@ -210,6 +215,7 @@ where
         Command::Search(a) => commands::search_cmd(&mut env, a),
         Command::DumpIndex(a) => commands::dump_index(&mut env, a),
         Command::Find(a) => commands::find_cmd(&mut env, a),
+        Command::Comment(a) => commands::comment_cmd(&mut env, a),
         Command::Health(a) => commands::health_cmd(&mut env, a),
         Command::Snapshot(SnapshotCommand::List(a)) => commands::snapshot_list(&mut env, a),
         Command::Snapshot(SnapshotCommand::Retain(a)) => commands::snapshot_retain(&mut env, a),

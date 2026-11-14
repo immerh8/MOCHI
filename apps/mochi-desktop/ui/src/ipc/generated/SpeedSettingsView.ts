@@ -17,4 +17,13 @@ fast_extract: boolean,
 /**
  * The cores "every core" means on this computer.
  */
-cores: number, };
+cores: number, 
+/**
+ * Windows: a folder flush on a local NTFS drive counts as saved when an
+ * archive is created (spec Annex B.2.20). Off by default (policy B).
+ */
+trust_ntfs_flush: boolean, 
+/**
+ * Whether that setting applies here (Windows only); the UI shows it then.
+ */
+windows: boolean, };

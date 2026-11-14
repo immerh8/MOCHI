@@ -490,3 +490,16 @@ the writer would otherwise refuse to overwrite; the diff, by kind:
   (`legacy/cases.json`). `r8_golden.rs` shows the writer's test control for the last draft
   rebuilds the Core and Redundancy ones exactly; the `w20_migrate.rs` tests migrate all three
   and compare content with the 1.0 case built from the same recipe.
+
+## The archive comment (D29, spec Annex B.2.19, 2026-11-14)
+
+`d29/` is new; no earlier fixture changed. An archive without a comment is written byte for
+byte as before, so R8, `b2` and `c1`–`c12` are untouched (their tests pass unchanged).
+`d29/valid-commit-comment.bin` is one commit-record frame of schema 4 (key 13, required
+feature 3); `reject-commit-comment-carriage-return.bin` and `reject-commit-comment-empty.bin`
+break the comment rules (`RECORD_INVALID`), with a correct commit ID so that only the rule
+refuses them. Built by `write_d29_golden_files` in `mochi-testkit/tests/d29_comment.rs` and
+checked against that builder; validated against `docs/schemas/commit-record-v4.cddl` by
+`r3_cddl`; seeds of the `commit_decode` fuzz target. Schema 3 and feature 2 stay unassigned:
+`c5/reject-commit-schema-version.bin` and the `*-required-feature` vectors use them as the
+values no build knows.

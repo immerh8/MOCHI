@@ -338,8 +338,8 @@ jobs:
           # assertions. Archives reach ~150 KB, above libFuzzer's default
           # max_len.
           - { target: archive_open,      seeds: "../fixtures/golden/c5 ../fixtures/golden/c11 ../fixtures/golden/c12", args: "-max_len=400000" }
-          # Their own vectors: commit records (c5/*.bin), descriptors (b2).
-          - { target: commit_decode,     seeds: "../fixtures/golden/c5", args: "" }
+          # Their own vectors: commit records (c5/*.bin; d29/*.bin, schema 4), descriptors (b2).
+          - { target: commit_decode,     seeds: "../fixtures/golden/c5 ../fixtures/golden/d29", args: "" }
           - { target: descriptor_decode, seeds: "../fixtures/golden/b2", args: "" }
           # C10 (D19): the TAR-compatible profile's stream parser.
           - { target: tar_stream,        seeds: "../fixtures/golden/c10", args: "-max_len=100000" }

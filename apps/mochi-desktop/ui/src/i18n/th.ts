@@ -11,8 +11,10 @@ import { extract } from "./th/extract";
 import { find } from "./th/find";
 import { foreign } from "./th/foreign";
 import { help } from "./th/help";
+import { info } from "./th/info";
 import { quick } from "./th/quick";
 import { result } from "./th/result";
+import { scan } from "./th/scan";
 import { settings } from "./th/settings";
 import { start } from "./th/start";
 import { toolbar } from "./th/toolbar";
@@ -30,8 +32,10 @@ export const th = {
   ...find,
   ...foreign,
   ...help,
+  ...info,
   ...quick,
   ...result,
+  ...scan,
   ...settings,
   ...start,
   ...toolbar,

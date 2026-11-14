@@ -4,6 +4,8 @@ Gate G6 (spec Annex B.2.6): *documented evidence matching the guarantee to NTFS 
 
 **Disposition [owner, 2026-10-15]: policy B.** G6 is closed as an explicit **policy disposition**. Windows keeps reporting the creating commit's directory durability as `Unconfirmed` in 1.0, and truncation there needs `--accept-unconfirmed-durability`. This is **not** a claim of documented durability and **not** a pass on physical machines: plan O12 says to claim only what the Windows APIs document, and the durability this evidence shows rests on a step (the directory flush) that Microsoft does not document. The weekly `g6-windows` workflow stays as a regression guard on the observed behaviour. Changing what Windows reports needs a documented primitive or a new owner decision. Spec Annex B.2.6 (G6) and B.3 item 1 carry the rule.
 
+**Amendment [owner, 2026-11-14], spec B.2.20 (D30).** Policy B stays the default. A user may choose to count a successful directory flush on a local NTFS volume as confirmed (`--trust-ntfs-directory-flush`, or the desktop app's setting), on the evidence below (flushed rename 3/3, unflushed 0/3). Network locations and other filesystems stay unconfirmed. This workflow remains the regression guard for that choice.
+
 Files: workflow `.github/workflows/g6-windows.yml` (manual and weekly, never on pull requests); driver `ci/g6-windows-crashreplay.sh`; host logic `ci/g6-windows/` (`orchestrate.py`, `logwrites.py`, tests `test_logwrites.py` and `test_evaluate.py`); guest scripts `ci/g6-windows/guest/`; guest workload and judge `crates/mochi-testkit/examples/g6_winworkload.rs`. The Linux counterpart is G7's `ci/g7-powercut.sh` (`dm-flakey`); this asks the same question of NTFS.
 
 ## What it found (summary)
