@@ -9,7 +9,7 @@ import { afterEach, expect, test } from "vitest";
 import type { SpeedSettingsView } from "../ipc/speed";
 import { Speed } from "./Speed";
 
-function backend(initial: SpeedSettingsView = { all_cores: true, fast_extract: false, cores: 6 }, failSet = false) {
+function backend(initial: SpeedSettingsView = { all_cores: true, fast_extract: false, cores: 6, trust_ntfs_flush: false, windows: false }, failSet = false) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let state = initial;
   mockIPC((cmd, args) => {
@@ -18,7 +18,12 @@ function backend(initial: SpeedSettingsView = { all_cores: true, fast_extract: f
     if (cmd === "get_speed_settings") return state;
     if (cmd === "set_speed_settings") {
       if (failSet) throw { code: "IO_ERROR", message: "disk full" };
-      state = { ...state, all_cores: a.allCores as boolean, fast_extract: a.fastExtract as boolean };
+      state = {
+        ...state,
+        all_cores: a.allCores as boolean,
+        fast_extract: a.fastExtract as boolean,
+        trust_ntfs_flush: (a.trustNtfsFlush as boolean | undefined) ?? state.trust_ntfs_flush,
+      };
       return state;
     }
     throw new Error(`unexpected command ${cmd}`);
@@ -56,7 +61,7 @@ test("turning it off asks Rust for one core, and back on for every core", async 
 
 test("a failed change is shown and the switch keeps the saved state", async () => {
   const user = userEvent.setup();
-  backend({ all_cores: true, fast_extract: false, cores: 4 }, true);
+  backend({ all_cores: true, fast_extract: false, cores: 4, trust_ntfs_flush: false, windows: false }, true);
   render(<Speed />);
   const box = screen.getByTestId("speed-all-cores");
   await waitFor(() => expect(box).toBeEnabled());
@@ -76,7 +81,7 @@ test("fast extract is off by default and its note names the cost", async () => {
 
 test("turning fast extract on keeps the core setting as it is", async () => {
   const user = userEvent.setup();
-  const calls = backend({ all_cores: false, fast_extract: false, cores: 6 });
+  const calls = backend({ all_cores: false, fast_extract: false, cores: 6, trust_ntfs_flush: false, windows: false });
   render(<Speed />);
   const box = screen.getByTestId("speed-fast-extract");
   await waitFor(() => expect(box).toBeEnabled());
@@ -86,4 +91,32 @@ test("turning fast extract on keeps the core setting as it is", async () => {
   expect(calls.filter((c) => c.cmd === "set_speed_settings").map((c) => c.args)).toEqual([
     { allCores: false, fastExtract: true },
   ]);
+});
+
+// Spec Annex B.2.20 (D30): the NTFS folder-flush setting exists on Windows only, is off
+// by default (policy B), and turning it on keeps the other two switches as they are.
+test("the NTFS setting is hidden off Windows", async () => {
+  backend();
+  render(<Speed />);
+  await waitFor(() => expect(screen.getByTestId("speed-all-cores")).toBeEnabled());
+  expect(screen.queryByTestId("speed-ntfs-flush")).toBeNull();
+});
+
+test("on Windows the NTFS setting is off by default and turning it on is saved", async () => {
+  const user = userEvent.setup();
+  const calls = backend({ all_cores: false, fast_extract: true, cores: 4, trust_ntfs_flush: false, windows: true });
+  render(<Speed />);
+  const box = await screen.findByTestId("speed-ntfs-flush");
+  await waitFor(() => expect(box).toBeEnabled());
+  expect(box).not.toBeChecked();
+  expect(screen.getByText(/Count a folder flush as saved/)).toBeInTheDocument();
+  await user.click(box);
+  await waitFor(() => expect(box).toBeChecked());
+  expect(calls.filter((c) => c.cmd === "set_speed_settings").map((c) => c.args)).toEqual([
+    { allCores: false, fastExtract: true, trustNtfsFlush: true },
+  ]);
+  // The other switches leave it as saved (no third argument).
+  await user.click(screen.getByTestId("speed-fast-extract"));
+  await waitFor(() => expect(screen.getByTestId("speed-fast-extract")).not.toBeChecked());
+  expect(box).toBeChecked();
 });

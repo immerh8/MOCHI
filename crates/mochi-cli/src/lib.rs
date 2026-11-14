@@ -192,6 +192,11 @@ where
         state::HeadStore::locate(cli.state_dir.as_deref())
     };
     let mut env = commands::Env {
+        flush: if cli.trust_ntfs_directory_flush {
+            mochi_core::storage::os::WindowsDirectoryFlush::TrustLocalNtfs
+        } else {
+            mochi_core::storage::os::WindowsDirectoryFlush::Unconfirmed
+        },
         json,
         out,
         err: errw,

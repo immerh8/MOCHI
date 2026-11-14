@@ -63,6 +63,16 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub passphrase_env_for_automation: bool,
 
+    /// Windows only: count a successful folder flush on a local NTFS drive
+    /// as saved when an archive is created (spec Annex B.2.20). Microsoft
+    /// does not document that this makes the new file's name survive a power
+    /// cut; MOCHI's crash tests found that it does. Without this switch,
+    /// creating an archive on Windows reports "directory durability
+    /// unconfirmed" and exits 2 (the default, policy B). Network locations
+    /// and other filesystems stay unconfirmed either way. No effect elsewhere.
+    #[arg(long, global = true)]
+    pub trust_ntfs_directory_flush: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }

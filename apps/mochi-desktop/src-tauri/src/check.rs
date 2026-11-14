@@ -713,7 +713,7 @@ impl Checks {
             .and_then(|n| n.to_str())
             .ok_or_else(|| invalid("the new archive's file name must be valid Unicode"))?
             .to_owned();
-        let mut dir = OsDir::containing(&output)?;
+        let mut dir = OsDir::containing(&output)?.with_windows_flush(crate::speed::windows_flush());
         // The source is only read: repair never writes to it (§22.2).
         let src = OsReadStorage::open(&path).map_err(MochiError::from)?;
         let read = chosen.read();

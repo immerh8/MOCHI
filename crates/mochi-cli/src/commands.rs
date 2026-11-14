@@ -40,6 +40,7 @@ use mochi_core::salvage::SalvageOptions;
 use mochi_core::search::{search, FullText, PathMatch, Query, SnapshotScope};
 use mochi_core::status::{Dimension, Status, VerificationLevel};
 use mochi_core::storage::os::find::normalize_scopes;
+use mochi_core::storage::os::WindowsDirectoryFlush;
 use mochi_core::storage::os::{
     OsDir, OsFindTree, OsReadStorage, OsRestoreDir, OsSourceTree, OsStorage,
 };
@@ -64,6 +65,9 @@ use crate::state::{HeadStore, SeenHead};
 /// What every command gets from the global options.
 pub struct Env<'a> {
     pub json: bool,
+    /// What a directory flush counts as on Windows when an archive or sidecar
+    /// is created (spec Annex B.2.20, D30). Policy B unless the user chose.
+    pub flush: WindowsDirectoryFlush,
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
     pub read: ReadOptions,
@@ -220,7 +224,9 @@ pub fn read_options(limits: &[String]) -> Result<ReadOptions> {
 }
 
 /// The directory holding `archive` and its file name.
-fn location(archive: &Path) -> Result<(OsDir, String)> {
+/// The archive's directory and file name. `flush` is what a directory flush
+/// counts as on Windows (`--trust-ntfs-directory-flush`, spec Annex B.2.20).
+fn location(archive: &Path, flush: WindowsDirectoryFlush) -> Result<(OsDir, String)> {
     let name = archive
         .file_name()
         .and_then(|n| n.to_str())
@@ -231,7 +237,7 @@ fn location(archive: &Path) -> Result<(OsDir, String)> {
             ))
         })?
         .to_owned();
-    Ok((OsDir::containing(archive)?, name))
+    Ok((OsDir::containing(archive)?.with_windows_flush(flush), name))
 }
 
 fn kind_name(k: SourceKind) -> &'static str {
@@ -445,7 +451,7 @@ pub fn create(env: &mut Env<'_>, a: &CreateArgs) -> Result<u8> {
         progress: &progress,
         cancel: &cancel,
     };
-    let (mut dir, name) = location(&a.archive)?;
+    let (mut dir, name) = location(&a.archive, env.flush)?;
     let mut tx = Transaction::new();
     if let Some(text) = comment_arg(a.comment.as_deref(), a.comment_file.as_deref())? {
         tx.set_comment(text);
@@ -516,7 +522,7 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
         .map(|d| archive_path_arg(d))
         .collect::<Result<_>>()?;
     env.unlock(&a.archive, Need::Required)?;
-    let (mut dir, name) = location(&a.archive)?;
+    let (mut dir, name) = location(&a.archive, env.flush)?;
     let tail = if a.truncate_tail {
         TailRepair::Truncate(TruncationWaivers {
             no_quarantine: a.no_quarantine,
@@ -1892,7 +1898,8 @@ fn open_writer(
     read: ReadOptions,
     kdf: Option<mochi_format::kdf::KdfParams>,
 ) -> Result<ArchiveWriter<OsStorage>> {
-    let (mut dir, name) = location(archive)?;
+    // An append never needs a directory flush (plan O12); the default stays.
+    let (mut dir, name) = location(archive, WindowsDirectoryFlush::default())?;
     let opts = WriterOptions {
         read,
         kdf,
@@ -2192,7 +2199,7 @@ fn rewrite(
             ),
         ));
     }
-    let (mut out_dir, out_name) = location(output)?;
+    let (mut out_dir, out_name) = location(output, env.flush)?;
     // The source's publication lock is held from here until the new archive
     // is published, so no commit can land in between (D18).
     let w = open_writer(archive, env.read.clone(), None)?;
@@ -2348,7 +2355,7 @@ pub fn migrate_cmd(env: &mut Env<'_>, a: &MigrateArgs) -> Result<u8> {
             ),
         ));
     }
-    let (mut out_dir, out_name) = location(&a.output)?;
+    let (mut out_dir, out_name) = location(&a.output, env.flush)?;
     let src = open_archive(&a.archive)?;
     let options = MigrateOptions {
         read: env.read.clone(),
@@ -2884,7 +2891,7 @@ pub fn repair_apply(env: &mut Env<'_>, a: &RepairApplyArgs) -> Result<u8> {
             ),
         ));
     }
-    let (mut out_dir, out_name) = location(&a.output)?;
+    let (mut out_dir, out_name) = location(&a.output, env.flush)?;
     // The source is only read: repair never writes to it (§22.2).
     let src = open_archive(&a.archive)?;
     let opened = open_copies(&a.archive, &a.copy)?;
@@ -3188,7 +3195,7 @@ fn reencrypt_cmd(env: &mut Env<'_>, a: &RekeyArgs) -> Result<u8> {
             ),
         ));
     }
-    let (mut out_dir, out_name) = location(output)?;
+    let (mut out_dir, out_name) = location(output, env.flush)?;
     let w = open_writer(&a.archive, env.read.clone(), None)?;
     let report = mochi_core::rekey::reencrypt(
         &w,

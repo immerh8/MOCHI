@@ -1755,6 +1755,11 @@ pub struct SpeedSettingsView {
     pub fast_extract: bool,
     /// The cores "every core" means on this computer.
     pub cores: u32,
+    /// Windows: a folder flush on a local NTFS drive counts as saved when an
+    /// archive is created (spec Annex B.2.20). Off by default (policy B).
+    pub trust_ntfs_flush: bool,
+    /// Whether that setting applies here (Windows only); the UI shows it then.
+    pub windows: bool,
 }
 
 /// The crash-log switches and what the log holds now.

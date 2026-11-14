@@ -979,7 +979,11 @@ pub(crate) fn location(archive: &Path) -> Result<(OsDir, String)> {
             ))
         })?
         .to_owned();
-    Ok((OsDir::containing(archive)?, name))
+    // What a directory flush counts as on Windows (D30): the user's setting.
+    Ok((
+        OsDir::containing(archive)?.with_windows_flush(crate::speed::windows_flush()),
+        name,
+    ))
 }
 
 /// Append `tx` to the archive at `path` as one commit. An uncommitted tail

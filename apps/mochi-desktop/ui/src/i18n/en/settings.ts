@@ -33,6 +33,9 @@ export const settings = {
   "settings.fastExtractTitle": "Fast extract",
   "settings.fastExtractShort": "Faster for many small files, but if the power fails during or just after an extraction, some extracted files may be incomplete.",
   "settings.fastExtractNote": "Skips flushing each file to disk before it gets its name; most noticeable on Windows. Every file is still checked before it gets its name. Off by default. Applies from the next job.",
+  "settings.ntfsFlushTitle": "Count a folder flush as saved (NTFS)",
+  "settings.ntfsFlushShort": "Off: new archives on Windows are reported as \"saved, folder entry unconfirmed\". On: on a local NTFS drive they are reported as saved.",
+  "settings.ntfsFlushNote": "When MOCHI creates an archive, its data is always flushed to disk. Only the new file's name in its folder is in question if the power fails seconds later. MOCHI flushes the folder too; Microsoft does not document that this makes the name permanent, but MOCHI's crash tests found that it does on NTFS. Off (the default) reports only what Windows documents. Network locations, USB sticks formatted FAT32 or exFAT, and other filesystems stay unconfirmed either way.",
   "settings.heading": "Settings",
   "settings.crashHeading": "Crash reports",
   "settings.crashPolicy":

@@ -483,6 +483,16 @@ flushed one by one" as a caution. Saved with the core setting in
 `compression-settings.json` (`fast_extract`; absent means off). The CLI always
 flushes.
 
+## Windows: counting a folder flush as saved (spec Annex B.2.20, D30)
+
+Settings → Performance shows, on Windows only, **Count a folder flush as saved (NTFS)**, off by
+default. Off is policy B (G6): a new archive's folder entry is reported "unconfirmed", because
+Microsoft documents no call that makes it durable. On, a folder flush that succeeded on a local
+NTFS drive counts as saved, on the G6 crash-replay evidence; network locations, FAT32/exFAT and
+other filesystems stay unconfirmed. The choice is saved with the speed settings
+(`compression-settings.json`, `trust_ntfs_flush`) and applies to creation, Add's rewrites and
+repair outputs from the next job (`speed::windows_flush`, passed to every `OsDir` the app opens).
+
 ## Crash reports (plan D7): opt-in, local, never sent
 
 There is no reporting endpoint, so nothing is sent. The app has an **off-by-default
