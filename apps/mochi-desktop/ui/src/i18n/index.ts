@@ -123,6 +123,17 @@ export function formatNumber(n: number | bigint): string {
   return n.toLocaleString(current);
 }
 
+/**
+ * A recorded RFC 3339 time as a short local date and time in the current
+ * language ("14 Nov 2026, 10:23"). A value the engine cannot read is shown as
+ * recorded, never guessed at.
+ */
+export function formatTime(rfc3339: string): string {
+  const d = new Date(rfc3339);
+  if (Number.isNaN(d.getTime())) return rfc3339;
+  return d.toLocaleString(current, { dateStyle: "medium", timeStyle: "short" });
+}
+
 // ---- Lookup --------------------------------------------------------------
 
 export type MessageKey = keyof typeof en;
