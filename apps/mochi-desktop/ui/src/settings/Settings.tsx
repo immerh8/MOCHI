@@ -7,6 +7,8 @@ import { Updates } from "../update/Updates";
 import { CrashReports } from "./CrashReports";
 import { ExtractSettings } from "./ExtractSettings";
 import { Language } from "./Language";
+import { Motion } from "./Motion";
+import { SettingGroup } from "./Row";
 import { Speed } from "./Speed";
 
 export type SettingsTab = "general" | "extraction" | "performance" | "updates" | "privacy";
@@ -55,7 +57,14 @@ export function Settings() {
   const panel = (id: SettingsTab): ReactNode => {
     switch (id) {
       case "general":
-        return <Language />;
+        return (
+          <>
+            <Language />
+            <SettingGroup>
+              <Motion />
+            </SettingGroup>
+          </>
+        );
       case "extraction":
         return <ExtractSettings />;
       case "performance":

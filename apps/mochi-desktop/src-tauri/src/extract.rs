@@ -619,6 +619,7 @@ fn run_job(
         search: None,
         rekey: None,
         export: None,
+        scan: None,
     })
 }
 

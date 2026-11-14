@@ -191,6 +191,7 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::ExtractArchive { .. }
         | JobRequest::TestForeign { .. }
         | JobRequest::ExtractForeign { .. }
+        | JobRequest::ScanArchive { .. }
         | JobRequest::InstallUpdate { .. } => services.validate(request)?,
         JobRequest::TestArchive { .. }
         | JobRequest::PlanRepair { .. }
@@ -326,6 +327,7 @@ fn run_job(
                 search: None,
                 rekey: None,
                 export: None,
+                scan: None,
             }),
         write => services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
@@ -344,6 +346,7 @@ fn run_job(
             search,
             rekey,
             export,
+            scan,
         }) => JobOutcome::Completed {
             summary,
             commit,
@@ -353,6 +356,7 @@ fn run_job(
             search,
             rekey,
             export,
+            scan,
         },
         Err(e) if e.code == ErrorCode::Cancelled => JobOutcome::Cancelled,
         Err(e) => JobOutcome::Failed {

@@ -751,6 +751,7 @@ impl Foreign {
             search: None,
             rekey: None,
             export: None,
+            scan: None,
             check: None,
         })
     }
@@ -867,6 +868,7 @@ impl Foreign {
             search: None,
             rekey: None,
             export: None,
+            scan: None,
             check: None,
         })
     }

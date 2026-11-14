@@ -10,8 +10,10 @@ import { extract } from "./en/extract";
 import { find } from "./en/find";
 import { foreign } from "./en/foreign";
 import { help } from "./en/help";
+import { info } from "./en/info";
 import { quick } from "./en/quick";
 import { result } from "./en/result";
+import { scan } from "./en/scan";
 import { settings } from "./en/settings";
 import { start } from "./en/start";
 import { toolbar } from "./en/toolbar";
@@ -29,8 +31,10 @@ export const en = {
   ...find,
   ...foreign,
   ...help,
+  ...info,
   ...quick,
   ...result,
+  ...scan,
   ...settings,
   ...start,
   ...toolbar,

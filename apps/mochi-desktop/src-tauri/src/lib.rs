@@ -30,6 +30,7 @@ pub mod quick;
 pub mod recent;
 pub mod rekey;
 pub mod route;
+pub mod scan;
 pub mod search;
 pub mod self_test;
 pub mod speed;
@@ -163,6 +164,9 @@ pub fn run() -> Result<(), tauri::Error> {
             commands::unlock_check_subject,
             commands::close_archive,
             commands::open_snapshot,
+            commands::archive_info,
+            commands::scan_setup,
+            commands::pick_scanner_program,
             commands::list_children,
             commands::entry_details,
             commands::watch_drops,
@@ -262,6 +266,8 @@ pub fn run() -> Result<(), tauri::Error> {
                 use tauri::Manager;
                 let dir = app.path().app_config_dir()?;
                 setup_recents.configure(&dir);
+                // The virus scanner chosen last, and scan folders an earlier run left.
+                scan::configure(dir.clone(), app.path().app_cache_dir()?);
                 setup_windows.history().configure(&dir);
                 setup_updates.configure(
                     dir,
@@ -278,6 +284,7 @@ pub fn run() -> Result<(), tauri::Error> {
             // The same sweep at exit.
             if matches!(event, tauri::RunEvent::Exit) {
                 dragout::sweep_on_exit(app);
+                scan::sweep_on_exit();
             }
         });
     Ok(())

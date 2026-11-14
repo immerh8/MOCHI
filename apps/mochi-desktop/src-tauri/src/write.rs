@@ -545,6 +545,8 @@ pub struct JobDone {
     pub rekey: Option<Box<crate::ipc::RekeyReport>>,
     /// Set by the export job (plan O31).
     pub export: Option<Box<ExportReportView>>,
+    /// Set by the virus scan job.
+    pub scan: Option<Box<crate::scan::ScanReportView>>,
 }
 
 impl Services {
@@ -556,6 +558,7 @@ impl Services {
             JobRequest::TestForeign { .. } | JobRequest::ExtractForeign { .. } => {
                 self.foreign.validate(&self.destination, request)
             }
+            JobRequest::ScanArchive { .. } => crate::scan::validate(&self.archives, request),
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::validate(&self.archives, &self.destination, request)
             }
@@ -655,6 +658,7 @@ impl Services {
                         search: None,
                         rekey: None,
                         export: None,
+                        scan: None,
                     })
             }
             JobRequest::TestForeign { .. } => self.foreign.run(&self.destination, request, ctx),
@@ -690,6 +694,7 @@ impl Services {
             | JobRequest::Reencrypt { .. } => {
                 crate::rekey::run(&self.archives, &self.staging, request, ctx)
             }
+            JobRequest::ScanArchive { .. } => crate::scan::run(&self.archives, request, ctx),
             JobRequest::AddToArchive { handle } => self.add(*handle, ctx),
             JobRequest::DeleteFromArchive { handle, keys } => self.delete(*handle, keys, ctx),
         })
@@ -987,6 +992,7 @@ pub(crate) fn export_done(
         search: None,
         rekey: None,
         export: Some(Box::new(view)),
+        scan: None,
     }
 }
 
@@ -1038,6 +1044,7 @@ fn done(
         search: None,
         rekey: None,
         export: None,
+        scan: None,
     }
 }
 

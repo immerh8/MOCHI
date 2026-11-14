@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { QuickWindow } from "./quick/QuickWindow";
 import { suppressNativeMenu } from "./list/ContextMenu";
+import "./settings/motion";
 import "./styles.css";
 
 // The shell's quick verbs open a small second window on the same page, told

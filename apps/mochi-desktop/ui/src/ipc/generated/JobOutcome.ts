@@ -5,6 +5,7 @@ import type { ExportReportView } from "./ExportReportView";
 import type { ExtractReport } from "./ExtractReport";
 import type { ForeignTestReport } from "./ForeignTestReport";
 import type { RekeyReport } from "./RekeyReport";
+import type { ScanReportView } from "./ScanReportView";
 import type { SearchResultView } from "./SearchResultView";
 
 /**
@@ -39,4 +40,8 @@ foreign_test?: ForeignTestReport,
 /**
  * Set by the export job (plan O31): what was written, no more.
  */
-export?: ExportReportView, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };
+export?: ExportReportView, 
+/**
+ * Set by the virus scan job.
+ */
+scan?: ScanReportView, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };

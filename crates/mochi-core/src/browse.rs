@@ -15,7 +15,7 @@
 //! `CATALOG_INVALID`, never a guessed directory (§22.1: never invent
 //! namespace information).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mochi_format::digest::FileContentHash;
 
@@ -23,9 +23,23 @@ use crate::catalog::namespace::{EntryKind, FileVersionId};
 use crate::catalog::path::ArchivePath;
 use crate::catalog::Catalog;
 use crate::error::{ErrorCode, MochiError, Result};
+use crate::object::ObjectId;
 
 /// Most entries one [`SnapshotIndex::children`] call returns.
 pub const MAX_PAGE: usize = 1000;
+
+/// A snapshot's totals ([`SnapshotIndex::totals`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapshotTotals {
+    pub folders: u64,
+    pub files: u64,
+    /// Sum of the files' logical lengths.
+    pub logical_bytes: u64,
+    /// Sum of the stored lengths of the distinct chunks the files name.
+    pub stored_bytes: u64,
+    /// How many distinct chunks that is.
+    pub chunks: u64,
+}
 
 /// One entry of a browsed snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +99,13 @@ pub struct SnapshotIndex {
 
 fn invalid(what: impl Into<String>) -> MochiError {
     MochiError::new(ErrorCode::InvalidArgument, what)
+}
+
+fn too_large() -> MochiError {
+    MochiError::new(
+        ErrorCode::LimitExceeded,
+        "a snapshot total does not fit in 64 bits",
+    )
 }
 
 fn catalog_invalid(what: &str) -> MochiError {
@@ -171,6 +192,47 @@ impl SnapshotIndex {
             .binary_search_by(|e| e.path.cmp(path))
             .ok()
             .map(|i| &self.entries[i])
+    }
+
+    /// The snapshot's totals (the archive Info window): its folders and files,
+    /// their logical size, and what their chunks occupy in the archive.
+    /// `cat` must be the catalog the index was built from.
+    ///
+    /// The stored size counts each chunk the snapshot's files name **once**,
+    /// however many files or extents share it (deduplication), with its exact
+    /// stored length (framing and, if encrypted, the AEAD tag included). Chunks
+    /// no file of this snapshot names (other versions' data, stream-only
+    /// chunks of the TAR-compatible profile) and the archive's metadata are not
+    /// counted: it is this snapshot's file data, not the archive's file size.
+    ///
+    /// Errors: `LIMIT_EXCEEDED` if a total does not fit in 64 bits.
+    pub fn totals(&self, cat: &Catalog) -> Result<SnapshotTotals> {
+        let mut t = SnapshotTotals::default();
+        let mut versions = HashSet::new();
+        for e in &self.entries {
+            match e.kind {
+                EntryKind::Directory => t.folders += 1,
+                EntryKind::File => {
+                    t.files += 1;
+                    t.logical_bytes = t
+                        .logical_bytes
+                        .checked_add(e.logical_len)
+                        .ok_or_else(too_large)?;
+                    versions.insert(e.version);
+                }
+            }
+        }
+        let mut seen: HashSet<ObjectId> = HashSet::new();
+        for (version, chunk, stored_len) in cat.chunk_refs()? {
+            if versions.contains(&version) && seen.insert(chunk) {
+                t.chunks += 1;
+                t.stored_bytes = t
+                    .stored_bytes
+                    .checked_add(stored_len)
+                    .ok_or_else(too_large)?;
+            }
+        }
+        Ok(t)
     }
 
     /// Direct (subdirectories, files) of `dir`, or of the root for `None`.
@@ -293,6 +355,118 @@ mod tests {
 
     fn names(page: &Page<'_>) -> Vec<Vec<u8>> {
         page.entries.iter().map(|e| e.name().to_vec()).collect()
+    }
+
+    fn chunk(n: u8, stored_len: u64) -> crate::object::ObjectRecord {
+        use mochi_format::codec::{Encoding, Protection};
+        use mochi_format::digest::{chunk_content_hash, StoredObjectHash};
+        use mochi_format::repr::DecodedBytes;
+        crate::object::ObjectRecord {
+            id: ObjectId::from_bytes([n; 32]),
+            encoding: Encoding::ZstdFrame,
+            protection: Protection::None,
+            stored_len,
+            stored_hash: StoredObjectHash::from_bytes([n; 32]),
+            decoded_len: 100,
+            content_hash: chunk_content_hash(&DecodedBytes::new(vec![n; 100])),
+            dependencies: vec![],
+        }
+    }
+
+    fn file(cat: &mut Catalog, id: u32, extents: &[(u64, Option<u8>)]) {
+        use crate::catalog::extent::{Extent, ExtentSource};
+        let mut at = 0;
+        let mut list = Vec::new();
+        for (i, (len, c)) in extents.iter().enumerate() {
+            list.push(Extent {
+                ordinal: i as u32,
+                logical_offset: at,
+                length: *len,
+                source: match c {
+                    Some(n) => ExtentSource::Chunk {
+                        chunk: ObjectId::from_bytes([*n; 32]),
+                        chunk_offset: 0,
+                    },
+                    None => ExtentSource::Hole,
+                },
+            });
+            at += len;
+        }
+        cat.insert_file_version(
+            &FileVersion {
+                id: vid(id),
+                kind: EntryKind::File,
+                logical_len: at,
+                content_hash: Some(FileContentHash::from_bytes([id as u8; 32])),
+            },
+            &list,
+        )
+        .unwrap();
+    }
+
+    /// Two files share chunk 1 (counted once); one adds chunk 2 and a hole
+    /// (no stored bytes); a version replaced in the second commit names chunk
+    /// 3, which the head does not count. Folders and files are counted apart.
+    #[test]
+    fn totals_count_each_chunk_of_the_snapshot_once() {
+        let mut cat = Catalog::new_working().unwrap();
+        for (n, len) in [(1, 40), (2, 25), (3, 1000)] {
+            cat.insert_object(&chunk(n, len), Some(u64::from(n) * 2000))
+                .unwrap();
+        }
+        cat.insert_file_version(
+            &FileVersion {
+                id: vid(10),
+                kind: EntryKind::Directory,
+                logical_len: 0,
+                content_hash: None,
+            },
+            &[],
+        )
+        .unwrap();
+        file(&mut cat, 11, &[(100, Some(1))]);
+        file(&mut cat, 12, &[(100, Some(1)), (50, None), (100, Some(2))]);
+        file(&mut cat, 13, &[(100, Some(3))]);
+        file(&mut cat, 14, &[(100, Some(1))]);
+        let put = |path: &[u8], v: u32| NamespaceOp::Put {
+            path: p(path),
+            version: vid(v),
+        };
+        cat.append_commit(&Commit {
+            seq: 0,
+            parent: None,
+            ops: vec![
+                put(b"d", 10),
+                put(b"d/a", 11),
+                put(b"d/b", 12),
+                put(b"c", 13),
+            ],
+        })
+        .unwrap();
+        cat.append_commit(&Commit {
+            seq: 1,
+            parent: Some(0),
+            ops: vec![put(b"c", 14)],
+        })
+        .unwrap();
+        let index = SnapshotIndex::build(&cat).unwrap();
+        assert_eq!(
+            index.totals(&cat).unwrap(),
+            SnapshotTotals {
+                folders: 1,
+                files: 3,
+                logical_bytes: 100 + 250 + 100,
+                stored_bytes: 40 + 25,
+                chunks: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn totals_of_an_empty_snapshot_are_zero() {
+        let cat = catalog(&[]);
+        let index = SnapshotIndex::build(&cat).unwrap();
+        assert_eq!(index.totals(&cat).unwrap(), SnapshotTotals::default());
     }
 
     #[test]
