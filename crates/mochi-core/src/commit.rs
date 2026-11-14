@@ -1,5 +1,8 @@
-//! Commit records, schema version 1 (spec §12.1, Annex B.2 D10–D12; schema
-//! `docs/schemas/commit-record-v1.cddl`). **DRAFT** (R3).
+//! Commit records, schema versions 1, 2 and 4 (spec §12.1, Annex B.2 D10–D12;
+//! `docs/schemas/commit-record-v1.cddl`, `-v2` for the Encrypted profile
+//! (B.2.10), `-v4` for a commit that carries the archive comment (B.2.19)).
+//! Schema 3 is not assigned: the frozen golden vectors use it as the version
+//! no build knows.
 //!
 //! A commit names everything its state depends on by offset, length, and
 //! stored-object hash: the archive descriptor (key 10), its delta manifest
@@ -41,7 +44,9 @@ use mochi_format::digest::{commit_id, CommitId, StoredObjectHash};
 use mochi_format::envelope::{check_required_features, RecordIdentity};
 use mochi_format::error::LimitKind;
 use mochi_format::frame::{encode_skippable_frame_within, walk_frame, FrameDetail};
-use mochi_format::registry::{FrameKind, DESCRIPTOR_OFFSET, SKIPPABLE_HEADER_LEN};
+use mochi_format::registry::{
+    FrameKind, DESCRIPTOR_OFFSET, FEATURE_COMMENT, MAX_COMMENT_BYTES, SKIPPABLE_HEADER_LEN,
+};
 use mochi_format::repr::{CanonicalCommitBody, StoredObject};
 use mochi_format::seal::{FEATURE_ENCRYPTED, MIN_SEALED_FRAME_LEN};
 use mochi_format::{FormatError, Limits};
@@ -59,16 +64,46 @@ pub const SCHEMA_VERSION: u64 = 1;
 /// region). Used exactly when the record lists required feature 1.
 pub const ENCRYPTED_SCHEMA_VERSION: u64 = 2;
 
+/// Schema version of a commit that carries the archive comment (Annex
+/// B.2.19 D29; `docs/schemas/commit-record-v4.cddl`): schema 1 plus key 13,
+/// the comment as of this commit. Used exactly when the record lists required
+/// feature 3 ([`FEATURE_COMMENT`]); never in the Encrypted profile.
+pub const COMMENT_SCHEMA_VERSION: u64 = 4;
+
+/// Map key of the archive comment (schema 4).
+const COMMENT_KEY: u64 = 13;
+
 /// The pre-batch draft schema. Refused, and named as legacy (§26).
 pub const LEGACY_SCHEMA_VERSION: u64 = 0;
 
 /// Map key holding the commit ID; excluded from the body (§9.2).
 const ID_KEY: u64 = 9;
 
-/// Required-feature identifiers this build understands: the Encrypted
-/// profile's (D20 item 4). Any other listed feature makes the commit
-/// unsupported (fail closed).
-pub const KNOWN_REQUIRED_FEATURES: &[u64] = &[FEATURE_ENCRYPTED];
+/// Required-feature identifiers this build understands in a commit record:
+/// the Encrypted profile's (D20 item 4) and the archive comment's (D29). Any
+/// other listed feature makes the commit unsupported (fail closed).
+pub const KNOWN_REQUIRED_FEATURES: &[u64] = &[FEATURE_ENCRYPTED, FEATURE_COMMENT];
+
+/// Whether `text` may be an archive comment (Annex B.2.19 item 3): 1 to
+/// [`MAX_COMMENT_BYTES`] bytes of UTF-8 (CBOR text guarantees the encoding),
+/// with no control character but tab and line feed (no carriage return: a
+/// line ends with a line feed), and no C1 control. The text is otherwise kept
+/// exactly; nothing is normalized.
+pub fn check_comment(text: &str) -> std::result::Result<(), &'static str> {
+    if text.is_empty() {
+        return Err("an archive comment is not empty (no comment is written as none)");
+    }
+    if text.len() > MAX_COMMENT_BYTES {
+        return Err("an archive comment is at most 16,384 bytes");
+    }
+    if text
+        .chars()
+        .any(|c| (c.is_control() && c != '\n' && c != '\t') || ('\u{80}'..='\u{9f}').contains(&c))
+    {
+        return Err("an archive comment has no control character but tab and line feed");
+    }
+    Ok(())
+}
 
 /// Where a stored object sits in a monolithic archive, and its hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +191,10 @@ pub struct CommitRecord {
     /// `None` when the commit adds no data object. Always `None` outside the
     /// Encrypted profile.
     pub data_region: Option<ObjectRef>,
+    /// Schema 4, key 13: the archive comment as of this commit (a complete
+    /// value, not a change; Annex B.2.19 D29). `None`: the archive has no
+    /// comment at this commit. Always `None` in the Encrypted profile.
+    pub comment: Option<String>,
 }
 
 /// Format 16 random bytes as an RFC 9562 version-4 UUID.
@@ -209,10 +248,12 @@ fn decode_link(v: &Value, what: &'static str) -> Result<CommitLink> {
 
 impl CommitRecord {
     /// 2 for an Encrypted-profile commit (it lists the D20 required feature),
-    /// else 1.
+    /// 4 for one that carries a comment (it lists the D29 feature), else 1.
     pub fn schema_version(&self) -> u64 {
         if self.encrypted() {
             ENCRYPTED_SCHEMA_VERSION
+        } else if self.required_features.contains(&FEATURE_COMMENT) {
+            COMMENT_SCHEMA_VERSION
         } else {
             SCHEMA_VERSION
         }
@@ -336,6 +377,25 @@ impl CommitRecord {
                 "key envelopes and a data region belong to the Encrypted profile (schema 2)",
             ));
         }
+        // Schema 4 (D29): the comment and the feature go together, and the
+        // feature is the only one listed (no Encrypted commit has a comment).
+        match &self.comment {
+            Some(text) => {
+                if self.required_features != [FEATURE_COMMENT] {
+                    return Err(schema(
+                        "a commit with a comment lists exactly the comment required feature \
+                         (an Encrypted commit has no comment)",
+                    ));
+                }
+                check_comment(text).map_err(schema)?;
+            }
+            None if self.required_features.contains(&FEATURE_COMMENT) => {
+                return Err(schema(
+                    "a commit that lists the comment required feature carries a comment",
+                ));
+            }
+            None => {}
+        }
         Ok(())
     }
 
@@ -384,6 +444,9 @@ impl CommitRecord {
                 Value::Array(self.key_envelopes.iter().map(ref_value).collect()),
             ));
             entries.push((12, self.data_region.as_ref().map_or(Value::Null, ref_value)));
+        }
+        if let Some(text) = &self.comment {
+            entries.push((COMMENT_KEY, Value::Text(text.clone())));
         }
         entries
     }
@@ -451,12 +514,12 @@ impl CommitRecord {
         let root = cbor::decode(bytes, cbor_limits)?;
         let mut f = Fields::of(&root, "commit")?;
         let version = match f.req(0)?.uint("schema version")? {
-            v @ (SCHEMA_VERSION | ENCRYPTED_SCHEMA_VERSION) => v,
+            v @ (SCHEMA_VERSION | ENCRYPTED_SCHEMA_VERSION | COMMENT_SCHEMA_VERSION) => v,
             LEGACY_SCHEMA_VERSION => {
                 return Err(MochiError::new(
                     ErrorCode::UnsupportedFeature,
                     "commit-record schema 0 is the pre-batch draft (legacy, spec §26); \
-                     this build reads schemas 1 and 2",
+                     this build reads schemas 1, 2 and 4",
                 ))
             }
             v => {
@@ -537,6 +600,11 @@ impl CommitRecord {
                 data_region = Some(decode_ref(region, "data region")?);
             }
         }
+        let comment = if version == COMMENT_SCHEMA_VERSION {
+            Some(f.req(COMMENT_KEY)?.text("comment")?.to_owned())
+        } else {
+            None
+        };
         f.finish()?;
         let record = CommitRecord {
             archive_id,
@@ -550,6 +618,7 @@ impl CommitRecord {
             descriptor,
             key_envelopes,
             data_region,
+            comment,
         };
         // D11 first (count, increasing order, known), so a fault in the feature
         // list itself keeps its own code before the profile comparison below.
@@ -557,7 +626,8 @@ impl CommitRecord {
         if record.schema_version() != version {
             return Err(schema(
                 "the commit's schema version does not match its required features: \
-                 schema 2 exactly when it lists the Encrypted required feature",
+                 schema 2 exactly when it lists the Encrypted required feature, 4 exactly \
+                 when it lists the comment required feature",
             ));
         }
         record.check_structure(limits)?;
@@ -641,6 +711,7 @@ mod tests {
             descriptor: r(0, 56, 6),
             key_envelopes: Vec::new(),
             data_region: None,
+            comment: None,
         }
     }
 
@@ -769,10 +840,16 @@ mod tests {
                 Box::new(|r| r.required_features = vec![2, 1]),
                 ErrorCode::EnvelopeInvalid,
             ),
-            // Feature 1 is the Encrypted profile (D20); 2 is not assigned.
+            // Feature 1 is the Encrypted profile (D20), 3 the comment (D29); 2 is
+            // not assigned (the frozen vectors use it as the unknown feature).
             (
                 Box::new(|r| r.required_features = vec![2]),
                 ErrorCode::UnsupportedFeature,
+            ),
+            // The comment feature without a comment.
+            (
+                Box::new(|r| r.required_features = vec![FEATURE_COMMENT]),
+                ErrorCode::RecordInvalid,
             ),
         ];
         for (i, (edit, code)) in cases.into_iter().enumerate() {
@@ -897,7 +974,7 @@ mod tests {
     #[test]
     fn legacy_and_future_schema_versions_are_refused() {
         let (bytes, _) = root().encode().unwrap();
-        for (v, legacy) in [(0u8, true), (3, false)] {
+        for (v, legacy) in [(0u8, true), (3, false), (5, false)] {
             let mut b = bytes.clone();
             // map(11), key 0, value 1 → value v.
             assert_eq!(&b[..3], &[0xAB, 0x00, 0x01]);
@@ -913,5 +990,195 @@ mod tests {
         let u = uuid_v4([0xff; 16]);
         assert_eq!(u[6] >> 4, 4);
         assert_eq!(u[8] >> 6, 0b10);
+    }
+
+    // ---- Schema 4: the archive comment (Annex B.2.19, D29) ----
+
+    fn commented(text: &str) -> CommitRecord {
+        CommitRecord {
+            required_features: vec![FEATURE_COMMENT],
+            comment: Some(text.to_owned()),
+            ..root()
+        }
+    }
+
+    #[test]
+    fn a_comment_is_schema_4_key_13_and_round_trips_exactly() {
+        let text = "Photos 2026\n\tkept as written: <b>, \u{202e}, émoji 🙂";
+        for rec in [
+            commented(text),
+            CommitRecord {
+                required_features: vec![FEATURE_COMMENT],
+                comment: Some("x".into()),
+                ..child_delta()
+            },
+        ] {
+            let (bytes, id) = rec.encode().unwrap();
+            let (back, id2) = dec(&bytes).unwrap();
+            assert_eq!((back.clone(), id2), (rec.clone(), id));
+            assert_eq!(back.schema_version(), COMMENT_SCHEMA_VERSION);
+            let Value::Map(m) = cbor::decode(&bytes, &CborLimits::default()).unwrap() else {
+                panic!("a commit is a map")
+            };
+            assert_eq!(m[0].1, Value::Uint(4));
+            assert_eq!(m.last().map(|(k, _)| *k), Some(13));
+        }
+        // The comment is in the commit ID: changing one character changes it.
+        assert_ne!(
+            commented("a").commit_id().unwrap(),
+            commented("b").commit_id().unwrap()
+        );
+        // A commit without a comment is schema 1, byte for byte as before.
+        assert_eq!(root().schema_version(), SCHEMA_VERSION);
+    }
+
+    /// Golden bytes of a small schema-4 root commit: any change to the
+    /// encoding of key 13 or the schema number shows here.
+    #[test]
+    fn schema_4_golden_vector() {
+        let (bytes, id) = commented("hi").encode().unwrap();
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        // map(12): keys 0..10 as schema 1, then key 13 = text(2) "hi".
+        assert!(hex.starts_with("ac0004"), "{hex}");
+        assert!(hex.ends_with("0d626869"), "{hex}");
+        assert_eq!(dec(&bytes).unwrap().1, id);
+    }
+
+    #[test]
+    fn comment_rules_are_checked_on_write_and_read() {
+        let long = "a".repeat(MAX_COMMENT_BYTES + 1);
+        let bad: Vec<(&str, String)> = vec![
+            ("empty", String::new()),
+            ("too long", long),
+            ("carriage return", "a\r\nb".into()),
+            ("NUL", "a\0b".into()),
+            ("escape", "a\u{1b}[31m".into()),
+            ("C1", "a\u{85}b".into()),
+            ("DEL", "a\u{7f}".into()),
+        ];
+        for (what, text) in &bad {
+            let e = commented(text).commit_id().unwrap_err();
+            assert_eq!(e.code, ErrorCode::RecordInvalid, "{what}");
+        }
+        assert!(check_comment(&"é".repeat(MAX_COMMENT_BYTES / 2)).is_ok());
+        assert!(check_comment("tab\tand\nline").is_ok());
+
+        // The same rules hold for bytes a hostile writer made: re-encode a
+        // valid record with a bad comment and the right ID.
+        for (what, text) in bad
+            .into_iter()
+            .filter(|(_, t)| t.len() <= MAX_COMMENT_BYTES)
+        {
+            let rec = commented("ok");
+            let mut m = match rec.full_value(&rec.compute_id().unwrap()) {
+                Value::Map(m) => m,
+                _ => unreachable!(),
+            };
+            let last = m.len() - 1;
+            m[last].1 = Value::Text(text.clone());
+            let mut body = m.clone();
+            body.retain(|(k, _)| *k != ID_KEY);
+            let id = commit_id(CanonicalCommitBody::assume_canonical(
+                &cbor::encode(&Value::Map(body)).unwrap(),
+            ));
+            let at = m.iter().position(|(k, _)| *k == ID_KEY).unwrap();
+            m[at].1 = b32(id.as_bytes());
+            let bytes = cbor::encode(&Value::Map(m)).unwrap();
+            assert_eq!(
+                dec(&bytes).unwrap_err().code,
+                ErrorCode::RecordInvalid,
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_feature_and_key_13_go_together() {
+        type Edit = Box<dyn Fn(&mut Vec<(u64, Value)>)>;
+        // Each edit is applied to a valid encoding and the ID fixed up, so the
+        // refusal is the schema rule, not the ID check.
+        let cases: Vec<(&str, CommitRecord, Edit)> = vec![
+            (
+                "schema 1 with key 13",
+                root(),
+                Box::new(|m| m.push((13, Value::Text("x".into())))),
+            ),
+            (
+                "schema 4 without key 13",
+                commented("x"),
+                Box::new(|m| m.retain(|(k, _)| *k != 13)),
+            ),
+            (
+                "schema 4 without the feature",
+                commented("x"),
+                Box::new(|m| m[7].1 = Value::Array(vec![])),
+            ),
+            (
+                "schema 1 listing the feature",
+                root(),
+                Box::new(|m| m[7].1 = Value::Array(vec![Value::Uint(FEATURE_COMMENT)])),
+            ),
+            (
+                "comment and Encrypted together",
+                commented("x"),
+                Box::new(|m| {
+                    m[7].1 = Value::Array(vec![
+                        Value::Uint(FEATURE_ENCRYPTED),
+                        Value::Uint(FEATURE_COMMENT),
+                    ])
+                }),
+            ),
+            (
+                "key 13 not text",
+                commented("x"),
+                Box::new(|m| {
+                    let last = m.len() - 1;
+                    m[last].1 = Value::Bytes(b"x".to_vec())
+                }),
+            ),
+        ];
+        for (what, rec, edit) in cases {
+            let mut m = match rec.full_value(&rec.compute_id().unwrap()) {
+                Value::Map(m) => m,
+                _ => unreachable!(),
+            };
+            m.retain(|(k, _)| *k != ID_KEY);
+            edit(&mut m);
+            let id = commit_id(CanonicalCommitBody::assume_canonical(
+                &cbor::encode(&Value::Map(m.clone())).unwrap(),
+            ));
+            let at = m.iter().position(|(k, _)| *k > ID_KEY).unwrap_or(m.len());
+            m.insert(at, (ID_KEY, b32(id.as_bytes())));
+            let e = dec(&cbor::encode(&Value::Map(m)).unwrap()).unwrap_err();
+            assert!(
+                matches!(
+                    e.code,
+                    ErrorCode::RecordInvalid | ErrorCode::UnsupportedFeature
+                ),
+                "{what}: {e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_encrypted_commit_cannot_carry_a_comment() {
+        let mut rec = commented("x");
+        rec.required_features = vec![FEATURE_ENCRYPTED, FEATURE_COMMENT];
+        rec.time = None;
+        rec.key_envelopes = vec![r(5000, 200, 9)];
+        assert_eq!(rec.commit_id().unwrap_err().code, ErrorCode::RecordInvalid);
+    }
+
+    /// The largest comment fits the commit frame with room to spare, on the
+    /// largest schema-4 record (a delta, every key).
+    #[test]
+    fn the_largest_comment_fits_the_commit_frame() {
+        let rec = CommitRecord {
+            required_features: vec![FEATURE_COMMENT],
+            comment: Some("\u{10ffff}".repeat(MAX_COMMENT_BYTES / 4)),
+            ..child_delta()
+        };
+        let (frame, _) = rec.to_stored().unwrap();
+        assert!(frame.len() < Limits::WRITER_DEFAULT.max_commit_frame_len / 3);
     }
 }

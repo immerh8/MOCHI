@@ -56,6 +56,7 @@ const SCHEMAS: &[&str] = &[
     "cli-plan-saved.schema.json",
     "cli-migrate.schema.json",
     "cli-find.schema.json",
+    "cli-comment.schema.json",
 ];
 
 /// The R8 case spec §20.6's example is generated from.
@@ -454,7 +455,7 @@ fn command_output_schemas_require_their_in_band_tag() {
         }
         seen += 1;
     }
-    assert_eq!(seen, 13, "the thirteen command-output schemas");
+    assert_eq!(seen, 14, "the fourteen command-output schemas");
 }
 
 // ---- enumerations ------------------------------------------------------------------
@@ -1234,6 +1235,23 @@ fn corpus() -> Vec<(&'static str, Value)> {
     assert_eq!(code, 2);
     assert_eq!(v["coverage"]["archives_skipped"], 3, "{v}");
     keep("cli-find.schema.json", v);
+
+    // comment (B.2.19): set with append, then read at the head and at a
+    // version without one.
+    let (_, v) = ok(
+        "cli-commit.schema.json",
+        &a.g(&["append", &arc, "--comment", "Holiday photos\n\tday 1"]),
+    );
+    keep("cli-commit.schema.json", v);
+    let (_, v) = ok("cli-comment.schema.json", &a.g(&["comment", &arc]));
+    assert_eq!(v["comment"], "Holiday photos\n\tday 1");
+    keep("cli-comment.schema.json", v);
+    let (_, v) = ok(
+        "cli-comment.schema.json",
+        &a.g(&["comment", &arc, "--snapshot", "0"]),
+    );
+    assert_eq!(v["comment"], Value::Null);
+    keep("cli-comment.schema.json", v);
 
     // Evidence lines and the local head history.
     for e in fs::read_dir(a.p("state/evidence")).unwrap() {

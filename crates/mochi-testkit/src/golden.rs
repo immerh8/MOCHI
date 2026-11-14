@@ -1370,6 +1370,7 @@ fn c5_root() -> CommitRecord {
         descriptor: c5_ref(0, 56, 0x3D),
         key_envelopes: Vec::new(),
         data_region: None,
+        comment: None,
     }
 }
 

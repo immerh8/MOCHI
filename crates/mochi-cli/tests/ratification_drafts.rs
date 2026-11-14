@@ -275,6 +275,28 @@ fn r1_registered_byte_strings_match_the_code() {
     }
 }
 
+/// What Annex B added to the wire format after ratification, never by editing
+/// `docs/ratification/` (AGENTS.md: a change is a new identifier with an Annex B
+/// entry). The R1 and R3 checks below compare the frozen documents with the
+/// code *minus* exactly these additions, so an addition that has no entry here
+/// still fails them.
+mod since_ratification {
+    use mochi_core::commit;
+    use mochi_format::registry;
+
+    /// B.2.19 (D29, the archive comment): commit record schema 4.
+    pub const COMMIT_SCHEMAS: &[u64] = &[commit::COMMENT_SCHEMA_VERSION];
+    /// B.2.19: required feature 3, known in commit records only.
+    pub const COMMIT_FEATURES: &[u64] = &[registry::FEATURE_COMMENT];
+    /// B.2.19: its schema file.
+    pub const CDDL_FILES: &[&str] = &["commit-record-v4.cddl"];
+
+    /// `all` without the additions.
+    pub fn frozen(all: &[u64], added: &[u64]) -> Vec<u64> {
+        all.iter().copied().filter(|v| !added.contains(v)).collect()
+    }
+}
+
 #[test]
 fn r1_record_schema_versions_match_the_code() {
     use mochi_core::{commit, descriptor, image, keys, manifest};
@@ -287,6 +309,8 @@ fn r1_record_schema_versions_match_the_code() {
         let code: Vec<u64> = match kind {
             FrameKind::ArchiveDescriptor => vec![descriptor::SCHEMA_VERSION],
             FrameKind::CommitRecord => {
+                // B.2.19 (D29) adds schema 4 after ratification.
+                assert_eq!(since_ratification::COMMIT_SCHEMAS, [4]);
                 vec![commit::SCHEMA_VERSION, commit::ENCRYPTED_SCHEMA_VERSION]
             }
             FrameKind::RecoveryManifest => vec![
@@ -312,12 +336,19 @@ fn r1_record_schema_versions_match_the_code() {
     // "Required-feature identifiers registered: **1**".
     assert_eq!(mochi_format::seal::FEATURE_ENCRYPTED, 1);
     for known in [
-        descriptor::KNOWN_REQUIRED_FEATURES,
-        commit::KNOWN_REQUIRED_FEATURES,
-        manifest::KNOWN_REQUIRED_FEATURES,
+        descriptor::KNOWN_REQUIRED_FEATURES.to_vec(),
+        since_ratification::frozen(
+            commit::KNOWN_REQUIRED_FEATURES,
+            since_ratification::COMMIT_FEATURES,
+        ),
+        manifest::KNOWN_REQUIRED_FEATURES.to_vec(),
     ] {
         assert_eq!(known, [mochi_format::seal::FEATURE_ENCRYPTED]);
     }
+    // B.2.19: the comment is identifier 3, in commit records only; 2 stays
+    // unassigned (the frozen vectors use it as the unknown feature).
+    assert_eq!(since_ratification::COMMIT_FEATURES, [3]);
+    assert!(!commit::KNOWN_REQUIRED_FEATURES.contains(&2));
 }
 
 // ---- R2: record envelopes -----------------------------------------------------------
@@ -1203,12 +1234,14 @@ fn r3_schema_registry_matches_the_code() {
     assert_eq!(seen_current.len(), current.len());
 
     // The table lists every CDDL schema file, and nothing else (R7's JSON
-    // Schemas in `docs/schemas/json/` are checked by r7_json_schemas.rs).
+    // Schemas in `docs/schemas/json/` are checked by r7_json_schemas.rs),
+    // except the files Annex B added after ratification.
     let on_disk: BTreeSet<String> =
         std::fs::read_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schemas"))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|n| n.ends_with(".cddl"))
+            .filter(|n| !since_ratification::CDDL_FILES.contains(&n.as_str()))
             .collect();
     assert_eq!(files, on_disk);
 }

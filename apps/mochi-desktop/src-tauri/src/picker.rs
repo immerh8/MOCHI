@@ -272,6 +272,26 @@ pub fn pick_crash_log_destination<R: Runtime>(
         .ok()
 }
 
+/// Show the open dialog for a virus scanner's program (the scan window's
+/// Browse). On Windows only programs are offered. `None` if the user
+/// cancelled. Blocks: call it off the async runtime.
+pub fn pick_scanner_program<R: Runtime>(app: &AppHandle<R>, text: &DialogText) -> Option<PathBuf> {
+    #[cfg(feature = "e2e")]
+    if let Some(path) = crate::automation::next_pick() {
+        return Some(path);
+    }
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title(text.title("Choose the virus scanner's program"));
+    let dialog = if cfg!(windows) {
+        dialog.add_filter(text.filter("Programs"), &["exe", "com"])
+    } else {
+        dialog
+    };
+    dialog.blocking_pick_file()?.into_path().ok()
+}
+
 /// `path` with `.mochi` appended when it has no extension.
 pub fn with_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {

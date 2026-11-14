@@ -119,6 +119,20 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
         return { total: FOREIGN_ROWS.length, offset: a.offset, entries: FOREIGN_ROWS };
       case "plan_extract_foreign":
         return { plan: { destination: "/home/me/zip", entries: 2, existing: [], existing_total: 0, merged_folders: 0, conflicts: [], conflicts_total: 0, case_insensitive: false }, skipped_kinds: 0 };
+      case "archive_info":
+        return {
+          seq: (args as { seq: number }).seq,
+          folders: "1",
+          files: "2",
+          total_size: "300",
+          packed_size: "150",
+          chunks: "2",
+          file_size: "900",
+          chunk_size: "8388608",
+          zstd_level: 3,
+        };
+      case "scan_setup":
+        return { detected: [], chosen: { name: "", program: "", arguments: '"%f"' } };
       case "close_archive":
       case "close_foreign_archive":
         return true;
@@ -130,7 +144,7 @@ function backend(opts: { rows?: EntryRow[] } = {}) {
 
 afterEach(() => clearMocks());
 
-const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "extract-to", "toolbar-test", "remove-entry", "search-query", "toolbar-info"];
+const ARCHIVE_TOOLS = ["add-to-archive", "extract-all", "extract-to", "toolbar-test", "remove-entry", "search-query", "toolbar-info", "toolbar-archive-info", "toolbar-scan"];
 
 async function openIt() {
   const user = userEvent.setup();
@@ -156,7 +170,7 @@ test("with nothing open, the archive's buttons are off and More, Find and Help a
   // A calm bar (release 0.9.10): the primary actions only. Each has one or two words beside its
   // icon, shown whenever they all fit (owner request 2026-11-10) and the accessible name either
   // way; More is an icon alone. The reason a button is off is its tooltip.
-  const names = ["Open", "Add", "Extract to…", "Test", "Find", "More"];
+  const names = ["Open", "Add", "Extract to…", "Test", "Find", "Info", "Scan", "More"];
   const buttons = within(bar).getAllByRole("button");
   expect(buttons.map((b) => b.textContent)).toEqual(names);
   for (const b of buttons.slice(0, -1)) expect(b.querySelector(".tool-label")?.textContent, b.textContent ?? "").toBe(b.textContent);
@@ -183,7 +197,7 @@ test("the rarer actions moved off the bar are in More, each with its key", async
     "New archive": "Control+N",
     Extract: "Control+E",
     Remove: "Delete",
-    Info: "Alt+Enter",
+    Details: "Alt+Enter",
     Help: "F1",
   });
   // The same buttons, test ids and states as before; they are menu items now.
@@ -337,7 +351,7 @@ test("More lists the rarer things, takes its choice, closes on Escape, and Escap
     "New archive",
     "Extract",
     "Remove",
-    "Info",
+    "Details",
     "Open and extract…",
     "Other formats…",
     "Passphrases",
@@ -499,4 +513,18 @@ test("showing a MOCHI archive closes the foreign one on screen", async () => {
   await waitFor(() => expect(screen.queryByTestId("foreign-meta")).toBeNull());
   expect(b.cmds()).toContain("close_foreign_archive");
   expect(screen.getByTestId("extract-all")).toBeEnabled();
+});
+
+test("Info opens the archive's information for the version on screen, and Scan its scan window", async () => {
+  const { user, b } = await openIt();
+  await user.click(screen.getByTestId("toolbar-archive-info"));
+  const info = await screen.findByTestId("archive-info");
+  expect(await within(info).findByTestId("info-ratio")).toHaveTextContent("50%");
+  expect(b.calls.find((c) => c.cmd === "archive_info")?.args).toEqual({ handle: 3, seq: 1 });
+  await user.keyboard("{Escape}");
+  expect(screen.queryByTestId("archive-info")).toBeNull();
+  await user.click(screen.getByTestId("toolbar-scan"));
+  expect(await screen.findByTestId("scan-archive")).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByTestId("scan-archive")).toBeNull();
 });

@@ -503,6 +503,41 @@ revisited.** MOCHI is an archiver, and other programs can collect the exported l
 app has no reporting endpoint and sends nothing. The way to report a crash is: turn the log on, reproduce it, save a copy, read it, and
 attach it to an issue.
 
+## Info, Scan for viruses, and animations (owner request 2026-11-14)
+
+**Info** (toolbar) shows the version on screen as WinRAR's Info tab does: total folders and
+files, total size, packed size and ratio, stored chunks, the archive file's size, encryption and
+recovery record, and the writer's recorded chunk size ("Dictionary size: up to 8 MiB", since each
+chunk is compressed on its own and 1.0 writes no shared dictionary) and Zstandard level. The
+numbers come from `mochi_core::browse::SnapshotIndex::totals` (each chunk counted once however many
+files share it; other versions and metadata not counted), through the `archive_info` command.
+Comment shows the archive comment of that version as text (spec Annex B.2.19, D29: commit
+schema 4, decided by the owner as plan O32 option b). On the latest version of an archive that
+is not encrypted, *Edit comment…* saves a new version through the `set_archive_comment` job;
+earlier versions keep the comment they had, and an empty text removes it. An encrypted archive
+cannot have one: a commit record is readable without the passphrase.
+The old Info item, which shows or hides the details pane (Alt+Enter), is now called **Details**.
+
+**Scan** (toolbar) runs a virus scanner the user has on the version on screen
+(`src-tauri/src/scan.rs`). The window lists the scanners found (Microsoft Defender's
+`MpCmdRun.exe` on Windows, ClamAV's `clamscan` on Ubuntu) and takes any other program and its
+parameters, `%f` standing for the folder to scan; the choice is remembered. The job extracts the
+version through the Extract job's own code into a random owner-only folder under the app's cache,
+runs the program there without a shell and with standard input closed, keeps the last 64 KiB of its
+output, and deletes the folder (swept at the next start if a scanner still held a file). Above
+8 GiB it refuses and suggests extracting and scanning the folder. On Windows only an `.exe` or
+`.com` is accepted, so no batch file runs through `cmd.exe`. The report gives what the scanner
+said, read from its exit code for the two scanners whose codes are documented (Defender 0/2,
+ClamAV 0/1/2) and the exit code alone for any other, and shows its output as text. It never calls
+an archive safe or clean, says a report without threats proves nothing, and labels a scan partial
+when entries could not be extracted.
+
+**Animations** (Settings, General): menus, dialogs, panels and the start screen enter with short
+eased animations, and buttons and rows ease their hover and press states. "As the system" (the
+default) follows the operating system's reduce-motion setting; "Off" turns every transition and
+animation off for a slower computer or by preference; "On" keeps them whatever the system says. The
+choice is kept in the webview's local storage like the language and applies at once in every window.
+
 ## Rules that apply from the first commit (AGENTS.md, spec §23.3)
 
 - No format logic in the UI or in Tauri commands. Commands validate input, call `mochi-core`, return typed results.

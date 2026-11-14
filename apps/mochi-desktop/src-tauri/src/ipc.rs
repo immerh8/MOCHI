@@ -64,6 +64,14 @@ pub enum JobRequest {
         /// Entries of the head snapshot, as the listing returned them.
         keys: Vec<PathKey>,
     },
+    /// Set or clear the archive comment of an open archive as one new commit
+    /// (spec Annex B.2.19, D29): `comment` is the new text, `null` removes
+    /// it. Earlier versions keep the comment they had. An Encrypted archive
+    /// cannot have one.
+    SetArchiveComment {
+        handle: ArchiveHandle,
+        comment: Option<String>,
+    },
     /// D3: extract entries of one snapshot of an open archive into the folder
     /// the user chose (`plan_extract` shows the native folder dialog from
     /// Rust and remembers the choice). The webview names no path.
@@ -153,6 +161,17 @@ pub enum JobRequest {
         keys: Vec<PathKey>,
         on_conflict: ConflictChoice,
     },
+    /// Scan snapshot `seq` with a virus scanner the user has (owner request
+    /// 2026-11-14): extract it to a temporary folder, run `program` with
+    /// `arguments` (`%f` is that folder), report, delete the folder
+    /// (`scan`).
+    ScanArchive {
+        handle: ArchiveHandle,
+        seq: u32,
+        /// The scanner's full path, as the user chose or typed it.
+        program: String,
+        arguments: String,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -216,6 +235,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         export: Option<Box<ExportReportView>>,
+        /// Set by the virus scan job.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        scan: Option<Box<crate::scan::ScanReportView>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,
@@ -356,6 +379,35 @@ pub struct SnapshotView {
     pub root_dirs: u32,
     pub root_files: u32,
     pub catalog_source: CatalogSourceView,
+}
+
+/// The archive Info window (owner request 2026-11-14): one snapshot's totals and
+/// the writer's recorded settings. Sizes are bytes, decimal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../ui/src/ipc/generated/")]
+pub struct ArchiveInfoView {
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub folders: String,
+    pub files: String,
+    /// Sum of the files' sizes.
+    pub total_size: String,
+    /// What the snapshot's distinct chunks occupy in the archive (each shared
+    /// chunk once; metadata and other versions' data not counted).
+    pub packed_size: String,
+    /// Distinct chunks behind `packed_size`.
+    pub chunks: String,
+    /// The archive file's size on disk (every version and its metadata).
+    pub file_size: Option<String>,
+    /// The chunk size the archive's writer recorded: no chunk is larger, and
+    /// each is compressed on its own, so it bounds the compression window.
+    /// `null` when the archive recorded none.
+    pub chunk_size: Option<String>,
+    /// The Zstandard level the writer recorded, `null` when none was.
+    pub zstd_level: Option<i32>,
+    /// The archive comment at this version (spec Annex B.2.19, D29), exactly
+    /// as written; `null` when it has none. Archive text: render as text.
+    pub comment: Option<String>,
 }
 
 /// One row of a directory listing.
@@ -606,6 +658,8 @@ pub enum CommitOperation {
     Create,
     Add,
     Delete,
+    /// The archive comment was set or cleared (D29); no entry changed.
+    Comment,
 }
 
 /// A source entry a commit left out, and why.

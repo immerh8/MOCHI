@@ -607,6 +607,7 @@ impl Checks {
             search: None,
             rekey: None,
             export: None,
+            scan: None,
             foreign_test: None,
         })
     }
@@ -665,6 +666,7 @@ impl Checks {
             search: None,
             rekey: None,
             export: None,
+            scan: None,
             foreign_test: None,
         })
     }
@@ -756,6 +758,7 @@ impl Checks {
             search: None,
             rekey: None,
             export: None,
+            scan: None,
             foreign_test: None,
         })
     }

@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { openArchiveDialog } from "./dialogs";
 
+import type { ArchiveInfoView } from "./generated/ArchiveInfoView";
 import type { ArchiveSummary } from "./generated/ArchiveSummary";
 import type { AttributesView } from "./generated/AttributesView";
 import type { ChildrenPage } from "./generated/ChildrenPage";
@@ -16,6 +17,7 @@ import type { NameText } from "./generated/NameText";
 import type { SnapshotView } from "./generated/SnapshotView";
 
 export type {
+  ArchiveInfoView,
   ArchiveSummary,
   AttributesView,
   ChildrenPage,
@@ -67,4 +69,9 @@ export function listChildren(
 
 export function entryDetails(handle: number, seq: number, key: string): Promise<EntryDetails> {
   return invoke<EntryDetails>("entry_details", { handle, seq, key });
+}
+
+/** The archive Info window's facts for snapshot `seq` (totals and recorded settings). */
+export function archiveInfo(handle: number, seq: number): Promise<ArchiveInfoView> {
+  return invoke<ArchiveInfoView>("archive_info", { handle, seq });
 }

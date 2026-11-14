@@ -7,7 +7,7 @@ export const toolbar = {
   "toolbar.test": "ทดสอบ",
   "toolbar.testTip": "ทดสอบไฟล์บีบอัดนี้",
   "toolbar.readOnly": "ไฟล์บีบอัดรูปแบบอื่นอ่านได้อย่างเดียว",
-  "toolbar.info": "ข้อมูล",
+  "toolbar.info": "รายละเอียด",
   "toolbar.infoTip": "แสดงหรือซ่อนรายละเอียด (Alt+Enter)",
   "toolbar.openFirst": "เปิดไฟล์บีบอัดก่อน",
   "toolbar.openTip": "เปิดไฟล์บีบอัด (Ctrl+O)",

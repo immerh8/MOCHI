@@ -17,6 +17,8 @@ import {
   MoreIcon,
   OpenIcon,
   PlusIcon,
+  ScanIcon,
+  TickIcon,
   TrashIcon,
   WrenchIcon,
 } from "../icons";
@@ -37,6 +39,8 @@ import { subscribeLaunches } from "../ipc/launch";
 import { forgetRecentArchives, openDroppedArchive, openRecent, recentArchives } from "../ipc/start";
 import type { RecentView } from "../ipc/start";
 import { Start } from "../start/Start";
+import { ArchiveInfo } from "../info/ArchiveInfo";
+import { ScanArchive } from "../scan/ScanArchive";
 import { errorText, formatMode, formatSize, shortSize } from "./format";
 import { ListHead, EntryCells } from "./ListHead";
 import { Name } from "./Name";
@@ -125,7 +129,7 @@ function Timeline({
                 onClick={() => onSelect(c.seq)}
               >
                 <span className="commit-mark" aria-hidden="true">
-                  {current && <CheckIcon />}
+                  {current && <TickIcon />}
                 </span>
                 <span className="commit-text">
                   <span className="seq">
@@ -657,6 +661,10 @@ export function Browser({
 
   // The More menu's tools open in a window over the list, one at a time.
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  // The archive Info window (owner request 2026-11-14).
+  const [archiveInfoOpen, setArchiveInfoOpen] = useState(false);
+  // Scan for viruses (owner request 2026-11-14).
+  const [scanOpen, setScanOpen] = useState(false);
   const showTool = (id: ToolId) => {
     setMoreOpen(false);
     setTool(id);
@@ -914,6 +922,28 @@ export function Browser({
                 title={t("toolbar.findTip")}
                 expanded={tool === "find"}
                 onClick={() => showTool("find")}
+              />
+            </span>
+            <span className="tool-cell">
+              <ToolButton
+                icon={<InfoIcon />}
+                label={t("info.toolbar")}
+                testId="toolbar-archive-info"
+                title={open ? t("info.tip") : t("toolbar.openFirst")}
+                disabled={open === null || foreignOpen}
+                expanded={archiveInfoOpen}
+                onClick={() => setArchiveInfoOpen(true)}
+              />
+            </span>
+            <span className="tool-cell">
+              <ToolButton
+                icon={<ScanIcon />}
+                label={t("scan.toolbar")}
+                testId="toolbar-scan"
+                title={open ? t("scan.tip") : t("toolbar.openFirst")}
+                disabled={open === null || foreignOpen}
+                expanded={scanOpen}
+                onClick={() => setScanOpen(true)}
               />
             </span>
             <span className="toolbar-spacer" />
@@ -1438,6 +1468,23 @@ export function Browser({
         </div>
         {foreign}
         {opening !== null && <OpeningNotice fileName={opening} />}
+        {scanOpen && open && !foreignOpen && (
+          <ScanArchive
+            key={`${String(open.archive.handle)}:${String(open.snapshot.seq)}`}
+            archive={open.archive}
+            seq={open.snapshot.seq}
+            onClose={() => setScanOpen(false)}
+          />
+        )}
+        {archiveInfoOpen && open && !foreignOpen && (
+          <ArchiveInfo
+            key={`${String(open.archive.handle)}:${String(open.snapshot.seq)}`}
+            archive={open.archive}
+            seq={open.snapshot.seq}
+            onClose={() => setArchiveInfoOpen(false)}
+            onCommitted={(a) => void adopt(a)}
+          />
+        )}
         <ToolSheet tool={tool} onClose={() => setTool(null)} returnFocus={moreButtonRef}>
           {{
             help,

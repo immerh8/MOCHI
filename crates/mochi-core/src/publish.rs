@@ -2346,6 +2346,19 @@ pub struct Transaction {
     /// envelopes, and envelope IDs to remove. A rewrap.
     key_adds: Vec<std::sync::Arc<Passphrase>>,
     key_removes: Vec<[u8; 16]>,
+    /// The archive comment from this commit on (Annex B.2.19, D29). `None`
+    /// keeps the head's comment, whatever it is.
+    comment: Option<CommentChange>,
+}
+
+/// A change to the archive comment (Annex B.2.19, D29). The comment is a
+/// value every later commit repeats until it is changed again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentChange {
+    /// The archive's comment from this commit on.
+    Set(String),
+    /// No comment from this commit on (earlier versions keep theirs).
+    Clear,
 }
 
 /// A regular file's content, read when the commit is written
@@ -2579,6 +2592,30 @@ impl Transaction {
         self
     }
 
+    /// Set the archive comment from this commit on (Annex B.2.19, D29): 1 to
+    /// 16,384 bytes of UTF-8, no control character but tab and line feed. The
+    /// commit refuses a text that breaks the rule (`INVALID_ARGUMENT`), and
+    /// an Encrypted archive refuses a comment altogether
+    /// (`UNSUPPORTED_FEATURE`: a commit record is readable without the key).
+    pub fn set_comment(&mut self, text: impl Into<String>) -> &mut Self {
+        self.comment = Some(CommentChange::Set(text.into()));
+        self
+    }
+
+    /// Remove the archive comment from this commit on. Earlier versions keep
+    /// the comment they had (it is history, like everything else).
+    pub fn clear_comment(&mut self) -> &mut Self {
+        self.comment = Some(CommentChange::Clear);
+        self
+    }
+
+    /// Set or clear the comment as `change` says (rewrites copy a source
+    /// commit's comment this way).
+    pub fn change_comment(&mut self, change: CommentChange) -> &mut Self {
+        self.comment = Some(change);
+        self
+    }
+
     /// Record this informational time instead of the system clock.
     pub fn at(&mut self, time: Mtime) -> &mut Self {
         self.time = Some(time);
@@ -2617,6 +2654,7 @@ impl Transaction {
             && self.retention.is_empty()
             && self.key_adds.is_empty()
             && self.key_removes.is_empty()
+            && self.comment.is_none()
     }
 }
 
@@ -2642,6 +2680,8 @@ struct WriterHead {
 /// Bytes written before the footer, ready to publish.
 struct Prepared {
     seq: u64,
+    /// The archive comment as of this commit (D29).
+    comment: Option<String>,
     next_base: CommitLink,
     delta_bytes: u64,
     base_bytes: u64,
@@ -2800,6 +2840,9 @@ pub struct ArchiveWriter<S: Storage> {
     read: ReadOptions,
     params: WriterParams,
     record_time: bool,
+    /// The archive comment at the head (D29), repeated by the next commit
+    /// unless its transaction changes it.
+    head_comment: Option<String>,
     archive_id: ArchiveId,
     head: Option<WriterHead>,
     /// Verified catalog at `head`; never mutated, duplicated per commit.
@@ -3114,6 +3157,7 @@ impl<S: Storage> ArchiveWriter<S> {
             params,
             // The Encrypted profile records no commit times (D20 item 6).
             record_time: opts.record_time && crypto.is_none(),
+            head_comment: None,
             archive_id,
             head: None,
             catalog,
@@ -3447,6 +3491,7 @@ impl<S: Storage> ArchiveWriter<S> {
                         read: opts.read,
                         params,
                         record_time: opts.record_time && crypto.is_none(),
+                        head_comment: head.commit.comment.clone(),
                         archive_id: head.commit.archive_id,
                         head: Some(WriterHead {
                             seq: head.commit.seq,
@@ -3842,6 +3887,7 @@ impl<S: Storage> ArchiveWriter<S> {
         // Step 10.
         let footer_offset = expected_footer_offset;
         let committed_len = footer_offset + FOOTER_FRAME_LEN;
+        self.head_comment = prepared.comment.clone();
         self.head = Some(WriterHead {
             seq: prepared.seq,
             commit_id: prepared.commit_id,
@@ -3918,6 +3964,18 @@ impl<S: Storage> ArchiveWriter<S> {
                 ErrorCode::InvalidArgument,
                 "key envelopes belong to the Encrypted profile; this archive is not encrypted",
             ));
+        }
+        // The archive comment (D29) is checked before anything is written.
+        if let Some(CommentChange::Set(text)) = &tx.comment {
+            if self.crypto.is_some() {
+                return Err(MochiError::new(
+                    ErrorCode::UnsupportedFeature,
+                    "an Encrypted archive cannot have a comment: a commit record is readable \
+                     without the passphrase (Annex B.2.19)",
+                ));
+            }
+            crate::commit::check_comment(text)
+                .map_err(|why| MochiError::new(ErrorCode::InvalidArgument, why))?;
         }
         // The Encrypted profile's transaction ID is drawn first, because the
         // key envelopes this commit writes carry it (D11 identity) and are
@@ -4556,6 +4614,15 @@ impl<S: Storage> ArchiveWriter<S> {
             (None, false, false) => None,
         };
         let data_region = region.as_ref().map(DataRegion::finish);
+        let comment = match &tx.comment {
+            None => self.head_comment.clone(),
+            Some(CommentChange::Set(text)) => Some(text.clone()),
+            Some(CommentChange::Clear) => None,
+        };
+        let mut required_features = self.profile_features();
+        if comment.is_some() {
+            required_features.push(mochi_format::registry::FEATURE_COMMENT);
+        }
         let record = CommitRecord {
             archive_id: self.archive_id,
             seq,
@@ -4567,11 +4634,12 @@ impl<S: Storage> ArchiveWriter<S> {
             }),
             metadata,
             delta_manifest,
-            required_features: self.profile_features(),
+            required_features,
             time,
             descriptor,
             key_envelopes: envelopes.iter().map(|e| e.object).collect(),
             data_region,
+            comment: comment.clone(),
         };
         let (commit_frame, commit_id) = record.to_stored()?;
         if commit_frame.len() > self.read.limits.max_commit_frame_len {
@@ -4630,6 +4698,7 @@ impl<S: Storage> ArchiveWriter<S> {
         };
         Ok(Prepared {
             seq,
+            comment: comment.clone(),
             next_base,
             delta_bytes,
             base_bytes,
