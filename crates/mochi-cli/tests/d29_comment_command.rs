@@ -9,6 +9,15 @@ use std::path::PathBuf;
 use mochi_cli::{exit, run};
 use serde_json::Value;
 
+/// `create`'s exit code on success: Windows reports the new file's directory
+/// entry as not confirmed durable (plan O12, G6 policy B), exit 2, as in
+/// `c14_commands.rs`.
+const CREATED: u8 = if cfg!(windows) {
+    exit::DEGRADED
+} else {
+    exit::OK
+};
+
 struct Area {
     dir: tempfile::TempDir,
 }
@@ -62,7 +71,7 @@ fn a_comment_is_set_kept_changed_and_cleared_and_each_version_keeps_its_own() {
     let one = a.s("one.txt");
     let two = a.s("two.txt");
     let (code, _, err) = a.go(&["create", &arc, &one, "--comment", "first\n\tindented"]);
-    assert_eq!(code, exit::OK, "{err}");
+    assert_eq!(code, CREATED, "{err}");
     // A plain append keeps it.
     assert_eq!(a.go(&["append", &arc, &two]).0, exit::OK);
     // A comment alone is a commit of its own.
@@ -107,7 +116,7 @@ fn a_comment_file_is_utf8_and_its_windows_line_ends_become_lf() {
         "--comment-file",
         &a.s("note.txt"),
     ]);
-    assert_eq!(code, exit::OK, "{err}");
+    assert_eq!(code, CREATED, "{err}");
     assert_eq!(a.comment(&arc, None), "line one\nline two\n");
 
     fs::write(a.p("bad.txt"), [0xffu8, 0xfe, 0x00]).unwrap();
@@ -120,7 +129,7 @@ fn a_comment_file_is_utf8_and_its_windows_line_ends_become_lf() {
 fn a_comment_that_breaks_the_rules_is_refused_and_nothing_is_written() {
     let a = Area::new();
     let arc = a.s("a.mochi");
-    assert_eq!(a.go(&["create", &arc, &a.s("one.txt")]).0, exit::OK);
+    assert_eq!(a.go(&["create", &arc, &a.s("one.txt")]).0, CREATED);
     let before = fs::read(&arc).unwrap();
     for bad in ["", "a\rb", "\u{1b}[31mred"] {
         let (code, _, err) = a.go(&["append", &arc, "--comment", bad]);
@@ -165,7 +174,7 @@ fn bidirectional_overrides_are_escaped_in_text_and_exact_in_json() {
     let arc = a.s("a.mochi");
     let hostile = "invoice\u{202e}fdp.exe";
     let (code, _, err) = a.go(&["create", &arc, &a.s("one.txt"), "--comment", hostile]);
-    assert_eq!(code, exit::OK, "{err}");
+    assert_eq!(code, CREATED, "{err}");
     assert_eq!(a.go(&["comment", &arc]).1, "invoice\\u{202e}fdp.exe\n");
     assert_eq!(a.comment(&arc, None), hostile);
 }
