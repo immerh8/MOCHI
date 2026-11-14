@@ -2,7 +2,7 @@ import { useId } from "react";
 
 import { t } from "../i18n";
 import { SettingRow } from "./Row";
-import { isMotionChoice, setMotion, useMotion } from "./motion";
+import { isMotionChoice, setMotion, useMotion } from "./motionChoice";
 
 /**
  * Animations (owner request 2026-11-14): menus, windows and lists move smoothly, and can be

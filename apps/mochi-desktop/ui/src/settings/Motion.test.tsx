@@ -6,7 +6,7 @@ import { afterEach, expect, test } from "vitest";
 
 import { audit } from "../test/audit";
 import { Motion } from "./Motion";
-import { MOTION_KEY, getMotion, setMotion } from "./motion";
+import { MOTION_KEY, getMotion, setMotion } from "./motionChoice";
 
 afterEach(() => {
   setMotion("system");
