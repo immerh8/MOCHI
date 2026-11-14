@@ -50,7 +50,9 @@ describe("archive browser", () => {
     await expect($('[data-testid="info-ratio"]')).toHaveText(/^(\d+%|—)$/);
     // The fixture records its writer's chunk size (small, so a test archive has many chunks).
     await expect($('[data-testid="info-dictionary"]')).toHaveText(/^Up to \d/);
-    await expect($('[data-testid="info-comment"]')).toHaveText("Not part of the MOCHI format");
+    // No comment on the fixture; the latest version offers to edit one (B.2.19).
+    await expect($('[data-testid="info-comment-text"]')).toHaveText("No comment");
+    await expect($('[data-testid="info-comment-edit"]')).toBeDisplayed();
     await $('[data-testid="archive-info-ok"]').click();
     await $('[data-testid="archive-info"]').waitForExist({ reverse: true });
 

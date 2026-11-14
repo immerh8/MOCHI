@@ -629,6 +629,20 @@ impl Services {
                 }
                 Ok(())
             }
+            JobRequest::SetArchiveComment { handle, comment } => {
+                let path = self.archives.path(*handle)?;
+                if let Some(text) = comment {
+                    mochi_core::commit::check_comment(text).map_err(invalid)?;
+                    if crate::browse::head_encrypted(&path) {
+                        return Err(MochiError::new(
+                            ErrorCode::UnsupportedFeature,
+                            "an Encrypted archive cannot have a comment: it would be readable \
+                             without the passphrase",
+                        ));
+                    }
+                }
+                Ok(())
+            }
             JobRequest::DeleteFromArchive { handle, keys } => {
                 self.archives.path(*handle)?;
                 if keys.is_empty() || keys.len() > MAX_DELETE_KEYS {
@@ -697,6 +711,9 @@ impl Services {
             JobRequest::ScanArchive { .. } => crate::scan::run(&self.archives, request, ctx),
             JobRequest::AddToArchive { handle } => self.add(*handle, ctx),
             JobRequest::DeleteFromArchive { handle, keys } => self.delete(*handle, keys, ctx),
+            JobRequest::SetArchiveComment { handle, comment } => {
+                self.set_comment(*handle, comment.as_deref(), ctx)
+            }
         })
     }
 
@@ -888,6 +905,44 @@ impl Services {
             total,
             opened,
         ))
+    }
+}
+
+impl Services {
+    /// Set or clear the archive comment as one new commit (D29). Nothing else
+    /// changes; the writer checks the text and refuses an Encrypted archive
+    /// before anything is written.
+    fn set_comment(
+        &self,
+        handle: ArchiveHandle,
+        comment: Option<&str>,
+        ctx: &JobContext<'_>,
+    ) -> Result<JobDone> {
+        let path = self.archives.path(handle)?;
+        let (mut dir, name) = location(&path)?;
+        let (mut w, _) = ArchiveWriter::open_append_in(
+            &mut dir,
+            &name,
+            Box::new(OsIds),
+            writer_options(self.archives.read_options(handle)?),
+            TailRepair::Refuse,
+        )?;
+        let mut tx = Transaction::new();
+        match comment {
+            Some(text) => tx.set_comment(text),
+            None => tx.clear_comment(),
+        };
+        let outcome = w.commit(tx, ctx)?;
+        let _ = w.close();
+        let opened = self.archives.reopen(handle);
+        let empty = Import {
+            transaction: Transaction::new(),
+            files: 0,
+            directories: 0,
+            bytes: 0,
+            skipped: Vec::new(),
+        };
+        Ok(done(CommitOperation::Comment, &outcome, &empty, 0, opened))
     }
 }
 
@@ -1638,6 +1693,49 @@ mod tests {
         let snap1 = fx.svc.archives.snapshot(handle, 1).unwrap();
         assert_eq!(snap1.root_files, 2);
         assert!(fx.svc.staging.view().items.is_empty());
+    }
+
+    /// D29: the comment is set, kept by a later add, cleared; each version
+    /// keeps its own; the archive verifies; a bad text is refused up front.
+    #[test]
+    fn the_archive_comment_is_set_kept_and_cleared_as_commits() {
+        let fx = fixture();
+        let (dest, done) = created(&fx);
+        let handle = done.commit.unwrap().archive.unwrap().handle;
+        let set = |c: Option<&str>| {
+            run_plain(
+                &fx.svc,
+                &JobRequest::SetArchiveComment {
+                    handle,
+                    comment: c.map(str::to_owned),
+                },
+            )
+        };
+        let done = set(Some("Holiday photos\n\tday one")).unwrap();
+        let report = done.commit.unwrap();
+        assert_eq!(report.operation, CommitOperation::Comment);
+        assert_eq!((report.files, report.removed), (0, 0));
+        stage_ok(&fx.svc, &[fx.root.join("loose.bin")]);
+        run_plain(&fx.svc, &JobRequest::AddToArchive { handle }).unwrap();
+        set(None).unwrap();
+        let info = |seq: u64| fx.svc.archives.info(handle, seq).unwrap().comment;
+        assert_eq!(info(0), None);
+        assert_eq!(info(1).as_deref(), Some("Holiday photos\n\tday one"));
+        assert_eq!(info(2).as_deref(), Some("Holiday photos\n\tday one"));
+        assert_eq!(info(3), None);
+        assert_verifies(&dest);
+        let before = std::fs::read(&dest).unwrap();
+        for bad in ["", "a\r\nb"] {
+            let e = fx
+                .svc
+                .validate(&JobRequest::SetArchiveComment {
+                    handle,
+                    comment: Some(bad.into()),
+                })
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidArgument, "{bad:?}");
+        }
+        assert_eq!(std::fs::read(&dest).unwrap(), before);
     }
 
     #[test]

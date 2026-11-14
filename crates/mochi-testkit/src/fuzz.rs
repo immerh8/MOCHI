@@ -341,6 +341,20 @@ fn assert_commit_v1_shape(r: &mochi_core::commit::CommitRecord) {
     for (_, o) in r.object_refs() {
         assert!(o.stored_len >= 8);
     }
+    // Schema 4 (Annex B.2.19, D29): a comment exactly with the comment
+    // feature alone, and only text the comment rule allows.
+    match &r.comment {
+        Some(text) => {
+            assert_eq!(
+                r.required_features,
+                [mochi_format::registry::FEATURE_COMMENT]
+            );
+            assert!(mochi_core::commit::check_comment(text).is_ok());
+        }
+        None => assert!(!r
+            .required_features
+            .contains(&mochi_format::registry::FEATURE_COMMENT)),
+    }
 }
 
 /// Archive descriptors (spec Annex B.2 D12): anything accepted re-encodes to

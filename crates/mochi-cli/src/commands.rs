@@ -52,10 +52,10 @@ use mochi_format::digest::FileContentHash;
 use serde_json::{json, Value};
 
 use crate::cli::{
-    AppendArgs, CheckpointArgs, CompactArgs, CreateArgs, DumpIndexArgs, ExpireArgs, FindArgs,
-    GcApplyArgs, GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, MigrateArgs, RekeyArgs,
-    ReleaseArgs, RepairApplyArgs, RepairPlanArgs, RestoreTestArgs, RetainArgs, SearchArgs,
-    SearchSnapshots, SnapshotListArgs, VerifyArgs,
+    AppendArgs, CheckpointArgs, CommentArgs, CompactArgs, CreateArgs, DumpIndexArgs, ExpireArgs,
+    FindArgs, GcApplyArgs, GcPlanArgs, GetArgs, HealthArgs, KindArg, Level, ListArgs, MigrateArgs,
+    RekeyArgs, ReleaseArgs, RepairApplyArgs, RepairPlanArgs, RestoreTestArgs, RetainArgs,
+    SearchArgs, SearchSnapshots, SnapshotListArgs, VerifyArgs,
 };
 use crate::passphrase::{self, Sources};
 use crate::render::{archive_path_arg, hex, os_path_text, path_fields, text};
@@ -266,6 +266,7 @@ const SCHEMA_REPAIR_APPLY: &str = "mochi-cli-repair-apply-v1";
 const SCHEMA_REKEY_LIST: &str = "mochi-cli-rekey-list-v1";
 const SCHEMA_PLAN_SAVED: &str = "mochi-cli-plan-saved-v1";
 const SCHEMA_FIND: &str = "mochi-cli-find-v1";
+const SCHEMA_COMMENT: &str = "mochi-cli-comment-v1";
 
 fn findings_json(f: &[Finding]) -> Value {
     serde_json::to_value(f).unwrap_or(Value::Null)
@@ -445,7 +446,11 @@ pub fn create(env: &mut Env<'_>, a: &CreateArgs) -> Result<u8> {
         cancel: &cancel,
     };
     let (mut dir, name) = location(&a.archive)?;
-    let imported = gather(&a.inputs, Transaction::new(), a.max_bytes, Vec::new(), &ctx)?;
+    let mut tx = Transaction::new();
+    if let Some(text) = comment_arg(a.comment.as_deref(), a.comment_file.as_deref())? {
+        tx.set_comment(text);
+    }
+    let imported = gather(&a.inputs, tx, a.max_bytes, Vec::new(), &ctx)?;
     // The passphrases the key envelopes wrap the data key under: the named
     // sources, else a prompt asked twice. Nothing is created without one.
     let mut read = env.read.clone();
@@ -532,6 +537,11 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
     // their parent), then the inputs.
     let snapshot = w.catalog().replay(None)?;
     let mut tx = Transaction::new();
+    if let Some(text) = comment_arg(a.comment.as_deref(), a.comment_file.as_deref())? {
+        tx.set_comment(text);
+    } else if a.clear_comment {
+        tx.clear_comment();
+    }
     let mut deleted = Vec::new();
     for d in &deletes {
         if snapshot.get(d).is_none() {
@@ -574,7 +584,8 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
             return Ok(exit::OK);
         }
         return Err(invalid(
-            "nothing to append: give files or directories to add, or --delete",
+            "nothing to append: give files or directories to add, --delete, --comment, or \
+             --clear-comment",
         ));
     }
     let outcome = w.commit(imported.import.transaction.clone(), &ctx)?;
@@ -591,6 +602,82 @@ pub fn append(env: &mut Env<'_>, a: &AppendArgs) -> Result<u8> {
         &imported,
         truncation.as_ref(),
     ))
+}
+
+/// The comment `--comment` or `--comment-file` gives (Annex B.2.19). A file
+/// is UTF-8; its Windows line ends (CR LF) become LF. The rules themselves
+/// are checked by the writer, before anything is written.
+fn comment_arg(text: Option<&str>, file: Option<&Path>) -> Result<Option<String>> {
+    if let Some(t) = text {
+        return Ok(Some(t.to_owned()));
+    }
+    let Some(path) = file else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(path).map_err(|e| {
+        MochiError::new(
+            ErrorCode::IoError,
+            format!("--comment-file {}: {e}", os_path_text(path)),
+        )
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        invalid("--comment-file: the file is not UTF-8 text; nothing was committed")
+    })?;
+    Ok(Some(text.replace("\r\n", "\n")))
+}
+
+/// A comment for a terminal: shown as written, except that invisible
+/// formatting characters (bidirectional overrides, zero-width marks; Unicode
+/// category Cf) are written as `\u{...}` so they cannot reorder what follows.
+fn comment_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let format = matches!(c,
+            '\u{00ad}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}' | '\u{fff9}'..='\u{fffb}');
+        if format {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `mochi comment`: the archive comment at the head or at `--snapshot`
+/// (Annex B.2.19). Reads the commit records only, so an Encrypted archive
+/// needs no passphrase (it never has a comment).
+pub fn comment_cmd(env: &mut Env<'_>, a: &CommentArgs) -> Result<u8> {
+    let src = open_archive(&a.archive)?;
+    let history = commit_history(&src, &env.read)?;
+    let entry = match a.sel.snapshot {
+        None => history.last(),
+        Some(seq) => history.iter().find(|e| e.commit.seq == seq),
+    }
+    .ok_or_else(|| {
+        invalid(format!(
+            "no commit {}: this archive has commits 0 to {}",
+            a.sel.snapshot.unwrap_or_default(),
+            history.len().saturating_sub(1)
+        ))
+    })?;
+    let comment = entry.commit.comment.as_deref();
+    if env.json {
+        env.emit_tagged(
+            SCHEMA_COMMENT,
+            json!({
+                "archive_id": entry.commit.archive_id.to_hex(),
+                "seq": entry.commit.seq,
+                "commit_id": entry.commit_id.to_hex(),
+                "comment": comment,
+            }),
+        );
+    } else if let Some(c) = comment {
+        for line in comment_text(c).split('\n') {
+            env.line(line);
+        }
+    }
+    Ok(exit::OK)
 }
 
 // ---- reading ----------------------------------------------------------------
@@ -1208,9 +1295,23 @@ pub fn snapshot_list(env: &mut Env<'_>, a: &SnapshotListArgs) -> Result<u8> {
             }),
         );
     } else {
+        let mut previous: Option<&str> = None;
         for e in &history {
             let seq = e.commit.seq;
             let mut notes = Vec::new();
+            // The comment (B.2.19) where it changes; `mochi comment` shows it.
+            let comment = e.commit.comment.as_deref();
+            if comment != previous {
+                notes.push(
+                    if comment.is_some() {
+                        "comment set"
+                    } else {
+                        "comment cleared"
+                    }
+                    .to_string(),
+                );
+            }
+            previous = comment;
             match expired(seq) {
                 Some(true) => notes.push("expired".to_string()),
                 Some(false) => {}

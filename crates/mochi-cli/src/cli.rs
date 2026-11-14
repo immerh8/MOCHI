@@ -117,6 +117,17 @@ pub struct CreateArgs {
     /// a time, never held in memory whole. `--max-memory` is the old name.
     #[arg(long, alias = "max-memory", value_name = "BYTES")]
     pub max_bytes: Option<u64>,
+    /// Set the archive comment (spec Annex B.2.19): 1 to 16,384 bytes of
+    /// text; tab and line feed are the only control characters allowed. It
+    /// is kept from this commit on, until changed, and every version keeps
+    /// the comment it had. An Encrypted archive cannot have one (its commit
+    /// records are readable without the passphrase): exit 4.
+    #[arg(long, value_name = "TEXT", conflicts_with = "comment_file")]
+    pub comment: Option<String>,
+    /// Set the archive comment from a UTF-8 text file. Windows line ends
+    /// (CR LF) become LF; the text is otherwise kept exactly.
+    #[arg(long, value_name = "PATH")]
+    pub comment_file: Option<PathBuf>,
     /// Deferred (plan Q10, spec Annex B D16): refused by name.
     #[arg(long, hide = true, num_args = 0..=1, require_equals = true, value_name = "V")]
     pub exceed_default_limits: Option<Option<String>>,
@@ -150,6 +161,29 @@ pub struct AppendArgs {
     /// confirmed durable (always so on Windows in 1.0, G6 policy B). Recorded.
     #[arg(long, requires = "truncate_tail")]
     pub accept_unconfirmed_durability: bool,
+    /// Set the archive comment (spec Annex B.2.19): 1 to 16,384 bytes of
+    /// text; tab and line feed are the only control characters allowed. It
+    /// is kept from this commit on, until changed, and every version keeps
+    /// the comment it had. An Encrypted archive cannot have one (its commit
+    /// records are readable without the passphrase): exit 4.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["comment_file", "clear_comment"])]
+    pub comment: Option<String>,
+    /// Set the archive comment from a UTF-8 text file. Windows line ends
+    /// (CR LF) become LF; the text is otherwise kept exactly.
+    #[arg(long, value_name = "PATH")]
+    pub comment_file: Option<PathBuf>,
+    /// Remove the archive comment from this commit on (earlier versions keep
+    /// theirs). Alone, it makes a commit that changes nothing else.
+    #[arg(long, conflicts_with = "comment_file")]
+    pub clear_comment: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CommentArgs {
+    /// The archive whose comment to show.
+    pub archive: PathBuf,
+    #[command(flatten)]
+    pub sel: SnapshotSel,
 }
 
 /// Which commit to read.
@@ -607,6 +641,10 @@ pub enum Command {
     /// matches is then not proof that no such name exists; 3 for a bad
     /// invocation.
     Find(FindArgs),
+    /// Show the archive comment of the head or of `--snapshot SEQ`
+    /// (read-only; spec Annex B.2.19). Set it with `create`/`append
+    /// --comment`. Prints nothing when that version has no comment.
+    Comment(CommentArgs),
 
     /// Post-1.0 (Preservation profile): exits 4 in this release line.
     Inventory(PendingArgs),
@@ -656,6 +694,7 @@ impl Command {
             Command::Rekey(_) => "rekey",
             Command::DumpIndex(_) => "dump-index",
             Command::Find(_) => "find",
+            Command::Comment(_) => "comment",
             Command::Inventory(_) => "inventory",
             Command::Split(_) => "split",
             Command::Join(_) => "join",
@@ -688,6 +727,7 @@ impl Command {
             | Command::Fsck(_)
             | Command::DumpIndex(_)
             | Command::Find(_)
+            | Command::Comment(_)
             | Command::Health(_)
             | Command::RestoreTest(_)
             | Command::Checkpoint(_)

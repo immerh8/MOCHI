@@ -1479,7 +1479,11 @@ export function Browser({
         {archiveInfoOpen && open && !foreignOpen && (
           <ArchiveInfo
             key={`${String(open.archive.handle)}:${String(open.snapshot.seq)}`}
-            archive={open.archive} seq={open.snapshot.seq} onClose={() => setArchiveInfoOpen(false)} />
+            archive={open.archive}
+            seq={open.snapshot.seq}
+            onClose={() => setArchiveInfoOpen(false)}
+            onCommitted={(a) => void adopt(a)}
+          />
         )}
         <ToolSheet tool={tool} onClose={() => setTool(null)} returnFocus={moreButtonRef}>
           {{

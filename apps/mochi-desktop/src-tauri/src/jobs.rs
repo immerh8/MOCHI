@@ -192,6 +192,7 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::TestForeign { .. }
         | JobRequest::ExtractForeign { .. }
         | JobRequest::ScanArchive { .. }
+        | JobRequest::SetArchiveComment { .. }
         | JobRequest::InstallUpdate { .. } => services.validate(request)?,
         JobRequest::TestArchive { .. }
         | JobRequest::PlanRepair { .. }

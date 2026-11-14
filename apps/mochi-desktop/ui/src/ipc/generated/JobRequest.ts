@@ -33,7 +33,7 @@ recovery_percent?: number, } | { "kind": "export_archive", format: ArchiveFormat
 /**
  * Entries of the head snapshot, as the listing returned them.
  */
-keys: Array<string>, } | { "kind": "extract_archive", handle: number, 
+keys: Array<string>, } | { "kind": "set_archive_comment", handle: number, comment: string | null, } | { "kind": "extract_archive", handle: number, 
 /**
  * The snapshot on screen.
  */

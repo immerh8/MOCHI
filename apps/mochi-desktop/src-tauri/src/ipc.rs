@@ -64,6 +64,14 @@ pub enum JobRequest {
         /// Entries of the head snapshot, as the listing returned them.
         keys: Vec<PathKey>,
     },
+    /// Set or clear the archive comment of an open archive as one new commit
+    /// (spec Annex B.2.19, D29): `comment` is the new text, `null` removes
+    /// it. Earlier versions keep the comment they had. An Encrypted archive
+    /// cannot have one.
+    SetArchiveComment {
+        handle: ArchiveHandle,
+        comment: Option<String>,
+    },
     /// D3: extract entries of one snapshot of an open archive into the folder
     /// the user chose (`plan_extract` shows the native folder dialog from
     /// Rust and remembers the choice). The webview names no path.
@@ -397,6 +405,9 @@ pub struct ArchiveInfoView {
     pub chunk_size: Option<String>,
     /// The Zstandard level the writer recorded, `null` when none was.
     pub zstd_level: Option<i32>,
+    /// The archive comment at this version (spec Annex B.2.19, D29), exactly
+    /// as written; `null` when it has none. Archive text: render as text.
+    pub comment: Option<String>,
 }
 
 /// One row of a directory listing.
@@ -647,6 +658,8 @@ pub enum CommitOperation {
     Create,
     Add,
     Delete,
+    /// The archive comment was set or cleared (D29); no entry changed.
+    Comment,
 }
 
 /// A source entry a commit left out, and why.

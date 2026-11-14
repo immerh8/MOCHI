@@ -511,7 +511,11 @@ recovery record, and the writer's recorded chunk size ("Dictionary size: up to 8
 chunk is compressed on its own and 1.0 writes no shared dictionary) and Zstandard level. The
 numbers come from `mochi_core::browse::SnapshotIndex::totals` (each chunk counted once however many
 files share it; other versions and metadata not counted), through the `archive_info` command.
-MOCHI 1.0 has no comment field, so Comment says "Not part of the MOCHI format" (plan O32, open).
+Comment shows the archive comment of that version as text (spec Annex B.2.19, D29: commit
+schema 4, decided by the owner as plan O32 option b). On the latest version of an archive that
+is not encrypted, *Edit comment…* saves a new version through the `set_archive_comment` job;
+earlier versions keep the comment they had, and an empty text removes it. An encrypted archive
+cannot have one: a commit record is readable without the passphrase.
 The old Info item, which shows or hides the details pane (Alt+Enter), is now called **Details**.
 
 **Scan** (toolbar) runs a virus scanner the user has on the version on screen

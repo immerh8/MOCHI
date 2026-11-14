@@ -663,6 +663,7 @@ impl Archives {
         let totals = v.index.totals(&v.head.catalog)?;
         let params = recorded_writer_parameters(&v.head.catalog)?;
         let seq = v.seq;
+        let comment = v.head.commit.comment.clone();
         drop(s);
         Ok(ArchiveInfoView {
             seq,
@@ -674,6 +675,7 @@ impl Archives {
             file_size: std::fs::metadata(&path).ok().map(|m| m.len().to_string()),
             chunk_size: params.map(|(size, _)| size.to_string()),
             zstd_level: params.map(|(_, level)| level),
+            comment,
         })
     }
 

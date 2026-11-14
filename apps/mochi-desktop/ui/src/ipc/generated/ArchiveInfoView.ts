@@ -31,4 +31,9 @@ chunk_size: string | null,
 /**
  * The Zstandard level the writer recorded, `null` when none was.
  */
-zstd_level: number | null, };
+zstd_level: number | null, 
+/**
+ * The archive comment at this version (spec Annex B.2.19, D29), exactly
+ * as written; `null` when it has none. Archive text: render as text.
+ */
+comment: string | null, };

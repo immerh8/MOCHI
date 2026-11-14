@@ -54,6 +54,7 @@ const SCHEMAS: &[&str] = &[
     "commit-record-v0",
     "commit-record-v1",
     "commit-record-v2",
+    "commit-record-v4",
     "key-envelope-v0",
     "recovery-manifest-v0",
     "recovery-manifest-v1",
@@ -129,6 +130,7 @@ impl Rec {
             (Rec::Commit, 0) => "commit-record-v0",
             (Rec::Commit, 1) => "commit-record-v1",
             (Rec::Commit, 2) => "commit-record-v2",
+            (Rec::Commit, 4) => "commit-record-v4",
             (Rec::Manifest, 0) => "recovery-manifest-v0",
             (Rec::Manifest, 1) => "recovery-manifest-v1",
             (Rec::Manifest, 2) => "recovery-manifest-v2",
@@ -230,7 +232,7 @@ fn files(dir: &str, ext: &str) -> Vec<(String, Vec<u8>)> {
 /// Valid single-record `.bin` vectors: `(dir, file)` pairs.
 fn valid_bins() -> Vec<(&'static str, String, Rec, Vec<u8>)> {
     let mut out = Vec::new();
-    for dir in ["b2", "c4", "c5", "c11"] {
+    for dir in ["b2", "c4", "c5", "c11", "d29"] {
         for (name, bytes) in files(dir, "bin") {
             if !name.starts_with("valid-") {
                 continue;
@@ -311,6 +313,7 @@ fn every_valid_golden_record_validates_against_its_schema() {
         "archive-descriptor-v0",
         "commit-record-v1",
         "commit-record-v2",
+        "commit-record-v4",
         "key-envelope-v0",
         "recovery-manifest-v1",
         "recovery-manifest-v2",
@@ -974,6 +977,14 @@ const REJECTS: &[(&str, Rec, Defect)] = &[
     ("c5/reject-commit-root-delta.bin", Rec::Commit, Schema),
     ("c5/reject-commit-root-with-parent.bin", Rec::Commit, Schema),
     ("c5/reject-commit-schema-version.bin", Rec::Commit, Version),
+    // D29 (Annex B.2.19): the comment rules. An empty comment is outside
+    // `tstr .size (1..16384)`; a carriage return is a rule CDDL cannot state.
+    (
+        "d29/reject-commit-comment-carriage-return.bin",
+        Rec::Commit,
+        Semantic("a comment has no control character but tab and line feed"),
+    ),
+    ("d29/reject-commit-comment-empty.bin", Rec::Commit, Schema),
     (
         "c5/reject-commit-short-transaction-id.bin",
         Rec::Commit,
@@ -1043,7 +1054,7 @@ fn not_cbor(dir: &str, name: &str) -> bool {
 fn every_cbor_reject_vector_is_classified_and_checked() {
     // The table lists every CBOR reject vector, and nothing else.
     let mut on_disk = BTreeSet::new();
-    for dir in ["b2", "c4", "c5", "c11"] {
+    for dir in ["b2", "c4", "c5", "c11", "d29"] {
         for (name, _) in files(dir, "bin") {
             if name.starts_with("reject-") && !not_cbor(dir, &name) {
                 on_disk.insert(format!("{dir}/{name}"));
