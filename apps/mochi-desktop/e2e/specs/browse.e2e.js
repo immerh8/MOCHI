@@ -48,7 +48,8 @@ describe("archive browser", () => {
     await $('[data-testid="info-files"]').waitForDisplayed({ timeout: 30_000 });
     expect(Number((await $('[data-testid="info-files"]').getText()).replace(/\D/g, ""))).toBeGreaterThan(0);
     await expect($('[data-testid="info-ratio"]')).toHaveText(/^(\d+%|—)$/);
-    await expect($('[data-testid="info-dictionary"]')).toHaveText(expect.stringContaining("MiB"));
+    // The fixture records its writer's chunk size (small, so a test archive has many chunks).
+    await expect($('[data-testid="info-dictionary"]')).toHaveText(/^Up to \d/);
     await expect($('[data-testid="info-comment"]')).toHaveText("Not part of the MOCHI format");
     await $('[data-testid="archive-info-ok"]').click();
     await $('[data-testid="archive-info"]').waitForExist({ reverse: true });
