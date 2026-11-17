@@ -18,7 +18,7 @@ import {
   findShowFolder,
   findStart,
 } from "../ipc/find";
-import type { FindEntryFilter, FindEvent, FindHit, FindResultView, FindScopeView } from "../ipc/find";
+import type { FindEntryFilter, FindEvent, FindHit, FindQuery, FindResultView, FindScopeView } from "../ipc/find";
 import { ContextMenu, copyNames, useContextMenu } from "../list/ContextMenu";
 import type { MenuItem } from "../list/ContextMenu";
 import { splitPath } from "../list/keys";
@@ -34,6 +34,14 @@ export { baseName, formatWhen };
 export const FIND_DELAY = 150;
 /** Fewest milliseconds between two refreshes of the results while a scan runs. */
 export const REFRESH_EVERY = 300;
+/** Matches fetched per page while the list scrolls (every match can be reached). */
+export const PAGE_ROWS = 1_000;
+/** The height of one result row in pixels (the list draws only the rows in view). */
+export const ROW_HEIGHT = 30;
+/** Rows drawn beyond the view on each side; and how many are drawn before the view is measured. */
+const OVERSCAN = 12;
+const FALLBACK_ROWS = 40;
+
 /** Names shown as chips under the list; the rest are counted. */
 export const CHIPS_SHOWN = 40;
 
@@ -98,11 +106,21 @@ interface Ask {
   entries: FindEntryFilter;
   /** One name with the default options: the single query, exactly as `mochi find` matches. */
   plain: boolean;
+  /** List only the matches of this name (its number in `terms`). */
+  term: number | null;
 }
 
-function ask(a: Ask): Promise<FindResultView> {
-  if (a.plain) return findQuery(a.terms[0] ?? "");
-  return findQueryMany({ terms: a.terms, match_case: a.matchCase, whole_name: a.wholeName, entries: a.entries });
+/** The search `a` asks, as Rust takes it (no page). */
+function queryOf(a: Ask): FindQuery {
+  const q: FindQuery = { terms: a.terms, match_case: a.matchCase, whole_name: a.wholeName, entries: a.entries };
+  if (a.term !== null) q.term = a.term;
+  return q;
+}
+
+/** The first page of `a`; then `offset` onwards, a page at a time. */
+function ask(a: Ask, offset = 0): Promise<FindResultView> {
+  if (a.plain && a.term === null && offset === 0) return findQuery(a.terms[0] ?? "");
+  return findQueryMany({ ...queryOf(a), offset, limit: PAGE_ROWS });
 }
 
 /** The sum of the sizes of `hits` (decimal strings), as a decimal string. */
@@ -154,6 +172,11 @@ export function Finder({
   const [notice, setNotice] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  // Every match of the list is ticked, loaded or not (retrieved by the search, not by listing them).
+  const [allTicked, setAllTicked] = useState(false);
+  // Pages loaded after the first (by page number), and the view's scroll position and height.
+  const [pages, setPages] = useState<ReadonlyMap<number, FindHit[]>>(() => new Map());
+  const [view, setView] = useState({ top: 0, height: 0 });
   // The name whose matches alone are shown, for the list of names it was picked in.
   const [filterPick, setFilterPick] = useState<{ list: string; index: number } | null>(null);
   const [retrieving, setRetrieving] = useState(false);
@@ -177,19 +200,27 @@ export function Finder({
   );
 
   // What is asked: the typed name, or the list (each waits for a pause in typing).
-  const current: Ask = useMemo(() => {
-    const terms = list ? listTerms : query === "" ? [] : [query];
-    const plain = !list && !choices.matchCase && !choices.wholeName && choices.entries === "all";
-    return { terms, matchCase: choices.matchCase, wholeName: choices.wholeName, entries: choices.entries, plain };
-  }, [list, listTerms, query, choices.matchCase, choices.wholeName, choices.entries]);
-  const asked = current.terms.length > 0;
-  const askedKey = current.terms.join("\u0000");
-  const termFilter = filterPick !== null && filterPick.list === askedKey ? filterPick.index : null;
+  const askedTerms = useMemo(() => (list ? listTerms : query === "" ? [] : [query]), [list, listTerms, query]);
+  const askedKey = askedTerms.join("\u0000");
+  const termFilter = list && filterPick !== null && filterPick.list === askedKey ? filterPick.index : null;
   const setTermFilter = (index: number | null) =>
     setFilterPick(index === null ? null : { list: askedKey, index });
+  const current: Ask = useMemo(() => {
+    const plain = !list && !choices.matchCase && !choices.wholeName && choices.entries === "all";
+    return {
+      terms: askedTerms,
+      matchCase: choices.matchCase,
+      wholeName: choices.wholeName,
+      entries: choices.entries,
+      plain,
+      term: termFilter,
+    };
+  }, [list, askedTerms, choices.matchCase, choices.wholeName, choices.entries, termFilter]);
+  const asked = current.terms.length > 0;
 
   // ---- asking Rust for the results --------------------------------------
   const askRef = useRef<Ask>(current);
+  const inFlightRef = useRef<Set<number>>(new Set());
   const seqRef = useRef(0);
   const lastRefreshRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -198,7 +229,10 @@ export function Finder({
     lastRefreshRef.current = Date.now();
     ask(askRef.current).then(
       (r) => {
-        if (id === seqRef.current) setResult(r);
+        if (id !== seqRef.current) return;
+        setResult(r);
+        setPages(new Map());
+        inFlightRef.current = new Set();
       },
       (e: unknown) => {
         if (id === seqRef.current) setError(errorText(t("find.queryFailed"), e));
@@ -209,6 +243,13 @@ export function Finder({
     askRef.current = current;
     if (active) refresh();
   }, [current, active, refresh]);
+  // A different search ticks nothing.
+  const [tickedFor, setTickedFor] = useState(current);
+  if (tickedFor !== current) {
+    setTickedFor(current);
+    setAllTicked(false);
+    setChecked(new Set());
+  }
   useEffect(
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -340,18 +381,41 @@ export function Finder({
   };
 
   const terms = useMemo(() => (list ? (result?.terms ?? []) : []), [list, result]);
-  const shown = useMemo(
-    () => (termFilter === null ? hits : hits.filter((h) => h.terms.includes(termFilter))),
-    [hits, termFilter],
-  );
-  const selected = hits.find((h) => hitId(h) === picked) ?? null;
-  const chosen = useMemo(() => hits.filter((h) => checked.has(hitId(h))), [hits, checked]);
+  // The matches loaded so far: the first page, then any page the list has scrolled to.
+  const rowAt = (i: number): FindHit | undefined =>
+    i < PAGE_ROWS ? hits[i] : pages.get(Math.floor(i / PAGE_ROWS))?.[i % PAGE_ROWS];
+  const shown = useMemo(() => {
+    const out = [...hits];
+    for (const [, rows] of [...pages.entries()].sort((a, b) => a[0] - b[0])) out.push(...rows);
+    return out;
+  }, [hits, pages]);
+  const listed = Math.max(result?.listed ?? 0, hits.length);
+  const selected = shown.find((h) => hitId(h) === picked) ?? null;
+  const chosen = useMemo(() => shown.filter((h) => checked.has(hitId(h))), [shown, checked]);
   const inc = coverage === null ? null : incomplete(coverage);
   const walking = coverage !== null && progress !== null && progress.total === null;
-  const allShownChecked = shown.length > 0 && shown.every((h) => checked.has(hitId(h)));
-  const someShownChecked = shown.some((h) => checked.has(hitId(h)));
+  const isTicked = (h: FindHit) => allTicked || checked.has(hitId(h));
+  const allShownChecked = shown.length > 0 && (allTicked || shown.every((h) => checked.has(hitId(h))));
+  const someShownChecked = allTicked || shown.some((h) => checked.has(hitId(h)));
+  const everyLoaded = shown.length >= listed;
 
-  const toggle = (h: FindHit) =>
+  // What a retrieve takes: every match (counted by Rust), or the rows ticked.
+  const filterTerm = termFilter === null ? null : (terms.find((x) => x.index === termFilter) ?? null);
+  const pick = allTicked
+    ? {
+        count: listed,
+        bytes: String(filterTerm?.bytes ?? result?.total_bytes ?? 0),
+        archives: filterTerm?.archives ?? result?.archives_with_hits ?? 0,
+      }
+    : { count: chosen.length, bytes: totalSize(chosen), archives: archivesOf(chosen) };
+
+  const toggle = (h: FindHit) => {
+    if (allTicked) {
+      // Leaving "all": every loaded row stays ticked but this one.
+      setAllTicked(false);
+      setChecked(new Set(shown.filter((x) => hitId(x) !== hitId(h)).map(hitId)));
+      return;
+    }
     setChecked((prev) => {
       const next = new Set(prev);
       const id = hitId(h);
@@ -359,13 +423,64 @@ export function Finder({
       else next.add(id);
       return next;
     });
-  const toggleAllShown = () =>
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (allShownChecked) for (const h of shown) next.delete(hitId(h));
-      else for (const h of shown) next.add(hitId(h));
-      return next;
-    });
+  };
+  const toggleAllShown = () => {
+    if (allShownChecked) {
+      setAllTicked(false);
+      setChecked(new Set());
+    } else {
+      setChecked(new Set(shown.map(hitId)));
+    }
+  };
+  const clearTicks = () => {
+    setAllTicked(false);
+    setChecked(new Set());
+  };
+
+  // ---- the rows in view, and the next page --------------------------------
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const visible = view.height > 0 ? Math.ceil(view.height / ROW_HEIGHT) : FALLBACK_ROWS;
+  const first = Math.max(0, Math.floor(view.top / ROW_HEIGHT) - OVERSCAN);
+  const last = Math.min(listed, first + visible + 2 * OVERSCAN);
+  // The pages the rows in view need, fetched once each (the first page came with the result).
+  const firstPage = Math.floor(first / PAGE_ROWS);
+  const lastPage = last === 0 ? -1 : Math.floor((last - 1) / PAGE_ROWS);
+  useEffect(() => {
+    for (let n = Math.max(1, firstPage); n <= lastPage; n++) {
+      if (pages.has(n) || inFlightRef.current.has(n)) continue;
+      inFlightRef.current.add(n);
+      const id = seqRef.current;
+      ask(askRef.current, n * PAGE_ROWS).then(
+        (r) => {
+          if (id !== seqRef.current) return;
+          inFlightRef.current.delete(n);
+          setPages((m) => new Map(m).set(n, r.hits));
+        },
+        (e: unknown) => {
+          if (id !== seqRef.current) return;
+          inFlightRef.current.delete(n);
+          setError(errorText(t("find.queryFailed"), e));
+        },
+      );
+    }
+  }, [firstPage, lastPage, pages]);
+  let loadingMore = false;
+  for (let i = first; i < last; i++) if (rowAt(i) === undefined) loadingMore = true;
+  const onScroll = () => {
+    const el = resultsRef.current;
+    if (el) setView({ top: el.scrollTop, height: el.clientHeight });
+  };
+  // A row that keyboard focus moves to once it is drawn.
+  const focusRef = useRef<number | null>(null);
+  useEffect(() => {
+    const at = focusRef.current;
+    if (at === null) return;
+    const row = listRef.current?.querySelector<HTMLButtonElement>(`[data-index="${at}"] [data-testid=find-hit]`);
+    if (row) {
+      focusRef.current = null;
+      row.focus();
+    }
+  });
 
   const openHit = (h: FindHit) => onOpen(h);
   const failWith = (what: string) => (e: unknown) => setError(errorText(what, e));
@@ -396,23 +511,47 @@ export function Finder({
       failWith(t("find.copyFailed")),
     );
 
-  // Arrow keys move between rows; Enter opens the focused one; Space ticks it; Ctrl+A ticks all shown.
+  // Arrow keys move between rows (scrolling as needed); Enter opens the focused one; Space ticks
+  // it; Ctrl+A ticks every loaded match.
   const onListKey = (e: KeyboardEvent<HTMLUListElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       e.preventDefault();
-      setChecked((prev) => new Set([...prev, ...shown.map(hitId)]));
+      setChecked(new Set(shown.map(hitId)));
       return;
     }
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>("[data-testid=find-hit]") ?? []);
-    const at = rows.findIndex((r) => r === document.activeElement);
-    if (at < 0) return;
+    const li = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-index]");
+    if (!li || !listRef.current?.contains(li)) return;
+    const at = Number(li.dataset.index);
+    const page = Math.max(1, visible - 1);
     const to =
-      e.key === "ArrowDown" ? at + 1 : e.key === "ArrowUp" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : null;
+      e.key === "ArrowDown"
+        ? at + 1
+        : e.key === "ArrowUp"
+          ? at - 1
+          : e.key === "PageDown"
+            ? at + page
+            : e.key === "PageUp"
+              ? at - page
+              : e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? listed - 1
+                  : null;
     if (to === null) return;
     e.preventDefault();
-    const row = rows[Math.min(Math.max(0, to), rows.length - 1)];
-    row?.focus();
+    const target = Math.min(Math.max(0, to), listed - 1);
+    const el = resultsRef.current;
+    if (el) {
+      const y = target * ROW_HEIGHT;
+      const height = el.clientHeight || visible * ROW_HEIGHT;
+      if (y < el.scrollTop) el.scrollTop = y;
+      else if (y + ROW_HEIGHT > el.scrollTop + height) el.scrollTop = y + ROW_HEIGHT - height;
+      setView({ top: el.scrollTop, height: el.clientHeight });
+    }
+    const h = rowAt(target);
+    if (h) setPicked(hitId(h));
+    focusRef.current = target;
   };
 
   // A pasted list in the one-name box opens the list of names with it.
@@ -814,7 +953,7 @@ export function Finder({
       )}
 
       {shown.length > 0 && (
-        <div className="find-results" data-testid="find-results">
+        <div className="find-results" data-testid="find-results" ref={resultsRef} onScroll={onScroll}>
           <div className="find-head">
             <span className="find-check-cell">
               <input
@@ -839,13 +978,23 @@ export function Finder({
             </span>
           </div>
           <ul ref={listRef} aria-label={t("find.results")} data-testid="find-hits" onKeyDown={onListKey}>
-            {shown.map((h, i) => {
+            {first > 0 && <li className="find-spacer" aria-hidden="true" style={{ height: first * ROW_HEIGHT }} />}
+            {Array.from({ length: last - first }, (_, j) => first + j).map((i) => {
+              const h = rowAt(i);
+              if (h === undefined) {
+                return (
+                  <li key={`wait-${i}`} data-index={i} className="find-row find-row-wait" aria-hidden="true">
+                    <span />
+                    <span className="find-wait">{t("find.loadingMore")}</span>
+                  </li>
+                );
+              }
               const { name, folder } = splitPath(h.path);
               const id = hitId(h);
-              const tab = picked === null ? i === 0 : picked === id;
-              const isChecked = checked.has(id);
+              const tab = selected !== null ? picked === id : i === first;
+              const isChecked = isTicked(h);
               return (
-                <li key={id} className={isChecked ? "find-row checked" : "find-row"}>
+                <li key={id} data-index={i} className={isChecked ? "find-row checked" : "find-row"}>
                   <span className="find-check-cell">
                     <input
                       type="checkbox"
@@ -909,36 +1058,53 @@ export function Finder({
                 </li>
               );
             })}
+            {listed > last && (
+              <li className="find-spacer" aria-hidden="true" style={{ height: (listed - last) * ROW_HEIGHT }} />
+            )}
           </ul>
         </div>
       )}
-      {result !== null && result.total_hits > hits.length && hits.length > 0 && (
-        <p className="find-note" data-testid="find-shown-of-total">
-          {t("find.shownOfTotal", { shown: formatNumber(hits.length), total: formatNumber(result.total_hits) })}
+      {loadingMore && (
+        <p className="find-note" data-testid="find-loading-more">
+          {t("find.loadingMore")}
+        </p>
+      )}
+      {shown.length > 0 && listed > 1 && allShownChecked && (!everyLoaded || allTicked) && (
+        <p className="find-tick-all" data-testid="find-tick-all">
+          {allTicked ? (
+            <span>{t("find.tickedAll", { n: formatNumber(listed) })}</span>
+          ) : (
+            <>
+              <span>{t("find.tickedLoaded", { n: formatNumber(shown.length) })}</span>
+              <button type="button" className="link" data-testid="find-tick-all-button" onClick={() => setAllTicked(true)}>
+                {t("find.tickAll", { n: formatNumber(listed) })}
+              </button>
+            </>
+          )}
         </p>
       )}
 
       {hits.length > 0 && (
-        <div className="find-actionbar" data-testid="find-actionbar" data-active={chosen.length > 0}>
+        <div className="find-actionbar" data-testid="find-actionbar" data-active={pick.count > 0}>
           <span className="find-actionbar-text" data-testid="find-selection">
-            {chosen.length === 0 ? (
+            {pick.count === 0 ? (
               t("find.selectionNone")
             ) : (
               <>
                 <strong>
-                  {tn(chosen.length, "find.selectionOne", "find.selectionMany", {
-                    n: formatNumber(chosen.length),
-                    size: shortSize(totalSize(chosen)),
+                  {tn(pick.count, "find.selectionOne", "find.selectionMany", {
+                    n: formatNumber(pick.count),
+                    size: shortSize(pick.bytes),
                   })}
                 </strong>{" "}
                 <span className="find-actionbar-from">
-                  {tc(archivesOf(chosen), "find.selectionArchivesOne", "find.selectionArchivesMany")}
+                  {tc(pick.archives, "find.selectionArchivesOne", "find.selectionArchivesMany")}
                 </span>
               </>
             )}
           </span>
-          {chosen.length > 0 && (
-            <button type="button" className="link" data-testid="find-clear-selection" onClick={() => setChecked(new Set())}>
+          {pick.count > 0 && (
+            <button type="button" className="link" data-testid="find-clear-selection" onClick={clearTicks}>
               {t("find.clearSelection")}
             </button>
           )}
@@ -946,7 +1112,7 @@ export function Finder({
             type="button"
             className="primary"
             data-testid="find-retrieve"
-            disabled={chosen.length === 0 || scanning}
+            disabled={pick.count === 0 || scanning}
             onClick={() => setRetrieving(true)}
           >
             <ExtractIcon />
@@ -968,7 +1134,16 @@ export function Finder({
           <p>{t("find.detailArchive", { path: selected.archive_path })}</p>
         </div>
       )}
-      {retrieving && chosen.length > 0 && <RetrieveDialog hits={chosen} onClose={() => setRetrieving(false)} />}
+      {retrieving && pick.count > 0 && (
+        <RetrieveDialog
+          what={
+            allTicked
+              ? { kind: "all", run: result?.coverage.run ?? 0, query: queryOf(current), count: pick.count, archives: pick.archives, bytes: pick.bytes }
+              : { kind: "items", hits: chosen }
+          }
+          onClose={() => setRetrieving(false)}
+        />
+      )}
       {menu.at !== null && menuHit !== null && (
         <ContextMenu
           at={menu.at}

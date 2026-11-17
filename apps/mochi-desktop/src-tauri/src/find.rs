@@ -70,11 +70,12 @@ use crate::launch::Launches;
 
 pub use mochi_core::find::{Limits, MAX_QUERY_BYTES, MAX_SCOPES, MAX_TERMS, PHASE};
 
-/// Hits that cross IPC for one name. More are counted (`total_hits`) and the UI says so.
+/// Hits in one page that crosses IPC (the first page, unless asked otherwise).
+/// Every match can be listed: the window asks for the next page as it
+/// scrolls (B.2.21), and a retrieve can take every match without listing them.
 pub const MAX_HITS_SHOWN: usize = 1_000;
-/// Hits that cross IPC for a list of names (B.2.21): every name that matched
-/// gets its share of them first.
-pub const MAX_HITS_SHOWN_MANY: usize = 5_000;
+/// The most hits one page may ask for.
+pub const MAX_PAGE: usize = 10_000;
 /// Archives listed by name in the coverage; the rest are counted.
 pub const MAX_SKIPPED_SHOWN: usize = 200;
 /// Fewest milliseconds between two progress events (the last is always sent).
@@ -345,7 +346,7 @@ impl From<FindEntryFilter> for EntryFilter {
 /// A search for one or more names at once (spec Annex B.2.21): the names the
 /// user typed or pasted, already split, and the options. The defaults are
 /// `mochi find`'s: case ignored, part of a name, files and folders.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub struct FindQuery {
     /// 1 to [`MAX_TERMS`] names, each at most [`MAX_QUERY_BYTES`] bytes.
@@ -356,6 +357,31 @@ pub struct FindQuery {
     pub whole_name: bool,
     #[serde(default)]
     pub entries: FindEntryFilter,
+    /// List only the matches of this name (its number in `terms`).
+    #[serde(default)]
+    #[ts(optional)]
+    pub term: Option<u32>,
+    /// The first match listed (0 by default): pages of the same query.
+    #[serde(default)]
+    #[ts(optional, type = "number")]
+    pub offset: Option<u64>,
+    /// Matches listed (default [`MAX_HITS_SHOWN`], at most [`MAX_PAGE`]).
+    #[serde(default)]
+    #[ts(optional)]
+    pub limit: Option<u32>,
+}
+
+impl FindQuery {
+    /// The same search, without the page or the one-name view: what is cached.
+    fn search(&self) -> (Vec<String>, bool, bool, FindEntryFilter) {
+        let texts = self
+            .terms
+            .iter()
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty())
+            .collect();
+        (texts, self.match_case, self.whole_name, self.entries)
+    }
 }
 
 /// One name asked for, and what it found.
@@ -371,10 +397,13 @@ pub struct FindTermView {
     /// Archives holding at least one of them.
     #[ts(type = "number")]
     pub archives: u64,
+    /// The sizes of the files it matched, added up.
+    #[ts(type = "number")]
+    pub bytes: u64,
 }
 
-/// A query's hits (at most [`MAX_HITS_SHOWN`], or [`MAX_HITS_SHOWN_MANY`] for
-/// a list), what each name found, and the coverage they were drawn from.
+/// A page of a query's hits, what each name found, and the coverage they were
+/// drawn from. Every match is reachable: `listed` says how many there are to page through.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../ui/src/ipc/generated/")]
 pub struct FindResultView {
@@ -382,6 +411,18 @@ pub struct FindResultView {
     /// All matching entries, shown or not (an entry matching two names is one).
     #[ts(type = "number")]
     pub total_hits: u64,
+    /// Matches in the list being paged (`total_hits`, or one name's matches).
+    #[ts(type = "number")]
+    pub listed: u64,
+    /// The position of `hits[0]` in that list.
+    #[ts(type = "number")]
+    pub offset: u64,
+    /// The sizes of every matching file, added up.
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+    /// Archives holding at least one match.
+    #[ts(type = "number")]
+    pub archives_with_hits: u64,
     /// One per name asked for, in order. Empty when nothing was asked.
     pub terms: Vec<FindTermView>,
     pub coverage: FindCoverageView,
@@ -462,12 +503,34 @@ struct FinderInner {
     last_run: u32,
 }
 
+/// One match of a query: the archive (an index into `Matches::found`), the
+/// entry, and the names it matched.
+struct Match {
+    archive: usize,
+    entry: usize,
+    terms: Box<[u16]>,
+}
+
+/// Every match of the last query, kept so that its pages and a retrieve of
+/// all of it do not match again. Valid for one scan in one state.
+struct Matches {
+    run: u32,
+    /// Archives searched so far: a running scan adds more.
+    searched: u64,
+    search: (Vec<String>, bool, bool, FindEntryFilter),
+    found: Vec<mochi_core::find::TermMatches>,
+    all: Vec<Match>,
+    terms: Vec<FindTermView>,
+    bytes: u64,
+}
+
 /// Scope folders, the session's cache, and the latest scan.
 #[derive(Default)]
 pub struct Finder {
     inner: Mutex<FinderInner>,
     cache: Arc<Cache>,
     limits: Mutex<Option<Limits>>,
+    last: Mutex<Option<Arc<Matches>>>,
 }
 
 fn scope_views(scopes: &[PathBuf]) -> Vec<FindScopeView> {
@@ -738,9 +801,10 @@ impl Finder {
         }
     }
 
-    /// Entries of the latest scan whose names match `text`. Blocking: call it
-    /// off the async runtime. Empty text matches nothing here (the window shows
-    /// only the coverage); it is not a listing. Exactly `mochi find`'s rules.
+    /// Entries of the latest scan whose names match `text`: the first page.
+    /// Blocking: call it off the async runtime. Empty text matches nothing
+    /// here (the window shows only the coverage); it is not a listing.
+    /// Exactly `mochi find`'s rules.
     pub fn query(&self, text: &str) -> Result<FindResultView, IpcError> {
         if text.len() > MAX_QUERY_BYTES {
             return Err(invalid(format!(
@@ -757,100 +821,217 @@ impl Finder {
             match_case: false,
             whole_name: false,
             entries: FindEntryFilter::All,
+            term: None,
+            offset: None,
+            limit: None,
         })
     }
 
-    /// Entries of the latest scan that match any of `q.terms` with `q`'s
-    /// options (B.2.21), with what each name found. Blocking. No terms (or
-    /// only blank ones) matches nothing; it is not a listing.
-    pub fn query_many(&self, q: &FindQuery) -> Result<FindResultView, IpcError> {
+    /// Every match of `q` in the latest scan (cached for the next page).
+    /// `None` when nothing is asked or no scan ran.
+    fn matches(&self, q: &FindQuery) -> Result<Option<Arc<Matches>>, IpcError> {
         if q.terms.len() > MAX_TERMS {
             return Err(invalid(format!(
                 "a search takes at most {MAX_TERMS} names at once"
             )));
         }
-        let texts: Vec<String> = q
-            .terms
-            .iter()
-            .map(|t| t.trim().to_owned())
-            .filter(|t| !t.is_empty())
-            .collect();
-        let coverage = self.coverage();
-        let run = match self.current() {
-            Some(run) if !texts.is_empty() => run,
-            _ => {
-                return Ok(FindResultView {
-                    hits: Vec::new(),
-                    total_hits: 0,
-                    terms: Vec::new(),
-                    coverage,
-                })
+        let search = q.search();
+        let Some(run) = self.current() else {
+            return Ok(None);
+        };
+        if search.0.is_empty() {
+            return Ok(None);
+        }
+        let c = run.scan.coverage();
+        let searched = c.archives_searched + c.skipped.len() as u64;
+        if let Some(m) = lock(&self.last).as_ref() {
+            if m.run == run.id && m.searched == searched && m.search == search {
+                return Ok(Some(Arc::clone(m)));
             }
-        };
+        }
         let options = MatchOptions {
-            ignore_case: !q.match_case,
-            whole_name: q.whole_name,
+            ignore_case: !search.1,
+            whole_name: search.2,
         };
-        let set = TermSet::new(&texts, options, q.entries.into()).map_err(IpcError::from)?;
-        let cap = if texts.len() == 1 {
-            MAX_HITS_SHOWN
-        } else {
-            MAX_HITS_SHOWN_MANY
-        };
-        let found = run.scan.query_terms(&set, cap);
-        let mut per_term = vec![(0u64, 0u64); texts.len()];
-        let mut total = 0u64;
-        let mut candidates: Vec<(usize, usize, &[u16])> = Vec::new();
+        let set = TermSet::new(&search.0, options, search.3.into()).map_err(IpcError::from)?;
+        let found = run.scan.query_terms(&set, usize::MAX);
+        let mut terms: Vec<FindTermView> = search
+            .0
+            .iter()
+            .enumerate()
+            .map(|(i, text)| FindTermView {
+                index: u32::try_from(i).unwrap_or(u32::MAX),
+                text: text.clone(),
+                hits: 0,
+                archives: 0,
+                bytes: 0,
+            })
+            .collect();
+        let mut all = Vec::new();
+        let mut bytes = 0u64;
         for (a, m) in found.iter().enumerate() {
-            total = total.saturating_add(m.count);
             for (t, &n) in m.per_term.iter().enumerate() {
-                if let Some(slot) = per_term.get_mut(t) {
-                    slot.0 = slot.0.saturating_add(n);
-                    slot.1 += u64::from(n > 0);
+                if let Some(v) = terms.get_mut(t) {
+                    v.hits = v.hits.saturating_add(n);
+                    v.archives += u64::from(n > 0);
                 }
             }
             for (e, ts) in &m.entries {
-                candidates.push((a, *e, ts.as_slice()));
+                let size = m.names.get(*e).map_or(0, |x| x.size);
+                bytes = bytes.saturating_add(size);
+                for &t in ts {
+                    if let Some(v) = terms.get_mut(usize::from(t)) {
+                        v.bytes = v.bytes.saturating_add(size);
+                    }
+                }
+                all.push(Match {
+                    archive: a,
+                    entry: *e,
+                    terms: ts.clone().into_boxed_slice(),
+                });
             }
         }
-        let shown = fair_share(&candidates, texts.len(), cap);
-        let hits = candidates
+        let m = Arc::new(Matches {
+            run: run.id,
+            searched,
+            search,
+            found,
+            all,
+            terms,
+            bytes,
+        });
+        *lock(&self.last) = Some(Arc::clone(&m));
+        Ok(Some(m))
+    }
+
+    /// A page of the entries of the latest scan that match any of `q.terms`
+    /// with `q`'s options (B.2.21), with what each name found. Blocking. No
+    /// terms (or only blank ones) matches nothing; it is not a listing.
+    pub fn query_many(&self, q: &FindQuery) -> Result<FindResultView, IpcError> {
+        let coverage = self.coverage();
+        let Some(m) = self.matches(q)? else {
+            return Ok(FindResultView {
+                hits: Vec::new(),
+                total_hits: 0,
+                listed: 0,
+                offset: 0,
+                total_bytes: 0,
+                archives_with_hits: 0,
+                terms: Vec::new(),
+                coverage,
+            });
+        };
+        let only = q.term.and_then(|t| u16::try_from(t).ok());
+        if q.term.is_some_and(|t| t as usize >= m.terms.len()) {
+            return Err(invalid("that name is not in the search"));
+        }
+        let listed: Vec<&Match> = m
+            .all
             .iter()
-            .zip(shown)
-            .filter(|(_, keep)| *keep)
-            .filter_map(|((a, e, ts), _)| {
-                let m = found.get(*a)?;
-                let entry = m.names.get(*e)?;
+            .filter(|x| only.is_none_or(|t| x.terms.contains(&t)))
+            .collect();
+        let offset = usize::try_from(q.offset.unwrap_or(0)).unwrap_or(usize::MAX);
+        let limit = q
+            .limit
+            .map_or(MAX_HITS_SHOWN, |l| l as usize)
+            .clamp(1, MAX_PAGE);
+        let hits = listed
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .filter_map(|x| {
+                let a = m.found.get(x.archive)?;
+                let entry = a.names.get(x.entry)?;
                 Some(FindHit {
-                    run: run.id,
-                    archive: u32::try_from(m.index).unwrap_or(u32::MAX),
-                    archive_path: m.path.display().to_string(),
-                    archive_modified_ms: m.stamp.modified_ms(),
+                    run: m.run,
+                    archive: u32::try_from(a.index).unwrap_or(u32::MAX),
+                    archive_path: a.path.display().to_string(),
+                    archive_modified_ms: a.stamp.modified_ms(),
                     path: NameText::of(entry.path),
-                    terms: ts.iter().map(|&t| u32::from(t)).collect(),
+                    terms: x.terms.iter().map(|&t| u32::from(t)).collect(),
                     key: hex(entry.path),
                     kind: kind(entry.kind),
                     size: entry.size.to_string(),
                 })
             })
             .collect();
-        let terms = texts
-            .into_iter()
-            .zip(per_term)
-            .enumerate()
-            .map(|(i, (text, (hits, archives)))| FindTermView {
-                index: u32::try_from(i).unwrap_or(u32::MAX),
-                text,
-                hits,
-                archives,
-            })
-            .collect();
         Ok(FindResultView {
             hits,
-            total_hits: total,
-            terms,
+            total_hits: m.all.len() as u64,
+            listed: listed.len() as u64,
+            offset: offset.min(listed.len()) as u64,
+            total_bytes: m.bytes,
+            archives_with_hits: m.found.len() as u64,
+            terms: m.terms.clone(),
             coverage,
         })
+    }
+
+    /// Every match of `q` (or of its one name, `q.term`) in scan `run`, by
+    /// archive: what a retrieve of all matches takes (B.2.21).
+    pub fn all_matches(
+        &self,
+        run: u32,
+        q: &FindQuery,
+    ) -> Result<Vec<(u32, Vec<mochi_core::catalog::path::ArchivePath>)>, IpcError> {
+        if self.current_run() != Some(run) {
+            return Err(invalid(
+                "those results belong to an earlier scan; search again",
+            ));
+        }
+        let Some(m) = self.matches(q)? else {
+            return Ok(Vec::new());
+        };
+        let only = q.term.and_then(|t| u16::try_from(t).ok());
+        let mut out: Vec<(u32, Vec<mochi_core::catalog::path::ArchivePath>)> = Vec::new();
+        for x in m
+            .all
+            .iter()
+            .filter(|x| only.is_none_or(|t| x.terms.contains(&t)))
+        {
+            let Some(a) = m.found.get(x.archive) else {
+                continue;
+            };
+            let Some(e) = a.names.get(x.entry) else {
+                continue;
+            };
+            let path = mochi_core::catalog::path::ArchivePath::from_stored(e.path)
+                .map_err(IpcError::from)?;
+            let n = u32::try_from(a.index).unwrap_or(u32::MAX);
+            match out.last_mut() {
+                Some((last, paths)) if *last == n => paths.push(path),
+                _ => out.push((n, vec![path])),
+            }
+        }
+        Ok(out)
+    }
+
+    /// The entries `keys` (hits' keys) of archive `archive` of scan `run`,
+    /// each checked against the names the scan read (one lookup each).
+    pub fn paths_in(
+        &self,
+        run: u32,
+        archive: u32,
+        keys: &[&str],
+    ) -> Result<Vec<mochi_core::catalog::path::ArchivePath>, IpcError> {
+        let current = self
+            .current()
+            .filter(|r| r.id == run)
+            .ok_or_else(|| invalid("that result belongs to an earlier scan; search again"))?;
+        let index = match current.scan.record(archive as usize).map(|r| r.outcome) {
+            Some(Some(Outcome::Indexed(ix))) => ix,
+            _ => return Err(invalid("that archive is not in the scan")),
+        };
+        let known: std::collections::HashSet<&[u8]> = index.iter().map(|e| e.path).collect();
+        keys.iter()
+            .map(|k| {
+                let p = crate::browse::parse_key(k).map_err(IpcError::from)?;
+                if !known.contains(p.as_stored()) {
+                    return Err(invalid("that entry is not in the archive"));
+                }
+                Ok(p)
+            })
+            .collect()
     }
 
     /// The archive of a hit, if it is still the one that was scanned: the same
@@ -898,49 +1079,6 @@ impl Finder {
             .map(|r| (r.path, r.stamp))
             .ok_or_else(|| invalid("that archive is not in the scan"))
     }
-}
-
-/// Which of `candidates` (in archive and path order; each with the terms it
-/// matched) to show when at most `cap` fit: first every term's share of
-/// `cap` (at least one each), so a common name cannot crowd out a rare one,
-/// then the rest in order. One flag per candidate.
-fn fair_share(candidates: &[(usize, usize, &[u16])], terms: usize, cap: usize) -> Vec<bool> {
-    if candidates.len() <= cap {
-        return vec![true; candidates.len()];
-    }
-    let quota = (cap / terms.max(1)).max(1);
-    let mut used = vec![0usize; terms];
-    let mut keep = vec![false; candidates.len()];
-    let mut kept = 0usize;
-    for (i, (_, _, ts)) in candidates.iter().enumerate() {
-        if kept >= cap {
-            break;
-        }
-        let wanted = ts
-            .iter()
-            .any(|&t| used.get(usize::from(t)).is_some_and(|&u| u < quota));
-        if wanted {
-            for &t in ts.iter() {
-                if let Some(u) = used.get_mut(usize::from(t)) {
-                    *u += 1;
-                }
-            }
-            if let Some(k) = keep.get_mut(i) {
-                *k = true;
-            }
-            kept += 1;
-        }
-    }
-    for k in &mut keep {
-        if kept >= cap {
-            break;
-        }
-        if !*k {
-            *k = true;
-            kept += 1;
-        }
-    }
-    keep
 }
 
 fn skipped_view(s: &Skipped) -> FindSkippedView {
@@ -1391,9 +1529,7 @@ mod tests {
     fn many(terms: &[&str]) -> FindQuery {
         FindQuery {
             terms: terms.iter().map(|t| (*t).to_owned()).collect(),
-            match_case: false,
-            whole_name: false,
-            entries: FindEntryFilter::All,
+            ..FindQuery::default()
         }
     }
 
@@ -1507,15 +1643,63 @@ mod tests {
     }
 
     #[test]
-    fn a_common_name_cannot_crowd_out_a_rare_one() {
-        let a: Vec<&[u16]> = vec![&[0]; 10];
-        let mut c: Vec<(usize, usize, &[u16])> =
-            a.iter().enumerate().map(|(i, t)| (0, i, *t)).collect();
-        c.push((1, 0, &[1]));
-        let keep = fair_share(&c, 2, 4);
-        assert_eq!(keep.iter().filter(|k| **k).count(), 4);
-        assert!(keep[10], "the rare name's only hit is shown");
-        assert!(fair_share(&c, 2, 100).iter().all(|k| *k));
+    fn every_match_is_reachable_page_by_page_and_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<String> = (0..2_500).map(|i| format!("logs/app-{i:05}.log")).collect();
+        let mut refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        refs.push("notes/readme.txt");
+        write_archive(&dir.path().join("big.mochi"), &refs, None);
+        let finder = Arc::new(Finder::default());
+        finder.set_scopes(vec![dir.path().to_path_buf()]).unwrap();
+        scan_now(&finder);
+        let q = |offset: Option<u64>, limit: Option<u32>, term: Option<u32>| FindQuery {
+            offset,
+            limit,
+            term,
+            ..many(&["*.log", "readme"])
+        };
+        let first = finder.query_many(&q(None, None, None)).unwrap();
+        assert_eq!(
+            (first.hits.len(), first.total_hits, first.listed),
+            (MAX_HITS_SHOWN, 2_501, 2_501)
+        );
+        assert_eq!(first.archives_with_hits, 1);
+        // Pages cover every match once, in order.
+        let mut seen: Vec<String> = Vec::new();
+        let mut at = 0u64;
+        loop {
+            let page = finder.query_many(&q(Some(at), Some(1_000), None)).unwrap();
+            assert_eq!(page.offset, at);
+            if page.hits.is_empty() {
+                break;
+            }
+            at += page.hits.len() as u64;
+            seen.extend(page.hits.into_iter().map(|h| h.path.text));
+        }
+        assert_eq!(seen.len(), 2_501);
+        let unique: std::collections::BTreeSet<&String> = seen.iter().collect();
+        assert_eq!(unique.len(), 2_501);
+        // One name's matches alone, and its size.
+        let readme = finder.query_many(&q(None, None, Some(1))).unwrap();
+        assert_eq!((readme.listed, readme.hits.len()), (1, 1));
+        assert_eq!(readme.terms[1].bytes, "notes/readme.txt".len() as u64);
+        assert_eq!(
+            readme.total_bytes,
+            readme.terms.iter().map(|t| t.bytes).sum::<u64>()
+        );
+        assert!(finder.query_many(&q(None, None, Some(5))).is_err());
+        // A retrieve of all of it gets every path, grouped by archive.
+        let run = first.hits[0].run;
+        let all = finder.all_matches(run, &q(None, None, None)).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].1.len(), 2_501);
+        assert_eq!(
+            finder.all_matches(run, &q(None, None, Some(1))).unwrap()[0]
+                .1
+                .len(),
+            1
+        );
+        assert!(finder.all_matches(run + 1, &q(None, None, None)).is_err());
     }
 
     #[test]

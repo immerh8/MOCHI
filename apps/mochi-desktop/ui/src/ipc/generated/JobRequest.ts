@@ -4,6 +4,7 @@ import type { CheckLevel } from "./CheckLevel";
 import type { CompressionPreset } from "./CompressionPreset";
 import type { ConflictChoice } from "./ConflictChoice";
 import type { EntryKindView } from "./EntryKindView";
+import type { FindQuery } from "./FindQuery";
 import type { FoundItem } from "./FoundItem";
 import type { RetrieveLayout } from "./RetrieveLayout";
 import type { SearchScopeChoice } from "./SearchScopeChoice";
@@ -84,4 +85,14 @@ keys: Array<string>, on_conflict: ConflictChoice, } | { "kind": "scan_archive", 
 /**
  * The scanner's full path, as the user chose or typed it.
  */
-program: string, arguments: string, } | { "kind": "retrieve_found", run: number, items: Array<FoundItem>, layout: RetrieveLayout, on_conflict: ConflictChoice, };
+program: string, arguments: string, } | { "kind": "retrieve_found", run: number, 
+/**
+ * The hits ticked. Empty when `all` is given.
+ */
+items: Array<FoundItem>, 
+/**
+ * Instead of `items`: every match of this search (or of its one
+ * name, `term`), found again in Rust, so that any number can be
+ * retrieved without listing them. Its page fields are ignored.
+ */
+all?: FindQuery, layout: RetrieveLayout, on_conflict: ConflictChoice, };

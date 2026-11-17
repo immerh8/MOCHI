@@ -2490,7 +2490,16 @@ button.find-term:disabled .find-term-count {
 .find-head-cols {
   padding-right: 0.6rem;
 }
+.find-spacer {
+  list-style: none;
+}
+.find-row-wait .find-wait {
+  padding-left: 1.6rem;
+  color: var(--muted);
+}
 .find-row {
+  box-sizing: border-box;
+  height: 30px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   transition: background var(--dur-1) var(--ease-1);
 }
@@ -2503,7 +2512,7 @@ button.find-term:disabled .find-term-count {
 .find-hit {
   box-sizing: border-box;
   width: 100%;
-  min-height: 1.9rem;
+  height: 100%;
   padding: 0 0.6rem 0 0;
   font: inherit;
   text-align: left;
@@ -2542,6 +2551,19 @@ button.find-term:disabled .find-term-count {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
+}
+
+/* Every loaded match is ticked: offer every match (Rust finds them again for the retrieve). */
+.find-tick-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--accent-bg);
+  border-radius: 6px;
 }
 
 /* What is ticked, and Retrieve: stays in reach at the bottom of the sheet while the list scrolls. */

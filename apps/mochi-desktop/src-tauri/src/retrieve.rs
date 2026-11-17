@@ -48,8 +48,9 @@ use crate::find::Finder;
 use crate::ipc::{ConflictChoice, IpcError, JobRequest, NameText, NotExtractedView, PathKey};
 use crate::write::JobDone;
 
-/// Most entries one retrieve may name.
-pub const MAX_ITEMS: usize = 10_000;
+/// Most entries one retrieve may name: no more than a scan can hold, so in
+/// practice every match. A retrieve of every match names none (`all`).
+pub const MAX_ITEMS: usize = mochi_core::find::MAX_ENTRIES_TOTAL;
 /// Entries listed per archive as not extracted (the total is always given).
 pub const MAX_NOT_EXTRACTED_PER_ARCHIVE: usize = 100;
 
@@ -142,17 +143,32 @@ pub struct RetrieveReportView {
 }
 
 /// The request's parts, or why it is not a retrieve.
-fn parts(request: &JobRequest) -> Result<(u32, &[FoundItem], RetrieveLayout, ConflictChoice)> {
+struct Parts<'a> {
+    run: u32,
+    items: &'a [FoundItem],
+    all: Option<&'a crate::find::FindQuery>,
+    layout: RetrieveLayout,
+    on_conflict: ConflictChoice,
+}
+
+fn parts(request: &JobRequest) -> Result<Parts<'_>> {
     let JobRequest::RetrieveFound {
         run,
         items,
+        all,
         layout,
         on_conflict,
     } = request
     else {
         return Err(invalid("not a retrieve request"));
     };
-    Ok((*run, items, *layout, *on_conflict))
+    Ok(Parts {
+        run: *run,
+        items,
+        all: all.as_ref(),
+        layout: *layout,
+        on_conflict: *on_conflict,
+    })
 }
 
 /// Refuse a request that cannot work, before a job starts.
@@ -161,12 +177,34 @@ pub fn validate(
     destination: &Destination,
     request: &JobRequest,
 ) -> Result<()> {
-    let (run, items, _, on_conflict) = parts(request)?;
+    let Parts {
+        run,
+        items,
+        all,
+        on_conflict,
+        ..
+    } = parts(request)?;
     let finder = finder.ok_or_else(|| invalid("MOCHI Find is not available here"))?;
-    if items.is_empty() || items.len() > MAX_ITEMS {
-        return Err(invalid(format!(
-            "a retrieve names 1 to {MAX_ITEMS} found entries"
-        )));
+    match all {
+        Some(q) => {
+            if !items.is_empty() {
+                return Err(invalid(
+                    "a retrieve names found entries or asks for every match, not both",
+                ));
+            }
+            if q.terms.iter().all(|t| t.trim().is_empty()) {
+                return Err(invalid(
+                    "a retrieve of every match needs the search it matches",
+                ));
+            }
+        }
+        None => {
+            if items.is_empty() || items.len() > MAX_ITEMS {
+                return Err(invalid(format!(
+                    "a retrieve names 1 to {MAX_ITEMS} found entries"
+                )));
+            }
+        }
     }
     if !matches!(
         on_conflict,
@@ -188,6 +226,23 @@ pub fn validate(
         return Err(invalid("choose the folder to retrieve into first"));
     }
     Ok(())
+}
+
+/// What to take from one archive.
+enum Wanted<'a> {
+    /// Hits' keys, checked against the scan before use.
+    Keys(Vec<&'a str>),
+    /// Paths from the scan's own names (every match of a search).
+    Paths(Vec<ArchivePath>),
+}
+
+impl Wanted<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Wanted::Keys(k) => k.len(),
+            Wanted::Paths(p) => p.len(),
+        }
+    }
 }
 
 /// Reports one restore's progress as part of the whole: entries done before
@@ -240,20 +295,45 @@ pub fn run(
 ) -> Result<JobDone> {
     validate(finder, destination, request)?;
     let finder = finder.ok_or_else(|| invalid("MOCHI Find is not available here"))?;
-    let (run, items, layout, on_conflict) = parts(request)?;
+    let Parts {
+        run,
+        items,
+        all,
+        layout,
+        on_conflict,
+    } = parts(request)?;
     let dest = destination
         .get()
         .ok_or_else(|| invalid("choose the folder to retrieve into first"))?;
 
-    // Archive by archive, in scan order; each entry once.
-    let mut by_archive: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
-    for item in items {
-        let keys = by_archive.entry(item.archive).or_default();
-        if !keys.contains(&item.key.as_str()) {
-            keys.push(item.key.as_str());
+    // Archive by archive, in scan order; each entry once. Ticked hits are
+    // checked against the names the scan read; every match of a search comes
+    // from those names already.
+    let mut by_archive: BTreeMap<u32, Wanted<'_>> = BTreeMap::new();
+    match all {
+        Some(q) => {
+            for (archive, paths) in finder.all_matches(run, q).map_err(|e| invalid(e.message))? {
+                by_archive.insert(archive, Wanted::Paths(paths));
+            }
+        }
+        None => {
+            let mut keys: BTreeMap<u32, std::collections::BTreeSet<&str>> = BTreeMap::new();
+            for item in items {
+                keys.entry(item.archive)
+                    .or_default()
+                    .insert(item.key.as_str());
+            }
+            for (archive, k) in keys {
+                by_archive.insert(archive, Wanted::Keys(k.into_iter().collect()));
+            }
         }
     }
-    let total: u64 = by_archive.values().map(|k| k.len() as u64).sum();
+    if by_archive.is_empty() {
+        return Err(invalid(
+            "nothing matches that search any more; search again",
+        ));
+    }
+    let total: u64 = by_archive.values().map(|w| w.len() as u64).sum();
     ctx.report(RESTORE_PHASE, 0, Some(total));
 
     let options = RestoreOptions {
@@ -265,9 +345,9 @@ pub fn run(
     let mut views = Vec::new();
     let mut before = 0u64;
     let mut files_not_flushed = false;
-    for (archive, keys) in &by_archive {
+    for (archive, want) in &by_archive {
         ctx.check_cancelled()?;
-        let asked = keys.len();
+        let asked = want.len();
         let done_before = before;
         before = before.saturating_add(asked as u64);
         let path = match finder.archive_for_open(run, *archive) {
@@ -285,13 +365,10 @@ pub fn run(
                 continue;
             }
         };
-        let wanted: std::result::Result<Vec<ArchivePath>, String> = keys
-            .iter()
-            .map(|k| {
-                let e = finder.entry_of(run, *archive, k).map_err(from_ipc)?;
-                parse_key(&e.key).map_err(|e| e.message)
-            })
-            .collect();
+        let wanted: std::result::Result<Vec<ArchivePath>, String> = match want {
+            Wanted::Paths(p) => Ok(p.clone()),
+            Wanted::Keys(k) => finder.paths_in(run, *archive, k).map_err(from_ipc),
+        };
         let wanted = match wanted {
             Ok(w) => w,
             Err(m) => {
@@ -531,6 +608,7 @@ mod tests {
                 match_case: false,
                 whole_name: true,
                 entries: FindEntryFilter::Files,
+                ..FindQuery::default()
             })
             .unwrap();
         let run = r.hits.first().map_or(0, |h| h.run);
@@ -554,6 +632,7 @@ mod tests {
         JobRequest::RetrieveFound {
             run,
             items,
+            all: None,
             layout,
             on_conflict: on,
         }
@@ -759,5 +838,66 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(e.code, ErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn every_match_of_a_search_is_retrieved_without_listing_it() {
+        let fx = fixture();
+        let (run, _) = found(&fx, &["report.txt"]);
+        let query = FindQuery {
+            terms: vec!["*.txt".into(), "cat.jpg".into()],
+            ..FindQuery::default()
+        };
+        let req = JobRequest::RetrieveFound {
+            run,
+            items: Vec::new(),
+            all: Some(query.clone()),
+            layout: RetrieveLayout::PerArchive,
+            on_conflict: ConflictChoice::AddNew,
+        };
+        let r = go(&fx, &req);
+        assert_eq!((r.files, r.archives_not_done), (3, 0));
+        assert!(fx.out.join("alpha/docs/report.txt").is_file());
+        assert!(fx.out.join("beta/docs/report.txt").is_file());
+        assert!(fx.out.join("beta/pics/cat.jpg").is_file());
+        assert!(!fx.out.join("alpha/keep").exists());
+        // One name of it alone.
+        let only = JobRequest::RetrieveFound {
+            run,
+            items: Vec::new(),
+            all: Some(FindQuery {
+                term: Some(1),
+                ..query
+            }),
+            layout: RetrieveLayout::Together,
+            on_conflict: ConflictChoice::AddNew,
+        };
+        let r = go(&fx, &only);
+        assert_eq!(r.files, 1);
+        assert!(fx.out.join("pics/cat.jpg").is_file());
+        assert!(!fx.out.join("docs").exists());
+        // Items and all at once, or an empty search, are refused.
+        let both = JobRequest::RetrieveFound {
+            run,
+            items: vec![FoundItem {
+                archive: 0,
+                key: crate::browse::hex(b"docs/report.txt"),
+            }],
+            all: Some(FindQuery {
+                terms: vec!["x".into()],
+                ..FindQuery::default()
+            }),
+            layout: RetrieveLayout::Together,
+            on_conflict: ConflictChoice::AddNew,
+        };
+        assert!(validate(Some(&fx.finder), &fx.destination, &both).is_err());
+        let empty = JobRequest::RetrieveFound {
+            run,
+            items: Vec::new(),
+            all: Some(FindQuery::default()),
+            layout: RetrieveLayout::Together,
+            on_conflict: ConflictChoice::AddNew,
+        };
+        assert!(validate(Some(&fx.finder), &fx.destination, &empty).is_err());
     }
 }

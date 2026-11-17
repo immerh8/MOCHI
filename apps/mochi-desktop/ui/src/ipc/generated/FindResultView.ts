@@ -4,14 +4,30 @@ import type { FindHit } from "./FindHit";
 import type { FindTermView } from "./FindTermView";
 
 /**
- * A query's hits (at most [`MAX_HITS_SHOWN`], or [`MAX_HITS_SHOWN_MANY`] for
- * a list), what each name found, and the coverage they were drawn from.
+ * A page of a query's hits, what each name found, and the coverage they were
+ * drawn from. Every match is reachable: `listed` says how many there are to page through.
  */
 export type FindResultView = { hits: Array<FindHit>, 
 /**
  * All matching entries, shown or not (an entry matching two names is one).
  */
 total_hits: number, 
+/**
+ * Matches in the list being paged (`total_hits`, or one name's matches).
+ */
+listed: number, 
+/**
+ * The position of `hits[0]` in that list.
+ */
+offset: number, 
+/**
+ * The sizes of every matching file, added up.
+ */
+total_bytes: number, 
+/**
+ * Archives holding at least one match.
+ */
+archives_with_hits: number, 
 /**
  * One per name asked for, in order. Empty when nothing was asked.
  */

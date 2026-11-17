@@ -525,3 +525,184 @@ fn c16_find_writes_nothing() {
     assert_eq!(snapshot(a.dir.path()), before);
     assert!(!a.p("state").exists(), "find records no local history");
 }
+
+/// **Several names and the options (spec Annex B.2.21).** `--name` (each
+/// positional is then a folder) and `--names-from`; each hit says which names
+/// it matched and each name what it found; `--match-case`, `--whole-name`,
+/// `--files-only`, `--folders-only`, `--no-subfolders`. The output is
+/// `mochi-cli-find-v2`; the plain `PATTERN FOLDER...` form stays v1.
+#[test]
+fn c16_find_several_names_and_options() {
+    let a = Area::new();
+    a.good_tree();
+    let root = a.s("root");
+    let (code, v) = a.json(&[
+        "find",
+        "--name",
+        "report",
+        "--name",
+        "*.jpg",
+        "--name",
+        "missing.doc",
+        "--name",
+        "REPORT",
+        &root,
+    ]);
+    assert_eq!(code, exit::OK);
+    assert_eq!(v["schema"], "mochi-cli-find-v2");
+    // A repeat (case ignored) is asked once.
+    let terms: Vec<(String, u64, u64)> = v["query"]["terms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            (
+                t["text"].as_str().unwrap().to_owned(),
+                t["hits"].as_u64().unwrap(),
+                t["archives"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        terms,
+        [
+            ("report".to_owned(), 2, 2),
+            ("*.jpg".to_owned(), 1, 1),
+            ("missing.doc".to_owned(), 0, 0)
+        ]
+    );
+    assert_eq!(v["query"]["terms"][1]["match"], "glob");
+    assert_eq!(v["total_hits"], 3);
+    let jpg = v["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["path"] == "photos/Holiday.JPG")
+        .unwrap();
+    assert_eq!(jpg["terms"], serde_json::json!([1]));
+    assert_eq!(v["query"]["subfolders"], true);
+
+    // Text: each name's result, "not found" only because everything was searched.
+    let (code, out, _) = a.go(&["find", "--name", "report", "--name", "missing.doc", &root]);
+    assert_eq!(code, exit::OK);
+    assert!(
+        out.contains("name report: 2 matches in 2 archives"),
+        "{out}"
+    );
+    assert!(out.contains("name missing.doc: not found\n"), "{out}");
+    assert!(out.contains("for 1 of 2 names"), "{out}");
+
+    // Options.
+    let paths = |args: &[&str]| -> Vec<String> {
+        let (code, v) = a.json(args);
+        assert_eq!(code, exit::OK, "{args:?} {v}");
+        assert_eq!(v["schema"], "mochi-cli-find-v2");
+        let mut p: Vec<String> = hits(&v).into_iter().map(|(_, p)| p).collect();
+        p.sort();
+        p
+    };
+    assert_eq!(
+        paths(&["find", "--match-case", "Report", &root]),
+        ["Report.pdf"]
+    );
+    assert_eq!(
+        paths(&[
+            "find",
+            "--whole-name",
+            "--name",
+            "report.PDF",
+            "--name",
+            "report",
+            &root
+        ]),
+        ["Report.pdf"]
+    );
+    assert_eq!(
+        paths(&[
+            "find",
+            "--files-only",
+            "--name",
+            "docs",
+            "--name",
+            "photos",
+            &root
+        ]),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        paths(&[
+            "find",
+            "--folders-only",
+            "--name",
+            "docs",
+            "--name",
+            "photos",
+            &root
+        ]),
+        ["docs", "photos"]
+    );
+    // Only the archives directly in the folder: a choice, still complete.
+    let (code, v) = a.json(&["find", "--no-subfolders", "*", &root]);
+    assert_eq!(code, exit::OK);
+    assert_eq!(v["coverage"]["archives_found"], 1);
+    assert_eq!(v["coverage"]["complete"], true);
+    assert_eq!(v["query"]["subfolders"], false);
+
+    // Names from a file, one per line.
+    fs::write(a.p("names.txt"), "invoice\r\n\r\n  holiday.jpg  \nnope\n").unwrap();
+    let (code, v) = a.json(&["find", "--names-from", &a.s("names.txt"), &root]);
+    assert_eq!(code, exit::OK);
+    let texts: Vec<&str> = v["query"]["terms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, ["invoice", "holiday.jpg", "nope"]);
+    assert_eq!(v["total_hits"], 2);
+
+    // The plain form is v1, unchanged.
+    let (_, v) = a.json(&["find", "report", &root]);
+    assert_eq!(v["schema"], "mochi-cli-find-v1");
+}
+
+/// **A name not found while the search is incomplete is "not found in what
+/// was searched"**, and invocation errors of the new form exit 3.
+#[test]
+fn c16_find_several_names_incomplete_and_errors() {
+    let a = Area::new();
+    a.good_tree();
+    fs::write(a.p("root/fake.mochi"), b"not an archive").unwrap();
+    let root = a.s("root");
+    let (code, out, _) = a.go(&["find", "--name", "nope", "--name", "report", &root]);
+    assert_eq!(code, exit::DEGRADED);
+    assert!(
+        out.contains("name nope: not found in what was searched"),
+        "{out}"
+    );
+    assert!(out.contains("coverage INCOMPLETE"), "{out}");
+
+    // No folder after --name; an empty names file; too many names; files and folders only.
+    for args in [
+        vec!["find".to_owned(), "--name".into(), "x".into()],
+        vec![
+            "find".to_owned(),
+            "--names-from".into(),
+            a.s("empty.txt"),
+            root.clone(),
+        ],
+    ] {
+        fs::write(a.p("empty.txt"), "\n\n").unwrap();
+        let (code, _, err) = a.go(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(code, exit::ERROR, "{args:?} {err}");
+    }
+    let many: String = (0..=mochi_core::find::MAX_TERMS)
+        .map(|i| format!("n{i}\n"))
+        .collect();
+    fs::write(a.p("many.txt"), many).unwrap();
+    let (code, v) = a.json(&["find", "--names-from", &a.s("many.txt"), &root]);
+    assert_eq!(code, exit::ERROR);
+    assert_eq!(v["error"]["code"], "INVALID_ARGUMENT");
+    let (code, _, _) = a.go(&["find", "--files-only", "--folders-only", "x", &root]);
+    assert_eq!(code, exit::ERROR);
+}

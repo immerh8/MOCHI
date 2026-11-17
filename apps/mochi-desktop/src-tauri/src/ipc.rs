@@ -180,7 +180,15 @@ pub enum JobRequest {
     /// no path.
     RetrieveFound {
         run: u32,
+        /// The hits ticked. Empty when `all` is given.
+        #[serde(default)]
         items: Vec<crate::retrieve::FoundItem>,
+        /// Instead of `items`: every match of this search (or of its one
+        /// name, `term`), found again in Rust, so that any number can be
+        /// retrieved without listing them. Its page fields are ignored.
+        #[serde(default)]
+        #[ts(optional)]
+        all: Option<crate::find::FindQuery>,
         layout: crate::retrieve::RetrieveLayout,
         on_conflict: ConflictChoice,
     },

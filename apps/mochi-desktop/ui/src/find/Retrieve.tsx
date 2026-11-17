@@ -7,7 +7,7 @@ import { progressText } from "../extract/messages";
 import { FolderIcon } from "../icons";
 import { formatNumber, t, tc, tn } from "../i18n";
 import { findChooseRetrieveFolder } from "../ipc/find";
-import type { FindHit, RetrieveArchiveView, RetrieveLayout, RetrieveReportView } from "../ipc/find";
+import type { FindHit, FindQuery, RetrieveArchiveView, RetrieveLayout, RetrieveReportView } from "../ipc/find";
 import { cancelJob, pauseJob, startJob } from "../ipc/jobs";
 import type { JobEvent, JobOutcome } from "../ipc/jobs";
 import { TransferProgress } from "../progress/TransferProgress";
@@ -30,6 +30,11 @@ type JobView =
     }
   | { state: "done"; outcome: JobOutcome };
 
+/** What to retrieve: the rows ticked, or every match of a search (any number, never listed). */
+export type RetrieveWhat =
+  | { kind: "items"; hits: readonly FindHit[] }
+  | { kind: "all"; run: number; query: FindQuery; count: number; archives: number; bytes: string };
+
 /** How many distinct archives `hits` come from. */
 export function archivesOf(hits: readonly FindHit[]): number {
   return new Set(hits.map((h) => h.archive)).size;
@@ -43,7 +48,7 @@ export function archivesOf(hits: readonly FindHit[]): number {
  * number, archive position and key. The report says what was extracted, never
  * that anything was verified or is safe (spec §23.3).
  */
-export function RetrieveDialog({ hits, onClose }: { hits: readonly FindHit[]; onClose: () => void }) {
+export function RetrieveDialog({ what, onClose }: { what: RetrieveWhat; onClose: () => void }) {
   const [folder, setFolder] = useState<string | null>(null);
   const [layout, setLayout] = useState<RetrieveLayout>("per_archive");
   const [conflict, setConflict] = useState<Conflict>("add_new");
@@ -55,9 +60,10 @@ export function RetrieveDialog({ hits, onClose }: { hits: readonly FindHit[]; on
   const chooseRef = useRef<HTMLButtonElement>(null);
 
   const busy = job.state === "starting" || job.state === "running";
+  const hits = what.kind === "items" ? what.hits : [];
   const files = hits.filter((h) => h.kind !== "directory").length;
   const folders = hits.length - files;
-  const archives = archivesOf(hits);
+  const archives = what.kind === "items" ? archivesOf(hits) : what.archives;
 
   const choose = async () => {
     setError(null);
@@ -109,21 +115,22 @@ export function RetrieveDialog({ hits, onClose }: { hits: readonly FindHit[]; on
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (folder === null || busy || hits.length === 0) return;
-    const run = hits[0]?.run ?? 0;
+    if (folder === null || busy) return;
+    if (what.kind === "items" && hits.length === 0) return;
     setError(null);
     reset();
     setJob({ state: "starting" });
-    startJob(
-      {
-        kind: "retrieve_found",
-        run,
-        items: hits.map((h) => ({ archive: h.archive, key: h.key })),
-        layout,
-        on_conflict: conflict,
-      },
-      onEvent,
-    ).catch((err: unknown) => {
+    const request =
+      what.kind === "all"
+        ? { kind: "retrieve_found" as const, run: what.run, items: [], all: what.query, layout, on_conflict: conflict }
+        : {
+            kind: "retrieve_found" as const,
+            run: hits[0]?.run ?? 0,
+            items: hits.map((h) => ({ archive: h.archive, key: h.key })),
+            layout,
+            on_conflict: conflict,
+          };
+    startJob(request, onEvent).catch((err: unknown) => {
       setJob({ state: "idle" });
       setError(errorText(t("find.retrieveStartFailed"), err));
     });
@@ -156,11 +163,17 @@ export function RetrieveDialog({ hits, onClose }: { hits: readonly FindHit[]; on
       {job.state === "idle" && (
         <form onSubmit={submit} className="find-retrieve-form">
           <p className="find-retrieve-what" data-testid="find-retrieve-what">
-            {t("find.retrieveWhat", {
-              files: formatNumber(files),
-              folders: formatNumber(folders),
-              archives: formatNumber(archives),
-            })}
+            {what.kind === "all"
+              ? t("find.retrieveWhatAll", {
+                  n: formatNumber(what.count),
+                  archives: formatNumber(archives),
+                  size: shortSize(what.bytes),
+                })
+              : t("find.retrieveWhat", {
+                  files: formatNumber(files),
+                  folders: formatNumber(folders),
+                  archives: formatNumber(archives),
+                })}
           </p>
 
           <fieldset className="find-field">

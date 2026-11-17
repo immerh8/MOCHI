@@ -10,4 +10,16 @@ export type FindQuery = {
 /**
  * 1 to [`MAX_TERMS`] names, each at most [`MAX_QUERY_BYTES`] bytes.
  */
-terms: Array<string>, match_case: boolean, whole_name: boolean, entries: FindEntryFilter, };
+terms: Array<string>, match_case: boolean, whole_name: boolean, entries: FindEntryFilter, 
+/**
+ * List only the matches of this name (its number in `terms`).
+ */
+term?: number, 
+/**
+ * The first match listed (0 by default): pages of the same query.
+ */
+offset?: number, 
+/**
+ * Matches listed (default [`MAX_HITS_SHOWN`], at most [`MAX_PAGE`]).
+ */
+limit?: number, };

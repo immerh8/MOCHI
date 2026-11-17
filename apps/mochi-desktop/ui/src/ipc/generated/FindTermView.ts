@@ -15,4 +15,8 @@ hits: number,
 /**
  * Archives holding at least one of them.
  */
-archives: number, };
+archives: number, 
+/**
+ * The sizes of the files it matched, added up.
+ */
+bytes: number, };

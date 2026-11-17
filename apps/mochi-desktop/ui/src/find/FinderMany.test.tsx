@@ -52,18 +52,39 @@ const coverage = (over: Partial<FindCoverageView> = {}): FindCoverageView => ({
   ...over,
 });
 
-const term = (index: number, text: string, hits: number): FindTermView => ({ index, text, hits, archives: hits > 0 ? 1 : 0 });
+const term = (index: number, text: string, hits: number): FindTermView => ({
+  index,
+  text,
+  hits,
+  archives: hits > 0 ? 1 : 0,
+  bytes: hits * 1000,
+});
+const page = (hits: FindHit[], over: Partial<FindResultView> = {}): FindResultView => ({
+  hits,
+  total_hits: hits.length,
+  listed: hits.length,
+  offset: 0,
+  total_bytes: hits.length * 1000,
+  archives_with_hits: new Set(hits.map((h) => h.archive)).size,
+  terms: [],
+  coverage: coverage(),
+  ...over,
+});
 const scope = (index: number, path: string): FindScopeView => ({ index, path });
 
 /** Three names asked: two found (one in two archives), one not. */
-const THREE: FindResultView = {
-  hits: [hit(0, "docs/invoice.pdf", [0]), hit(1, "x/invoice.pdf", [0]), hit(1, HOSTILE, [1])],
-  total_hits: 3,
+const THREE: FindResultView = page([hit(0, "docs/invoice.pdf", [0]), hit(1, "x/invoice.pdf", [0]), hit(1, HOSTILE, [1])], {
   terms: [term(0, "invoice.pdf", 2), term(1, "*.pdf", 1), term(2, "missing.doc", 0)],
-  coverage: coverage(),
-};
+});
 
-function backend(answer: (q: FindQuery) => FindResultView = () => THREE, cov: () => FindCoverageView = () => coverage()) {
+/** `r` as Rust lists it for one name (`term`), or whole. */
+function only(r: FindResultView, term: number | undefined): FindResultView {
+  if (term === undefined) return r;
+  const hits = r.hits.filter((h) => h.terms.includes(term));
+  return { ...r, hits, listed: hits.length };
+}
+
+function backend(answer: (q: FindQuery) => FindResultView = (q) => only(THREE, q.term), cov: () => FindCoverageView = () => coverage()) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let scanChannel: Channel<FindEvent> | undefined;
   let jobChannel: Channel<JobEvent> | undefined;
@@ -78,10 +99,10 @@ function backend(answer: (q: FindQuery) => FindResultView = () => THREE, cov: ()
         scanChannel = a.onEvent as Channel<FindEvent>;
         return 1;
       case "find_query":
-        return { hits: [], total_hits: 0, terms: [], coverage: cov() };
+        return page([], { coverage: cov() });
       case "find_query_many": {
         const q = a.query as FindQuery;
-        return q.terms.length === 0 ? { hits: [], total_hits: 0, terms: [], coverage: cov() } : answer(q);
+        return q.terms.length === 0 ? page([], { coverage: cov() }) : answer(q);
       }
       case "find_choose_retrieve_folder":
         return "/out/found";
@@ -136,7 +157,7 @@ test("a list of names is asked once, with what each name found and which were no
   expect(screen.getByTestId("find-list-left")).toHaveTextContent("1 repeated name left out");
   await waitFor(() =>
     expect(b.last("find_query_many")).toEqual({
-      query: { terms: ["invoice.pdf", "*.pdf", "missing.doc"], match_case: false, whole_name: false, entries: "all" },
+      query: { terms: ["invoice.pdf", "*.pdf", "missing.doc"], match_case: false, whole_name: false, entries: "all", offset: 0, limit: 1000 },
     }),
   );
   expect(await screen.findByTestId("find-terms-score")).toHaveTextContent("2 of 3 names found");
@@ -154,10 +175,11 @@ test("a list of names is asked once, with what each name found and which were no
   expect(screen.getAllByTestId("find-term-tag").map((x) => x.textContent)).toEqual(["*.pdf"]);
   // A name's chip shows only its matches; pressing it again shows all.
   await user.click(chips[1] as HTMLElement);
-  expect(screen.getAllByTestId("find-hit")).toHaveLength(1);
+  await waitFor(() => expect(screen.getAllByTestId("find-hit")).toHaveLength(1));
+  expect((b.last("find_query_many")?.query as FindQuery).term).toBe(1);
   expect(screen.getByTestId("find-term-showing")).toHaveTextContent("Showing the matches of *.pdf");
   await user.click(screen.getByTestId("find-term-all"));
-  expect(screen.getAllByTestId("find-hit")).toHaveLength(3);
+  await waitFor(() => expect(screen.getAllByTestId("find-hit")).toHaveLength(3));
   // No path crosses from the window.
   for (const c of b.calls) expect(JSON.stringify(c.args)).not.toContain("/data");
 });
@@ -165,7 +187,7 @@ test("a list of names is asked once, with what each name found and which were no
 test("while the search is incomplete a name is not found in what was searched, never simply not found", async () => {
   const user = userEvent.setup();
   const partial = coverage({ complete: false, archives_skipped: 1, archives_searched: 1 });
-  backend(() => ({ ...THREE, coverage: partial }), () => partial);
+  backend((q) => ({ ...only(THREE, q.term), coverage: partial }), () => partial);
   const box = await openList(user);
   await user.type(box, "invoice.pdf{Enter}missing.doc");
   expect(await screen.findByTestId("find-terms-missing")).toHaveTextContent("1 not found in what was searched");
@@ -210,14 +232,14 @@ test("one name with the default options is mochi find's query; any option asks w
   await user.click(screen.getByTestId("find-match-case"));
   await waitFor(() =>
     expect(b.last("find_query_many")).toEqual({
-      query: { terms: ["Report"], match_case: true, whole_name: false, entries: "all" },
+      query: { terms: ["Report"], match_case: true, whole_name: false, entries: "all", offset: 0, limit: 1000 },
     }),
   );
   await user.click(screen.getByTestId("find-whole-name"));
   await user.selectOptions(screen.getByTestId("find-entries"), "files");
   await waitFor(() =>
     expect(b.last("find_query_many")).toEqual({
-      query: { terms: ["Report"], match_case: true, whole_name: true, entries: "files" },
+      query: { terms: ["Report"], match_case: true, whole_name: true, entries: "files", offset: 0, limit: 1000 },
     }),
   );
   // The choices are remembered for next time.
@@ -232,7 +254,7 @@ test("turning Search subfolders off scans again without them, and says so", asyn
   const user = userEvent.setup();
   let sub = true;
   const b = backend(
-    () => THREE,
+    (q) => only(THREE, q.term),
     () => coverage({ subfolders: sub }),
   );
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
@@ -379,4 +401,87 @@ test("a retrieve that is stopped says what stays", async () => {
   expect(await screen.findByTestId("find-retrieve-outcome")).toHaveTextContent("Files retrieved before that stay");
   await user.click(screen.getByTestId("find-retrieve-again"));
   expect(screen.getByTestId("find-retrieve-ok")).toBeEnabled();
+});
+
+/** 2,500 log files across two archives, served a page at a time as Rust does. */
+function bigLogs(q: FindQuery): FindResultView {
+  const all = Array.from({ length: 2_500 }, (_, i) => hit(i < 1_500 ? 0 : 1, `logs/app-${String(i).padStart(5, "0")}.log`, [0]));
+  const offset = q.offset ?? 0;
+  const limit = q.limit ?? 1_000;
+  return page(all.slice(offset, offset + limit), {
+    total_hits: 2_500,
+    listed: 2_500,
+    offset,
+    total_bytes: 2_500_000,
+    archives_with_hits: 2,
+    terms: [term(0, "*.log", 2_500), term(1, "nothing.txt", 0)],
+  });
+}
+
+test("every match can be reached: the list draws the rows in view and fetches their page", async () => {
+  const user = userEvent.setup();
+  const b = backend(bigLogs);
+  const box = await openList(user);
+  await user.type(box, "*.log{Enter}nothing.txt");
+  await waitFor(() => expect(screen.getAllByTestId("find-hit").length).toBeGreaterThan(0));
+  expect(screen.getByTestId("find-status")).toHaveTextContent(/^2,500 matches$/);
+  // Only the rows in view are in the document, not 1,000 or 2,500.
+  expect(screen.getAllByTestId("find-hit").length).toBeLessThan(100);
+  const pagesAsked = () => b.calls.filter((c) => c.cmd === "find_query_many" && (c.args.query as FindQuery).offset !== 0);
+  expect(pagesAsked()).toHaveLength(0);
+  // Scrolling far down asks for the page there, and draws its rows.
+  const box2 = screen.getByTestId("find-results");
+  box2.scrollTop = 2_000 * 30;
+  fireEvent.scroll(box2);
+  await waitFor(() => expect(screen.getByText("app-02000.log")).toBeInTheDocument());
+  // The page there, and the one just above it for the rows drawn beyond the view.
+  expect(pagesAsked().map((c) => (c.args.query as FindQuery).offset)).toEqual([1_000, 2_000]);
+  expect(screen.queryByText("app-00000.log")).toBeNull();
+  // End goes to the last match, loading its page.
+  const row = screen.getAllByTestId("find-hit")[0] as HTMLElement;
+  row.focus();
+  await user.keyboard("{End}");
+  await waitFor(() => expect(screen.getByText("app-02499.log").closest("button")).toHaveFocus());
+});
+
+test("all matches can be ticked and retrieved without listing them", async () => {
+  const user = userEvent.setup();
+  const b = backend(bigLogs);
+  const box = await openList(user);
+  await user.type(box, "*.log{Enter}nothing.txt");
+  await waitFor(() => expect(screen.getAllByTestId("find-hit").length).toBeGreaterThan(0));
+  await user.click(screen.getByTestId("find-select-all"));
+  expect(screen.getByTestId("find-tick-all")).toHaveTextContent("All 1,000 matches loaded so far are ticked.");
+  await user.click(screen.getByTestId("find-tick-all-button"));
+  expect(screen.getByTestId("find-tick-all")).toHaveTextContent("All 2,500 matches are ticked");
+  expect(screen.getByTestId("find-selection")).toHaveTextContent("2,500 selected");
+  expect(screen.getByTestId("find-selection")).toHaveTextContent("from 2 archives");
+  await user.click(screen.getByTestId("find-retrieve"));
+  const dialog = await screen.findByTestId("find-retrieve-dialog");
+  expect(within(dialog).getByTestId("find-retrieve-what")).toHaveTextContent("Matches: 2,500 · From archives: 2");
+  await user.click(within(dialog).getByTestId("find-retrieve-choose"));
+  await within(dialog).findByText("/out/found");
+  await user.click(within(dialog).getByTestId("find-retrieve-ok"));
+  await waitFor(() => expect(b.count("start_job")).toBe(1));
+  expect(b.last("start_job")?.request).toEqual({
+    kind: "retrieve_found",
+    run: 1,
+    items: [],
+    all: { terms: ["*.log", "nothing.txt"], match_case: false, whole_name: false, entries: "all" },
+    layout: "per_archive",
+    on_conflict: "add_new",
+  });
+});
+
+test("unticking one row after ticking all leaves the other loaded rows ticked", async () => {
+  const user = userEvent.setup();
+  backend(bigLogs);
+  const box = await openList(user);
+  await user.type(box, "*.log{Enter}nothing.txt");
+  await waitFor(() => expect(screen.getAllByTestId("find-hit").length).toBeGreaterThan(0));
+  await user.click(screen.getByTestId("find-select-all"));
+  await user.click(screen.getByTestId("find-tick-all-button"));
+  await user.click(screen.getAllByTestId("find-hit-check")[0] as HTMLElement);
+  expect(screen.getByTestId("find-selection")).toHaveTextContent("999 selected");
+  expect(screen.queryByTestId("find-tick-all")).toBeNull();
 });
