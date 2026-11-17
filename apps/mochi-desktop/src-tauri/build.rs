@@ -93,6 +93,8 @@ fn main() {
         "find_start",
         "find_cancel",
         "find_query",
+        "find_query_many",
+        "find_choose_retrieve_folder",
         "find_open_hit",
         "find_show_folder",
         "window_minimize",

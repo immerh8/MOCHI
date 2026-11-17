@@ -5,6 +5,7 @@ import type { ExportReportView } from "./ExportReportView";
 import type { ExtractReport } from "./ExtractReport";
 import type { ForeignTestReport } from "./ForeignTestReport";
 import type { RekeyReport } from "./RekeyReport";
+import type { RetrieveReportView } from "./RetrieveReportView";
 import type { ScanReportView } from "./ScanReportView";
 import type { SearchResultView } from "./SearchResultView";
 
@@ -44,4 +45,8 @@ export?: ExportReportView,
 /**
  * Set by the virus scan job.
  */
-scan?: ScanReportView, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };
+scan?: ScanReportView, 
+/**
+ * Set by MOCHI Find's retrieve job (B.2.21).
+ */
+retrieve?: RetrieveReportView, } | { "status": "cancelled" } | { "status": "failed", code: string, message: string, } | { "status": "aborted", message: string, };

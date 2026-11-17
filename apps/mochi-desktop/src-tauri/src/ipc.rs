@@ -172,6 +172,18 @@ pub enum JobRequest {
         program: String,
         arguments: String,
     },
+    /// MOCHI Find (spec Annex B.2.21): extract found entries of the window's
+    /// latest scan `run`, from every archive they came from, into the folder
+    /// the user chose (`find_choose_retrieve_folder`). Each item is checked
+    /// against the names the scan read, and an archive that changed since is
+    /// left alone. `on_conflict` is `add_new` or `replace`. The webview names
+    /// no path.
+    RetrieveFound {
+        run: u32,
+        items: Vec<crate::retrieve::FoundItem>,
+        layout: crate::retrieve::RetrieveLayout,
+        on_conflict: ConflictChoice,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -239,6 +251,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         scan: Option<Box<crate::scan::ScanReportView>>,
+        /// Set by MOCHI Find's retrieve job (B.2.21).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        retrieve: Option<Box<crate::retrieve::RetrieveReportView>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,

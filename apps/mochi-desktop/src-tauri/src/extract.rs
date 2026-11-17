@@ -620,6 +620,7 @@ fn run_job(
         rekey: None,
         export: None,
         scan: None,
+        retrieve: None,
     })
 }
 
@@ -1243,6 +1244,7 @@ mod tests {
             checks: Arc::default(),
             updates: Arc::default(),
             after_extract: None,
+            finder: None,
         }))
     }
 

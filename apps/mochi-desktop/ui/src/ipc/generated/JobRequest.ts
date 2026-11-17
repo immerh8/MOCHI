@@ -4,6 +4,8 @@ import type { CheckLevel } from "./CheckLevel";
 import type { CompressionPreset } from "./CompressionPreset";
 import type { ConflictChoice } from "./ConflictChoice";
 import type { EntryKindView } from "./EntryKindView";
+import type { FoundItem } from "./FoundItem";
+import type { RetrieveLayout } from "./RetrieveLayout";
 import type { SearchScopeChoice } from "./SearchScopeChoice";
 import type { Secret } from "./Secret";
 
@@ -82,4 +84,4 @@ keys: Array<string>, on_conflict: ConflictChoice, } | { "kind": "scan_archive", 
 /**
  * The scanner's full path, as the user chose or typed it.
  */
-program: string, arguments: string, };
+program: string, arguments: string, } | { "kind": "retrieve_found", run: number, items: Array<FoundItem>, layout: RetrieveLayout, on_conflict: ConflictChoice, };

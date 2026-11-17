@@ -27,6 +27,7 @@ const hit = (archive: number, path: string, over: Partial<FindHit> = {}): FindHi
   key: hex(path),
   kind: "file",
   size: "1536",
+  terms: [0],
   ...over,
 });
 
@@ -46,6 +47,7 @@ const coverage = (over: Partial<FindCoverageView> = {}): FindCoverageView => ({
   skipped: [],
   names_searched: 40,
   scopes: ["/data"],
+  subfolders: true,
   failure: null,
   content_not_searched: true,
   ...over,
@@ -85,7 +87,7 @@ function backend(setup: Setup = {}) {
         return true;
       case "find_query": {
         const text = String(a.text);
-        return setup.answer ? setup.answer(text) : { hits: [], total_hits: 0, coverage: coverage() };
+        return setup.answer ? setup.answer(text) : { hits: [], total_hits: 0, terms: [], coverage: coverage() };
       }
       case "find_show_folder":
         return null;
@@ -139,7 +141,7 @@ test("nothing is asked of Rust until Find is shown", async () => {
 test("adding folders asks Rust's dialog and scans; the scan's events show progress, then the end", async () => {
   const user = userEvent.setup();
   const b = backend({
-    answer: () => ({ hits: [], total_hits: 0, coverage: coverage({ archives_searched: 3, names_searched: 40 }) }),
+    answer: () => ({ hits: [], total_hits: 0, terms: [], coverage: coverage({ archives_searched: 3, names_searched: 40 }) }),
   });
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
   await user.click(screen.getByTestId("find-add-folders"));
@@ -192,7 +194,7 @@ test("typing asks Rust and lists the matches; archive-supplied names are text on
   const b = backend({
     scopes: [scope(0, "/data")],
     answer: (text) =>
-      text === "" ? { hits: [], total_hits: 0, coverage: coverage() } : { hits, total_hits: 3, coverage: coverage() },
+      text === "" ? { hits: [], total_hits: 0, terms: [], coverage: coverage() } : { hits, total_hits: 3, terms: [], coverage: coverage() },
   });
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
   await screen.findAllByTestId("find-scope");
@@ -225,8 +227,8 @@ test("an escaped name says so, and a long list says how many are shown", async (
     scopes: [scope(0, "/data")],
     answer: (text) =>
       text === ""
-        ? { hits: [], total_hits: 0, coverage: coverage() }
-        : { hits: [hit(0, "a\\u{202e}b", { path: { text: "a\\u{202e}b", verbatim: false } })], total_hits: 4_321, coverage: coverage() },
+        ? { hits: [], total_hits: 0, terms: [], coverage: coverage() }
+        : { hits: [hit(0, "a\\u{202e}b", { path: { text: "a\\u{202e}b", verbatim: false } })], total_hits: 4_321, terms: [], coverage: coverage() },
   });
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
   await screen.findAllByTestId("find-scope");
@@ -256,7 +258,7 @@ test("zero matches with archives that could not be searched is incomplete, never
   });
   backend({
     scopes: [scope(0, "/data")],
-    answer: (text) => ({ hits: [], total_hits: 0, coverage: text === "" ? coverage() : incomplete }),
+    answer: (text) => ({ hits: [], total_hits: 0, terms: [], coverage: text === "" ? coverage() : incomplete }),
   });
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
   await screen.findAllByTestId("find-scope");
@@ -284,6 +286,7 @@ test("one archive that could not be searched, and the other reasons, are each sa
     answer: (text) => ({
       hits: [],
       total_hits: 0,
+      terms: [],
       coverage:
         text === ""
           ? coverage()
@@ -320,7 +323,7 @@ test("only a finished scan with nothing left out may say No matches", async () =
   const user = userEvent.setup();
   backend({
     scopes: [scope(0, "/data")],
-    answer: () => ({ hits: [], total_hits: 0, coverage: coverage() }),
+    answer: () => ({ hits: [], total_hits: 0, terms: [], coverage: coverage() }),
   });
   render(<Finder active launchToken={0} onOpen={() => undefined} />);
   await screen.findAllByTestId("find-scope");
@@ -338,6 +341,7 @@ test("a scan that failed is incomplete and says why", async () => {
     answer: (text) => ({
       hits: [],
       total_hits: 0,
+      terms: [],
       coverage: text === "" ? coverage() : coverage({ complete: false, state: "failed", failure: "disk went away" }),
     }),
   });
@@ -357,8 +361,8 @@ test("Enter and a double click open the hit; the menu opens the folder and copie
     scopes: [scope(0, "/data")],
     answer: (text) =>
       text === ""
-        ? { hits: [], total_hits: 0, coverage: coverage() }
-        : { hits: [hit(0, "a/one.txt"), hit(1, "b/two.txt")], total_hits: 2, coverage: coverage() },
+        ? { hits: [], total_hits: 0, terms: [], coverage: coverage() }
+        : { hits: [hit(0, "a/one.txt"), hit(1, "b/two.txt")], total_hits: 2, terms: [], coverage: coverage() },
   });
   render(<Finder active launchToken={0} onOpen={onOpen} />);
   await screen.findAllByTestId("find-scope");
@@ -445,8 +449,8 @@ function windowBackend() {
         return 1;
       case "find_query":
         return a.text === ""
-          ? { hits: [], total_hits: 0, coverage: coverage() }
-          : { hits: [hit(0, "music/albums/song.mp3")], total_hits: 1, coverage: coverage() };
+          ? { hits: [], total_hits: 0, terms: [], coverage: coverage() }
+          : { hits: [hit(0, "music/albums/song.mp3")], total_hits: 1, terms: [], coverage: coverage() };
       case "find_open_hit":
         // Rust opens the archive and tells the window which entry to show (a launch event).
         setTimeout(() => {

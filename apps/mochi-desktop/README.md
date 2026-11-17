@@ -334,6 +334,18 @@ chosen folders. It reads names only, never file content. Code: `src-tauri/src/fi
 * **Query.** A substring (case-insensitive: Unicode lower-casing for valid UTF-8, ASCII for other bytes),
   or a glob if it has `*` or `?` (the whole file name); text with `/` is matched against the whole path.
   At most 1,000 hits cross IPC; the rest are counted.
+* **Many names, options, retrieve (spec Annex B.2.21, D31).** *A list of names* takes a pasted or typed
+  list (split by line breaks, commas, semicolons, tabs, or a chosen one; quotes and repeats dropped;
+  at most 1,000) and asks `find_query_many` once (`mochi_core::find::TermSet`): every hit says which
+  names it matched and every name its count, so the window shows "4 of 6 names found" and the names
+  not found ("not found in what was searched" while the search is incomplete). Options: *Match case*,
+  *Whole name only*, *Show* files/folders, and *Search subfolders* (a scan option; off scans only the
+  chosen folders and rescans). One name with the default options still goes through `find_query`, the
+  same query as `mochi find`. Matches are ticked and **retrieved** by the job `retrieve_found`
+  (`src-tauri/src/retrieve.rs`): the webview names (scan, archive position, key); Rust checks each
+  against the scan and the archive's stamp, opens each archive read-only and extracts through the
+  restore engine into a new folder per archive (or all into the chosen folder), adding only new files
+  or replacing (to the Recycle Bin / Trash). Choices are remembered in `localStorage` only.
 * **Coverage (§23.3 #8).** Every result carries the scan's coverage. `complete` is true only if the scan
   finished, every archive found was searched, no folder was unreadable, no link was left unfollowed and no
   limit was hit. Encrypted archives (Find never has a passphrase), damaged or unreadable ones, files that
