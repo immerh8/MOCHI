@@ -4,7 +4,7 @@
 //! representations from their serialized, hashed bytes and checks that each
 //! one's authoritative state equals the source. A mismatch fails the commit:
 //! no new head, the previous head stays valid, and the writer is not
-//! poisoned. Plan: `docs/t16-t17-t15-plan.md` section 5.
+//! poisoned.
 
 use mochi_core::commit::Metadata;
 use mochi_core::damage::{assess_damage, Effect, ObjectRole};

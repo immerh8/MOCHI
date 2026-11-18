@@ -1,4 +1,4 @@
-//! C14 end-to-end tests for `mochi health` (next-work-plan K5), run
+//! C14 end-to-end tests for `mochi health` (concession K5), run
 //! in-process through `mochi_cli::run` against the real filesystem.
 //!
 //! The rules of the assessment itself (every status transition, the age

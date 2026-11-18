@@ -1,4 +1,4 @@
-"""The ``mochi-interop-summary-v1`` document (docs/ratification-core-plan.md, W17)."""
+"""The ``mochi-interop-summary-v1`` document (the W17 task text, interop/pyverify/W17-task.md)."""
 from __future__ import annotations
 
 import json

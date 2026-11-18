@@ -1,5 +1,5 @@
 //! A faithful, read-only view of a catalog's tables, for inspection tools
-//! (`mochi dump-index`, plan C14 / next-work-plan K6).
+//! (`mochi dump-index`, plan C14 / concession K6).
 //!
 //! Table names come only from `sqlite_schema` of the catalog itself, never
 //! from the caller: a requested name that is not in that list is

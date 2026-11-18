@@ -1,7 +1,7 @@
 //! The built commands (plan C14). Each is a thin adapter: parse, call
 //! `mochi-core`, render a typed result as text or JSON, return the exit
 //! code (spec §23.2). Rules the CLI adds on top of the core are listed in
-//! `docs/c14-cli.md`.
+//! `docs/cli.md`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -790,7 +790,7 @@ fn dump_value_text(v: &DumpValue) -> String {
     }
 }
 
-/// `mochi dump-index` (plan C14; next-work-plan K6): the catalog of the
+/// `mochi dump-index` (plan C14, concession K6): the catalog of the
 /// opened commit, hash-verified as every open is, dumped table by table.
 /// Read-only; table names come only from the catalog's own schema.
 pub fn dump_index(env: &mut Env<'_>, a: &DumpIndexArgs) -> Result<u8> {

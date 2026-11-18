@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mochi.invalid/schemas/json/health-evidence-v1.schema.json",
   "title": "MOCHI health evidence record, schema 1",
-  "description": "One line of the evidence log `<state dir>/evidence/<archive id>.jsonl` (mochi_core::health::EvidenceRecord; docs/c14-cli.md rule 13), appended by verify, fsck, restore-test, and a complete repair apply, and read by `mochi health`. Each line is one JSON object. Frozen with R7 (gate G15); a change is a new schema number.",
+  "description": "One line of the evidence log `<state dir>/evidence/<archive id>.jsonl` (mochi_core::health::EvidenceRecord; docs/cli.md rule 13), appended by verify, fsck, restore-test, and a complete repair apply, and read by `mochi health`. Each line is one JSON object. Frozen with R7 (gate G15); a change is a new schema number.",
   "type": "object",
   "additionalProperties": false,
   "required": [

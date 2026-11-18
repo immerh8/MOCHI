@@ -1,5 +1,5 @@
 //! Drift test for the draft ratification artifacts R1, R2, R4, R6, and R7
-//! (`docs/ratification/`, plan §6, next-work-plan W8).
+//! (`docs/ratification/`, plan §6).
 //!
 //! The drafts are written from the code. Every table they mark *(checked)* is
 //! parsed here and compared with the code it describes, so a change to the

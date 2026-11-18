@@ -2,7 +2,7 @@
 # C10 interop (spec 7.2, Annex B.2.9 D19 rule 10): a TAR-compatible archive,
 # decoded by the reference Zstandard CLI and extracted by independent tar
 # implementations. The tools and versions this runs are the only ones the
-# compatibility claim in docs/c10-tar-compat.md names.
+# compatibility claim in docs/dev/tar-compatible-profile.md names.
 #
 #   ci/tar-interop.sh MOCHI ZSTD GNU_TAR BSD_TAR
 #
@@ -81,7 +81,7 @@ fi
 if [ "$BSD_TAR" != - ]; then
   echo "== bsdtar"
   # libarchive stops at the first end-of-archive marker unless told to read
-  # concatenated archives (docs/c10-tar-compat.md).
+  # concatenated archives (docs/dev/tar-compatible-profile.md).
   n=$("$ZSTD" -dc a.mochi | "$BSD_TAR" -t --options read_concatenated_archives -f - | grep -c .)
   test "$n" -eq 13 || { echo "bsdtar listed $n members, expected 13"; exit 1; }
   mkdir out-bsd

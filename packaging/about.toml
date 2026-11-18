@@ -22,7 +22,7 @@ accepted = [
     "MIT-0",
     # MPL-2.0 is file-level copyleft; shipping the crates unmodified is
     # compatible with the MIT-licensed project. Present in Tauri's dependency tree.
-    # Owner to confirm (docs/packaging.md "Open question").
+    # Owner to confirm (docs/dev/packaging.md "Open question").
     "MPL-2.0",
 ]
 

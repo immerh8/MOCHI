@@ -1,10 +1,10 @@
 name: installer-smoke
 
-# Release checklist, the part that needs no human eyes (docs/release-runbook.md
-# "Automated"; audit F10 in docs/audit-gate1.md). Manual only: it installs the
+# Release checklist, the part that needs no human eyes (docs/dev/release-runbook.md
+# "Automated"; gate-1 audit finding F10). Manual only: it installs the
 # CI-built installers in Windows 11 and Windows 10 22H2 client VMs (Microsoft
 # evaluation media, QEMU/KVM on a GitHub-hosted runner; the harness is the G6
-# one, docs/g6-windows-crash-replay.md) and in the two Ubuntu LTS releases.
+# one, docs/dev/windows-crash-replay.md) and in the two Ubuntu LTS releases.
 #
 #   gh workflow run installer-smoke.yml --ref <branch>
 #   gh workflow run installer-smoke.yml -f ci_run_id=<run of ci.yml whose `package` jobs built the installers>
@@ -25,7 +25,7 @@ on:
         required: false
         default: ""
       windows_10:
-        description: "Also run Windows 10 22H2 (evaluation ISO from Microsoft's download link; see docs/g6-windows-crash-replay.md)"
+        description: "Also run Windows 10 22H2 (evaluation ISO from Microsoft's download link; see docs/dev/windows-crash-replay.md)"
         type: boolean
         default: true
       remove_webview2:

@@ -19,7 +19,7 @@ The format is **ratified at 1.0** (the flip, W20, 2026-10-15; spec B.2.14). The 
 
 1. `docs/spec.md` — the specification. Normative text wins over everything below.
 2. `docs/ratification/` — frozen artifacts (frame registry, DDL, serialization, vectors) once they exist. Where one exists, it is more precise than the spec and wins for its topic.
-3. `docs/implementation-plan.md` — phases, scope, and Definition of Done.
+3. `docs/dev/decisions.md` — the product decision log (O1–O32), load-bearing design decisions, and the Definition of Done.
 4. This file.
 
 Older documents (v1.2 spec, the unified v1.2 draft, the v1.2 plan) are **superseded**. Do not implement from them. Spec §29.1 lists v1.2 claims that are known to be wrong.
@@ -28,7 +28,7 @@ If the spec does not answer a question, **do not invent an answer.** Stop, state
 
 ## Commands
 
-Live today (plan phases C1–C5 complete; C6, C7, C9, C10, C11, C12 (R6 frozen), C13 discovery, C8 through §22 steps 1–7, and C14 implemented, `docs/c14-cli.md`; W20 `migrate`):
+Every 1.0 command and the desktop app are built; the CLI reference is `docs/cli.md`:
 
 ```bash
 cargo fmt --all --check
@@ -97,7 +97,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 - The writer's default profile is **not** TAR-compatible (spec D4); TAR compatibility is an explicit, per-archive choice at creation. In that profile (Annex B.2.9 D19) stream framing lives in *stream-only chunks* (ordinary data objects no extent references): never add a frame kind or a catalog field for it, never let GC treat them as collectable (`stream_framing`), and write a rewrite through the writer so framing is regenerated. Claims about generic tools name only what `ci/tar-interop.sh` ran.
 - New dependencies must be MIT/Apache-2.0-compatible (the project is MIT only, plan O23; Apache-2.0 dependencies stay fine). The one exception is UnRAR, confined to `mochi-foreign`, with its notice in `THIRD-PARTY-NOTICES.md`.
 - The catalog is in-memory SQLite; images move as bytes through `Storage` (O25). Never open SQLite on a file, `ATTACH`, or `VACUUM INTO` in `mochi-core` (`ci/check-invariants.sh` rule 8).
-- **Encrypted profile (D20, `docs/c11-encrypted.md`).** Every nonce is fresh from the OS CSPRNG: never a counter, never derived from content or position. A sealed object's associated data binds its archive ID, so a rewrite re-seals under a new data key and **needs the passphrase**; never copy a sealed frame between archives. Secrets (passphrases, the data key, the KEK) live in `zeroize` types, are never `Debug`-printed, logged, or put in an error message, and a passphrase is **never a command-line argument** (file, prompt, or the `--passphrase-env-for-automation` switch only). A command that needs the key opens it before it creates anything. A wrong passphrase is `KEY_UNAVAILABLE` (operational, exit 3), never a verification result; a tag failure on a hash-verified object is `CONTENT_INTEGRITY_FAILED`. Keyless `verify` reports `UNKNOWN` for everything it did not check and is never `PASS` overall. Removing a key envelope is **not revocation**: say so, and never write "revoked" or "secure". There is no KDF-cost knob in the shipped CLI.
+- **Encrypted profile (D20, `docs/dev/encrypted-profile.md`).** Every nonce is fresh from the OS CSPRNG: never a counter, never derived from content or position. A sealed object's associated data binds its archive ID, so a rewrite re-seals under a new data key and **needs the passphrase**; never copy a sealed frame between archives. Secrets (passphrases, the data key, the KEK) live in `zeroize` types, are never `Debug`-printed, logged, or put in an error message, and a passphrase is **never a command-line argument** (file, prompt, or the `--passphrase-env-for-automation` switch only). A command that needs the key opens it before it creates anything. A wrong passphrase is `KEY_UNAVAILABLE` (operational, exit 3), never a verification result; a tag failure on a hash-verified object is `CONTENT_INTEGRITY_FAILED`. Keyless `verify` reports `UNKNOWN` for everything it did not check and is never `PASS` overall. Removing a key envelope is **not revocation**: say so, and never write "revoked" or "secure". There is no KDF-cost knob in the shipped CLI.
 - **Redundancy profile (D21, `docs/ratification/R6-erasure-coding-draft.md`).** Parity is a **repair aid, never an integrity anchor**: a rebuilt shard is used only if it hashes to its table entry, and everything that reads rebuilt bytes still checks the commit chain's hashes. Never rebuild a group whose damage exceeds its intact parity (`PARITY_CAPACITY_EXCEEDED`), and never promise more than the suite's capacity. Parity frames go **between a commit frame and its footer**, before the step-6 sync; `verify` rebuilds only in memory (`parity::HealedSource`) and `repair` writes a new archive. Group membership is self-described and checked against the commit chain (no catalog table, no manifest state). The head's own footer is unprotected: never republish a head commit from parity. Never call an archive with a recovery record "safe" or "backed up".
 - **Hash-verify a catalog image before `Catalog::open_image`.** SQLite has no page checksums; a flipped bit in a stored value yields a different, fully valid catalog.
 - Paths are byte components joined by `/`; Windows names are WTF-8 (O24). Never normalize, case-fold, or lossily convert a name that is used as identity.
@@ -146,7 +146,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 
 ## Tests required with every change
 
-- **Feature code comes with its Definition of Done test**, not just a happy path. See the plan's §8.1 table and spec §24.2.
+- **Feature code comes with its Definition of Done test**, not just a happy path. See the Definition of Done in `docs/dev/decisions.md` and spec §24.2.
 - Corruption, recovery, dedup, or encryption code → the matching fault-injection or corruption test.
 - Anything the spec makes a cost or timing claim about → a benchmark reported with the §27 decomposition (dataset, hardware, cache state, settings).
 - Parser changes → extend a fuzz target and add a golden vector.
@@ -158,7 +158,7 @@ These come from the spec. Code review rejects changes that violate them, regardl
 
 Active scope is MOCHI 1.0: Core, TAR-compatibility, Encrypted, and Redundancy profiles; the CLI commands listed in spec §23; the desktop app phases D0–D7.
 
-**Not in 1.0** unless the plan is changed first: key files and public-key recipients for encryption (1.0 is passphrase-only, spec D3), split volumes / segmented storage, the Preservation profile and inventory service, concurrent preparation / multi-writer, remote HTTP/S3 access, mount, FastCDC, signatures and Merkle proofs, SFX archives, and *writing* any non-MOCHI archive format except the four the desktop app may create (owner decision 2026-10-20, plan O31): ZIP, `.tar`, `.tar.gz`, `.tar.zst`, written by `mochi-export`, never RAR and not 7z. The CLI does not write them. If a task touches one of these, say so and point to spec Annex A before writing code. A 1.0 build must answer requests for these with `UNSUPPORTED` / exit code 4.
+**Not in 1.0** unless a decision changes it first: key files and public-key recipients for encryption (1.0 is passphrase-only, spec D3), split volumes / segmented storage, the Preservation profile and inventory service, concurrent preparation / multi-writer, remote HTTP/S3 access, mount, FastCDC, signatures and Merkle proofs, SFX archives, and *writing* any non-MOCHI archive format except the four the desktop app may create (owner decision 2026-10-20, plan O31): ZIP, `.tar`, `.tar.gz`, `.tar.zst`, written by `mochi-export`, never RAR and not 7z. The CLI does not write them. If a task touches one of these, say so and point to spec Annex A before writing code. A 1.0 build must answer requests for these with `UNSUPPORTED` / exit code 4.
 
 
 **Foreign archive formats (plan D8, O9).** The desktop app *reads* ZIP, 7z, RAR, and `.tar.gz`/`.tar`: browse, extract, test. Rules that code review enforces:
@@ -177,4 +177,4 @@ Active scope is MOCHI 1.0: Core, TAR-compatibility, Encrypted, and Redundancy pr
 - [ ] No new `unwrap`, `unsafe`, direct `std::fs` in core, or magic literals.
 - [ ] Any new Tauri permission is justified.
 - [ ] User-facing wording checked against spec §23.3.
-- [ ] Open questions discovered are recorded (spec Annex B or plan §9), not silently resolved.
+- [ ] Open questions discovered are recorded (spec Annex B or `docs/dev/decisions.md`), not silently resolved.

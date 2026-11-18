@@ -101,7 +101,7 @@ pub struct CreateArgs {
     /// Create a TAR-compatible archive (spec 7.2, Annex B.2.9 D19): every
     /// commit also writes a TAR stream, so `zstd -dc` of the file yields the
     /// commits' streams. The choice is fixed for the archive's life, turns
-    /// deduplication off, and costs space (see docs/c10-tar-compat.md).
+    /// deduplication off, and costs space (see docs/dev/tar-compatible-profile.md).
     #[arg(long, conflicts_with = "encrypted")]
     pub tar_compatible: bool,
     /// Create an Encrypted archive (spec Annex B.2.10 D20): names, content,

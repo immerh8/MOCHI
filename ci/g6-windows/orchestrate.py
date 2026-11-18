@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host side of the G6 Windows crash-replay harness (docs/g6-windows-crash-replay.md).
+"""Host side of the G6 Windows crash-replay harness (docs/dev/windows-crash-replay.md).
 
 Subcommands (driven by ci/g6-windows-crashreplay.sh, run as root on an
 ubuntu runner with /dev/kvm):
@@ -9,7 +9,7 @@ ubuntu runner with /dev/kvm):
     image               unattended install into a qcow2 image (cached by the workflow)
     run                 format, run the workload on a logged disk, replay, judge
     smoke               install the CI-built NSIS setup in the guest, check it, uninstall
-                        (docs/release-runbook.md "Automated"; no crash replay involved)
+                        (docs/dev/release-runbook.md "Automated"; no crash replay involved)
 
 Nothing here is Windows-specific logic that decides a verdict: the guest
 reports facts over COM1 and the judge is `g6_winworkload check` plus the
@@ -43,7 +43,7 @@ ISOS = {
     "windows-11": "https://go.microsoft.com/fwlink/?linkid=2382600&clcid=0x409&culture=en-us&country=us",
     # Windows 10 Enterprise 22H2 evaluation. The Evaluation Center page for it now
     # answers with a redirect to an end-of-support notice, but Microsoft's own
-    # download link still serves the ISO from Microsoft's CDN (docs/g6-windows-crash-replay.md).
+    # download link still serves the ISO from Microsoft's CDN (docs/dev/windows-crash-replay.md).
     "windows-10": "https://go.microsoft.com/fwlink/p/?LinkID=2208844&clcid=0x409&culture=en-us&country=US",
 }
 ISO_URL = ISOS["windows-11"]  # set from --os in main()
@@ -471,7 +471,7 @@ def cmd_image(a):
         raise SystemExit(f"image build failed after {INSTALL_ATTEMPTS} attempts (see evidence-image/)")
     # The installed disk is the base image as it is: compressing it (6 min) buys
     # nothing, because the image is not cached (12.2 GB archive; the repository
-    # limit is 10 GB, docs/g6-windows-crash-replay.md).
+    # limit is 10 GB, docs/dev/windows-crash-replay.md).
     os.replace(sysdisk, img / "base.qcow2")
     shutil.copy(vm.vars, img / "OVMF_VARS.fd")
     shutil.copytree(vm.tpm, img / "tpm", ignore=shutil.ignore_patterns("sock", "*.pid", "*.log", "*.out"))

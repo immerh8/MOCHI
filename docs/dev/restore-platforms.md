@@ -1,4 +1,4 @@
-# C6 restore destinations, per platform
+# Restore destinations, per platform
 
 Status 2026-10-06. Decided by the owner's delegation of the same date: "make the best call that finishes the project without opening more blockers; record concessions so they can be refined later; keep it modular enough to be worked on separately."
 

@@ -170,7 +170,7 @@ fn mochi<S: AsRef<str>>(args: &[S]) -> Out {
 }
 
 /// Run with `--json`: standard output is exactly one line holding one JSON
-/// value (docs/c14-cli.md). An error line is checked against the error
+/// value (docs/cli.md). An error line is checked against the error
 /// schema and the exit code against `exit_code_for`; `None` then.
 fn json_out<S: AsRef<str>>(args: &[S]) -> (u8, Option<Value>) {
     let mut a: Vec<String> = args.iter().map(|s| s.as_ref().to_owned()).collect();

@@ -18,7 +18,7 @@ class Convert(unittest.TestCase):
         self.assertTrue(body.endswith("&amp; <code>&lt;b&gt;x&lt;/b&gt;</code> a</p>"), body)
 
     def test_links_between_bundled_pages_only(self):
-        _, body = guide.convert("[v](verification.md#x) [r](README.md) [c](../c14-cli.md) [n](nope.md)\n")
+        _, body = guide.convert("[v](verification.md#x) [r](README.md) [c](../cli.md) [n](nope.md)\n")
         self.assertIn('href="verification.html#x"', body)
         self.assertIn('href="index.html"', body)
         self.assertEqual(len(re.findall("href=", body)), 2)

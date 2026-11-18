@@ -223,7 +223,7 @@ hits=$(grep -rnE --include='*.rs' 'write_all\([^)]*Rar!|b"Rar!' crates/mochi-for
 
 # 11. In-app updates (plan D7, T13). The webview gets none of the updater plugin's own
 #     permissions and does not import its JavaScript API: Rust makes the request and
-#     checks the signature (docs/packaging.md "Updates"). No private key material is
+#     checks the signature (docs/dev/packaging.md "Updates"). No private key material is
 #     committed. The release workflow only ever creates DRAFT releases and never pushes
 #     a tag or publishes.
 hits=$(grep -nE '"(updater:|core:)' apps/mochi-desktop/src-tauri/capabilities/*.json || true)

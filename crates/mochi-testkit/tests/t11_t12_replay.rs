@@ -3,8 +3,7 @@
 //! checkpoint policies (review decision 14), plus forged commits appended on
 //! top for the reject rows (`mochi_testkit::forge`).
 //!
-//! Rows of `docs/t11-t12-acceptance.md` covered here are named in each
-//! test's doc comment. Not here yet: the oracle property test (amendment 4),
+//! The acceptance rows covered here are named in each test's doc comment. Not here yet: the oracle property test (amendment 4),
 //! golden vectors, and the fuzz exerciser.
 
 use std::cell::RefCell;

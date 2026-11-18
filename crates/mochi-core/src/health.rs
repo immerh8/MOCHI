@@ -1,5 +1,5 @@
 //! Health from locally recorded evidence (spec §20.3, §20.4, §21, §23.2;
-//! plan C14 `health`; next-work-plan K5, delegated 2026-10-08).
+//! plan C14 `health`; concession K5, delegated 2026-10-08).
 //!
 //! `mochi health` runs no check. It summarizes what this client recorded when
 //! it last ran `verify`, `fsck`, `restore-test`, and `repair apply`, judged

@@ -1,4 +1,4 @@
-# The TAR-compatible profile (plan C10; spec §7.2, Annex B.2.9 D19)
+# The TAR-compatible profile (spec §7.2, Annex B.2.9, D19)
 
 A TAR-compatible archive is an ordinary MOCHI archive in which every commit that
 adds or replaces something also writes **one complete pax TAR stream**, so that the

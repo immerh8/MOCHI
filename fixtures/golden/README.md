@@ -308,7 +308,7 @@ to SQLite.
 succeed on it, and opening must refuse it as legacy (`UNSUPPORTED_FEATURE`,
 spec §26).
 
-**T11/T12 archive vectors** (`docs/t11-t12-acceptance.md`, "Fixtures"),
+**T11/T12 archive vectors** (the T11/T12 replay and oracle tests, `crates/mochi-testkit/tests/t11_t12_replay.rs` and `t12_oracle.rs`),
 built by `mochi_testkit::golden::c5_archive_vectors` and listed after the
 commit vectors in `c5/vectors.txt` with their expected outcome at
 `open_head`: `valid-archive-delta-segment.mochi` (checkpoint, three deltas,

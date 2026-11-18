@@ -1,4 +1,4 @@
-# Packaging the desktop app (plan D7, first slice; D6 shell integration)
+# Packaging the desktop app and shell integration
 
 Installers for the two supported platforms (decision O11): a **Windows NSIS**
 setup (per-user, WebView2 bootstrapper) and an **Ubuntu `.deb`** built on 22.04. No MSI,
@@ -58,7 +58,7 @@ is prepended.
 - `installer-smoke` (`.github/workflows/installer-smoke.yml`, **manual**, never on pull
   requests): the part of the release checklist that needs no human eyes. It installs the
   CI-built setup in real Windows 11 and Windows 10 22H2 *client* VMs and the `.deb` on
-  Ubuntu 22.04 and 24.04; see "Release checklist" below and `docs/release-runbook.md`.
+  Ubuntu 22.04 and 24.04; see "Release checklist" below and `docs/dev/release-runbook.md`.
 
 ## The `mochi` command line in the installers
 
@@ -308,7 +308,7 @@ It never publishes and never pushes a tag.
    if you like, and publish it. Publishing makes `latest.json` visible to installed apps
    (`releases/latest` is the newest *published, non-draft, non-prerelease* release).
 5. Do the release checklist below, including updating from the previous release.
-   `docs/release-runbook.md` is the step-by-step version, with the owner's notebook steps and a
+   `docs/dev/release-runbook.md` is the step-by-step version, with the owner's notebook steps and a
    throwaway **0.9.0 / 0.9.1 test release pair** for the updater check, so that no real
    version number is spent on it.
 
@@ -323,7 +323,7 @@ manifest generator.
 
 ## Release checklist (not reproducible on CI)
 
-**Run it from `docs/release-runbook.md`**: every item below is there as numbered steps
+**Run it from `docs/dev/release-runbook.md`**: every item below is there as numbered steps
 with what a pass and a fail look like and a results table, and the results go into the
 release notes and the audit F10 row. The `installer-smoke` workflow (manual) already does
 what needs no eyes in Windows 11 and Windows 10 22H2 client VMs (silent install, Start
@@ -367,7 +367,7 @@ and Windows 11 client machines check by hand:
   second time: `... (2).mochi`, the first untouched). **Fail:** a cascade, a third entry, three
   windows or archives for three files, or a label that differs from the archive's name.
 - Right-click a `.mochi` file: the two Add entries plus the flat "Open with MOCHI",
-  "Extract here" and "Extract to a new folder" (see `docs/release-runbook.md` W-06).
+  "Extract here" and "Extract to a new folder" (see `docs/dev/release-runbook.md` W-06).
 - Update with Explorer running (install 0.9.x over 0.9.y, then over the same version
   again): the installer finishes without a "file in use" prompt, the menu still works at
   once, and after signing out and in only the new `mochi-shellext-<version>.dll` remains in
@@ -421,10 +421,10 @@ read with it). Record the result in the release notes.
 - Windows Authenticode signing (decided against for 1.0), `.deb` or APT signing, and
   publishing a release without the owner's review (the workflow makes drafts only).
 - An update applied end to end on a real pair of published releases (the release checklist;
-  `docs/release-runbook.md` section 7 sets up a test pair, 0.9.0 and 0.9.1, for it).
+  `docs/dev/release-runbook.md` section 7 sets up a test pair, 0.9.0 and 0.9.1, for it).
 - Icon artwork: the bundle uses the existing `src-tauri/icons/` set (32, 128, 256 px, `.ico`); a designed icon set is a separate task.
 - Windows 11's top-level context menu and Nautilus extensions (1.x, O10). Foreign
-  formats opened from the shell are browsed (D8, T20; fixes `docs/audit-gate1.md` F1);
+  formats opened from the shell are browsed (D8, T20; fixes gate-1 audit finding F1);
   there are no foreign shell verbs (extract, add) and none is planned for 1.0.
 - The Tauri bundle itself is proved by CI (`package` on both platforms and
   `package smoke (ubuntu-24.04)`, green in main run 38551536791).

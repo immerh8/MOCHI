@@ -47,7 +47,7 @@
 //!   returns.") concerns the copy-and-delete case, which a rename within one
 //!   directory is not.
 //!
-//!   **What the evidence shows (G6b, `docs/g6-windows-crash-replay.md`, #60).**
+//!   **What the evidence shows (G6b, `docs/dev/windows-crash-replay.md`, #60).**
 //!   On NTFS (Windows 11 build 26300.9457, Windows 10 22H2 build 19045.2006,
 //!   emulated disk that honours FLUSH/FUA), the first sentence alone is *not*
 //!   enough for a same-directory rename: a `MOVEFILE_WRITE_THROUGH` rename on
@@ -1129,7 +1129,7 @@ impl StorageDir for OsDir {
 // ---- Restore destinations (plan C6) ----------------------------------------
 //
 // One implementation per supported platform, each in its own module so it
-// can be worked on separately (docs/c6-restore-platforms.md). All three
+// can be worked on separately (docs/dev/restore-platforms.md). All three
 // export `OsRestoreDir`, which implements `RestoreDir`.
 
 /// How an [`OsRestoreDir`] moves an existing file out of the way so a

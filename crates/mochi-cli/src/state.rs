@@ -17,7 +17,7 @@
 //! * Writes go to a temporary file in the same directory, then replace
 //!   `heads.json` by rename. Two clients writing at once may lose one
 //!   update (concession: the anchor is then older, never wrong; noted in
-//!   `docs/c14-cli.md`).
+//!   `docs/cli.md`).
 //! * The file is outside every archive: verification stays read-only.
 //!
 //! Beside it, `evidence/<archive id hex>.jsonl` is the **evidence log** that

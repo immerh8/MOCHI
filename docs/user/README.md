@@ -3,7 +3,7 @@
 MOCHI is an archive format and archiver. This guide is for people who use the `mochi`
 command line tool. Every statement here comes from the specification (`docs/spec.md`),
 a frozen ratification artifact (`docs/ratification/`), the CLI reference
-(`docs/c14-cli.md`), or the behaviour of the code, and each page says which.
+(`docs/cli.md`), or the behaviour of the code, and each page says which.
 
 > **A `.mochi` file is not a backup.** The format is ratified at 1.0 (spec §28). Archives
 > written by a pre-1.0 build must be converted with `mochi migrate`
@@ -52,4 +52,4 @@ and `mochi create` and `mochi append`. A new archive is a local file, not a back
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04
 on x86-64 (plan O11).
 
-Command reference, exit codes, and known concessions: [`docs/c14-cli.md`](../c14-cli.md).
+Command reference, exit codes, and known concessions: [`docs/cli.md`](../cli.md).

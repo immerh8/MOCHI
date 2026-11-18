@@ -4,7 +4,7 @@ name: g6-windows
 # crash replay of real Windows client builds (Windows 11 and Windows 10 22H2
 # Enterprise evaluation media) in QEMU/KVM VMs, the CrashMonkey / dm-log-writes
 # method. Method, limits and evidence:
-# docs/g6-windows-crash-replay.md. Counterpart of the `powercut` job in ci.yml
+# docs/dev/windows-crash-replay.md. Counterpart of the `powercut` job in ci.yml
 # (G7, Linux).
 #
 # Slow (about 45 minutes per guest OS, the OSes in parallel), so it never runs on
@@ -156,7 +156,7 @@ jobs:
   replay:
     # One runner per guest OS, in parallel. Windows 10 22H2 (plan O11) comes from
     # the evaluation ISO Microsoft's own download link still serves; see
-    # docs/g6-windows-crash-replay.md for its status.
+    # docs/dev/windows-crash-replay.md for its status.
     name: replay (${{ matrix.os }})
     needs: [plan, build-windows]
     runs-on: ubuntu-24.04

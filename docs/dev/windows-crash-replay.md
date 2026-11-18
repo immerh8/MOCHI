@@ -1,4 +1,4 @@
-# G6 on Windows without hardware: block-level crash replay (G6b)
+# Windows directory durability: block-level crash replay (gate G6)
 
 Gate G6 (spec Annex B.2.6): *documented evidence matching the guarantee to NTFS on the supported versions, plus release-checklist results. Until G6 passes, Windows reports `Unconfirmed`.* This document describes a hardware-free way to produce that evidence, and what it found.
 

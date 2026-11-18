@@ -44,4 +44,4 @@ provides:
 * a separate record of your encryption passphrases.
 
 MOCHI 1.0 does not create or track copies. `mochi repair` can use copies you give it
-(`--copy PATH`, see `docs/c14-cli.md` rule 11a), but the copies are yours to make and keep.
+(`--copy PATH`, see `docs/cli.md` rule 11a), but the copies are yours to make and keep.

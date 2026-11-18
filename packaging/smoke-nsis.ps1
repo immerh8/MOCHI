@@ -3,7 +3,7 @@
 # with the default (the foreign-format opt-in is OFF) and once with /ASSOCIATE_FOREIGN.
 # Usage: smoke-nsis.ps1 path\to\setup.exe
 # Note: Windows Server runner; client-only behaviour (WebView2 bootstrap on a machine
-# without it, Explorer's menu display and its locked-DLL behaviour on update) is on the release checklist (docs/packaging.md).
+# without it, Explorer's menu display and its locked-DLL behaviour on update) is on the release checklist (docs/dev/packaging.md).
 param([Parameter(Mandatory = $true)][string]$Setup)
 $ErrorActionPreference = "Stop"
 function Fail($m) { Write-Error "SMOKE FAIL: $m"; exit 1 }

@@ -1,6 +1,6 @@
 //! Gate G6 Windows-durability helper (spec §12.2, D13; gate G6). Runs inside
 //! the Windows guest of the block-level crash-replay harness
-//! (`ci/g6-windows-crashreplay.sh`, `docs/g6-windows-crash-replay.md`).
+//! (`ci/g6-windows-crashreplay.sh`, `docs/dev/windows-crash-replay.md`).
 //!
 //! ```text
 //! g6_winworkload workload <dir> <port|none> [--no-dir-sync]  # create archives, append commits, ack each

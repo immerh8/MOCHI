@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Gate G6 Windows durability: block-level crash replay of a real Windows client
-# build in a QEMU/KVM VM (docs/g6-windows-crash-replay.md). The Linux power-cut
+# build in a QEMU/KVM VM (docs/dev/windows-crash-replay.md). The Linux power-cut
 # test ci/g7-powercut.sh is the model; this is its Windows counterpart.
 #
 # Runs on an ubuntu-24.04 GitHub-hosted runner (KVM available to public repos).
@@ -17,7 +17,7 @@
 #              format, workload on a dm-log-writes disk, replay, judge
 #   smoke      <label> <setup.exe> [orchestrate.py smoke options]
 #              install the CI-built NSIS setup in the image, check it, uninstall
-#              (docs/release-runbook.md "Automated"; not a crash-replay run)
+#              (docs/dev/release-runbook.md "Automated"; not a crash-replay run)
 #
 # Environment: G6_SKIP_LOGWRITES=1 makes `setup` skip dm-log-writes and replay-log (smoke only),
 # G6_WORK (default /var/tmp/g6), G6_EVIDENCE (default $G6_WORK/evidence),
