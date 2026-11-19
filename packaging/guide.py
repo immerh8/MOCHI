@@ -21,6 +21,7 @@ PAGES = [
     "README.md",
     "not-a-backup.md",
     "getting-started.md",
+    "how-it-works.md",
     "encrypted.md",
     "verification.md",
     "tar-compatible.md",

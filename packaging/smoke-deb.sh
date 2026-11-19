@@ -44,7 +44,7 @@ dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
 dpkg-deb --extract "$deb" "$dir"
 grep -q "Rust crates:" "$dir/$lic" && grep -q "npm packages (UI bundle):" "$dir/$lic" \
   && grep -q "MIT License" "$dir/$lic" || fail "license list lacks an expected section"
-for page in index not-a-backup getting-started encrypted verification tar-compatible recovery-record experimental; do
+for page in index not-a-backup getting-started how-it-works encrypted verification tar-compatible recovery-record experimental; do
   [ -s "$dir/usr/lib/MOCHI/guide/$page.html" ] || fail "user guide page $page.html missing or empty"
 done
 grep -q "This guide is written for the mochi command line." "$dir/$guide" || fail "user guide lacks its command-line scope banner"
