@@ -17,7 +17,7 @@ Windows and Ubuntu, a `mochi` command-line tool, and the Rust library both are b
   used, and a file is only written out after its content hash matches. `verify`
   reports each health dimension separately and never calls a check that did not run
   a pass.
-- **Safe publication.** A commit becomes visible only after it is completely on disk;
+- **All-or-nothing saving.** A commit becomes visible only after it is completely on disk;
   an interrupted write never replaces the last good version.
 - **Optional profiles, chosen at creation:**
   - *Encrypted* (XChaCha20-Poly1305, passphrase-only): names, sizes and content are sealed.
@@ -27,6 +27,8 @@ Windows and Ubuntu, a `mochi` command-line tool, and the Rust library both are b
   open ZIP, 7z, RAR and `.tar`/`.tar.gz`/`.tar.zst` read-only; write ZIP and TAR
   archives; search file names across every archive under a folder and retrieve the
   matches. Explorer and file-manager integration on Windows and Ubuntu.
+
+New to MOCHI? Read [How MOCHI works](docs/user/how-it-works.md).
 
 The format is **ratified at version 1.0** ([specification](docs/spec.md)).
 Archives written by pre-1.0 builds are converted with `mochi migrate`.
@@ -61,6 +63,7 @@ Every command, option and exit code: [`docs/cli.md`](docs/cli.md).
 
 | | |
 |---|---|
+| [How MOCHI works](docs/user/how-it-works.md) | Start here: versions, chunks and fingerprints, how saving works, checks and repair, in plain words |
 | [User guide](docs/user/README.md) | Getting started, encryption, what the checks prove, recovery records, TAR compatibility |
 | [Command-line reference](docs/cli.md) | Commands, exit codes, JSON output |
 | [Specification](docs/spec.md) | The `.mochi` format (normative), with the frozen [ratification artifacts](docs/ratification/README.md) and [schemas](docs/schemas/) |

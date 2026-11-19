@@ -128,7 +128,7 @@ function Run-Cycle([string[]]$SetupArgs, [bool]$ExpectForeign, [string]$StartPat
   # "guide/index.html" under the install directory), with every page, offline and static.
   $guideIndex = Join-Path $dir "guide\index.html"
   if (-not (Test-Path $guideIndex)) { Fail "user guide missing at $guideIndex" }
-  foreach ($page in "index", "not-a-backup", "getting-started", "encrypted", "verification", "tar-compatible", "recovery-record", "experimental") {
+  foreach ($page in "index", "not-a-backup", "getting-started", "how-it-works", "encrypted", "verification", "tar-compatible", "recovery-record", "experimental") {
     $f = Join-Path $dir "guide\$page.html"
     if (-not (Test-Path $f) -or (Get-Item $f).Length -eq 0) { Fail "user guide page $page.html missing or empty" }
   }

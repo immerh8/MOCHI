@@ -13,8 +13,9 @@ Read these first, in this order:
 
 | Page | What it tells you |
 |---|---|
-| [A `.mochi` file is not a backup](not-a-backup.md) | What an archive is and is not, and what to do about copies |
+| [A .mochi file is not a backup](not-a-backup.md) | What an archive is and is not, and what to do about copies |
 | [Getting started](getting-started.md) | The commands that exist today, each with an example that was run |
+| [How MOCHI works](how-it-works.md) | What is inside a `.mochi` file, how versions are saved safely, how every read is checked, and what repair does, in plain words |
 | [Encrypted archives](encrypted.md) | What is visible without the key, what stops working, lost passphrases, removing a passphrase, the equal-content leak |
 | [What the checks prove](verification.md) | `verify`, `fsck`, `restore-test`, `health`, and the status values |
 | [TAR-compatible archives](tar-compatible.md) | The tested commands and tools, and why generic tools show history |
@@ -52,4 +53,4 @@ and `mochi create` and `mochi append`. A new archive is a local file, not a back
 Platforms: the desktop application targets Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04
 on x86-64 (plan O11).
 
-Command reference, exit codes, and known concessions: [`docs/cli.md`](../cli.md).
+Command reference, exit codes, and known concessions: [docs/cli.md](../cli.md).
