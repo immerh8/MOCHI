@@ -75,7 +75,7 @@ Network off: the Wi-Fi flyout → Wi-Fi off, or Airplane mode; unplug the cable.
 
 ---
 
-## 2. The test release pair for the updater (T13)
+## 2. The test release pair for the updater
 
 The updater test needs two published releases. To spend no real version, publish a throwaway
 pair **0.9.0 then 0.9.1** as ordinary releases through the draft-only `release` workflow
@@ -196,7 +196,7 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 2. Settings → System → Display → **Scale 200 %**, window about 1280×720. **Pass:** no **horizontal** scroll bar for the page; panels reflow to one column. **Fail:** sideways scrolling or cut-off controls.
 3. Put the theme and scale back.
 
-### W-09a. The start screen, drag and drop, and the simple Create and Extract flows (D10)
+### W-09a. The start screen, drag and drop, and the simple Create and Extract flows
 
 WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
 
@@ -236,7 +236,7 @@ WebDriver cannot press the mouse for the operating system's move or resize of a 
 
 ---
 
-## 4. The updater (T13) on this notebook, then final cleanup
+## 4. The updater on this notebook, then final cleanup
 
 Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** now (2.3). Then:
 

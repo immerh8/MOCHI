@@ -1,7 +1,7 @@
 # Recovery record (Redundancy profile)
 
 Sources: spec §7.4, §15.1, §15.2, §22 step 6; `docs/ratification/R6-erasure-coding-draft.md`
-(frozen 2026-10-12); `docs/cli.md`; `docs/dev/benchmarks/c12-parity.md`.
+(frozen 2026-10-12); `docs/cli.md`; `docs/dev/performance.md#parity`.
 
 A recovery record is **extra bytes that can repair bounded damage to the same file**. It
 is a repair aid. It is not a second copy, and an archive that carries one is not

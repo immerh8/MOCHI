@@ -1,6 +1,6 @@
 # Restore destinations, per platform
 
-Status 2026-10-06. Decided by the owner's delegation of the same date: "make the best call that finishes the project without opening more blockers; record concessions so they can be refined later; keep it modular enough to be worked on separately."
+What restoring files guarantees on each platform, and the known limits.
 
 ## Where the code lives
 
@@ -50,7 +50,3 @@ None of these allows an overwrite, a write through a link, or a write outside th
 - **L1.** Insensitive detection relies on a probe file in the root, created and removed. CI job `casefold` proves it on ext4 casefold.
 - **L2.** Unicode-normalization-only collisions are not foreseen by the preflight. Exclusive creation still catches them.
 - **L3.** A root other users can modify is refused, not worked around.
-
-## Suggested separate work item
-
-`mochi-winfs` (name tentative): a small crate with audited `unsafe` (`windows-sys`, MIT/Apache-2.0) offering handle-relative create, open, rename and attribute calls, file identity, and a DACL check. `restore_windows.rs` would switch to it and close W1–W4 and W6. Like `mochi-foreign`, it is isolated from `mochi-core`'s `forbid(unsafe_code)`. Only `restore_windows.rs` and this document change.

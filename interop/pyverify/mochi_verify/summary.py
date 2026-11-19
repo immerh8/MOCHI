@@ -1,4 +1,4 @@
-"""The ``mochi-interop-summary-v1`` document (the W17 task text, interop/pyverify/W17-task.md)."""
+"""The ``mochi-interop-summary-v1`` document (the summary format of the R9 interoperability run)."""
 from __future__ import annotations
 
 import json

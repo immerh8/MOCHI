@@ -28,9 +28,9 @@ independence claim.
 * `docs/ratification/R5-vectors/vectors.json` and `R6-vectors/vectors.json`, as test data.
 * `fixtures/golden/`: `README.md`, every `vectors.txt` and `descriptor-vectors.txt`, and the
   fixture files themselves, as test data.
-* Section W17 of the ratification plan, then `docs/ratification-core-plan.md` (lines 617 to 690; that plan is
-  retired, and the section is kept verbatim in `W17-task.md`). Also, one `grep -n` of that file for the
-  headings of W16 to W20 printed those five heading lines (titles only).
+* The task description (section W17 of the ratification plan, a document since retired; it set the
+  scope below and the summary format). Also, one `grep -n` of that plan for the headings of W16 to W20
+  printed those five heading lines (titles only).
 
 **Not read:** any file under `crates/` or `apps/`; any `gen_vectors.py`; any other `docs/*.md`;
 `docs/ratification/README.md`; `ci/` scripts; the Rust sources of the fixtures' writers.

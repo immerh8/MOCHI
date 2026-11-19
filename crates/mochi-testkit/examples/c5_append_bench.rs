@@ -31,7 +31,7 @@ use mochi_testkit::archive::path;
 use mochi_testkit::{deterministic_bytes, SeqIds};
 
 const SIZES: &[u64] = &[1, 10, 100, 1000];
-/// The recorded tables (`docs/dev/benchmarks/c5-append.md`) measure a
+/// The recorded tables (`docs/dev/performance.md#append`) measure a
 /// checkpoint on every commit, so every session selects it explicitly; the
 /// production writer uses the T14 trigger, which T32 measures.
 const EVERY: CheckpointPolicy = CheckpointPolicy::EveryCommit;

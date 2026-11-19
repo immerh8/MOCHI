@@ -90,7 +90,7 @@ a terminal. Its dependencies are in the license list (`packaging/licenses.py`, `
 - **Ubuntu (deb)**: `/usr/bin/mochi` (Tauri `externalBin`), already on PATH; removing the
   package removes it.
 
-## Shell integration (plan D6, decision O10)
+## Shell integration (decision O10)
 
 Defined in `tauri.conf.json` (`bundle.fileAssociations`, the NSIS `installerHooks`, the
 `.deb` `desktopTemplate` and `files`), `packaging/nsis/hooks.nsh`, and
@@ -255,7 +255,7 @@ public key built into it before installing anything, and refuses an update that 
 (A first install from a download is not covered by that check; compare the file with the
 release page if that matters to you.)
 
-## Updates in the app (plan D7, T13)
+## Updates in the app
 
 Settings has **Check for updates**. It makes one request, from Rust, to the endpoint above
 and shows the newer version and its release notes as plain text; nothing is downloaded or

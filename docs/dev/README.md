@@ -12,7 +12,7 @@ the format is defined by the [specification](../spec.md).
 | [tar-compatible-profile.md](tar-compatible-profile.md) | How TAR-compatible archives are written, and what was tested with generic tools |
 | [restore-platforms.md](restore-platforms.md) | Restoring files on Linux and Windows: names, attributes, durability |
 | [windows-crash-replay.md](windows-crash-replay.md) | The crash-replay evidence behind Windows directory durability (gate G6) |
-| [benchmarks/](benchmarks/) | Measured costs (append, read, parity, scaling, memory, threads), each with its dataset, hardware and settings |
+| [performance.md](performance.md) | Measured costs (scaling, append, capacity and memory, read, parity, threads, after a commit), each with its dataset, hardware and settings |
 
 Also: [`AGENTS.md`](../../AGENTS.md) (every rule review checks),
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the [JSON output schemas](../schemas/json/README.md),

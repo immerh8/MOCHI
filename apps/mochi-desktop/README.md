@@ -76,7 +76,7 @@ cargo test -p mochi-desktop        # writes ui/src/ipc/generated/*.ts; commit th
 pnpm --dir apps/mochi-desktop/ui build
 cargo build -p mochi-desktop --features custom-protocol,e2e   # embeds ui/dist; e2e: see below
 cargo install tauri-driver --locked
-# The archives the D1 spec opens (target/d1-fixtures; MOCHI_E2E_FIXTURES overrides):
+# The archives the browser spec opens (target/d1-fixtures; MOCHI_E2E_FIXTURES overrides):
 cargo run --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures
 cd apps/mochi-desktop/e2e && pnpm install --frozen-lockfile
 xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnpm test,
@@ -261,7 +261,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   only ESLint up to 9, which is out of support, so the maintained `@eslint-react`
   plugin carries the rule. `ci/check-invariants.sh` rule 7 also greps `ui/src`.
 
-### In-app updates (T13)
+### In-app updates
 
 `src/update.rs` drives `tauri-plugin-updater` from Rust. The webview is granted three of
 the app's own commands (`get_update_settings`, `set_update_settings`, `check_for_update`),
@@ -272,7 +272,7 @@ while it is off. Release notes are remote text and are shown as text only. The d
 logic is behind the `Backend` trait and is tested without a network. Endpoint, public key,
 the release workflow, and the owner's steps: `docs/dev/packaging.md`.
 
-## Creating ZIP and tar archives, and the Add form (plan O31, owner decision 2026-10-20)
+## Creating ZIP and tar archives, and the Add form (decision O31)
 
 The app may create `.mochi` (the default), ZIP, `.tar`, `.tar.gz` and `.tar.zst`; it never writes RAR, and
 7z is not written now. The writer is `crates/mochi-export` (not `mochi-format`, not `mochi-core`, not the
@@ -403,7 +403,7 @@ plan the user reviewed, core plans again and refuses any difference, and changin
 archive or the copies drops the plan. Only a §20.4 `PASS` gets success styling
 (`ui/src/check/messages.ts`, tested); the overall line names every failing dimension.
 
-## Accessibility (plan D7)
+## Accessibility
 
 What is built, and how each part is checked:
 
@@ -447,7 +447,7 @@ What is built, and how each part is checked:
 Not checked by a machine, so on the release checklist (`docs/dev/packaging.md`): a pass with
 NVDA on Windows and Orca on Ubuntu, Windows high-contrast themes, and 200 % zoom.
 
-## Messages (i18n scaffolding, plan D7)
+## Messages and languages
 
 All user-visible wording is in the typed catalogue `ui/src/i18n/en/*.ts` (one file per
 screen, merged in `en.ts`); screens call `t("area.key", { param })`. English, Thai (`th/`)
@@ -476,7 +476,7 @@ how to translate or add one is `ui/src/i18n/README.md`. A key that does not exis
 Writes (Create, Add, the Explorer "Add to archive" verbs) pass
 `WriterOptions::threads` from `src-tauri/src/speed.rs`: by default `None`,
 every processor core up to 8, so `mochi-core` reads, hashes and compresses
-file content on worker threads (`docs/dev/benchmarks/c14-threads.md`: 3.2× on one
+file content on worker threads (`docs/dev/performance.md#threads`: 3.2× on one
 512 MiB file with 4 cores). *Settings → Speed* (`ui/src/settings/Speed.tsx`)
 turns it down to one core, which leaves the computer more responsive during a
 long job. The archive is the same bytes either way, so the choice is not
@@ -510,7 +510,7 @@ other filesystems stay unconfirmed. The choice is saved with the speed settings
 (`compression-settings.json`, `trust_ntfs_flush`) and applies to creation, Add's rewrites and
 repair outputs from the next job (`speed::windows_flush`, passed to every `OsDir` the app opens).
 
-## Crash reports (plan D7): opt-in, local, never sent
+## Crash reports: opt-in, local, never sent
 
 There is no reporting endpoint, so nothing is sent. The app has an **off-by-default
 local panic log** (`src-tauri/src/crashlog.rs`, screen: *Settings → Crash reports*):
@@ -591,7 +591,7 @@ choice is kept in the webview's local storage like the language and applies at o
   `foreign: bool` and can be opened or, with `stage_dropped_archive`, staged as an ordinary source to
   add. `foreign_search` looks up entry names (never contents) in an open foreign archive.
 
-## The simplified main path (D10)
+## The simplified main path
 
 Owner test, 2026-10-16: nobody knew where to start, the words were technical, and create and
 extract were confusing. The window opens on a drop area with two actions (Create archive, Open

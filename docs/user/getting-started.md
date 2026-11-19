@@ -158,7 +158,7 @@ mochi snapshot expire photos.mochi 0 --confirm           # irreversible (no un-e
 
 An archive in 1.0 has a fixed ceiling on how many files it can track. Each commit
 writes the whole archive state as one bounded record, and that record has a size limit
-(measured, gate G5, `docs/dev/benchmarks/t32-capacity-memory.md`):
+(measured, gate G5, `docs/dev/performance.md#capacity-memory`):
 
 * about **342,391** files when each file is a single chunk;
   (the ceiling counts the catalog's size once decoded; the catalog is stored compressed,
