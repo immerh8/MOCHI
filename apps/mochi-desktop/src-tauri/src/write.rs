@@ -518,6 +518,9 @@ pub struct Services {
     /// "Open the folder when done" (owner request 2026-11-10), shared with the compact
     /// window. `None` opens nothing (the services of tests that do not need it).
     pub after_extract: Option<Arc<crate::afterextract::AfterExtract>>,
+    /// The window's MOCHI Find, for retrieving what it found (B.2.21). Set
+    /// per window by `JobRegistry::services_for`.
+    pub finder: Option<Arc<crate::find::Finder>>,
 }
 
 /// What a create asks for, gathered from the request.
@@ -547,6 +550,26 @@ pub struct JobDone {
     pub export: Option<Box<ExportReportView>>,
     /// Set by the virus scan job.
     pub scan: Option<Box<crate::scan::ScanReportView>>,
+    /// Set by MOCHI Find's retrieve job (B.2.21).
+    pub retrieve: Option<Box<crate::retrieve::RetrieveReportView>>,
+}
+
+impl JobDone {
+    /// A result with only an empty summary (set what the job reports).
+    pub fn empty() -> JobDone {
+        JobDone {
+            summary: String::new(),
+            commit: None,
+            extract: None,
+            foreign_test: None,
+            check: None,
+            search: None,
+            rekey: None,
+            export: None,
+            scan: None,
+            retrieve: None,
+        }
+    }
 }
 
 impl Services {
@@ -561,6 +584,9 @@ impl Services {
             JobRequest::ScanArchive { .. } => crate::scan::validate(&self.archives, request),
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::validate(&self.archives, &self.destination, request)
+            }
+            JobRequest::RetrieveFound { .. } => {
+                crate::retrieve::validate(self.finder.as_deref(), &self.destination, request)
             }
             JobRequest::TestArchive { .. }
             | JobRequest::PlanRepair { .. }
@@ -673,6 +699,7 @@ impl Services {
                         rekey: None,
                         export: None,
                         scan: None,
+                        retrieve: None,
                     })
             }
             JobRequest::TestForeign { .. } => self.foreign.run(&self.destination, request, ctx),
@@ -682,6 +709,10 @@ impl Services {
                 .map(|done| self.extracted(done)),
             JobRequest::ExtractArchive { .. } => {
                 crate::extract::run(&self.archives, &self.destination, request, ctx)
+                    .map(|done| self.extracted(done))
+            }
+            JobRequest::RetrieveFound { .. } => {
+                crate::retrieve::run(self.finder.as_deref(), &self.destination, request, ctx)
                     .map(|done| self.extracted(done))
             }
             JobRequest::TestArchive { .. }
@@ -727,6 +758,15 @@ impl Services {
             self.destination.get(),
         ) {
             report.opened_folder = after.done(&folder);
+        }
+        if let (Some(after), Some(report), Some(folder)) = (
+            self.after_extract.as_ref(),
+            done.retrieve.as_mut(),
+            self.destination.get(),
+        ) {
+            if report.files + report.directories > 0 {
+                report.opened_folder = after.done(&folder);
+            }
         }
         done
     }
@@ -1052,6 +1092,7 @@ pub(crate) fn export_done(
         rekey: None,
         export: Some(Box::new(view)),
         scan: None,
+        retrieve: None,
     }
 }
 
@@ -1104,6 +1145,7 @@ fn done(
         rekey: None,
         export: None,
         scan: None,
+        retrieve: None,
     }
 }
 

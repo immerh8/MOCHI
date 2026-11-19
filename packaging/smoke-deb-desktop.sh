@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Desktop-level smoke test of the .deb (docs/release-runbook.md "Automated", Ubuntu part).
+# Desktop-level smoke test of the .deb (docs/dev/release-runbook.md "Automated", Ubuntu part).
 # What packaging/smoke-deb.sh does not do: with the package installed from a path
 # (`apt install ./mochi_*.deb`, as the release checklist says) it checks the type and
 # the "Open with" registration the way the desktop sees it (xdg-mime, gio), starts the

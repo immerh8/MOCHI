@@ -81,10 +81,8 @@ export function statusText(r: FindResultView | null, query: string): string {
         });
   }
   if (r.total_hits > 0) {
-    return (
-      tc(r.total_hits, "search.foundOne", "search.foundMany") +
-      (r.total_hits > r.hits.length ? t("search.firstShown", { n: formatNumber(r.hits.length) }) : "")
-    );
+    // Every match can be reached by scrolling: the list loads the rest as it goes.
+    return tc(r.total_hits, "search.foundOne", "search.foundMany");
   }
   // Zero matches. "No matches" only when everything was searched and the scan is over.
   if (c.state === "running") return t("find.searching");

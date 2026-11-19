@@ -3,8 +3,7 @@
 //! The damage matrix runs over deltas, images, and snapshot manifests across
 //! three segments, against an **independent oracle** written from the D10.9
 //! text and the fixture's known commit forms. The oracle does not call
-//! `mochi_core::damage` or any open-path logic. Plan:
-//! `docs/t16-t17-t15-plan.md` section 4.
+//! `mochi_core::damage` or any open-path logic.
 
 #![allow(clippy::needless_range_loop)]
 

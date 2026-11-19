@@ -42,7 +42,7 @@ function outcomeLines(o: JobOutcome): string[] {
 }
 
 /**
- * Plan D5 rekey (docs/c11-encrypted.md): add a passphrase, remove one, or
+ * Plan D5 rekey (docs/dev/encrypted-profile.md): add a passphrase, remove one, or
  * re-encrypt to a new file. Everything is `mochi_core::rekey` in Rust. The
  * passphrase goes to Rust once, in the job request, and is not kept here.
  * Removal is not revocation, and the screen says so before it is done.

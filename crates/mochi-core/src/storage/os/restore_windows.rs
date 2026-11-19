@@ -3,7 +3,7 @@
 //! forbids it; the creation path's `unsafe` lives in `mochi-sys`, which
 //! restoration does not need). The Linux counterpart is
 //! `restore_linux.rs`. What this guarantees, what it concedes, and how a
-//! stronger implementation would replace it: `docs/c6-restore-platforms.md`.
+//! stronger implementation would replace it: `docs/dev/restore-platforms.md`.
 //!
 //! # Mechanism
 //!

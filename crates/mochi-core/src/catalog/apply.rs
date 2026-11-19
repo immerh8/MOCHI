@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(state(&a), before);
     }
 
-    /// Verification audit, V2 (`docs/t12-verify-audit.md`): `verify()`'s
+    /// Verification audit, V2 (T12): `verify()`'s
     /// `foreign_key_check` is not re-run after replay because the applier's
     /// connection enforces foreign keys on every insert. Shown directly: the
     /// pragma is on for the connection the applier writes through, and a
@@ -751,7 +751,7 @@ mod tests {
         assert_eq!(state(&a), before);
     }
 
-    /// Verification audit, V3 (`docs/t12-verify-audit.md`): `verify()`
+    /// Verification audit, V3 (T12): `verify()`
     /// re-checks every file version's extents; replay instead checks each
     /// version it introduces (existing ones were verified with the base
     /// image, and versions are immutable). Shown through `apply` on

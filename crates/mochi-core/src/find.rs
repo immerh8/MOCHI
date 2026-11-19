@@ -26,6 +26,10 @@
 //!   whole component); text with a `/` is matched against the whole path
 //!   inside the archive. Names match as stored bytes (O24); the only
 //!   normalization is case folding, applied to the comparison only.
+//!   [`Matcher::with_options`] adds the desktop's *Match case* and *Whole
+//!   name only*, and [`TermSet`] matches a list of names at once, saying
+//!   which each entry matched (spec Annex B.2.21, D31). `mochi find` uses the
+//!   defaults, which are the rules above.
 //! * **Coverage** ([`Coverage`]). What was searched and what was not:
 //!   archives skipped with their reason, folders that could not be read,
 //!   links not followed, the limit hit, archives still pending. Zero matches
@@ -409,6 +413,10 @@ impl Limit {
 /// Bounds of a scan (tests lower them).
 #[derive(Debug, Clone)]
 pub struct Limits {
+    /// Whether the subfolders of a scope are walked at all. `false` is the
+    /// user's choice to search only the chosen folders themselves (desktop
+    /// Find, B.2.21): it is not a bound, so no [`Limit`] is reported for it.
+    pub subfolders: bool,
     pub depth: usize,
     pub folders: u64,
     pub archives: usize,
@@ -420,6 +428,7 @@ impl Default for Limits {
     fn default() -> Self {
         let cpus = std::thread::available_parallelism().map_or(2, usize::from);
         Limits {
+            subfolders: true,
             depth: MAX_DEPTH,
             folders: MAX_FOLDERS,
             archives: MAX_ARCHIVES,
@@ -481,7 +490,9 @@ pub fn walk<T: FindTree + ?Sized>(
                     }
                 }
                 TreeKind::Folder => {
-                    if depth >= limits.depth {
+                    if !limits.subfolders {
+                        // Not asked for: the scope is the folder itself.
+                    } else if depth >= limits.depth {
                         stats.limit = Some(Limit::Depth);
                     } else {
                         subdirs.push(e.path);
@@ -785,22 +796,8 @@ impl Scan {
     /// counted). Archives without a match are left out. Large sets are
     /// matched on several threads.
     pub fn query(&self, matcher: &Matcher, cap: usize) -> Vec<ArchiveMatches> {
-        let mut sets: Vec<(usize, PathBuf, Stamp, Arc<ArchiveIndex>)> = {
-            let inner = lock(&self.inner);
-            inner
-                .records
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| match &r.outcome {
-                    Some(Outcome::Indexed(ix)) => {
-                        Some((i, r.path.clone(), r.stamp, Arc::clone(ix)))
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        sets.sort_by(|a, b| a.1.cmp(&b.1));
-        let per_archive = match_all(&sets, matcher, cap);
+        let sets = self.indexed_sets();
+        let per_archive = par_map(&sets, |ix| matches_in(ix, matcher, cap));
         sets.into_iter()
             .zip(per_archive)
             .filter(|(_, (count, _))| *count > 0)
@@ -816,6 +813,67 @@ impl Scan {
             )
             .collect()
     }
+
+    /// The matches of every term of `terms` in every searched archive, in
+    /// archive path order: per archive, the first `cap` matching entries with
+    /// the terms each matched, and every term's count (all are counted).
+    /// Archives without a match are left out.
+    pub fn query_terms(&self, terms: &TermSet, cap: usize) -> Vec<TermMatches> {
+        let sets = self.indexed_sets();
+        let per_archive = par_map(&sets, |ix| terms_in(ix, terms, cap));
+        sets.into_iter()
+            .zip(per_archive)
+            .filter(|(_, m)| m.count > 0)
+            .map(|((index, path, stamp, names), m)| TermMatches {
+                index,
+                path,
+                stamp,
+                names,
+                count: m.count,
+                entries: m.entries,
+                per_term: m.per_term,
+            })
+            .collect()
+    }
+
+    /// Every searched archive's names, in archive path order.
+    fn indexed_sets(&self) -> Vec<IndexedSet> {
+        let mut sets: Vec<IndexedSet> = {
+            let inner = lock(&self.inner);
+            inner
+                .records
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| match &r.outcome {
+                    Some(Outcome::Indexed(ix)) => {
+                        Some((i, r.path.clone(), r.stamp, Arc::clone(ix)))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        sets.sort_by(|a, b| a.1.cmp(&b.1));
+        sets
+    }
+}
+
+/// One searched archive: its number, path, stamp and names.
+type IndexedSet = (usize, PathBuf, Stamp, Arc<ArchiveIndex>);
+
+/// The matches of a [`TermSet`] in one archive.
+pub struct TermMatches {
+    /// The archive's number in the scan.
+    pub index: usize,
+    pub path: PathBuf,
+    pub stamp: Stamp,
+    pub names: Arc<ArchiveIndex>,
+    /// Entries that matched at least one term (an entry is counted once).
+    pub count: u64,
+    /// The first matching entries (at most the cap asked for): the entry
+    /// number in `names` and the numbers of the terms it matched, ascending.
+    pub entries: Vec<(usize, Vec<u16>)>,
+    /// For each term, in order, how many entries of this archive it matched.
+    pub per_term: Vec<u64>,
 }
 
 /// The matches in one archive: how many, and the first few as entry numbers.
@@ -836,12 +894,45 @@ fn matches_in(ix: &ArchiveIndex, m: &Matcher, cap: usize) -> Matched {
     (count, first)
 }
 
-/// Match every set; large ones on several threads. One result per set, in order.
-fn match_all(
-    sets: &[(usize, PathBuf, Stamp, Arc<ArchiveIndex>)],
-    m: &Matcher,
-    cap: usize,
-) -> Vec<Matched> {
+/// Matched entries of one archive for a [`TermSet`].
+#[derive(Clone, Default)]
+struct TermsMatched {
+    count: u64,
+    entries: Vec<(usize, Vec<u16>)>,
+    per_term: Vec<u64>,
+}
+
+fn terms_in(ix: &ArchiveIndex, terms: &TermSet, cap: usize) -> TermsMatched {
+    let mut out = TermsMatched {
+        per_term: vec![0; terms.len()],
+        ..TermsMatched::default()
+    };
+    let mut hit = Vec::new();
+    for (i, slot) in ix.slots.iter().enumerate() {
+        terms.matching(ix.view(slot), &mut hit);
+        if hit.is_empty() {
+            continue;
+        }
+        out.count += 1;
+        for &t in &hit {
+            if let Some(c) = out.per_term.get_mut(usize::from(t)) {
+                *c += 1;
+            }
+        }
+        if out.entries.len() < cap {
+            out.entries.push((i, std::mem::take(&mut hit)));
+        }
+    }
+    out
+}
+
+/// `f` over every set's names; large sets on several threads. One result
+/// per set, in order.
+fn par_map<R, F>(sets: &[IndexedSet], f: F) -> Vec<R>
+where
+    R: Send + Clone + Default,
+    F: Fn(&ArchiveIndex) -> R + Sync,
+{
     let names: usize = sets.iter().map(|s| s.3.len()).sum();
     let workers = if names < 100_000 {
         1
@@ -851,16 +942,16 @@ fn match_all(
             .clamp(1, MAX_WORKERS)
     };
     if workers == 1 {
-        return sets.iter().map(|s| matches_in(&s.3, m, cap)).collect();
+        return sets.iter().map(|s| f(&s.3)).collect();
     }
     let next = AtomicUsize::new(0);
-    let out: Mutex<Vec<Option<Matched>>> = Mutex::new(vec![None; sets.len()]);
+    let out: Mutex<Vec<Option<R>>> = Mutex::new(vec![None; sets.len()]);
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| loop {
                 let i = next.fetch_add(1, Ordering::SeqCst);
                 let Some(set) = sets.get(i) else { return };
-                let r = matches_in(&set.3, m, cap);
+                let r = f(&set.3);
                 if let Some(slot) = lock(&out).get_mut(i) {
                     *slot = Some(r);
                 }
@@ -888,8 +979,51 @@ pub struct Matcher {
 #[derive(Debug, Clone)]
 enum MatcherKind {
     Any,
-    Substring { raw: Vec<u8>, lower: String },
+    Substring {
+        raw: Vec<u8>,
+        lower: String,
+    },
+    /// The whole name (or path), equal after [`fold`] when case is ignored.
+    Exact {
+        raw: Vec<u8>,
+        folded: Vec<u8>,
+    },
     Glob(Vec<char>),
+}
+
+/// How a query compares names (desktop Find's options, B.2.21). The
+/// default is what `mochi find` does: case ignored, part of a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchOptions {
+    /// Compare with case folded (the default) or byte for byte.
+    pub ignore_case: bool,
+    /// Text without `*` or `?` must equal the whole name (or, with a `/`, the
+    /// whole path) instead of being part of it. A glob covers the whole name
+    /// either way.
+    pub whole_name: bool,
+}
+
+impl Default for MatchOptions {
+    fn default() -> Self {
+        MatchOptions {
+            ignore_case: true,
+            whole_name: false,
+        }
+    }
+}
+
+/// `bytes` with case folded as the matcher folds it: Unicode lower-casing
+/// per character for UTF-8, ASCII folding for bytes that are not UTF-8.
+fn fold(bytes: &[u8]) -> Vec<u8> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_lowercase().into_bytes(),
+        Err(_) => bytes.to_ascii_lowercase(),
+    }
+}
+
+/// The last path component of a stored path.
+fn last_component(path: &[u8]) -> &[u8] {
+    path.rsplit(|&b| b == b'/').next().unwrap_or(path)
 }
 
 fn chars_of(bytes: &[u8], ignore_case: bool) -> Vec<char> {
@@ -944,12 +1078,33 @@ fn glob(p: &[char], t: &[char]) -> bool {
 impl Matcher {
     /// `text` is the user's query, trimmed. Empty matches everything.
     pub fn new(text: &str, ignore_case: bool) -> Matcher {
+        Matcher::with_options(
+            text,
+            MatchOptions {
+                ignore_case,
+                whole_name: false,
+            },
+        )
+    }
+
+    /// [`Matcher::new`] with every option. `Matcher::with_options(t,
+    /// MatchOptions::default())` is exactly `Matcher::new(t, true)`.
+    pub fn with_options(text: &str, options: MatchOptions) -> Matcher {
+        let MatchOptions {
+            ignore_case,
+            whole_name,
+        } = options;
         let text = text.trim();
         let whole_path = text.contains('/');
         let kind = if text.is_empty() {
             MatcherKind::Any
         } else if text.contains(['*', '?']) {
             MatcherKind::Glob(chars_of(text.as_bytes(), ignore_case))
+        } else if whole_name {
+            MatcherKind::Exact {
+                raw: text.as_bytes().to_vec(),
+                folded: fold(text.as_bytes()),
+            }
         } else {
             MatcherKind::Substring {
                 raw: text.as_bytes().to_vec(),
@@ -978,10 +1133,17 @@ impl Matcher {
         let target = if self.whole_path {
             path
         } else {
-            path.rsplit(|&b| b == b'/').next().unwrap_or(path)
+            last_component(path)
         };
         match &self.kind {
             MatcherKind::Any => true,
+            MatcherKind::Exact { raw, folded } => {
+                if self.ignore_case {
+                    fold(target) == *folded
+                } else {
+                    target == raw.as_slice()
+                }
+            }
             MatcherKind::Glob(p) => glob(p, &chars_of(target, self.ignore_case)),
             MatcherKind::Substring { raw, lower } => {
                 if !self.ignore_case {
@@ -996,6 +1158,137 @@ impl Matcher {
                 }
             }
         }
+    }
+}
+
+/// Most terms one [`TermSet`] holds (desktop Find's pasted list, B.2.21).
+pub const MAX_TERMS: usize = 1_000;
+
+/// Which entries a [`TermSet`] may match.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EntryFilter {
+    /// Files and folders (what `mochi find` matches).
+    #[default]
+    All,
+    Files,
+    Folders,
+}
+
+impl EntryFilter {
+    fn admits(self, kind: EntryKind) -> bool {
+        match self {
+            EntryFilter::All => true,
+            EntryFilter::Files => kind != EntryKind::Directory,
+            EntryFilter::Folders => kind == EntryKind::Directory,
+        }
+    }
+}
+
+/// Several queries at once (desktop Find's list of names, B.2.21): an entry
+/// matches the set when it matches any term, and the set says which. Each
+/// term follows the [`Matcher`] rules with the same [`MatchOptions`]. Terms
+/// that must equal a whole name are looked up by name instead of compared one
+/// by one; the answer is the same.
+#[derive(Debug, Clone)]
+pub struct TermSet {
+    terms: Vec<Matcher>,
+    /// Whole-name terms (no `*`, `?` or `/`) by the name they equal (folded
+    /// when case is ignored): their term numbers.
+    by_name: std::collections::HashMap<Vec<u8>, Vec<u16>>,
+    /// Every other term's number.
+    each: Vec<u16>,
+    ignore_case: bool,
+    filter: EntryFilter,
+}
+
+impl TermSet {
+    /// `terms` are the user's texts, each trimmed; empty ones are refused, as
+    /// are more than [`MAX_TERMS`] and a term over [`MAX_QUERY_BYTES`].
+    pub fn new(terms: &[String], options: MatchOptions, filter: EntryFilter) -> Result<TermSet> {
+        if terms.is_empty() || terms.len() > MAX_TERMS {
+            return Err(MochiError::new(
+                ErrorCode::InvalidArgument,
+                format!("a search takes 1 to {MAX_TERMS} names"),
+            ));
+        }
+        let mut set = TermSet {
+            terms: Vec::with_capacity(terms.len()),
+            by_name: std::collections::HashMap::new(),
+            each: Vec::new(),
+            ignore_case: options.ignore_case,
+            filter,
+        };
+        for (i, text) in terms.iter().enumerate() {
+            let text = text.trim();
+            if text.is_empty() {
+                return Err(MochiError::new(
+                    ErrorCode::InvalidArgument,
+                    "an empty name is not a search; leave it out",
+                ));
+            }
+            if text.len() > MAX_QUERY_BYTES {
+                return Err(MochiError::new(
+                    ErrorCode::InvalidArgument,
+                    format!("a name to find takes at most {MAX_QUERY_BYTES} bytes"),
+                ));
+            }
+            // MAX_TERMS fits in u16.
+            let n = u16::try_from(i).unwrap_or(u16::MAX);
+            let m = Matcher::with_options(text, options);
+            match &m.kind {
+                MatcherKind::Exact { raw, folded } if !m.whole_path => {
+                    let key = if options.ignore_case { folded } else { raw };
+                    set.by_name.entry(key.clone()).or_default().push(n);
+                }
+                _ => set.each.push(n),
+            }
+            set.terms.push(m);
+        }
+        Ok(set)
+    }
+
+    /// Number of terms.
+    pub fn len(&self) -> usize {
+        self.terms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+    }
+
+    /// Term number `i`.
+    pub fn term(&self, i: usize) -> Option<&Matcher> {
+        self.terms.get(i)
+    }
+
+    /// The numbers of the terms `entry` matches, ascending, into `out`
+    /// (cleared first). Empty when the filter leaves the entry out.
+    pub fn matching(&self, entry: IndexEntry<'_>, out: &mut Vec<u16>) {
+        out.clear();
+        if !self.filter.admits(entry.kind) {
+            return;
+        }
+        if !self.by_name.is_empty() {
+            let name = last_component(entry.path);
+            let hit = if self.ignore_case {
+                self.by_name.get(&fold(name))
+            } else {
+                self.by_name.get(name)
+            };
+            if let Some(ns) = hit {
+                out.extend_from_slice(ns);
+            }
+        }
+        for &n in &self.each {
+            if self
+                .terms
+                .get(usize::from(n))
+                .is_some_and(|m| m.matches(entry.path))
+            {
+                out.push(n);
+            }
+        }
+        out.sort_unstable();
     }
 }
 
@@ -1204,6 +1497,206 @@ mod tests {
         );
         let c = scan.coverage();
         assert_eq!((c.folders_visited, c.limit), (2, Some(Limit::Folders)));
+    }
+
+    #[test]
+    fn subfolders_off_walks_only_the_scopes_and_reports_no_limit() {
+        let mut t = Mem::default();
+        t.dir("/r");
+        t.dir("/r/sub");
+        t.file("/r/top.mochi", b"x");
+        t.file("/r/sub/deep.mochi", b"x");
+        let (scan, _) = ctx_run(
+            &t,
+            &["/r"],
+            &Limits {
+                subfolders: false,
+                ..Limits::default()
+            },
+        );
+        let c = scan.coverage();
+        assert_eq!((c.folders_visited, c.archives_found), (1, 1));
+        assert_eq!(c.limit, None, "a choice, not a bound");
+        assert_eq!(scan.record(0).unwrap().path, PathBuf::from("/r/top.mochi"));
+        let (scan, _) = ctx_run(&t, &["/r"], &Limits::default());
+        assert_eq!(scan.coverage().archives_found, 2);
+    }
+
+    #[test]
+    fn match_options_whole_name_and_case() {
+        let exact = MatchOptions {
+            ignore_case: true,
+            whole_name: true,
+        };
+        let cased = MatchOptions {
+            ignore_case: false,
+            whole_name: false,
+        };
+        // The default options are `mochi find`'s.
+        assert_eq!(
+            MatchOptions::default(),
+            MatchOptions {
+                ignore_case: true,
+                whole_name: false
+            }
+        );
+        assert!(Matcher::with_options("report.pdf", exact).matches(b"a/REPORT.PDF"));
+        assert!(!Matcher::with_options("report", exact).matches(b"a/report.pdf"));
+        assert!(Matcher::with_options("École.txt", exact).matches("x/école.TXT".as_bytes()));
+        assert!(Matcher::with_options("docs/a.txt", exact).matches(b"DOCS/A.txt"));
+        assert!(!Matcher::with_options("docs/a.txt", exact).matches(b"x/docs/a.txt"));
+        // A glob covers the whole name with or without the option.
+        assert!(Matcher::with_options("*.pdf", exact).matches(b"a.PDF"));
+        // Match case compares bytes.
+        assert!(!Matcher::with_options("Report", cased).matches(b"report.pdf"));
+        assert!(Matcher::with_options("Report", cased).matches(b"Q3 Report.pdf"));
+        assert!(!Matcher::with_options("*.PDF", cased).matches(b"a.pdf"));
+        let exact_cased = MatchOptions {
+            ignore_case: false,
+            whole_name: true,
+        };
+        assert!(Matcher::with_options("a.txt", exact_cased).matches(b"d/a.txt"));
+        assert!(!Matcher::with_options("a.txt", exact_cased).matches(b"d/A.txt"));
+        // Bytes that are not UTF-8 fold as ASCII.
+        assert!(!Matcher::with_options("ab", exact).matches(b"x/AB\xff"));
+        assert!(Matcher::with_options("ab?", exact).matches(b"x/AB\xff"));
+        assert!(Matcher::with_options(
+            "ab",
+            MatchOptions {
+                ignore_case: true,
+                whole_name: false
+            }
+        )
+        .matches(b"AB\xff"));
+    }
+
+    fn index_of(paths: &[(&str, bool)]) -> ArchiveIndex {
+        let mut ix = ArchiveIndex::default();
+        for (p, dir) in paths {
+            assert!(ix.push(p.as_bytes(), 1, *dir));
+        }
+        ix
+    }
+
+    #[test]
+    fn a_term_set_says_which_terms_each_entry_matched() {
+        let ix = index_of(&[
+            ("docs", true),
+            ("docs/Invoice-1.pdf", false),
+            ("docs/invoice-2.PDF", false),
+            ("photos", true),
+            ("photos/Holiday.jpg", false),
+            ("report.txt", false),
+        ]);
+        let terms: Vec<String> = ["invoice-2.pdf", "holiday", "*.pdf", "missing.doc", "docs"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let opts = MatchOptions::default();
+        let set = TermSet::new(&terms, opts, EntryFilter::All).unwrap();
+        let m = terms_in(&ix, &set, 100);
+        let got: Vec<(&str, Vec<u16>)> = m
+            .entries
+            .iter()
+            .map(|(i, t)| {
+                (
+                    std::str::from_utf8(ix.get(*i).unwrap().path).unwrap(),
+                    t.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("docs", vec![4]),
+                ("docs/Invoice-1.pdf", vec![2]),
+                ("docs/invoice-2.PDF", vec![0, 2]),
+                ("photos/Holiday.jpg", vec![1]),
+            ]
+        );
+        assert_eq!(m.count, 4, "an entry that matches two terms is one hit");
+        assert_eq!(m.per_term, [1, 1, 2, 0, 1]);
+
+        // Files only leaves the folder out; whole name finds exact names by lookup.
+        let exact = MatchOptions {
+            ignore_case: true,
+            whole_name: true,
+        };
+        let set = TermSet::new(&terms, exact, EntryFilter::Files).unwrap();
+        let m = terms_in(&ix, &set, 100);
+        assert_eq!(m.per_term, [1, 0, 2, 0, 0]);
+        let folders = TermSet::new(&terms, exact, EntryFilter::Folders).unwrap();
+        assert_eq!(terms_in(&ix, &folders, 100).per_term, [0, 0, 0, 0, 1]);
+        // The cap keeps the first entries; every match is still counted.
+        let m = terms_in(
+            &ix,
+            &TermSet::new(&terms, opts, EntryFilter::All).unwrap(),
+            1,
+        );
+        assert_eq!((m.entries.len(), m.count), (1, 4));
+    }
+
+    #[test]
+    fn the_name_lookup_gives_the_same_answer_as_matching_each_term() {
+        let names = [
+            "a/Report.PDF",
+            "b/report.pdf",
+            "École.txt",
+            "école.txt",
+            "dir/",
+            "dir/sub/Deep.TXT",
+            "plain",
+            "Ǆ.txt",
+            "ǆ.txt",
+        ];
+        let mut ix = ArchiveIndex::default();
+        for n in names {
+            ix.push(n.as_bytes(), 0, false);
+        }
+        ix.push(b"x/AB\xff", 0, false);
+        let terms: Vec<String> = [
+            "report.pdf",
+            "ÉCOLE.TXT",
+            "deep.txt",
+            "PLAIN",
+            "ab",
+            "ǅ.txt",
+            "nothing",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        for ignore_case in [true, false] {
+            let opts = MatchOptions {
+                ignore_case,
+                whole_name: true,
+            };
+            let set = TermSet::new(&terms, opts, EntryFilter::All).unwrap();
+            let mut out = Vec::new();
+            for e in ix.iter() {
+                set.matching(e, &mut out);
+                let linear: Vec<u16> = (0..terms.len())
+                    .filter(|&i| Matcher::with_options(&terms[i], opts).matches(e.path))
+                    .map(|i| u16::try_from(i).unwrap())
+                    .collect();
+                assert_eq!(out, linear, "{:?} ignore_case={ignore_case}", e.path);
+            }
+        }
+    }
+
+    #[test]
+    fn a_term_set_refuses_what_is_not_a_search() {
+        let o = MatchOptions::default();
+        assert!(TermSet::new(&[], o, EntryFilter::All).is_err());
+        assert!(TermSet::new(&["  ".to_owned()], o, EntryFilter::All).is_err());
+        assert!(TermSet::new(&["x".repeat(MAX_QUERY_BYTES + 1)], o, EntryFilter::All).is_err());
+        let many = vec!["a".to_owned(); MAX_TERMS + 1];
+        assert!(TermSet::new(&many, o, EntryFilter::All).is_err());
+        let most = vec!["a".to_owned(); MAX_TERMS];
+        assert_eq!(
+            TermSet::new(&most, o, EntryFilter::All).unwrap().len(),
+            MAX_TERMS
+        );
     }
 
     #[test]

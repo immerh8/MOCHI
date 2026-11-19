@@ -12,8 +12,27 @@ import type { FindHit } from "./generated/FindHit";
 import type { FindResultView } from "./generated/FindResultView";
 import type { FindScopeView } from "./generated/FindScopeView";
 import type { FindSkippedView } from "./generated/FindSkippedView";
+import type { FindEntryFilter } from "./generated/FindEntryFilter";
+import type { FindQuery } from "./generated/FindQuery";
+import type { FindTermView } from "./generated/FindTermView";
+import type { RetrieveArchiveView } from "./generated/RetrieveArchiveView";
+import type { RetrieveLayout } from "./generated/RetrieveLayout";
+import type { RetrieveReportView } from "./generated/RetrieveReportView";
 
-export type { FindCoverageView, FindEvent, FindHit, FindResultView, FindScopeView, FindSkippedView };
+export type {
+  FindCoverageView,
+  FindEntryFilter,
+  FindEvent,
+  FindHit,
+  FindQuery,
+  FindResultView,
+  FindScopeView,
+  FindSkippedView,
+  FindTermView,
+  RetrieveArchiveView,
+  RetrieveLayout,
+  RetrieveReportView,
+};
 
 /** The folders to search. */
 export function findScopes(): Promise<FindScopeView[]> {
@@ -29,11 +48,14 @@ export function findRemoveScope(index: number): Promise<FindScopeView[]> {
   return invoke<FindScopeView[]>("find_remove_scope", { index });
 }
 
-/** Scan the folders. Events (started, progress, one finished) go to `onEvent`. Resolves to the scan's number. */
-export function findStart(fresh: boolean, onEvent: (event: FindEvent) => void): Promise<number> {
+/**
+ * Scan the folders (and their subfolders unless `subfolders` is `false`). Events (started,
+ * progress, one finished) go to `onEvent`. Resolves to the scan's number.
+ */
+export function findStart(fresh: boolean, onEvent: (event: FindEvent) => void, subfolders = true): Promise<number> {
   const channel = new Channel<FindEvent>();
   channel.onmessage = onEvent;
-  return invoke<number>("find_start", { fresh, onEvent: channel });
+  return invoke<number>("find_start", { fresh, subfolders, onEvent: channel });
 }
 
 /** Stop the scan. `false` if none is running. */
@@ -44,6 +66,16 @@ export function findCancel(): Promise<boolean> {
 /** Names matching `text` in the latest scan, with the scan's coverage. */
 export function findQuery(text: string): Promise<FindResultView> {
   return invoke<FindResultView>("find_query", { text });
+}
+
+/** Entries matching any of several names, with the options (spec Annex B.2.21), and what each name found. */
+export function findQueryMany(query: FindQuery): Promise<FindResultView> {
+  return invoke<FindResultView>("find_query_many", { query });
+}
+
+/** The native folder dialog (in Rust) for where found files go; Rust keeps the choice. `null` if cancelled. */
+export function findChooseRetrieveFolder(): Promise<string | null> {
+  return invoke<string | null>("find_choose_retrieve_folder", { text: { title: t("find.dialogRetrieve") } });
 }
 
 /** Open the archive of a hit read-only where archives open (here, the window that has it, or a new one) and show the entry `key` in it. */

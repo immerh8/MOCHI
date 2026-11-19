@@ -1,7 +1,7 @@
 # What the checks prove
 
-Sources: spec §5.4, §5.7, §20, §21, §23.3 #2–#3; `docs/c14-cli.md` (rule 13 for `health`);
-`docs/report-schema-v1.md`; `docs/c11-encrypted.md`.
+Sources: spec §5.4, §5.7, §20, §21, §23.3 #2–#3; `docs/cli.md` (rule 13 for `health`);
+`docs/report-schema-v1.md`; `docs/dev/encrypted-profile.md`.
 
 MOCHI separates "the bytes in this file match what was recorded" from any claim about where else your data exists.
 Only the first is something a check can show, and only for what it ran.

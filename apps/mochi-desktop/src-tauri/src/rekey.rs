@@ -1,4 +1,4 @@
-//! Rekey (plan D5; `docs/c11-encrypted.md`): add a passphrase to an
+//! Rekey (plan D5; `docs/dev/encrypted-profile.md`): add a passphrase to an
 //! Encrypted archive, take one out, and write the archive again as a new file
 //! under a new data key. Thin over `mochi_core::rekey`: the envelopes, the
 //! rewrap commit, and the re-encryption are core's; this module routes the
@@ -210,6 +210,7 @@ fn rewrap(
         rekey: Some(Box::new(report)),
         export: None,
         scan: None,
+        retrieve: None,
         foreign_test: None,
     })
 }
@@ -283,6 +284,7 @@ fn reencrypt(
         rekey: Some(Box::new(out)),
         export: None,
         scan: None,
+        retrieve: None,
         foreign_test: None,
     })
 }

@@ -1,7 +1,7 @@
 # Encrypted archives
 
-Sources: spec §7.3, §14; `docs/c11-encrypted.md` (Annex B.2.10 D20,
-`docs/ratification/R5-crypto-draft.md`); `docs/c14-cli.md`. Experimental
+Sources: spec §7.3, §14; `docs/dev/encrypted-profile.md` (Annex B.2.10 D20,
+`docs/ratification/R5-crypto-draft.md`); `docs/cli.md`. Experimental
 ([experimental.md](experimental.md)).
 
 ```bash
@@ -25,7 +25,7 @@ operational error, not a statement about the archive.
 ## What is visible without the key
 
 An encrypted archive hides names, attributes, file sizes, directory structure, and content
-(`docs/c11-encrypted.md`). Searching the raw bytes of an example archive for its file names and file contents
+(`docs/dev/encrypted-profile.md`). Searching the raw bytes of an example archive for its file names and file contents
 finds neither. The following **stays visible** to anyone holding the file:
 
 * the archive ID, the number of commits, and their parent links;
@@ -103,7 +103,7 @@ Deduplication still works inside an encrypted archive, so an identical file is s
 **Someone who can compare your archive before and after an append can tell whether the
 content you appended was already in it**: if the file grew by about the file's size, it was
 new; if it did not, an identical file was already stored. They learn this without the key
-and without learning what the file is. This is a documented property (`docs/c11-encrypted.md`;
+and without learning what the file is. This is a documented property (`docs/dev/encrypted-profile.md`;
 a test asserts it), not a fault; it exists because dedup is part of the format. If it
 matters to you, do not store content in the archive whose repetition would give something away.
 

@@ -48,6 +48,7 @@ holds the shared definitions.
 | `cli-migrate.schema.json` | `migrate` | `migrate_cmd` | `schema: "mochi-cli-migrate-v1"` | frozen at the 1.0 flip (W20) |
 | `cli-find.schema.json` | `find` | `find_cmd` | `schema: "mochi-cli-find-v1"` | frozen when written (B.2.18, 2026-10-24) |
 | `cli-comment.schema.json` | `comment` | `comment_cmd` | `schema: "mochi-cli-comment-v1"` | frozen when written (B.2.19, 2026-11-14) |
+| `cli-find-v2.schema.json` | `find` with `--name`, `--names-from` or an option | `find_v2` | `schema: "mochi-cli-find-v2"` | frozen when written (B.2.21, 2026-11-17) |
 
 **Frozen** means R7's rule applies: adding an error code is allowed (it appends to
 `error-code` in `common.schema.json`); any other change is a new identifier (a new
@@ -66,6 +67,10 @@ the fourteenth: `mochi comment` (spec Annex B.2.19, D29, 2026-11-14) shows the a
 comment of one commit, carries `mochi-cli-comment-v1`, and was frozen as it was written.
 No earlier output gained a field for the comment: `snapshot list` text marks where it
 changes, and its JSON is unchanged.
+`cli-find-v2.schema.json` is the fifteenth: `mochi find` with several names or an option
+(spec Annex B.2.21, D31, 2026-11-17) says which names each hit matched and what each name
+found; it carries `mochi-cli-find-v2` and was frozen as it was written. The plain
+`mochi find PATTERN FOLDER...` form still writes `mochi-cli-find-v1`, unchanged.
 
 A consumer that validates an output should use the schema of the tool version that
 wrote it (`tool.version` in a report): a newer tool may emit an error code an older

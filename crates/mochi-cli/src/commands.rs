@@ -1,7 +1,7 @@
 //! The built commands (plan C14). Each is a thin adapter: parse, call
 //! `mochi-core`, render a typed result as text or JSON, return the exit
 //! code (spec §23.2). Rules the CLI adds on top of the core are listed in
-//! `docs/c14-cli.md`.
+//! `docs/cli.md`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,8 @@ use mochi_core::copies::CopySource;
 use mochi_core::descriptor::{DraftPolicy, Profile};
 use mochi_core::exit;
 use mochi_core::find::{
-    Limits as FindLimits, Matcher, NoCache, Scan, Skip, MAX_QUERY_BYTES, MAX_SCOPES,
+    EntryFilter, Limits as FindLimits, MatchOptions, Matcher, NoCache, Scan, Skip, TermSet,
+    MAX_QUERY_BYTES, MAX_SCOPES, MAX_TERMS,
 };
 use mochi_core::gc::{self, GcPlan, PlanHead};
 use mochi_core::health::{
@@ -272,6 +273,7 @@ const SCHEMA_REPAIR_APPLY: &str = "mochi-cli-repair-apply-v1";
 const SCHEMA_REKEY_LIST: &str = "mochi-cli-rekey-list-v1";
 const SCHEMA_PLAN_SAVED: &str = "mochi-cli-plan-saved-v1";
 const SCHEMA_FIND: &str = "mochi-cli-find-v1";
+const SCHEMA_FIND_V2: &str = "mochi-cli-find-v2";
 const SCHEMA_COMMENT: &str = "mochi-cli-comment-v1";
 
 fn findings_json(f: &[Finding]) -> Value {
@@ -788,7 +790,7 @@ fn dump_value_text(v: &DumpValue) -> String {
     }
 }
 
-/// `mochi dump-index` (plan C14; next-work-plan K6): the catalog of the
+/// `mochi dump-index` (plan C14, concession K6): the catalog of the
 /// opened commit, hash-verified as every open is, dumped table by table.
 /// Read-only; table names come only from the catalog's own schema.
 pub fn dump_index(env: &mut Env<'_>, a: &DumpIndexArgs) -> Result<u8> {
@@ -1058,6 +1060,93 @@ fn skip_text(s: &Skip) -> String {
 /// some folders, read-only, through `mochi_core::find`, the engine the
 /// desktop app's Find uses. Exit 0 when nothing was left out, whatever
 /// matched; 2 when anything was (never "no matches" then).
+/// The names `mochi find` looks for and the folders it searches: the
+/// positional `PATTERN FOLDER...`, or `FOLDER...` with `--name` and
+/// `--names-from` (spec Annex B.2.21).
+struct FindAsk {
+    names: Vec<String>,
+    folders: Vec<std::path::PathBuf>,
+    /// `mochi find PATTERN FOLDER...` with no option: the v1 form, unchanged.
+    v1: bool,
+}
+
+fn find_ask(a: &FindArgs) -> Result<FindAsk> {
+    let mut names: Vec<String> = a.names.clone();
+    if let Some(file) = &a.names_from {
+        let text = if file.as_os_str() == "-" {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)
+                .map_err(|e| invalid(format!("standard input: {e}")))?;
+            t
+        } else {
+            std::fs::read_to_string(file)
+                .map_err(|e| invalid(format!("{}: {e}", os_path_text(file))))?
+        };
+        names.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned),
+        );
+        if names.is_empty() {
+            return Err(invalid(format!(
+                "{}: no names in it (one name per line)",
+                os_path_text(file)
+            )));
+        }
+    }
+    let listed = !a.names.is_empty() || a.names_from.is_some();
+    let mut args = a.args.iter();
+    if !listed {
+        let pattern = args
+            .next()
+            .ok_or_else(|| invalid("give a name to find (`*` matches every name)"))?;
+        let pattern = pattern.to_str().ok_or_else(|| {
+            invalid("the name to find must be text (names are compared as UTF-8 here)")
+        })?;
+        names.push(pattern.to_owned());
+    }
+    let folders: Vec<std::path::PathBuf> = args.cloned().collect();
+    if folders.is_empty() {
+        return Err(invalid(if listed {
+            "give at least one folder to search"
+        } else {
+            "give a name to find, then at least one folder to search"
+        }));
+    }
+    // Each name once, in the order given.
+    let mut seen = std::collections::HashSet::new();
+    names.retain(|n| {
+        seen.insert(if a.match_case {
+            n.trim().to_owned()
+        } else {
+            n.trim().to_lowercase()
+        })
+    });
+    for n in &names {
+        if n.trim().is_empty() {
+            return Err(invalid("give a name to find (`*` matches every name)"));
+        }
+        if n.len() > MAX_QUERY_BYTES {
+            return Err(invalid(format!(
+                "a name to find has at most {MAX_QUERY_BYTES} bytes"
+            )));
+        }
+    }
+    if names.len() > MAX_TERMS {
+        return Err(invalid(format!(
+            "at most {MAX_TERMS} names can be found at once"
+        )));
+    }
+    let v1 = !listed
+        && !a.match_case
+        && !a.whole_name
+        && !a.files_only
+        && !a.folders_only
+        && !a.no_subfolders;
+    Ok(FindAsk { names, folders, v1 })
+}
+
 pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
     if env.pass.explicit() {
         return Err(invalid(
@@ -1065,16 +1154,9 @@ pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
              Encrypted archives as not searched (use `mochi search ARCHIVE` with a passphrase)",
         ));
     }
-    if a.pattern.trim().is_empty() {
-        return Err(invalid("give a name to find (`*` matches every name)"));
-    }
-    if a.pattern.len() > MAX_QUERY_BYTES {
-        return Err(invalid(format!(
-            "a name to find has at most {MAX_QUERY_BYTES} bytes"
-        )));
-    }
-    let mut given = Vec::with_capacity(a.folders.len());
-    for f in &a.folders {
+    let ask = find_ask(a)?;
+    let mut given = Vec::with_capacity(ask.folders.len());
+    for f in &ask.folders {
         let abs =
             std::path::absolute(f).map_err(|e| invalid(format!("{}: {e}", os_path_text(f))))?;
         if !abs.is_dir() {
@@ -1104,13 +1186,20 @@ pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
     scan.run(
         &OsFindTree,
         &env.read,
-        &FindLimits::default(),
+        &FindLimits {
+            subfolders: !a.no_subfolders,
+            ..FindLimits::default()
+        },
         &NoCache,
         &ctx,
     )?;
+    if !ask.v1 {
+        return find_v2(env, a, &ask, &scan);
+    }
+    let pattern = ask.names.first().map(String::as_str).unwrap_or_default();
     let c = scan.coverage();
     let complete = c.nothing_left_out();
-    let matcher = Matcher::new(&a.pattern, true);
+    let matcher = Matcher::new(pattern, true);
     let found = scan.query(&matcher, usize::MAX);
     let total: u64 = found.iter().map(|m| m.count).sum();
     let code = if complete { exit::OK } else { exit::DEGRADED };
@@ -1142,7 +1231,7 @@ pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
             SCHEMA_FIND,
             json!({
                 "query": {
-                    "text": a.pattern.trim(),
+                    "text": pattern.trim(),
                     "match": if matcher.is_glob() { "glob" } else { "substring" },
                     "whole_path": matcher.is_whole_path(),
                     "ignore_case": true,
@@ -1207,6 +1296,12 @@ pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
          what was left out are unknown, so this is not proof that no matching name exists",
         c.archives_searched, c.archives_found
     ));
+    find_left_out(env, &c);
+    Ok(code)
+}
+
+/// The text lines that say what an incomplete search left out.
+fn find_left_out(env: &mut Env<'_>, c: &mochi_core::find::Coverage) {
     for s in &c.skipped {
         env.line(format!(
             "  not searched: {}: {}",
@@ -1232,6 +1327,186 @@ pub fn find_cmd(env: &mut Env<'_>, a: &FindArgs) -> Result<u8> {
             l.as_str()
         ));
     }
+}
+
+fn entry_filter_name(f: EntryFilter) -> &'static str {
+    match f {
+        EntryFilter::All => "all",
+        EntryFilter::Files => "files",
+        EntryFilter::Folders => "folders",
+    }
+}
+
+/// `mochi find` with several names or any option (spec Annex B.2.21): every
+/// entry that matches any name, with the names it matched, and what each name
+/// found. JSON: `mochi-cli-find-v2`.
+fn find_v2(env: &mut Env<'_>, a: &FindArgs, ask: &FindAsk, scan: &Scan) -> Result<u8> {
+    let options = MatchOptions {
+        ignore_case: !a.match_case,
+        whole_name: a.whole_name,
+    };
+    let filter = if a.files_only {
+        EntryFilter::Files
+    } else if a.folders_only {
+        EntryFilter::Folders
+    } else {
+        EntryFilter::All
+    };
+    let set = TermSet::new(&ask.names, options, filter)?;
+    let found = scan.query_terms(&set, usize::MAX);
+    let c = scan.coverage();
+    let complete = c.nothing_left_out();
+    let code = if complete { exit::OK } else { exit::DEGRADED };
+    let total: u64 = found.iter().map(|m| m.count).sum();
+    let mut per_term = vec![(0u64, 0u64); ask.names.len()];
+    for m in &found {
+        for (t, &n) in m.per_term.iter().enumerate() {
+            if let Some(slot) = per_term.get_mut(t) {
+                slot.0 += n;
+                slot.1 += u64::from(n > 0);
+            }
+        }
+    }
+    if env.json {
+        let terms: Vec<Value> = ask
+            .names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let m = set.term(i);
+                let (hits, archives) = per_term.get(i).copied().unwrap_or_default();
+                json!({
+                    "text": n.trim(),
+                    "match": if m.is_some_and(Matcher::is_glob) {
+                        "glob"
+                    } else if a.whole_name {
+                        "whole_name"
+                    } else {
+                        "substring"
+                    },
+                    "whole_path": m.is_some_and(Matcher::is_whole_path),
+                    "hits": hits,
+                    "archives": archives,
+                })
+            })
+            .collect();
+        let mut hits = Vec::new();
+        for m in &found {
+            for (i, ts) in &m.entries {
+                let Some(e) = m.names.get(*i) else { continue };
+                let mut h = serde_json::Map::new();
+                h.insert("archive".into(), json!(m.path.display().to_string()));
+                h.extend(path_fields(e.path));
+                h.insert("kind".into(), json!(entry_kind(e.kind)));
+                h.insert("size".into(), json!(e.size));
+                h.insert("terms".into(), json!(ts));
+                hits.push(Value::Object(h));
+            }
+        }
+        let skipped: Vec<Value> = c
+            .skipped
+            .iter()
+            .map(|s| {
+                json!({
+                    "archive": s.path.display().to_string(),
+                    "reason": s.skip.reason(),
+                    "code": s.skip.code().map(|c| c.as_str()),
+                    "message": s.skip.message(),
+                })
+            })
+            .collect();
+        env.emit_tagged(
+            SCHEMA_FIND_V2,
+            json!({
+                "query": {
+                    "terms": terms,
+                    "ignore_case": !a.match_case,
+                    "whole_name": a.whole_name,
+                    "entries": entry_filter_name(filter),
+                    "subfolders": !a.no_subfolders,
+                },
+                "scopes": scan.scopes().iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "coverage": {
+                    "complete": complete,
+                    "folders_visited": c.folders_visited,
+                    "folders_unreadable": c.folders_unreadable,
+                    "links_not_followed": c.links_not_followed,
+                    "limit": c.limit.map(|l| l.as_str()),
+                    "archives_found": c.archives_found,
+                    "archives_searched": c.archives_searched,
+                    "archives_skipped": c.skipped.len(),
+                    "skipped": skipped,
+                    "names_searched": c.names_searched,
+                    "content_searched": false,
+                },
+                "total_hits": total,
+                "hits": hits,
+            }),
+        );
+        return Ok(code);
+    }
+    for m in &found {
+        let archive = os_path_text(&m.path);
+        for (i, _) in &m.entries {
+            let Some(e) = m.names.get(*i) else { continue };
+            let slash = if e.kind == EntryKind::Directory {
+                "/"
+            } else {
+                ""
+            };
+            env.line(format!("{archive}: {}{slash}", text(e.path)));
+        }
+    }
+    // What each name found; a name with no match is "not found" only when
+    // everything was searched (spec 23.3 #8).
+    for (n, (hits, archives)) in ask.names.iter().zip(&per_term) {
+        let name = text(n.trim().as_bytes());
+        if *hits == 0 {
+            env.line(format!(
+                "name {name}: {}",
+                if complete {
+                    "not found"
+                } else {
+                    "not found in what was searched"
+                }
+            ));
+        } else {
+            env.line(format!(
+                "name {name}: {hits} match{} in {archives} archive{}",
+                if *hits == 1 { "" } else { "es" },
+                if *archives == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    let found_names = per_term.iter().filter(|(h, _)| *h > 0).count();
+    let matches = if total == 1 { "match" } else { "matches" };
+    let summary = format!(
+        "{total} {matches} for {found_names} of {} names in {} of {} archives searched ({} \
+         names){}; file content was not searched",
+        ask.names.len(),
+        found.len(),
+        c.archives_searched,
+        c.names_searched,
+        if a.no_subfolders {
+            "; subfolders were not searched (--no-subfolders)"
+        } else {
+            ""
+        }
+    );
+    if complete {
+        env.line(format!(
+            "{summary}; coverage complete: every one of the {} archives found ({} folders \
+             walked) was searched",
+            c.archives_found, c.folders_visited
+        ));
+        return Ok(code);
+    }
+    env.line(format!(
+        "{summary}; coverage INCOMPLETE: {} of {} archives found were searched, and names in \
+         what was left out are unknown, so this is not proof that no matching name exists",
+        c.archives_searched, c.archives_found
+    ));
+    find_left_out(env, &c);
     Ok(code)
 }
 

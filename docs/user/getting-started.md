@@ -1,6 +1,6 @@
 # Getting started with the `mochi` command line
 
-Sources: `docs/c14-cli.md`, spec §23. Every example below was run against a temporary
+Sources: `docs/cli.md`, spec §23. Every example below was run against a temporary
 directory with a build of this repository.
 
 > A `.mochi` file is not a backup; archives from before 1.0 need `mochi migrate` ([experimental.md](experimental.md)).
@@ -47,7 +47,7 @@ mochi get photos.mochi photos/2026/a.txt --stdout
   partial, and the exit code is 1. It never overwrites or merges into existing files.
   The restore reports name collisions and unsupported names instead of renaming.
 * Symbolic links, devices, FIFOs, and sockets are skipped and listed, and the command
-  exits 2 (`docs/c14-cli.md` rule 5). Links are never followed.
+  exits 2 (`docs/cli.md` rule 5). Links are never followed.
 
 After each commit the tool prints `LOCAL_COMMITTED` and reminds you to keep an
 independent copy. That line means the commit is complete in this file
@@ -158,7 +158,7 @@ mochi snapshot expire photos.mochi 0 --confirm           # irreversible (no un-e
 
 An archive in 1.0 has a fixed ceiling on how many files it can track. Each commit
 writes the whole archive state as one bounded record, and that record has a size limit
-(measured, gate G5, `docs/benchmarks/t32-capacity-memory.md`):
+(measured, gate G5, `docs/dev/performance.md#capacity-memory`):
 
 * about **342,391** files when each file is a single chunk;
   (the ceiling counts the catalog's size once decoded; the catalog is stored compressed,

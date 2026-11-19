@@ -1,185 +1,109 @@
 # MOCHI
 
-An archive format and archiver, shipped the way WinRAR is: a format library plus an
-end-user application.
+**MOCHI** is an archive format and an archiver: a `.mochi` file keeps every version
+of what you put in it, checks every byte it reads, and says plainly what it could
+and could not verify. It ships the way WinRAR does: a desktop application for
+Windows and Ubuntu, a `mochi` command-line tool, and the Rust library both are built on.
 
-> **A `.mochi` file is not a backup** (spec §1.1). Keep independent copies of anything
-> you cannot recreate. The format is ratified at 1.0 (spec §28, Annex B.2.14); archives
-> written by a pre-1.0 build (draft 2) are converted with `mochi migrate`.
+> **A `.mochi` file is not a backup.** It is one file on one disk. Keep independent
+> copies of anything you cannot recreate. See [why](docs/user/not-a-backup.md).
 
-## Where to read first
+## What it does
 
-1. [`AGENTS.md`](AGENTS.md): working rules and invariants. Read before changing anything.
-2. [`docs/spec.md`](docs/spec.md): the specification (revision 2.0). Normative.
-3. [`docs/implementation-plan.md`](docs/implementation-plan.md): phases, scope, Definition of Done.
-4. [`docs/user/`](docs/user/README.md): the user guide (not a backup, encrypted archives, what the checks prove, TAR compatibility, recovery record).
+- **Versions, not just files.** Each `create` or `append` is a commit. Every earlier
+  snapshot stays readable; deleting a file removes it from the current snapshot, not
+  from history. Unchanged content is stored once.
+- **Verified reads.** Every object is checked against its BLAKE3-256 hash before it is
+  used, and a file is only written out after its content hash matches. `verify`
+  reports each health dimension separately and never calls a check that did not run
+  a pass.
+- **Safe publication.** A commit becomes visible only after it is completely on disk;
+  an interrupted write never replaces the last good version.
+- **Optional profiles, chosen at creation:**
+  - *Encrypted* (XChaCha20-Poly1305, passphrase-only): names, sizes and content are sealed.
+  - *Recovery record*: Reed–Solomon parity that `repair` can use to rebuild damaged parts.
+  - *TAR-compatible*: standard `zstd` and `tar` can read the archive's history.
+- **Desktop app.** Browse, create, add, extract, test and repair `.mochi` archives;
+  open ZIP, 7z, RAR and `.tar`/`.tar.gz`/`.tar.zst` read-only; write ZIP and TAR
+  archives; search file names across every archive under a folder and retrieve the
+  matches. Explorer and file-manager integration on Windows and Ubuntu.
 
-## Layout
+The format is **ratified at version 1.0** ([specification](docs/spec.md)).
+Archives written by pre-1.0 builds are converted with `mochi migrate`.
 
-| Path | Role | Status |
-|---|---|---|
-| `crates/mochi-format` | Framing, record envelopes, digests. Pure, no I/O. | C1: frame walker, skippable writer, framed footer, draft envelope. C2: representation types, per-scope typed digests, unencrypted object codec |
-| `crates/mochi-core` | Archive operations, jobs, reports, `Storage` trait | C0 harness; C2: object records, integrity checks; C3: catalog (paths, extents, namespace replay, published images); C4: recovery manifests; C5: commit records, §12.2 publication, head location, tail handling; Annex B.2 batch: archive descriptor, commit v1, delta manifests with checkpoints, D13 creation, D14 tail quarantine, D15 report results and timestamps |
-| `crates/mochi-cli` | The `mochi` binary | Every spec §23.2 1.0 command is built (`docs/c14-cli.md`); post-1.0 commands exit 4 |
-| `crates/mochi-testkit` | Fault-injecting storage, fixtures | C0: `SimStorage`; C1/C2: golden vectors, fuzz exercisers, C2 property tests |
-| `apps/mochi-desktop` | Tauri v2 app: React + TypeScript + Vite (O1); reads `.mochi` plus ZIP, 7z, RAR, `.tar.gz` (D8, read-only) | **Not started; unblocked** (D0 next on the desktop track). Windows 10 22H2+/11 and Ubuntu 22.04/24.04 (O11) |
-| `fuzz/` | cargo-fuzz targets | `frame_walker`, `footer`, `envelope` (C1), `object_decode` (C2), `catalog_image` (C3), `cbor_decode`, `manifest_decode` (C4), `commit_decode`, `archive_open` (C5); see `fuzz/README.md` |
-| `fixtures/golden/` | Valid / corrupt / interrupted archives | `c1/`: 16 framing vectors; `c2/`: 13 object vectors + 15 digest known answers; `c3/`: one catalog image that must stay readable; `c4/`: recovery-manifest vectors; `c5/`: commit-record vectors and archives that must stay readable; `b2/`: Annex B.2 vectors (binary envelope v0, archive descriptor). See `fixtures/golden/README.md` |
-| `docs/ratification/` | Frozen format artifacts R1–R10 | Empty; written from working code |
+## Download
 
-Dependency direction is one-way: `mochi-format` ← `mochi-core` ← {`mochi-cli`, desktop backend}.
+Installers are on the **Releases** page:
 
-## Build and test
+| Platform | Package |
+|---|---|
+| Windows 10 22H2 / 11 (x86-64) | `MOCHI_<version>_x64-setup.exe` (per-user install) |
+| Ubuntu 22.04 / 24.04 (x86-64) | `mochi_<version>_amd64.deb` (`sudo apt install ./mochi_*.deb`) |
 
-Requires Rust 1.89 or newer (`rust-toolchain.toml` pins 1.91).
+The installers are not code-signed, so Windows SmartScreen shows "unknown publisher"
+(choose *More info*, then *Run anyway*). The in-app updater checks its own signature on
+every update before installing it. macOS is not supported.
 
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-ci/check-invariants.sh          # AGENTS.md rules clippy cannot express
-cargo run -p mochi-cli -- --help
-```
-
-## What works today
-
-Phases C1 (framing), C2 (object model and digests), C3 (catalog and
-namespace), C4 (recovery manifests), and C5 (commit and single-file
-publication) are implemented; C6 (read and restore) and C7 (verification)
-are implemented, with CI evidence (run 37735586637, Ubuntu 22.04/24.04 and
-Windows). The `mochi` CLI creates, appends
-to, lists, extracts, and verifies real `.mochi` files:
+## The command line
 
 ```bash
-mochi create photos.mochi ~/Pictures/2026      # one commit; never replaces a file
+mochi create photos.mochi ~/Pictures/2026        # a new archive (never replaces a file)
 mochi append photos.mochi new.jpg --delete 2026/old.jpg
-mochi list photos.mochi                         # or --snapshot 0 for history
-mochi get photos.mochi -C restored/             # verified before each file is published
-mochi verify photos.mochi --json                # read-only; per-dimension report
+mochi list photos.mochi                          # the latest snapshot; --snapshot N for history
+mochi get photos.mochi -C restored/              # each file verified before it is written
+mochi verify photos.mochi                        # read-only health report (--json for machines)
+mochi find --name report.pdf --name '*.log' ~/Archives   # names across many archives
 ```
 
-Command reference, exit codes, and current concessions: `docs/c14-cli.md`.
-Report format: `docs/report-schema-v1.md`.
+Every command, option and exit code: [`docs/cli.md`](docs/cli.md).
 
-- Structural frame walker (spec §8.6): skippable and data frames, the RLE
-  one-byte rule, reserved block types and header bit rejected, `Block_Maximum_Size`
-  enforced, every step bounds-checked against configurable limits (§8.5).
-- Skippable-frame writer; it refuses data frames and reserved magics.
-- Framed footer (§8.4): 72-byte skippable frame, domain-separated BLAKE3 digest,
-  keyless validation including the preceding skippable header.
-- Record envelopes (§8.3 as amended by Annex B.2 D11): the binary envelope v0
-  for opaque payloads, with one fault per validation obligation, and shared
-  feature and identity checks for the CBOR-native records. **Draft** (R2).
-- Golden vectors in `fixtures/golden/c1/` and three fuzz targets.
-- **C2.** The four spec §9.1 representations are distinct types; encoded
-  plaintext has no public byte accessor, so it cannot be hashed. Every §9.2
-  digest scope has its own draft domain separator and its own output type.
-  Unencrypted objects encode to exactly one Zstandard frame and decode only to
-  their exact recorded length. Object records support stored-integrity and
-  content-integrity checks (§20.1) that are tested to be independent.
-  Encryption and dictionaries return `UNSUPPORTED`, never a silent fallback.
+## Documentation
 
-Decisions settled during C2 (plan §9): object IDs are random 256-bit values
-from the OS (O19); the file-content hash is plain BLAKE3, equal to `b3sum`
-(O20); data objects must carry a content size and frame checksum (O21);
-integrity failures exit 1, with a documented precedence (O22, O13).
+| | |
+|---|---|
+| [User guide](docs/user/README.md) | Getting started, encryption, what the checks prove, recovery records, TAR compatibility |
+| [Command-line reference](docs/cli.md) | Commands, exit codes, JSON output |
+| [Specification](docs/spec.md) | The `.mochi` format (normative), with the frozen [ratification artifacts](docs/ratification/README.md) and [schemas](docs/schemas/) |
+| [Desktop app](apps/mochi-desktop/README.md) | Architecture, IPC, security rules, testing |
+| [Developer documents](docs/dev/README.md) | Design decisions, packaging and releases, benchmarks, platform notes |
+| [Release notes](docs/release-notes/) | What changed in each version |
 
-Product decisions (plan §9): the desktop app is Tauri v2 with React and TypeScript
-(O1); it supports Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04 on x86-64, not macOS
-(O11); and it opens ZIP, 7z, RAR, and `.tar.gz` read-only (O9, phase D8; RAR is read-only
-for good, and in 1.0 it has no hostile-input fixtures and no complete multi-volume
-test, [owner, 2026-10-15]). The
-project is licensed MIT (O23), which permits distributing UnRAR
-in the D8 helper; its notice is in `THIRD-PARTY-NOTICES.md`.
+## Building from source
 
-- **C3.** Reversible archive paths (byte components; Windows names as WTF-8, so
-  unpaired surrogates round-trip). Extent validation rejecting gaps, overlaps,
-  out-of-range reads, and length mismatches. `PUT`/`DELETE` replay checked
-  against the completed commit state, verified against an independent model
-  that catches four planted bugs. An in-memory SQLite catalog whose published
-  images are byte strings through `Storage`, opened only after header, exact
-  schema, integrity, foreign-key, and MOCHI checks. SQLite cannot detect a bit
-  flip inside a stored value, so C5 must hash-verify images before opening them.
+Rust 1.91 (pinned in `rust-toolchain.toml`; the minimum supported version is 1.89).
 
-The nine format decisions D1–D9 are recorded in spec Annex B.1, and D10–D15
-are decided in Annex B.2, with their evidence tracked by gates G1–G9. Every
-product decision in plan §9 is settled except two drafts that close with
-ratification: error-code names (O15) and walker defaults (O18). Notably: manifests and commit bodies use
-deterministic CBOR (D2); encryption is XChaCha20-Poly1305, passphrase-only in
-1.0 (D3); TAR compatibility is opt-in (D4).
+```bash
+cargo build --release -p mochi-cli          # the `mochi` binary
+cargo test --workspace
+```
 
-- **C4.** A strict deterministic-CBOR codec (byte-identical to `ciborium`; every
-  excluded feature rejected by name). Recovery manifests per a draft CDDL schema
-  (`docs/schemas/`). Rebuilding a destroyed catalog from manifests found by
-  scanning, trusting only what chains back from the head, and claiming snapshot
-  recovery only from a verified baseline. A forged-but-consistent history is
-  detectable only against a trusted head, which C5's footer supplies.
+The desktop app also needs Node 22 or newer with pnpm, and on Linux the WebKitGTK 4.1
+development packages. See [`apps/mochi-desktop/README.md`](apps/mochi-desktop/README.md).
 
-- **C5.** Commit records (draft CDDL in `docs/schemas/`) and the §12.2
-  publication protocol: lock, head validation, content → manifest → catalog
-  checkpoint → commit → sync → footer → sync → directory sync, then
-  `LOCAL_COMMITTED`. Readers find the head at EOF or, after an interrupted
-  write, by scanning, and say which. Every referenced object is hash-verified
-  before it is parsed. Uncommitted tails are removed only on request, with an
-  audit record; anything that might be a damaged commit is refused. Tested
-  against halts at every write, torn and lost writes, lying and failing
-  syncs, and truncation at every byte.
-  C5 stored a full catalog image with every commit, so archive size grew
-  roughly quadratically with history (`docs/benchmarks/c5-append.md`). The
-  Annex B.2 batch replaced that: each commit stores a delta manifest, and a
-  checkpoint (image plus snapshot manifest) is written only when the deltas
-  since the last one reach α·max(*B*, *F*). Measured to 10,000 commits in
-  `docs/benchmarks/t32-scaling.md` (gate G3).
+## Repository layout
 
-**Annex B.2 batch, now the 1.0 layout** (`docs/b2-implementation-checklist.md`
-tracks every task, decision, CI run, and gate). Archives written today
-carry the archive descriptor at offset 0, v1 commit records, and delta
-manifests with checkpoints; pre-batch drafts (no descriptor, v0 commits or
-manifests) are refused as legacy (§26). Gates G1 (conformance), G3
-(scaling), G5 (capacity), and G7 (creation, including power loss on ext4
-over dm-flakey) have passed, and G9's (reports) criteria are met at
-library level. G2 (replay and recovery, including the GC hold test) and G8
-(truncation, through `mochi append --truncate-tail`) have passed; G4 has
-passed except its opt-in item, which moved to 1.x with
-`create --exceed-default-limits` (D16). G6 (Windows durability) is closed as
-a policy disposition, not as documented durability: Windows reports a new
-archive's directory entry as `Unconfirmed` in 1.0 (spec B.2.6, B.3 item 1).
+| Path | What it is |
+|---|---|
+| `crates/mochi-format` | Framing, record envelopes, digests. Pure: no I/O |
+| `crates/mochi-core` | Archive operations: catalog, commits, verification, restore, repair, jobs, reports |
+| `crates/mochi-cli` | The `mochi` command-line tool |
+| `crates/mochi-export` | Writes ZIP and TAR archives for the desktop app |
+| `crates/mochi-foreign` | Reads ZIP, 7z, RAR and TAR in an isolated helper process |
+| `crates/mochi-sys`, `crates/mochi-shellext` | Windows system calls and the Explorer context menu |
+| `crates/mochi-testkit` | Fault-injecting storage, golden fixtures, test tools |
+| `apps/mochi-desktop` | The desktop app (Tauri 2, React, TypeScript) |
+| `interop/pyverify` | An independent read-only verifier in Python, written from the specification alone |
+| `fixtures/`, `fuzz/` | Golden archives and vectors; fuzz targets |
+| `packaging/`, `ci/` | Installers, the bundled user guide, CI scripts |
 
-**C9 (retention, GC, compaction, dedup) is implemented in the library:**
-in-archive deduplication on the write path; retention by expiry and legal
-holds, carried in recovery-manifest schema 2; `gc::plan`, which marks from
-the retained roots; and `compact::compact`, which writes the kept snapshots
-into a new archive (new archive ID, provenance, IDs and attributes
-preserved, verified before it is published) and never removes the source.
-The `checkpoint`, `snapshot`, `gc`, and `compact` commands arrive with C14.
+## Contributing
 
-**C6 (read path) has started:** `mochi_core::read` lists any commit's
-snapshot and streams a file out of it, verifying every chunk and the whole
-file's content hash. `mochi_core::restore` writes a snapshot or subtree into
-a directory. It never overwrites or merges, reports collisions and
-unsupported names (Windows rules included) instead of renaming, and
-publishes a file only after it verifies. Promised attributes (O6) are
-restored where the platform allows, and every one that is not is reported.
-
-**C7 (verification):** `mochi_core::verify` checks the whole retained history
-at the spec §20.1 levels, read-only, and reports each health dimension
-separately: integrity is `PASS` only when stored bytes were read, freshness is
-`UNKNOWN` without an anchor (a user-supplied expected head or this client's
-last-seen head), and an older copy of an archive is caught as a rollback.
-
-**C8 (repair, first slice):** `mochi repair plan` and `mochi repair apply`
-recover what the §22 ladder reaches through recovery manifests (step 4) into
-a new archive, leave out and list anything that cannot be recovered, verify
-the result before publishing it, and never write to the damaged source. A
-partial repair is labelled partial and exits `2`.
-
-Every 1.0 command in spec §23.2 is built. A command a future build adds to
-the 1.0 scope before implementing it would exit `3` with `NOT_IMPLEMENTED`,
-and post-1.0 commands (`inventory`, `split`, `join`, `mount`) exit `4` with
-`UNSUPPORTED_FEATURE`, as spec §23.2 requires. See
-`docs/implementation-plan.md` for the status of every phase.
+Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: the format
+has invariants that tests alone cannot enforce. To report a security problem, see
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Licensed under the [MIT license](LICENSE). Third-party components with other conditions are listed in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). Third-party components and their licenses are listed in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md); the RAR reader uses the UnRAR source,
+which is freeware under its own license and is used for reading only.

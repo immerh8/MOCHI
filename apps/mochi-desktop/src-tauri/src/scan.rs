@@ -524,6 +524,7 @@ fn run_in(
         rekey: None,
         export: None,
         scan: Some(Box::new(report)),
+        retrieve: None,
     })
 }
 

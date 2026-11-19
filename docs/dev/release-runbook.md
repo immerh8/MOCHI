@@ -1,7 +1,7 @@
 # Release runbook: the checklist you run by hand
 
-The owner's checklist for `docs/packaging.md` ("Release checklist (not reproducible on
-CI)"; audit finding F10 in `docs/audit-gate1.md`). **One Windows 11 notebook, no virtual
+The owner's checklist for `docs/dev/packaging.md` ("Release checklist (not reproducible on
+CI)"; gate-1 audit finding F10). **One Windows 11 notebook, no virtual
 machines, one sitting (about two hours, most of it waiting for two release builds).**
 Each step says what a pass and a fail look like. Fill in the results table (section 6).
 
@@ -75,7 +75,7 @@ Network off: the Wi-Fi flyout → Wi-Fi off, or Airplane mode; unplug the cable.
 
 ---
 
-## 2. The test release pair for the updater (T13)
+## 2. The test release pair for the updater
 
 The updater test needs two published releases. To spend no real version, publish a throwaway
 pair **0.9.0 then 0.9.1** as ordinary releases through the draft-only `release` workflow
@@ -152,7 +152,7 @@ scratch folder. Install the **0.9.0** setup from its published release.
 
 ### W-06. The MOCHI right-click menu (the menu display is yours; the entries themselves are Automated)
 
-**Layout changed 2026-10-20 (owner decision, O10): the menu is flat, with no "MOCHI" submenu.** Read every "MOCHI ▸ X" below as the flat entry X. Every file and folder shows exactly two entries, **Add to archive...** and **Add to "<Name>.mochi"** (drawn by `mochi-shellext.dll`; the name is the file's name without extension, the folder's name, or for several items their folder's name); **Both carry the MOCHI icon** (small, crisp, transparent background, also on a high-DPI display and in dark mode) and sit next to each other at the top level of the classic menu, not in a submenu; if the icon cannot be loaded the entries still appear without it. **Find (added with MOCHI Find):** when the selection contains a folder (one, several, or folders among files) a third entry, **Find in MOCHI archives**, follows them; on the empty space of an open folder it is the only MOCHI entry; on files only it is absent. Choosing it opens MOCHI's Find window already scanning those folders (files in the selection are ignored). Check the Thai and Chinese labels under those display languages, and Find on a folder on a network share and on a folder whose path is longer than 260 characters (the latter shows no entry on the background menu). `.mochi` files also show **Open with MOCHI**, **Extract here**, **Extract to a new folder**. Also do the Windows 11 client check in `docs/packaging.md` (Release checklist, Shell integration): the labels, and an update while Explorer runs (locked DLL). The guest checks `A-ASSOC-VERBS`, `B-ASSOC-VERBS` and `B-VERB-ADD-*` (`ci/g6-windows/guest/payload/user.ps1`) read the new layout.
+**Layout changed 2026-10-20 (owner decision, O10): the menu is flat, with no "MOCHI" submenu.** Read every "MOCHI ▸ X" below as the flat entry X. Every file and folder shows exactly two entries, **Add to archive...** and **Add to "<Name>.mochi"** (drawn by `mochi-shellext.dll`; the name is the file's name without extension, the folder's name, or for several items their folder's name); **Both carry the MOCHI icon** (small, crisp, transparent background, also on a high-DPI display and in dark mode) and sit next to each other at the top level of the classic menu, not in a submenu; if the icon cannot be loaded the entries still appear without it. **Find (added with MOCHI Find):** when the selection contains a folder (one, several, or folders among files) a third entry, **Find in MOCHI archives**, follows them; on the empty space of an open folder it is the only MOCHI entry; on files only it is absent. Choosing it opens MOCHI's Find window already scanning those folders (files in the selection are ignored). Check the Thai and Chinese labels under those display languages, and Find on a folder on a network share and on a folder whose path is longer than 260 characters (the latter shows no entry on the background menu). `.mochi` files also show **Open with MOCHI**, **Extract here**, **Extract to a new folder**. Also do the Windows 11 client check in `docs/dev/packaging.md` (Release checklist, Shell integration): the labels, and an update while Explorer runs (locked DLL). The guest checks `A-ASSOC-VERBS`, `B-ASSOC-VERBS` and `B-VERB-ADD-*` (`ci/g6-windows/guest/payload/user.ps1`) read the new layout.
 
 Close MOCHI first each time. In the scratch folder:
 
@@ -196,7 +196,7 @@ Install NVDA from `nvaccess.org` for the session (uninstall it in W-11 if you do
 2. Settings → System → Display → **Scale 200 %**, window about 1280×720. **Pass:** no **horizontal** scroll bar for the page; panels reflow to one column. **Fail:** sideways scrolling or cut-off controls.
 3. Put the theme and scale back.
 
-### W-09a. The start screen, drag and drop, and the simple Create and Extract flows (D10)
+### W-09a. The start screen, drag and drop, and the simple Create and Extract flows
 
 WebDriver cannot drag files from Explorer, so this one is yours. Close MOCHI, start it from the Start menu.
 
@@ -236,7 +236,7 @@ WebDriver cannot press the mouse for the operating system's move or resize of a 
 
 ---
 
-## 4. The updater (T13) on this notebook, then final cleanup
+## 4. The updater on this notebook, then final cleanup
 
 Install the **0.9.0** release (W-02 to W-09 were done on it). Publish **0.9.1** now (2.3). Then:
 
@@ -375,7 +375,7 @@ Done by <you> on <date>
 Where it goes:
 
 1. **The release notes.** Paste the header and table into the real release draft's description under **Release checklist results**. Do not publish with a FAIL, or a blank cell on the notebook.
-2. **The audit F10 row.** In `docs/audit-gate1.md` item **10. F10**, add one line below its *Next step* and change nothing else:
+2. **The audit F10 record.** Add one line to the release's description, below the table, and change nothing else:
 
    ```
    **Status (<date>):** run by <you> on one Windows 11 notebook, <build>, results in <release link>; <n> of <m> notebook steps PASS, <FAIL steps with the finding>. Not run on client hardware for 1.0: Windows 10 22H2 and Ubuntu human-only items (listed in the runbook, section 5). Automated part: <installer-smoke run link>.

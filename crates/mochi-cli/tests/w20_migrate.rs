@@ -1,5 +1,5 @@
 //! W20: the 1.0 flip at the command line (spec §23, §26, Annex B.2.14 D24;
-//! plan K25; `docs/c14-cli.md`). Every command but `migrate` refuses a draft
+//! plan K25; `docs/cli.md`). Every command but `migrate` refuses a draft
 //! archive (`UNSUPPORTED_FEATURE`, exit 4, naming the draft; only draft 2
 //! suggests `mochi migrate`), and `mochi migrate` converts the three draft-2
 //! archives of `fixtures/golden/r8/legacy/`, one per encryption state and one

@@ -1,4 +1,4 @@
-//! C14 end-to-end tests for `mochi dump-index` (next-work-plan K6), run
+//! C14 end-to-end tests for `mochi dump-index` (concession K6), run
 //! in-process through `mochi_cli::run` against the real filesystem.
 //!
 //! The oracles are independent of the dump code: the table names come from

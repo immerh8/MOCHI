@@ -24,6 +24,11 @@ archive_modified_ms: number | null,
  */
 path: NameText, 
 /**
+ * The numbers of the names asked for that this entry matched (ascending;
+ * `[0]` for a single name).
+ */
+terms: Array<number>, 
+/**
  * The path's exact stored bytes, hex: for opening the entry's folder.
  */
 key: string, kind: EntryKindView, 

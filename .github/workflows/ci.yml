@@ -470,7 +470,7 @@ jobs:
     # Plan C10 (spec 7.2, Annex B.2.9 D19 rule 10): a TAR-compatible archive
     # decoded by the reference zstd CLI and extracted by GNU tar and by
     # bsdtar (libarchive). The versions printed here are the only ones the
-    # compatibility claim in docs/c10-tar-compat.md may name.
+    # compatibility claim in docs/dev/tar-compatible-profile.md may name.
     name: tar interop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -574,7 +574,7 @@ jobs:
     # WebView2 bootstrapper) and an Ubuntu .deb built on 22.04 (declares
     # libwebkit2gtk-4.1-0). The build generates the full third-party license list
     # and fails on a license outside packaging/about.toml. Signing and the updater
-    # need owner-provided keys: docs/packaging.md. Both uploads are workflow
+    # need owner-provided keys: docs/dev/packaging.md. Both uploads are workflow
     # artifacts only; nothing is published.
     name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -616,7 +616,7 @@ jobs:
       - name: Build the installer (license list, UI, bundle)
         shell: bash
         run: packaging/build-installer.sh ${{ matrix.bundle }}
-      # --- Signing placeholder (docs/packaging.md; NOT active) -------------
+      # --- Signing placeholder (docs/dev/packaging.md; NOT active) -------------
       # Windows: sign the setup exe with the owner's code-signing certificate,
       # e.g. bundle.windows.signCommand / certificateThumbprint, with secrets
       # such as WINDOWS_CERTIFICATE supplied by the owner. Never commit keys.

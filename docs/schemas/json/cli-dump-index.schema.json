@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mochi.invalid/schemas/json/cli-dump-index.schema.json",
   "title": "mochi dump-index --json",
-  "description": "The catalog of the opened commit, table by table: `mochi dump-index --json` (docs/c14-cli.md rule 12). Table and column names come from the catalog's own schema (R4).",
+  "description": "The catalog of the opened commit, table by table: `mochi dump-index --json` (docs/cli.md rule 12). Table and column names come from the catalog's own schema (R4).",
   "type": "object",
   "additionalProperties": false,
   "required": [

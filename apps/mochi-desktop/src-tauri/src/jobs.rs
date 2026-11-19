@@ -83,6 +83,7 @@ impl JobRegistry {
             staging: Arc::clone(&window.staging),
             destination: Arc::clone(&window.destination),
             checks: Arc::clone(&window.checks),
+            finder: Some(Arc::clone(&window.finder)),
             ..self.services.clone()
         }
     }
@@ -189,6 +190,7 @@ fn validate(request: &JobRequest, services: &Services) -> Result<(), IpcError> {
         | JobRequest::ExportArchive { .. }
         | JobRequest::DeleteFromArchive { .. }
         | JobRequest::ExtractArchive { .. }
+        | JobRequest::RetrieveFound { .. }
         | JobRequest::TestForeign { .. }
         | JobRequest::ExtractForeign { .. }
         | JobRequest::ScanArchive { .. }
@@ -329,6 +331,7 @@ fn run_job(
                 rekey: None,
                 export: None,
                 scan: None,
+                retrieve: None,
             }),
         write => services.run(write, &ctx).unwrap_or_else(|| {
             Err(MochiError::new(
@@ -348,6 +351,7 @@ fn run_job(
             rekey,
             export,
             scan,
+            retrieve,
         }) => JobOutcome::Completed {
             summary,
             commit,
@@ -358,6 +362,7 @@ fn run_job(
             rekey,
             export,
             scan,
+            retrieve,
         },
         Err(e) if e.code == ErrorCode::Cancelled => JobOutcome::Cancelled,
         Err(e) => JobOutcome::Failed {

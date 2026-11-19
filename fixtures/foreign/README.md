@@ -1,4 +1,4 @@
-# Foreign-format fixtures (plan D8)
+# Foreign-format fixtures
 
 Hostile and ordinary ZIP / tar / tar.gz archives for `crates/mochi-foreign`.
 They are **generated deliberately** by `gen.py` from independent writers

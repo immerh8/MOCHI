@@ -1,5 +1,5 @@
 # Shared by smoke.ps1 (SYSTEM half) and user.ps1 (interactive half) of the installer
-# smoke test (docs/release-runbook.md, "Automated"). Dot-sourced; defines functions only.
+# smoke test (docs/dev/release-runbook.md, "Automated"). Dot-sourced; defines functions only.
 # Do not put non-ASCII characters in these scripts: Windows PowerShell 5.1 reads a
 # BOM-less file as ANSI. Build them from code points ([char]0x00E9) instead.
 

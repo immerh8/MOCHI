@@ -34,6 +34,12 @@ archives_from_cache: number, archives_skipped: number,
  */
 skipped: Array<FindSkippedView>, names_searched: number, scopes: Array<string>, 
 /**
+ * Whether the folders' subfolders were searched. `false` is the user's
+ * choice ("Search subfolders" off): only the folders themselves were
+ * walked, and that alone does not make the search incomplete.
+ */
+subfolders: boolean, 
+/**
  * A failure that ended the scan, if one did.
  */
 failure: string | null, 

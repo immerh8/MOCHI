@@ -299,7 +299,7 @@ pub struct DedupStats {
 /// and *B* is the base's image plus snapshot manifest. α is held as a ratio
 /// so the decision is exact integer arithmetic, the same on every platform.
 /// The defaults are α = 1 and *F* = 1 MiB, confirmed by the gate G3
-/// measurements (T32, `docs/benchmarks/t32-scaling.md`).
+/// measurements (T32, `docs/dev/performance.md#scaling`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CheckpointTrigger {
     alpha_num: u64,

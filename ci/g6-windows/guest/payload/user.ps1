@@ -1,4 +1,4 @@
-# Installer smoke test, interactive half (docs/release-runbook.md "Automated").
+# Installer smoke test, interactive half (docs/dev/release-runbook.md "Automated").
 # Runs in the logged-on session of the image's throwaway account g6, started by
 # the scheduled task smoke.ps1 registered. Two install/uninstall cycles:
 #

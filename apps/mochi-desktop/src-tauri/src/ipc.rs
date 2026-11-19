@@ -172,6 +172,26 @@ pub enum JobRequest {
         program: String,
         arguments: String,
     },
+    /// MOCHI Find (spec Annex B.2.21): extract found entries of the window's
+    /// latest scan `run`, from every archive they came from, into the folder
+    /// the user chose (`find_choose_retrieve_folder`). Each item is checked
+    /// against the names the scan read, and an archive that changed since is
+    /// left alone. `on_conflict` is `add_new` or `replace`. The webview names
+    /// no path.
+    RetrieveFound {
+        run: u32,
+        /// The hits ticked. Empty when `all` is given.
+        #[serde(default)]
+        items: Vec<crate::retrieve::FoundItem>,
+        /// Instead of `items`: every match of this search (or of its one
+        /// name, `term`), found again in Rust, so that any number can be
+        /// retrieved without listing them. Its page fields are ignored.
+        #[serde(default)]
+        #[ts(optional)]
+        all: Option<crate::find::FindQuery>,
+        layout: crate::retrieve::RetrieveLayout,
+        on_conflict: ConflictChoice,
+    },
 }
 
 /// Everything the runner says about one job, in order: `started`, any
@@ -239,6 +259,10 @@ pub enum JobOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         scan: Option<Box<crate::scan::ScanReportView>>,
+        /// Set by MOCHI Find's retrieve job (B.2.21).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        retrieve: Option<Box<crate::retrieve::RetrieveReportView>>,
     },
     /// Stopped at a safe point because cancellation was requested.
     Cancelled,

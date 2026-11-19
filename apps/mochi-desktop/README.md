@@ -1,13 +1,15 @@
 # MOCHI desktop (Tauri v2)
 
-**Phases D0 to D6 and D8 built, and D7 in slices** (plan §7; the in-app updater, T13, and the bundled user guide, audit F8, are part of D7; the owner-held release checklist has not been run): the shell, the job runner, typed IPC, E2E tests,
-the archive browser (snapshot timeline, folder tree, virtualized list, details),
-create, add, and remove (D2), extract (D3), test, health, and repair (D4), encryption and
-search (D5), shell integration (D6), foreign formats (D8), packaging (D7 slice 1), and
-accessibility, the message catalogue, and the opt-in crash log (D7 slice 2), and the
-simplified main path (D10: a start screen, guided create and extract, technical tools under
-"Advanced").
-Stack (plan §9 O1, next-work-plan K9): Tauri 2, React 19 + TypeScript (strict) on
+The MOCHI desktop application: a WinRAR-style archiver for `.mochi` archives. It browses
+every version of an archive (snapshot timeline, folder tree, virtualized list, details);
+creates archives and adds or removes files; extracts, tests, checks health and repairs;
+handles encryption, recovery records and name search; finds names across every archive
+under a folder and retrieves the matches; opens ZIP, 7z, RAR and TAR archives read-only
+and writes ZIP and TAR; integrates with Explorer and the Linux file managers; and ships
+installers, an in-app updater, a bundled offline user guide, three languages
+(English, Thai, Simplified Chinese) and an opt-in local crash log.
+
+Stack (decision O1, `docs/dev/decisions.md`): Tauri 2, React 19 + TypeScript (strict) on
 Vite, pnpm with a frozen lockfile, Node 24 LTS in CI (Node 22 works locally).
 Platforms (O11): Windows 10 22H2 / 11 and Ubuntu 22.04 / 24.04, x86-64. macOS is not
 supported in 1.0.
@@ -74,7 +76,7 @@ cargo test -p mochi-desktop        # writes ui/src/ipc/generated/*.ts; commit th
 pnpm --dir apps/mochi-desktop/ui build
 cargo build -p mochi-desktop --features custom-protocol,e2e   # embeds ui/dist; e2e: see below
 cargo install tauri-driver --locked
-# The archives the D1 spec opens (target/d1-fixtures; MOCHI_E2E_FIXTURES overrides):
+# The archives the browser spec opens (target/d1-fixtures; MOCHI_E2E_FIXTURES overrides):
 cargo run --release -p mochi-testkit --example d1_browse_fixtures -- target/d1-fixtures
 cd apps/mochi-desktop/e2e && pnpm install --frozen-lockfile
 xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnpm test,
@@ -88,7 +90,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
 ## Security decisions (each is a reason AGENTS.md asks for)
 
 - **Compact window (D6 quick verbs).** The shell's "Extract here", "Extract to a new folder", "Add to archive" (`--add-now`) and "Add to archive..." (`--add`, the form below) run in a small compact window (the same page, `#quick`), **one per job** since release 0.9.19 (owner report 2026-11-12, `quick::QuickPool`): labelled `quick`, then `quick-2`, `quick-3`, ..., each job on its own thread and at most four at once, so a second "Add to archive" runs beside the first instead of waiting unseen behind it. Every command below finds the caller's own job by the label Tauri hands it (`commands::QuickWin`), never one the page names, and closing a window cancels only its job. `capabilities/quick.json` grants `quick` and `quick-*` fourteen commands and nothing else (the last three are its title bar's Minimize, Close and move, below): `allow-watch-quick` (hear the one running job), `allow-quick-passphrase` (an encrypted archive's passphrase, once, into a zeroizing type in Rust), `allow-quick-cancel`, `allow-quick-show-folder` (Rust remembers the folder; the webview names no path), `allow-quick-close`, and, for the Add form, `allow-quick-choose-location` (Browse...: the save dialog is shown from Rust, which keeps the folder; the webview learns the folder's display text and the file name) and `allow-quick-add-submit` (OK: a plain file name, one of five format words, a level, and for `.mochi` only a passphrase that crosses once into a zeroizing type and a recovery percentage; Rust checks it, refuses a name that exists, and makes the archive in the folder it holds). After an extraction (owner request 2026-11-09) three more: `allow-quick-set-open-folder` (the saved check box "Open the folder when done", on by default; Rust then opens the folder extracted into, as Show in folder does, kept in `quick-settings.json` in the app's local data folder), `allow-quick-rename-folder` (one folder name, checked in Rust; renames the new folder that "Extract to a new folder" made, in place) and `allow-quick-move-folder` (Move to…: the folder dialog is shown from Rust and that folder moves into the chosen one, keeping its name). Both use `mochi_core::storage::os::rename_no_replace` (`renameat2(RENAME_NOREPLACE)` on Linux, `MoveFileExW` without replace on Windows): an existing file or folder, even an empty one, is never replaced, and another drive is refused, nothing copied. Neither touches the folder an "Extract here" wrote into. The main window gains none of them and the compact window reaches none of the main window's archive, staging, extract or update commands. No fs, shell, http or dialog permission is granted to either.
-- **One window per archive (`src/windows.rs`).** Like WinRAR, an archive opened while the window already shows one (or runs a job, or has files staged) opens in a **new window**; an empty window (the start screen) is reused, and an archive that is already open is not opened twice: its window is brought forward (same file by device and inode on Linux, by canonical path on Windows). This holds for a double-click or "Open with MOCHI" (the single-instance forward), **Open**, **Recent**, and a `.mochi` or foreign archive dropped on a window. `Placement` (`windows::place`) is the pure decision; `Launches::open_in_window` and the shell's open apply it. Labels are `main` then `win-N`; a new window is the opener's size, cascaded 32 logical pixels down and right (`windows::cascade`), and its title is `<archive name> - MOCHI` (a plain-text title; the name is the user's file name). There is no "open in this window" switch in 1.0: close the archive first. What used to be a singleton for "the open archive" is now **per window**, keyed by the label Tauri reports for the calling webview (the `Win` argument of a command, never a value the page sends): the staged sources, drop listener, extract folder and Test and Repair tool (`windows::WindowState`); which archives, foreign archives, waiting passphrases and password retries (`Archives::open_as`, `Foreign::open_as`) and running jobs (`JobRegistry::start_for`) a window owns. Closing a window (`WindowEvent::Destroyed`) runs `WindowStates::release`: cancels its jobs (a write job holds the archive's writer lock for its length, so the lock goes with it), closes its archives (their readers) and forgets its passphrases; nothing of any other window is touched. Handles are still process-wide counters; a window cannot name another's state, but within one app a page that guessed another window's archive handle could read it (same trust domain, as before). Limits: 4 archives per window, 16 archives and 12 windows in all. The start-up update check is made by `main` only. `capabilities/main.json` grants `win-*` the same commands as `main` and nothing more; no window permission is granted, so a page cannot open windows. The release checklist (W-09b in `docs/release-runbook.md`) covers the multi-window behaviour that WebDriver cannot drive.
+- **One window per archive (`src/windows.rs`).** Like WinRAR, an archive opened while the window already shows one (or runs a job, or has files staged) opens in a **new window**; an empty window (the start screen) is reused, and an archive that is already open is not opened twice: its window is brought forward (same file by device and inode on Linux, by canonical path on Windows). This holds for a double-click or "Open with MOCHI" (the single-instance forward), **Open**, **Recent**, and a `.mochi` or foreign archive dropped on a window. `Placement` (`windows::place`) is the pure decision; `Launches::open_in_window` and the shell's open apply it. Labels are `main` then `win-N`; a new window is the opener's size, cascaded 32 logical pixels down and right (`windows::cascade`), and its title is `<archive name> - MOCHI` (a plain-text title; the name is the user's file name). There is no "open in this window" switch in 1.0: close the archive first. What used to be a singleton for "the open archive" is now **per window**, keyed by the label Tauri reports for the calling webview (the `Win` argument of a command, never a value the page sends): the staged sources, drop listener, extract folder and Test and Repair tool (`windows::WindowState`); which archives, foreign archives, waiting passphrases and password retries (`Archives::open_as`, `Foreign::open_as`) and running jobs (`JobRegistry::start_for`) a window owns. Closing a window (`WindowEvent::Destroyed`) runs `WindowStates::release`: cancels its jobs (a write job holds the archive's writer lock for its length, so the lock goes with it), closes its archives (their readers) and forgets its passphrases; nothing of any other window is touched. Handles are still process-wide counters; a window cannot name another's state, but within one app a page that guessed another window's archive handle could read it (same trust domain, as before). Limits: 4 archives per window, 16 archives and 12 windows in all. The start-up update check is made by `main` only. `capabilities/main.json` grants `win-*` the same commands as `main` and nothing more; no window permission is granted, so a page cannot open windows. The release checklist (W-09b in `docs/dev/release-runbook.md`) covers the multi-window behaviour that WebDriver cannot drive.
 - **Capabilities.** `capabilities/main.json` grants the main window only the app's own
   commands: `allow-start-job` and `allow-cancel-job` (D0), and `allow-open-archive`,
   `allow-close-archive`, `allow-open-snapshot`, `allow-list-children`, and
@@ -155,7 +157,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   whole app, and its Close stops its job as the system's close did. Not provided: Windows
   11's snap-layout flyout on hovering Maximize (it needs a native caption button); Windows +
   arrow keys and dragging to a screen edge still snap. The release checklist (W-09c in
-  `docs/release-runbook.md`) covers what WebDriver cannot drive: dragging, edge resizing,
+  `docs/dev/release-runbook.md`) covers what WebDriver cannot drive: dragging, edge resizing,
   Alt+F4, the shadow and corners, and high contrast.
 - **The open dialog runs in Rust (D1).** `open_archive` shows the operating system's
   dialog from Rust (`tauri-plugin-dialog`, MIT OR Apache-2.0, registered for its Rust
@@ -189,7 +191,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   overwritten. With the `e2e` feature only, the dialog takes its path from the pick queue
   and `MOCHI_E2E_PACE_MS` also slows an extraction per entry; shipped builds read neither.
   On Linux the engine refuses a folder other users can modify; on Windows the destination's
-  ACL is not checked (`docs/c6-restore-platforms.md`, W2), so the panel says: "Extract into
+  ACL is not checked (`docs/dev/restore-platforms.md`, W2), so the panel says: "Extract into
   a folder only you can modify."
 - **Tests, reports, and repairs stay in Rust (D4).** The archive to test or repair, each
   independent copy, the new archive a repair writes, and where a report is exported are
@@ -259,7 +261,7 @@ xvfb-run -a pnpm test     # Linux (apt: webkit2gtk-driver xvfb); on Windows: pnp
   only ESLint up to 9, which is out of support, so the maintained `@eslint-react`
   plugin carries the rule. `ci/check-invariants.sh` rule 7 also greps `ui/src`.
 
-### In-app updates (T13)
+### In-app updates
 
 `src/update.rs` drives `tauri-plugin-updater` from Rust. The webview is granted three of
 the app's own commands (`get_update_settings`, `set_update_settings`, `check_for_update`),
@@ -268,9 +270,9 @@ the request, the signature check, and the install all happen in Rust, so the CSP
 unchanged. The start-up check is opt-in and off by default; Rust refuses an automatic check
 while it is off. Release notes are remote text and are shown as text only. The decision
 logic is behind the `Backend` trait and is tested without a network. Endpoint, public key,
-the release workflow, and the owner's steps: `docs/packaging.md`.
+the release workflow, and the owner's steps: `docs/dev/packaging.md`.
 
-## Creating ZIP and tar archives, and the Add form (plan O31, owner decision 2026-10-20)
+## Creating ZIP and tar archives, and the Add form (decision O31)
 
 The app may create `.mochi` (the default), ZIP, `.tar`, `.tar.gz` and `.tar.zst`; it never writes RAR, and
 7z is not written now. The writer is `crates/mochi-export` (not `mochi-format`, not `mochi-core`, not the
@@ -333,7 +335,22 @@ chosen folders. It reads names only, never file content. Code: `src-tauri/src/fi
   never rescans; a new scan re-reads only archives whose key changed. There is no on-disk cache.
 * **Query.** A substring (case-insensitive: Unicode lower-casing for valid UTF-8, ASCII for other bytes),
   or a glob if it has `*` or `?` (the whole file name); text with `/` is matched against the whole path.
-  At most 1,000 hits cross IPC; the rest are counted.
+  **Every match is reachable** (no cap): Rust keeps the query's full match list and serves pages
+  (`offset`, `limit`, 1,000 by default); the list draws only the rows in view and fetches the
+  pages under them as it scrolls.
+* **Many names, options, retrieve (spec Annex B.2.21, D31).** *A list of names* takes a pasted or typed
+  list (split by line breaks, commas, semicolons, tabs, or a chosen one; quotes and repeats dropped;
+  at most 1,000) and asks `find_query_many` once (`mochi_core::find::TermSet`): every hit says which
+  names it matched and every name its count, so the window shows "4 of 6 names found" and the names
+  not found ("not found in what was searched" while the search is incomplete). Options: *Match case*,
+  *Whole name only*, *Show* files/folders, and *Search subfolders* (a scan option; off scans only the
+  chosen folders and rescans). One name with the default options still goes through `find_query`, the
+  same query as `mochi find`. Matches are ticked and **retrieved** by the job `retrieve_found`
+  (`src-tauri/src/retrieve.rs`): the webview names (scan, archive position, key); Rust checks each
+  against the scan and the archive's stamp, opens each archive read-only and extracts through the
+  restore engine into a new folder per archive (or all into the chosen folder), adding only new files
+  or replacing (to the Recycle Bin / Trash). *Tick all N matches* sends the search itself (`all`)
+  instead of keys, so any number is retrieved. Choices are remembered in `localStorage` only.
 * **Coverage (§23.3 #8).** Every result carries the scan's coverage. `complete` is true only if the scan
   finished, every archive found was searched, no folder was unreadable, no link was left unfollowed and no
   limit was hit. Encrypted archives (Find never has a passphrase), damaged or unreadable ones, files that
@@ -386,7 +403,7 @@ plan the user reviewed, core plans again and refuses any difference, and changin
 archive or the copies drops the plan. Only a §20.4 `PASS` gets success styling
 (`ui/src/check/messages.ts`, tested); the overall line names every failing dimension.
 
-## Accessibility (plan D7)
+## Accessibility
 
 What is built, and how each part is checked:
 
@@ -427,10 +444,10 @@ What is built, and how each part is checked:
   Enter): section buttons, opening an archive, the roving list, panel focus in and out,
   a keyboard-started test with its result, and a full tab cycle with no trap.
 
-Not checked by a machine, so on the release checklist (`docs/packaging.md`): a pass with
+Not checked by a machine, so on the release checklist (`docs/dev/packaging.md`): a pass with
 NVDA on Windows and Orca on Ubuntu, Windows high-contrast themes, and 200 % zoom.
 
-## Messages (i18n scaffolding, plan D7)
+## Messages and languages
 
 All user-visible wording is in the typed catalogue `ui/src/i18n/en/*.ts` (one file per
 screen, merged in `en.ts`); screens call `t("area.key", { param })`. English, Thai (`th/`)
@@ -459,7 +476,7 @@ how to translate or add one is `ui/src/i18n/README.md`. A key that does not exis
 Writes (Create, Add, the Explorer "Add to archive" verbs) pass
 `WriterOptions::threads` from `src-tauri/src/speed.rs`: by default `None`,
 every processor core up to 8, so `mochi-core` reads, hashes and compresses
-file content on worker threads (`docs/benchmarks/c14-threads.md`: 3.2× on one
+file content on worker threads (`docs/dev/performance.md#threads`: 3.2× on one
 512 MiB file with 4 cores). *Settings → Speed* (`ui/src/settings/Speed.tsx`)
 turns it down to one core, which leaves the computer more responsive during a
 long job. The archive is the same bytes either way, so the choice is not
@@ -493,7 +510,7 @@ other filesystems stay unconfirmed. The choice is saved with the speed settings
 (`compression-settings.json`, `trust_ntfs_flush`) and applies to creation, Add's rewrites and
 repair outputs from the next job (`speed::windows_flush`, passed to every `OsDir` the app opens).
 
-## Crash reports (plan D7): opt-in, local, never sent
+## Crash reports: opt-in, local, never sent
 
 There is no reporting endpoint, so nothing is sent. The app has an **off-by-default
 local panic log** (`src-tauri/src/crashlog.rs`, screen: *Settings → Crash reports*):
@@ -574,7 +591,7 @@ choice is kept in the webview's local storage like the language and applies at o
   `foreign: bool` and can be opened or, with `stage_dropped_archive`, staged as an ordinary source to
   add. `foreign_search` looks up entry names (never contents) in an open foreign archive.
 
-## The simplified main path (D10)
+## The simplified main path
 
 Owner test, 2026-10-16: nobody knew where to start, the words were technical, and create and
 extract were confusing. The window opens on a drop area with two actions (Create archive, Open
@@ -704,7 +721,7 @@ returns a path and no `fs`, `shell`, `opener`, or `dialog` permission was added.
 Both installers also install the `mochi` CLI: on Windows `%LOCALAPPDATA%\MOCHI\bin\mochi.exe`,
 with that folder added to the user's PATH (a new terminal finds `mochi`); on Ubuntu
 `/usr/bin/mochi`. The app does not use it. How it is built, put on PATH (and why a
-too-long PATH is never edited), and smoke-tested: `docs/packaging.md` "The `mochi` command
+too-long PATH is never edited), and smoke-tested: `docs/dev/packaging.md` "The `mochi` command
 line in the installers".
 
 ## Foreign-format helper in the installers

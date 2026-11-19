@@ -14,9 +14,8 @@ only to an in-memory copy.
 This section says exactly what the verifier was written from. Read it before trusting the
 independence claim.
 
-**Session.** Written in the Claude Code session
-<https://claude.ai/code/session_01CrNtRm2M4VNc1w7Lr3C4qV> (branch
-`claude/mochi-archive-verifier-biuybp`).
+**Session.** Written in a separate Claude Code session of its own, on its own branch
+(`claude/mochi-archive-verifier-biuybp`), started with only the files listed below.
 
 **Read, as the task allows:**
 
@@ -29,8 +28,9 @@ independence claim.
 * `docs/ratification/R5-vectors/vectors.json` and `R6-vectors/vectors.json`, as test data.
 * `fixtures/golden/`: `README.md`, every `vectors.txt` and `descriptor-vectors.txt`, and the
   fixture files themselves, as test data.
-* Section W17 of `docs/ratification-core-plan.md` (lines 617 to 690). Also, one `grep -n` of that file for the
-  headings of W16 to W20 printed those five heading lines (titles only).
+* The task description (section W17 of the ratification plan, a document since retired; it set the
+  scope below and the summary format). Also, one `grep -n` of that plan for the headings of W16 to W20
+  printed those five heading lines (titles only).
 
 **Not read:** any file under `crates/` or `apps/`; any `gen_vectors.py`; any other `docs/*.md`;
 `docs/ratification/README.md`; `ci/` scripts; the Rust sources of the fixtures' writers.

@@ -441,6 +441,42 @@ pub fn preflight<D: RestoreDir>(
 /// every entry at or under any selected path, with the directories above
 /// each. An empty `selection` is the whole commit. A path the commit lacks
 /// is `INVALID_ARGUMENT`, before anything is written.
+/// Which entries a selection takes: a selected path, anything under one, and
+/// the directories above one. Looked up by path bytes, so the cost grows with
+/// the entries and their depth, not with entries times selected paths (a
+/// retrieve of every match of a large search names many thousands).
+struct Selector<'a> {
+    chosen: std::collections::HashSet<&'a [u8]>,
+    above: std::collections::HashSet<&'a [u8]>,
+}
+
+/// The proper prefixes of `b` that end just before a `/`: its ancestors' paths.
+fn ancestors(b: &[u8]) -> impl Iterator<Item = &[u8]> {
+    b.iter()
+        .enumerate()
+        .filter(|(_, c)| **c == b'/')
+        .filter_map(move |(i, _)| b.get(..i))
+}
+
+impl<'a> Selector<'a> {
+    fn new(selection: &'a [ArchivePath]) -> Self {
+        Selector {
+            chosen: selection.iter().map(ArchivePath::as_stored).collect(),
+            above: selection
+                .iter()
+                .flat_map(|u| ancestors(u.as_stored()))
+                .collect(),
+        }
+    }
+
+    fn admits(&self, p: &ArchivePath) -> bool {
+        let b = p.as_stored();
+        self.chosen.contains(b)
+            || self.above.contains(b)
+            || ancestors(b).any(|a| self.chosen.contains(a))
+    }
+}
+
 fn select(head: &OpenedHead, selection: &[ArchivePath]) -> Result<Vec<Selected>> {
     let snapshot = head.catalog.replay(None)?;
     for u in selection {
@@ -455,14 +491,10 @@ fn select(head: &OpenedHead, selection: &[ArchivePath]) -> Result<Vec<Selected>>
             ));
         }
     }
+    let wanted = Selector::new(selection);
     Ok(snapshot
         .iter()
-        .filter(|(p, _)| {
-            selection.is_empty()
-                || selection
-                    .iter()
-                    .any(|u| p.is_descendant_of(u) || *p == u || u.is_descendant_of(p))
-        })
+        .filter(|(p, _)| selection.is_empty() || wanted.admits(p))
         .map(|(p, e)| (p.clone(), e.kind, e.version))
         .collect())
 }
@@ -803,4 +835,51 @@ pub fn restore_selected<D: RestoreDir>(
         }
     }
     Ok(report)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod selector_tests {
+    use super::*;
+
+    #[test]
+    fn the_selector_takes_what_the_pairwise_rule_takes() {
+        let p = |s: &str| ArchivePath::from_stored(s.as_bytes()).unwrap();
+        let entries: Vec<ArchivePath> = [
+            "a",
+            "a/b",
+            "a/b/c.txt",
+            "a/bc",
+            "a/bc/d",
+            "ab",
+            "ab/c",
+            "x",
+            "x/y",
+            "x/y/z",
+            "x/y/z/w.log",
+            "logs",
+            "logs/2026",
+            "logs/2026/app.log",
+            "logs/2026/app.log.1",
+        ]
+        .iter()
+        .map(|s| p(s))
+        .collect();
+        let selections: Vec<Vec<ArchivePath>> = vec![
+            vec![p("a/b")],
+            vec![p("a")],
+            vec![p("x/y/z/w.log"), p("ab")],
+            vec![p("logs/2026/app.log")],
+            vec![p("a/bc/d"), p("x"), p("logs/2026")],
+        ];
+        for sel in &selections {
+            let s = Selector::new(sel);
+            for e in &entries {
+                let pairwise = sel
+                    .iter()
+                    .any(|u| e.is_descendant_of(u) || e == u || u.is_descendant_of(e));
+                assert_eq!(s.admits(e), pairwise, "{e:?} in {sel:?}");
+            }
+        }
+    }
 }

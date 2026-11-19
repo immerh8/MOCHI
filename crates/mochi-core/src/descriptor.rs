@@ -19,8 +19,7 @@
 //!   about the descriptor itself.
 //!
 //! The wire-generation and draft-identifier classifications are this
-//! build's reading of D12 and §26, which do not say; recorded as open in
-//! `docs/b2-implementation-checklist.md`.
+//! build's reading of D12 and §26, which do not say.
 //!
 //! # Failure behaviour (plan T18)
 //!

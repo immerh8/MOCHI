@@ -111,6 +111,7 @@ pub fn run(archives: &Archives, request: &JobRequest, ctx: &JobContext<'_>) -> R
         rekey: None,
         export: None,
         scan: None,
+        retrieve: None,
         foreign_test: None,
     })
 }

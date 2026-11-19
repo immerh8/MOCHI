@@ -1,6 +1,6 @@
 # Format status and archives from before 1.0
 
-Sources: spec §26, §28, Annex B.2.14; `docs/c14-cli.md`; `mochi --version`.
+Sources: spec §26, §28, Annex B.2.14; `docs/cli.md`; `mochi --version`.
 
 The archive format is **ratified at 1.0** (spec §28): a 1.0 build writes a ratified
 archive, and the layout it reads is the one the ratification artifacts describe. That

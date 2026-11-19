@@ -4,7 +4,7 @@ name: release
 # minisign key (GitHub Actions secrets TAURI_SIGNING_PRIVATE_KEY and
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD), writes latest.json, and creates a DRAFT GitHub
 # Release for the owner to review and publish by hand. Windows installers are not
-# Authenticode-signed (owner decision 2026-10-14). See docs/packaging.md "Releasing".
+# Authenticode-signed (owner decision 2026-10-14). See docs/dev/packaging.md "Releasing".
 #
 # This workflow never publishes a release and never pushes a tag: `gh release create
 # --draft` only. (ci/check-invariants.sh rule 11 checks that.) Runs on a pushed tag `v*`
@@ -48,7 +48,7 @@ jobs:
           [ -n "$KEY" ] || missing="$missing TAURI_SIGNING_PRIVATE_KEY"
           [ -n "$PASSWORD" ] || missing="$missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
           if [ -n "$missing" ]; then
-            echo "::error title=Updater signing secrets are missing::Add the repository secret(s):$missing (Settings > Secrets and variables > Actions). Nothing was built. See docs/packaging.md, section Releasing."
+            echo "::error title=Updater signing secrets are missing::Add the repository secret(s):$missing (Settings > Secrets and variables > Actions). Nothing was built. See docs/dev/packaging.md, section Releasing."
             exit 1
           fi
       - name: Work out the version and tag

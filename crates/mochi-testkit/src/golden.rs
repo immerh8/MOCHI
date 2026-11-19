@@ -2325,7 +2325,7 @@ pub fn render_b2_descriptor_manifest() -> String {
     s
 }
 
-// ---- C5 archive vectors for T11/T12 (docs/t11-t12-acceptance.md, "Fixtures") -----
+// ---- C5 archive vectors for T11/T12 (the replay and oracle tests) -------------------
 //
 // Whole archives, written by the real writer under a test checkpoint policy
 // (review decision 14), with forged commits appended for the reject cases

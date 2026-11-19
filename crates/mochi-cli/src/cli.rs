@@ -101,7 +101,7 @@ pub struct CreateArgs {
     /// Create a TAR-compatible archive (spec 7.2, Annex B.2.9 D19): every
     /// commit also writes a TAR stream, so `zstd -dc` of the file yields the
     /// commits' streams. The choice is fixed for the archive's life, turns
-    /// deduplication off, and costs space (see docs/c10-tar-compat.md).
+    /// deduplication off, and costs space (see docs/dev/tar-compatible-profile.md).
     #[arg(long, conflicts_with = "encrypted")]
     pub tar_compatible: bool,
     /// Create an Encrypted archive (spec Annex B.2.10 D20): names, content,
@@ -339,17 +339,46 @@ pub struct SearchArgs {
 
 #[derive(Debug, Args)]
 pub struct FindArgs {
-    /// The name to look for. Plain text matches anywhere in an entry's last
-    /// path component, ignoring case (`invoice` finds `docs/Invoice-3.PDF`);
-    /// with `*` or `?` it is a pattern for the whole last component
-    /// (`*.pdf`); with a `/` it is matched against the whole path inside the
-    /// archive (`docs/inv`). Quote it so the shell does not expand it.
-    pub pattern: String,
-    /// Folders to search. Every `.mochi` file under them is opened read-only
-    /// and the names of its newest version are searched. Links below a
-    /// folder are not followed (the result says how many were not).
-    #[arg(required = true, num_args = 1.., value_name = "FOLDER")]
-    pub folders: Vec<PathBuf>,
+    /// `PATTERN FOLDER...`: the name to look for, then the folders to search.
+    /// With `--name` or `--names-from`, every value here is a folder.
+    ///
+    /// A name in plain text matches anywhere in an entry's last path
+    /// component, ignoring case (`invoice` finds `docs/Invoice-3.PDF`); with
+    /// `*` or `?` it is a pattern for the whole last component (`*.pdf`); with
+    /// a `/` it is matched against the whole path inside the archive
+    /// (`docs/inv`). Quote it so the shell does not expand it. Every `.mochi`
+    /// file under the folders is opened read-only and the names of its newest
+    /// version are searched. Links below a folder are not followed (the result
+    /// says how many were not).
+    #[arg(required = true, num_args = 1.., value_name = "PATTERN|FOLDER")]
+    pub args: Vec<PathBuf>,
+    /// A name to look for (repeatable): find entries that match any of them,
+    /// and say what each found (spec Annex B.2.21). With it, every positional
+    /// value is a folder.
+    #[arg(long = "name", value_name = "PATTERN")]
+    pub names: Vec<String>,
+    /// Read names to look for from FILE, one per line (`-` reads standard
+    /// input). Blank lines are skipped; at most 1,000 names in all.
+    #[arg(long, value_name = "FILE")]
+    pub names_from: Option<PathBuf>,
+    /// Compare names byte for byte instead of ignoring case.
+    #[arg(long)]
+    pub match_case: bool,
+    /// A name without `*` or `?` must be the whole name (or, with a `/`, the
+    /// whole path), not part of it.
+    #[arg(long)]
+    pub whole_name: bool,
+    /// Match files only.
+    #[arg(long, conflicts_with = "folders_only")]
+    pub files_only: bool,
+    /// Match folders only.
+    #[arg(long)]
+    pub folders_only: bool,
+    /// Search only the archives directly in the folders given, not in their
+    /// subfolders. This is a choice of scope: it does not make the search
+    /// incomplete.
+    #[arg(long)]
+    pub no_subfolders: bool,
 }
 
 /// Verification levels (spec §20.1).

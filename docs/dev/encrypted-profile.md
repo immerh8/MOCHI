@@ -1,4 +1,4 @@
-# The Encrypted profile and `rekey` (plan C11; spec Annex B.2.10 D20)
+# The Encrypted profile and `rekey` (spec Annex B.2.10, D20)
 
 An Encrypted archive is an ordinary MOCHI archive whose names, attributes, file
 sizes, directory structure, and content are sealed under a random data key. The

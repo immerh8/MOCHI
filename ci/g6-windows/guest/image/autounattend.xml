@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Unattended install of Microsoft's Windows 11 Enterprise evaluation media for
-  the G6 crash-replay harness (docs/g6-windows-crash-replay.md). UEFI/GPT,
+  the G6 crash-replay harness (docs/dev/windows-crash-replay.md). UEFI/GPT,
   one disk. The throwaway local account exists only inside the VM image; its
   password is not a secret. Windows 11's TPM 2.0 / Secure Boot / RAM / disk
   checks are satisfied by swtpm, OVMF Secure Boot, and the VM's size, not

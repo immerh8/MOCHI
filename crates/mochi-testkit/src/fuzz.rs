@@ -392,8 +392,7 @@ pub enum ArchiveOpenOutcome {
 /// hash-verify (`open_head` checks that itself; here we only require no panic
 /// and that an opened head's commit is the one its footer names).
 ///
-/// T11/T12: for anything `open_head` opens (`docs/t11-t12-acceptance.md`,
-/// "Fuzz"), also: the catalog head equals the footer's sequence, and the head's
+/// T11/T12: for anything `open_head` opens, also: the catalog head equals the footer's sequence, and the head's
 /// replay segment obeys the T11 rules. The segment is re-walked here
 /// independently of `mochi_core::segment` (footers via `mochi-format`,
 /// following the parent hints, which an opened head's segment must match

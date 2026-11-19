@@ -153,6 +153,7 @@ test("every catalogue key is used, so the catalogue does not collect dead wordin
     "check.outcome.",
     "check.enum.",
     "common.phase.",
+    "find.split.",
   ];
   const unused = Object.keys(en).filter(
     (k) => !text.includes(`"${k}"`) && !dynamic.some((p) => k.startsWith(p)),

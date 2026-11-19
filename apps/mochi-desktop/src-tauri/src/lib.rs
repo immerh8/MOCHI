@@ -29,6 +29,7 @@ mod picker;
 pub mod quick;
 pub mod recent;
 pub mod rekey;
+pub mod retrieve;
 pub mod route;
 pub mod scan;
 pub mod search;
@@ -231,6 +232,8 @@ pub fn run() -> Result<(), tauri::Error> {
             find::find_start,
             find::find_cancel,
             find::find_query,
+            find::find_query_many,
+            find::find_choose_retrieve_folder,
             find::find_open_hit,
             find::find_show_folder,
             dragout::drag_out,

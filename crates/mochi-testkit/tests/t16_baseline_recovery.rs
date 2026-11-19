@@ -7,8 +7,7 @@
 //! "Equal" below always means: the recovered catalog's authoritative state at
 //! each commit from *b* to the head equals the state of the same commit
 //! opened from the **undamaged** original, and the recovered promised
-//! attributes equal the transaction model's. Plan: `docs/t16-t17-t15-plan.md`
-//! section 3.
+//! attributes equal the transaction model's.
 
 use mochi_core::catalog::namespace::FileVersionId;
 use mochi_core::catalog::{Commit, FileVersion, SegmentApplier};

@@ -1,6 +1,6 @@
 # TAR-compatible archives
 
-Sources: spec §7.2; `docs/c10-tar-compat.md` (Annex B.2.9 D19); `ci/tar-interop.sh`.
+Sources: spec §7.2; `docs/dev/tar-compatible-profile.md` (Annex B.2.9 D19); `ci/tar-interop.sh`.
 
 ```bash
 mochi create --tar-compatible t.mochi src

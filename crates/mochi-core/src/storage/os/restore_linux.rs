@@ -1,7 +1,7 @@
 //! [`OsRestoreDir`] on Linux (plan C6): race-resistant restoration through
 //! directory descriptors (`rustix`, no `unsafe`). The Windows counterpart is
 //! `restore_windows.rs`; both implement [`RestoreDir`] and are chosen by
-//! target in `os.rs`. See `docs/c6-restore-platforms.md`.
+//! target in `os.rs`. See `docs/dev/restore-platforms.md`.
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;

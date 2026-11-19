@@ -16,7 +16,7 @@ kind="${1:?usage: build-installer.sh nsis|deb}"
 case "$kind" in nsis | deb) ;; *) echo "unknown bundle '$kind' (nsis|deb only: O11)" >&2; exit 2 ;; esac
 
 if [ "${MOCHI_UPDATER_ARTIFACTS:-0}" = 1 ]; then
-  : "${TAURI_SIGNING_PRIVATE_KEY:?MOCHI_UPDATER_ARTIFACTS=1 needs TAURI_SIGNING_PRIVATE_KEY (the updater signing key; docs/packaging.md)}"
+  : "${TAURI_SIGNING_PRIVATE_KEY:?MOCHI_UPDATER_ARTIFACTS=1 needs TAURI_SIGNING_PRIVATE_KEY (the updater signing key; docs/dev/packaging.md)}"
   : "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:?MOCHI_UPDATER_ARTIFACTS=1 needs TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
 fi
 

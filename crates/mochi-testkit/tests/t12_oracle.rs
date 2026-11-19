@@ -1,4 +1,4 @@
-//! T12 oracle property test (review amendment 4, `docs/t11-t12-acceptance.md`).
+//! T12 oracle property test (review amendment 4).
 //!
 //! The same seeded `SeqIds` stream and the same generated transactions are
 //! written under `EveryCommit` (archive A) and under `Never` / `Every(n)`,
@@ -458,7 +458,7 @@ fn check(steps: &[Step], policy: CheckpointPolicy, split: usize) -> Vec<HistoryE
             "{ctx}: B attributes vs model"
         );
 
-        // Verification audit (docs/t12-verify-audit.md), empirical side:
+        // Verification audit (T12), empirical side:
         // the full `Catalog::verify` passes on every replayed catalog. Test
         // evidence only; production does not run it after replay.
         ob.catalog

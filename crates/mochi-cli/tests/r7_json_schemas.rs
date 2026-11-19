@@ -57,6 +57,7 @@ const SCHEMAS: &[&str] = &[
     "cli-migrate.schema.json",
     "cli-find.schema.json",
     "cli-comment.schema.json",
+    "cli-find-v2.schema.json",
 ];
 
 /// The R8 case spec §20.6's example is generated from.
@@ -169,7 +170,7 @@ fn mochi<S: AsRef<str>>(args: &[S]) -> Out {
 }
 
 /// Run with `--json`: standard output is exactly one line holding one JSON
-/// value (docs/c14-cli.md). An error line is checked against the error
+/// value (docs/cli.md). An error line is checked against the error
 /// schema and the exit code against `exit_code_for`; `None` then.
 fn json_out<S: AsRef<str>>(args: &[S]) -> (u8, Option<Value>) {
     let mut a: Vec<String> = args.iter().map(|s| s.as_ref().to_owned()).collect();
@@ -443,7 +444,16 @@ fn command_output_schemas_require_their_in_band_tag() {
             assert!(!has_tag, "{name} is frozen and must not carry an O2 tag");
             continue;
         };
-        let tag = format!("mochi-cli-{stem}-v1");
+        // `cli-NAME.schema.json` carries `mochi-cli-NAME-v1`; a later version is
+        // its own file, `cli-NAME-vN.schema.json`, carrying `mochi-cli-NAME-vN`.
+        let versioned = stem
+            .rsplit_once("-v")
+            .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        let tag = if versioned {
+            format!("mochi-cli-{stem}")
+        } else {
+            format!("mochi-cli-{stem}-v1")
+        };
         let branches: Vec<&Value> = match doc.get("oneOf") {
             Some(Value::Array(b)) => b.iter().collect(),
             _ => vec![doc],
@@ -455,7 +465,7 @@ fn command_output_schemas_require_their_in_band_tag() {
         }
         seen += 1;
     }
-    assert_eq!(seen, 14, "the fourteen command-output schemas");
+    assert_eq!(seen, 15, "the fifteen command-output schemas");
 }
 
 // ---- enumerations ------------------------------------------------------------------
@@ -1235,6 +1245,40 @@ fn corpus() -> Vec<(&'static str, Value)> {
     assert_eq!(code, 2);
     assert_eq!(v["coverage"]["archives_skipped"], 3, "{v}");
     keep("cli-find.schema.json", v);
+
+    // find with several names and options (B.2.21): v2, complete and incomplete.
+    let (code, v) = ok(
+        "cli-find-v2.schema.json",
+        &a.g(&[
+            "find",
+            "--name",
+            "*",
+            "--name",
+            "no-such-name",
+            &a.s("find-ok"),
+        ]),
+    );
+    assert_eq!(code, 0);
+    assert_eq!(v["query"]["terms"][1]["hits"], 0, "{v}");
+    keep("cli-find-v2.schema.json", v);
+    let (code, v) = ok(
+        "cli-find-v2.schema.json",
+        &a.g(&[
+            "find",
+            "--match-case",
+            "--whole-name",
+            "--files-only",
+            "--no-subfolders",
+            "--name",
+            "*.txt",
+            "--name",
+            "a",
+            &a.s("find-mixed"),
+        ]),
+    );
+    assert_eq!(code, 2);
+    assert_eq!(v["query"]["subfolders"], false);
+    keep("cli-find-v2.schema.json", v);
 
     // comment (B.2.19): set with append, then read at the head and at a
     // version without one.

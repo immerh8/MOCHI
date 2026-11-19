@@ -1,4 +1,4 @@
-"""The ``mochi-interop-summary-v1`` document (docs/ratification-core-plan.md, W17)."""
+"""The ``mochi-interop-summary-v1`` document (the summary format of the R9 interoperability run)."""
 from __future__ import annotations
 
 import json
